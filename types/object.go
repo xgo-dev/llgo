@@ -728,9 +728,6 @@ type Info struct {
 	Scopes       map[ast.Node]*Scope
 	InitOrder    []*Initializer
 	FileVersions map[*ast.File]string
-
-	ctx    *Context
-	goInfo *gotypes.Info
 }
 
 // TypeOf returns the LLGo Type of expression e, or nil if unknown.
@@ -744,11 +741,6 @@ func (info *Info) TypeOf(e ast.Expr) Type {
 	if id, ok := e.(*ast.Ident); ok {
 		if obj := info.ObjectOf(id); obj != nil {
 			return obj.Type()
-		}
-	}
-	if info.goInfo != nil && info.ctx != nil {
-		if t := info.goInfo.TypeOf(e); t != nil {
-			return info.ctx.FromGo(t)
 		}
 	}
 	return nil
@@ -780,11 +772,6 @@ func (info *Info) ObjectOf(id *ast.Ident) Object {
 	}
 	if obj := info.Uses[id]; obj != nil {
 		return obj
-	}
-	if info.goInfo != nil && info.ctx != nil {
-		if obj := info.goInfo.ObjectOf(id); obj != nil {
-			return info.ctx.FromGoObject(obj)
-		}
 	}
 	return nil
 }

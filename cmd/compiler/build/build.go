@@ -1344,6 +1344,15 @@ func (ctx *context) releaseSingleExecutableBackend() {
 	ctx.prog.Dispose()
 	ctx.prog = nil
 	ctx.cTransformer = nil
+	ctx.progSSA = nil
+	ctx.dedup = nil
+	ctx.frontend = nil
+	ctx.callerTracking = nil
+	ctx.patches = nil
+	ctx.frontendOptions.EscapeAnalysis = nil
+	ctx.frontendOptions.ReceiverNilChecks = nil
+	ctx.pkgs = nil
+	ctx.pkgByID = nil
 	// Return unused Go heap pages before the linker/optimizer allocates its
 	// own working set. LLVM's native allocations were released above.
 	debug.FreeOSMemory()

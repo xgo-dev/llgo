@@ -143,6 +143,12 @@ func NewChecker(conf *Config, fset *token.FileSet, pkg *Package, info *Info) *Ch
 		switch s := cfg.Sizes.(type) {
 		case *Context:
 			ctx = s
+		case *archSizes:
+			ctx = NewContextWithConfig(ContextConfig{
+				Spec:             s.spec,
+				HostBasicLayouts: s.hostBasicLayouts,
+				SIMDAlignments:   s.simdAlignments,
+			})
 		case llgoContextProvider:
 			ctx = s.LLGoContext()
 		}
@@ -239,6 +245,16 @@ func bridgeToGoSizes(ctx *Context, s Sizes) gotypes.Sizes {
 	switch v := s.(type) {
 	case *Context:
 		return v.GoSizes()
+	case *archSizes:
+		if ctx != nil && ctx.spec.GOARCH == v.spec.GOARCH &&
+			ctx.spec.WordSize == v.spec.WordSize && ctx.spec.MaxAlign == v.spec.MaxAlign {
+			return ctx.GoSizes()
+		}
+		return NewContextWithConfig(ContextConfig{
+			Spec:             v.spec,
+			HostBasicLayouts: v.hostBasicLayouts,
+			SIMDAlignments:   v.simdAlignments,
+		}).GoSizes()
 	case llgoContextProvider:
 		if c := v.LLGoContext(); c != nil {
 			return c.GoSizes()

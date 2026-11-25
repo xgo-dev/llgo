@@ -1287,3 +1287,71 @@ func TestConstructorsPreserveBoundTypeName(t *testing.T) {
 		t.Fatalf("NewTypeParam overwrote bound TypeName: got %v, want %v", tnParam.Type(), origParam)
 	}
 }
+
+func TestSyncAtomicAlign64On386(t *testing.T) {
+	for _, pkgPath := range []string{"sync/atomic", "internal/runtime/atomic"} {
+		t.Run(pkgPath, func(t *testing.T) {
+			pkg := types.NewPackage(pkgPath, "atomic")
+			align64 := types.NewNamed(types.NewTypeName(0, pkg, "align64", nil), types.NewStruct(nil, nil), nil)
+			noCopy := types.NewNamed(types.NewTypeName(0, pkg, "noCopy", nil), types.NewStruct(nil, nil), nil)
+			u64Struct := types.NewStruct([]*types.Var{
+				types.NewField(0, pkg, "noCopy", noCopy, false),
+				types.NewField(0, pkg, "_", align64, false),
+				types.NewField(0, pkg, "v", types.Typ[types.Uint64], false),
+			}, nil)
+			u64 := types.NewNamed(types.NewTypeName(0, pkg, "Uint64", nil), u64Struct, nil)
+			bucket := types.NewStruct([]*types.Var{
+				types.NewField(0, pkg, "_", types.NewArray(u64, 0), false),
+				types.NewField(0, pkg, "head", types.Typ[types.Uint32], false),
+				types.NewField(0, pkg, "count", u64, false),
+			}, nil)
+
+			sizesList := []struct {
+				name  string
+				sizes types.Sizes
+			}{
+				{"SizesFor(gc,386)", types.SizesFor("gc", "386")},
+				{"SizesFor(llgo,386)", types.SizesFor("llgo", "386")},
+				{"Context(windows/386)", newContextForSpec(target.Spec{GOOS: "windows", GOARCH: "386"})},
+				{"Context(linux/386)", newContextForSpec(target.Spec{GOOS: "linux", GOARCH: "386"})},
+				{"StdSizes(4,4)", &types.StdSizes{WordSize: 4, MaxAlign: 4}},
+			}
+			for _, tc := range sizesList {
+				if got := tc.sizes.Alignof(align64); got != 8 {
+					t.Errorf("%s Alignof(align64) = %d, want 8", tc.name, got)
+				}
+				if got := tc.sizes.Sizeof(align64); got != 0 {
+					t.Errorf("%s Sizeof(align64) = %d, want 0", tc.name, got)
+				}
+				if got := tc.sizes.Alignof(u64); got != 8 {
+					t.Errorf("%s Alignof(Uint64) = %d, want 8", tc.name, got)
+				}
+				if got := tc.sizes.Sizeof(u64); got != 8 {
+					t.Errorf("%s Sizeof(Uint64) = %d, want 8", tc.name, got)
+				}
+				if got := tc.sizes.Alignof(bucket); got != 8 {
+					t.Errorf("%s Alignof(bucket) = %d, want 8", tc.name, got)
+				}
+				offs := tc.sizes.Offsetsof([]*types.Var{
+					bucket.Field(0),
+					bucket.Field(1),
+					bucket.Field(2),
+				})
+				if len(offs) != 3 || offs[0] != 0 || offs[1] != 0 || offs[2] != 8 {
+					t.Errorf("%s Offsetsof(bucket) = %v, want [0 0 8]", tc.name, offs)
+				}
+			}
+		})
+	}
+}
+
+func TestSizesForIsStateless(t *testing.T) {
+	s1 := types.SizesFor("gc", "amd64")
+	s2 := types.SizesFor("gc", "amd64")
+	if s1 == nil || s1 != s2 {
+		t.Fatalf("SizesFor(gc, amd64) must preserve pointer identity: %p vs %p", s1, s2)
+	}
+	if _, isCtx := s1.(*types.Context); isCtx {
+		t.Fatal("SizesFor must not return a globally retained *types.Context")
+	}
+}

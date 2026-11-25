@@ -33,7 +33,83 @@ type Sizes interface {
 	Sizeof(T Type) int64
 }
 
-// SizesFor returns a Sizes implementation (backed by *Context) for the given
+// archSizes is an immutable, stateless Sizes implementation returned by
+// SizesFor("gc"|"llgo", arch). Keeping it stateless avoids retaining per-package
+// type/layout caches across independent compilations while preserving pointer
+// identity (SizesFor("gc", arch) == SizesFor("gc", arch)).
+type archSizes struct {
+	spec             target.Spec
+	hostBasicLayouts [UnsafePointer + 1]LayoutPair
+	simdAlignments   [3]int64
+}
+
+func newArchSizes(spec target.Spec) *archSizes {
+	if spec.WordSize == 0 || spec.PtrSize == 0 {
+		spec = target.ResolveSpec(spec)
+	}
+	if spec.MaxAlign == 0 {
+		spec.MaxAlign = spec.WordSize
+	}
+	return &archSizes{
+		spec:             spec,
+		hostBasicLayouts: defaultHostBasicLayouts(spec),
+		simdAlignments:   defaultSIMDAlignments(spec),
+	}
+}
+
+func (s *archSizes) statelessContext() Context {
+	return Context{
+		spec:             s.spec,
+		hostBasicLayouts: s.hostBasicLayouts,
+		simdAlignments:   s.simdAlignments,
+	}
+}
+
+func (s *archSizes) Sizeof(T Type) int64 {
+	if T == nil {
+		return 0
+	}
+	ctx := s.statelessContext()
+	return ctx.layoutInMode(T, modeGo).Size
+}
+
+func (s *archSizes) Alignof(T Type) int64 {
+	if T == nil {
+		return 1
+	}
+	ctx := s.statelessContext()
+	return ctx.layoutInMode(T, modeGo).Align
+}
+
+func (s *archSizes) Offsetsof(fields []*Var) []int64 {
+	if len(fields) == 0 {
+		return nil
+	}
+	ctx := s.statelessContext()
+	return ctx.Offsetsof(fields)
+}
+
+// isSyncAtomicAlign64 reports whether t is sync/atomic.align64 or
+// internal/runtime/atomic.align64, the empty marker struct recognized by the
+// Go compiler and go/types as requiring 8-byte alignment even on 32-bit targets.
+func isSyncAtomicAlign64(t Type) bool {
+	named, ok := Unalias(t).(*Named)
+	if !ok || named == nil {
+		return false
+	}
+	obj := named.Obj()
+	if obj == nil || obj.Name() != "align64" || obj.Pkg() == nil {
+		return false
+	}
+	path := obj.Pkg().Path()
+	if path != "sync/atomic" && path != "internal/runtime/atomic" {
+		return false
+	}
+	st, ok := named.Underlying().(*Struct)
+	return ok && len(st.fields) == 0
+}
+
+// SizesFor returns a stateless Sizes implementation for the given
 // compiler ("llgo" or "gc") and GOARCH (mirroring go/types.SizesFor).
 func SizesFor(compiler, arch string) Sizes {
 	if compiler == "gccgo" {
@@ -73,7 +149,7 @@ func SizesFor(compiler, arch string) Sizes {
 			spec.MaxAlign = int(gs.Alignof(gotypes.Typ[gotypes.Complex128]))
 		}
 	}
-	s := NewContextWithConfig(ContextConfig{Spec: spec})
+	s := newArchSizes(spec)
 	actual, _ := cachedSizes.LoadOrStore(key, s)
 	return actual.(Sizes)
 }
@@ -94,6 +170,9 @@ func (s *StdSizes) Alignof(T Type) int64 {
 	case *Array:
 		return s.Alignof(t.elem)
 	case *Struct:
+		if len(t.fields) == 0 && isSyncAtomicAlign64(T) {
+			return 8
+		}
 		max := int64(1)
 		for _, f := range t.fields {
 			if f != nil {
@@ -486,6 +565,13 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 				Align:           c.SIMDAlignment(u.simdTagIndex),
 				IsRegularMemory: true,
 				HasSIMDStorage:  true,
+			}
+		}
+		if isSyncAtomicAlign64(u) {
+			return &Layout{
+				Size:            0,
+				Align:           8,
+				IsRegularMemory: true,
 			}
 		}
 		nativeNamed := u.hasCallConv && u.callConv.IsNative()

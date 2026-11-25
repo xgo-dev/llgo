@@ -321,7 +321,7 @@ func (c *Context) checkIncompleteNamedLocked() {
 }
 
 func (c *Context) trackIncompleteLLNamed(n *Named) {
-	if n == nil || n.goNamed != nil {
+	if n == nil || n.goNamed != nil || c.layouts == nil {
 		return
 	}
 	c.mu.Lock()
@@ -1480,16 +1480,40 @@ func (c *Context) populateFromGoPackage(dstPkg *Package, goPkg *gotypes.Package,
 	}
 
 	c.populateInfoFromGoLocked(dstInfo, goInfo, goVersion, files)
+	if goPkg != nil {
+		if gs := goPkg.Scope(); gs != nil {
+			for i := 0; i < gs.NumChildren(); i++ {
+				c.pruneLocalGoScopeLocked(gs.Child(i))
+			}
+		}
+	}
 	return pkg
+}
+
+// pruneLocalGoScopeLocked drops file-, function-, and block-local go/types
+// scopes and their declared objects from the Context cache after a package has
+// finished lowering into its LLGo Scope/Info. Package-level scopes/objects and
+// struct fields remain cached for cross-package identity.
+func (c *Context) pruneLocalGoScopeLocked(gs *gotypes.Scope) {
+	if gs == nil {
+		return
+	}
+	delete(c.goScopes, gs)
+	for _, name := range gs.Names() {
+		if obj := gs.Lookup(name); obj != nil {
+			delete(c.goObjs, obj)
+		}
+	}
+	for i := 0; i < gs.NumChildren(); i++ {
+		c.pruneLocalGoScopeLocked(gs.Child(i))
+	}
 }
 
 func (c *Context) populateInfoFromGoLocked(info *Info, goInfo *gotypes.Info, goVersion string, files []*ast.File) {
 	if info == nil {
 		return
 	}
-	info.ctx = c
 	if goInfo != nil {
-		info.goInfo = goInfo
 		if info.Defs != nil {
 			for id, obj := range goInfo.Defs {
 				info.Defs[id] = c.fromGoObjectLocked(obj)
