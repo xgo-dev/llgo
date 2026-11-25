@@ -186,15 +186,17 @@ flipped locally, esptool write-flash of the merged image). Measured:
   reply value only LP-core code can compute), through stop, stop-twice
   and the reload. The earlier zero-tick run (whose slot-cursor wipe
   motivated the bounded send) never got past the first exchange.
-- **LP-timer wake-up after deep sleep is not yet observed on this setup**:
-  after the deep-sleep entry the USJ port did not re-enumerate within
-  minutes (twice), so the 3 s timer wake could not be read over the
-  console; the wake configuration itself was verified against the IDF
-  source (`esp_sleep_enable_timer_wakeup` receives the correct 3 s).
-  Distinguishing "the wake did not fire" from "the USB bridge did not
-  come back" needs a serial console wired to UART0, the documented next
-  step (the repo demo keeps UART0 as its console; the real-device run
-  switched to USJ locally to flash over USB).
+- **LP-timer wake-up after deep sleep is verified.** On an ESP32-S31-Function-CoreBoard
+  (whose onboard USB-to-UART bridge keeps UART0 alive across deep sleep, unlike the
+  USJ port) the probe ran the full loop: `deep sleep now` → `rst:0x5
+  (PMU_SYS_PWR_DOWN_RESET)` → `wakeup_cause=16 ESP_SLEEP_WAKEUP_TIMER` (the IDF
+  sleep API itself attributing the reset to the configured timer) → the post-wake
+  marker check reading the intact `0xC0DEC0DE` LP-RAM boot marker (the LP domain
+  stays powered in deep sleep) → `PASS`. The first boot correctly reported
+  `wakeup_cause=1 ESP_SLEEP_WAKEUP_UNDEFINED`, distinguishing power-on from timer
+  wake. An earlier attempt over the USJ port alone never showed any of this: the
+  USJ peripheral does not re-enumerate after wake, so deep-sleep observation needs
+  a console on UART0.
 - **The mailbox needs a bounded blocking send.** The driver's HP-side ACK
   arrives through the mailbox interrupt + semaphore; a zero-tick send
   returns before that machinery can ever deliver the ACK, and each send
