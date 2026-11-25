@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestAppendUint32CachedPrivateMethod(t *testing.T) {
@@ -102,7 +102,7 @@ func TestRuntimeEscapeContractsAvoidObserverAndMapKeyAllocation(t *testing.T) {
 		names []string
 	}{
 		{"runtime", []string{"runtime.ReadMemStats"}},
-		{llssa.PkgRuntime, []string{llssa.PkgRuntime + ".mapaccess1_faststr", llssa.PkgRuntime + ".mapaccess2_faststr"}},
+		{llvmgen.PkgRuntime, []string{llvmgen.PkgRuntime + ".mapaccess1_faststr", llvmgen.PkgRuntime + ".mapaccess2_faststr"}},
 	} {
 		t.Run(test.path, func(t *testing.T) {
 			conf := NewDefaultConf(ModeGen)

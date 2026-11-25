@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llvm"
 )
@@ -70,7 +70,7 @@ func TestWASILTOFunctionFeatures(t *testing.T) {
 }
 
 func TestWASILTOFunctionFeaturesCodegen(t *testing.T) {
-	llssa.Initialize(llssa.InitAll)
+	llvmgen.Initialize(llvmgen.InitAll)
 	target, err := llvm.GetTargetFromTriple("wasm32-unknown-wasip1")
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestUseInMemoryNativeCodegenConf(t *testing.T) {
 }
 
 func TestExportPackageObjectErrors(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	pkg := prog.NewPackage("p", "example.com/p")
 

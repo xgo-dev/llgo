@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -25,7 +25,7 @@ var multiplyValue = multiply[Word]
 func Value64(a, b Word) (Word, bool) { return multiplyValue(a, b) }
 func Defer64(a, b Word) { defer multiply(a, b) }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "arm64"},
 		{GOOS: "windows", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "386"},
@@ -89,7 +89,7 @@ func TestUMulOverflowInvalidDeclarations(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := "package overflow\n//llgo:link mul llgo.umulOverflow\n" + tc.decl + "\nfunc bad(a uint) { " + tc.call + " }"
 			ssapkg, _, files := buildGoSSAPkg(t, src)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			defer func() {
 				if got := fmt.Sprint(recover()); !strings.Contains(got, tc.want) {

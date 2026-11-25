@@ -24,7 +24,7 @@ import (
 	"go/types"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -33,49 +33,49 @@ import (
 func TestConfigureWasmReflectBridges(t *testing.T) {
 	tests := []struct {
 		name     string
-		target   *llssa.Target
+		target   *llvmgen.Target
 		src      string
 		expected bool
 	}{
 		{
 			"reachable WASI reflection",
-			&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
+			&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
 			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
 			true,
 		},
 		{
 			"dead WASI reflection",
-			&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
+			&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
 			`package main; import "reflect"; func dead(v reflect.Value) { v.Call(nil) }; func main() {}`,
 			false,
 		},
 		{
 			"fmt reflection metadata does not require bridges",
-			&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
+			&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
 			`package main; import "fmt"; func main() { _ = fmt.Sprintf("%v", 1) }`,
 			false,
 		},
 		{
 			"GoJS reflection uses typed bridges",
-			&llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			&llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
 			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
 			true,
 		},
 		{
 			"Emscripten Memory32 reflection uses typed bridges",
-			&llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"},
+			&llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"},
 			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
 			true,
 		},
 		{
 			"Emscripten Memory64 reflection uses typed bridges",
-			&llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", WasmProvider: "emscripten"},
+			&llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", WasmProvider: "emscripten"},
 			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
 			true,
 		},
 		{
 			"dead JavaScript reflection does not require bridges",
-			&llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "emscripten"},
+			&llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "emscripten"},
 			`package main; import "reflect"; func dead(v reflect.Value) { v.Call(nil) }; func main() {}`,
 			false,
 		},
@@ -83,7 +83,7 @@ func TestConfigureWasmReflectBridges(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			pkg := buildWasmReflectTestProgram(t, test.src)
-			prog := llssa.NewProgram(test.target)
+			prog := llvmgen.NewProgram(test.target)
 			defer prog.Dispose()
 			ctx := &context{
 				prog:    prog,
@@ -106,40 +106,40 @@ func TestConfigureWasmReflectBridges(t *testing.T) {
 func TestConfigureWasmFuncInfoEntries(t *testing.T) {
 	tests := []struct {
 		name      string
-		target    *llssa.Target
+		target    *llvmgen.Target
 		buildMode BuildMode
 		src       string
 		want      bool
 	}{
 		{
 			name:      "plain executable",
-			target:    &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			target:    &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
 			buildMode: BuildModeExe,
 			src:       `package main; func main() {}`,
 		},
 		{
 			name:      "reachable FuncForPC",
-			target:    &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			target:    &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
 			buildMode: BuildModeExe,
 			src:       `package main; import "runtime"; func main() { _ = runtime.FuncForPC(0) }`,
 			want:      true,
 		},
 		{
 			name:      "dead FuncForPC",
-			target:    &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			target:    &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
 			buildMode: BuildModeExe,
 			src:       `package main; import "runtime"; func dead() { _ = runtime.FuncForPC(0) }; func main() {}`,
 		},
 		{
 			name:      "wasm library",
-			target:    &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			target:    &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
 			buildMode: BuildModeCArchive,
 			src:       `package main; func main() {}`,
 			want:      true,
 		},
 		{
 			name:      "native",
-			target:    &llssa.Target{GOOS: "linux", GOARCH: "amd64"},
+			target:    &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"},
 			buildMode: BuildModeExe,
 			src:       `package main; import "runtime"; func main() { _ = runtime.FuncForPC(0) }`,
 		},
@@ -147,7 +147,7 @@ func TestConfigureWasmFuncInfoEntries(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			pkg := buildWasmReflectTestProgram(t, test.src)
-			prog := llssa.NewProgram(test.target)
+			prog := llvmgen.NewProgram(test.target)
 			defer prog.Dispose()
 			ctx := &context{
 				prog:      prog,
@@ -186,8 +186,8 @@ func main() {
 	reflect.ValueOf(func() {}).Call(nil)
 	_ = runtime.FuncForPC(0)
 }`)
-	target := &llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"}
-	prog := llssa.NewProgram(target)
+	target := &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"}
+	prog := llvmgen.NewProgram(target)
 	defer prog.Dispose()
 	ctx := &context{
 		prog:      prog,
@@ -321,12 +321,12 @@ func main() { `
 		t.Run(tc.decl+"/"+tc.expr, func(t *testing.T) {
 			pkg := buildWasmReflectTestProgram(t, prefix+tc.expr+"}")
 			use := analyzeWasmProgramUse(pkg.Prog, []*ssa.Function{pkg.Func("main")})
-			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
 			defer prog.Dispose()
 			if use.usesWasmReflectBridges(prog) {
 				t.Fatal("ordinary Go value operation enabled bridges")
 			}
-			prog.SetNativeTypeDecl(pkg.Pkg, tc.decl, llssa.CDecl)
+			prog.SetNativeTypeDecl(pkg.Pkg, tc.decl, llvmgen.CDecl)
 			if got := use.usesWasmReflectBridges(prog); got != tc.want {
 				t.Errorf("bridges = %v, want %v", got, tc.want)
 			}

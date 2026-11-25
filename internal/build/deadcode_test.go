@@ -6,16 +6,16 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"github.com/xgo-dev/llvm"
 )
 
 func TestApplyDeadcodeDropOverridesWritesStrongTypeOverride(t *testing.T) {
-	llssa.Initialize(llssa.InitAll)
+	llvmgen.Initialize(llvmgen.InitAll)
 	ctx := &context{
-		prog: llssa.NewProgram(nil),
+		prog: llvmgen.NewProgram(nil),
 		buildConf: &Config{
 			BuildMode: BuildModeExe,
 			Goos:      "linux",
@@ -26,7 +26,7 @@ func TestApplyDeadcodeDropOverridesWritesStrongTypeOverride(t *testing.T) {
 
 	// Isolated package workers and the synthetic entry module deliberately use
 	// different LLVM contexts. Keep this test faithful to that production path.
-	srcProg := llssa.NewProgram(nil)
+	srcProg := llvmgen.NewProgram(nil)
 	defer srcProg.Dispose()
 	srcPkg := srcProg.NewPackage("pkg", "pkg")
 	addMethodTypeGlobal(srcPkg.Module(), "_llgo_pkg.T")
@@ -37,7 +37,7 @@ func TestApplyDeadcodeDropOverridesWritesStrongTypeOverride(t *testing.T) {
 		LPkg:    srcPkg,
 		Meta:    pkgMeta,
 	}
-	entryPkg := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+	entryPkg := genMainModule(ctx, llvmgen.PkgRuntime, &packages.Package{
 		PkgPath:    "pkg",
 		ExportFile: "pkg.a",
 	}, &genConfig{})
@@ -67,7 +67,7 @@ func TestDCEEntryRootCandidates(t *testing.T) {
 		t.Fatalf("dceEntryRootCandidates(false) = %v, want %v", got, want)
 	}
 
-	want = append(want, llssa.PkgRuntime+".init")
+	want = append(want, llvmgen.PkgRuntime+".init")
 	if got := dceEntryRootCandidates(nil, true); !reflect.DeepEqual(got, want) {
 		t.Fatalf("dceEntryRootCandidates(true) = %v, want %v", got, want)
 	}
@@ -82,13 +82,13 @@ func TestApplyDeadcodeDropRejectsMissingMetadata(t *testing.T) {
 }
 
 func TestDCEEntryRootCandidatesIncludesCExports(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	lpkg := prog.NewPackage("pkg", "pkg")
 	lpkg.SetExport("main.Z", "Zed")
 	lpkg.SetExport("main.A", "Add")
-	lpkg.NewFunc("main.Z", llssa.NoArgsNoRet, llssa.GoDecl)
-	lpkg.NewFunc("main.A", llssa.NoArgsNoRet, llssa.GoDecl)
+	lpkg.NewFunc("main.Z", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
+	lpkg.NewFunc("main.A", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	pkgs := []Package{&aPackage{LPkg: lpkg}}
 
 	want := []string{"main.init", "main.main", "main.A", "main.Z"}
@@ -98,12 +98,12 @@ func TestDCEEntryRootCandidatesIncludesCExports(t *testing.T) {
 }
 
 func TestLinkedCExportsIncludesDependencyAndExecutableCallbacks(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	newExport := func(path, name, goName, cName string) Package {
 		lpkg := prog.NewPackage(path, path)
 		lpkg.SetExport(goName, cName)
-		lpkg.NewFunc(goName, llssa.NoArgsNoRet, llssa.GoDecl)
+		lpkg.NewFunc(goName, llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 		return &aPackage{
 			Package: &packages.Package{Name: name, PkgPath: path},
 			LPkg:    lpkg,
@@ -133,7 +133,7 @@ func TestLinkedCExportsIncludesDependencyAndExecutableCallbacks(t *testing.T) {
 }
 
 func TestLinkedCExportsValidation(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	ctx := &context{buildConf: &Config{
 		Goos:      "windows",
@@ -143,7 +143,7 @@ func TestLinkedCExportsValidation(t *testing.T) {
 		lpkg := prog.NewPackage(path, path)
 		lpkg.SetExport(goName, cName)
 		if define {
-			lpkg.NewFunc(goName, sig, llssa.GoDecl)
+			lpkg.NewFunc(goName, sig, llvmgen.GoDecl)
 		}
 		return &aPackage{
 			Package: &packages.Package{Name: "main", PkgPath: path},
@@ -153,7 +153,7 @@ func TestLinkedCExportsValidation(t *testing.T) {
 
 	t.Run("empty C name", func(t *testing.T) {
 		_, err := linkedCExports(ctx, []Package{
-			newExport("main", "main.Exported", "", llssa.NoArgsNoRet, true),
+			newExport("main", "main.Exported", "", llvmgen.NoArgsNoRet, true),
 		})
 		if err == nil || !strings.Contains(err.Error(), "empty export name") {
 			t.Fatalf("linkedCExports() error = %v, want empty export name", err)
@@ -162,7 +162,7 @@ func TestLinkedCExportsValidation(t *testing.T) {
 
 	t.Run("Unicode C name", func(t *testing.T) {
 		exports, err := linkedCExports(ctx, []Package{
-			newExport("main", "main.函数", "函数", llssa.NoArgsNoRet, true),
+			newExport("main", "main.函数", "函数", llvmgen.NoArgsNoRet, true),
 		})
 		if err != nil || len(exports) != 1 || exports[0].cName != "函数" {
 			t.Fatalf("linkedCExports() = (%+v, %v), want Unicode name preserved", exports, err)
@@ -171,8 +171,8 @@ func TestLinkedCExportsValidation(t *testing.T) {
 
 	t.Run("duplicate C name", func(t *testing.T) {
 		_, err := linkedCExports(ctx, []Package{
-			newExport("first", "first.Exported", "Exported", llssa.NoArgsNoRet, true),
-			newExport("second", "second.Exported", "Exported", llssa.NoArgsNoRet, true),
+			newExport("first", "first.Exported", "Exported", llvmgen.NoArgsNoRet, true),
+			newExport("second", "second.Exported", "Exported", llvmgen.NoArgsNoRet, true),
 		})
 		if err == nil || !strings.Contains(err.Error(), "provided by both") {
 			t.Fatalf("linkedCExports() error = %v, want duplicate C export", err)
@@ -181,8 +181,8 @@ func TestLinkedCExportsValidation(t *testing.T) {
 
 	t.Run("duplicate mapping", func(t *testing.T) {
 		exports, err := linkedCExports(ctx, []Package{
-			newExport("main", "main.Exported", "Exported", llssa.NoArgsNoRet, true),
-			newExport("main", "main.Exported", "Exported", llssa.NoArgsNoRet, true),
+			newExport("main", "main.Exported", "Exported", llvmgen.NoArgsNoRet, true),
+			newExport("main", "main.Exported", "Exported", llvmgen.NoArgsNoRet, true),
 		})
 		if err != nil || len(exports) != 1 {
 			t.Fatalf("linkedCExports() = (%+v, %v), want one deduplicated export", exports, err)
@@ -191,7 +191,7 @@ func TestLinkedCExportsValidation(t *testing.T) {
 
 	t.Run("missing implementation", func(t *testing.T) {
 		_, err := linkedCExports(ctx, []Package{
-			newExport("main", "main.Exported", "Exported", llssa.NoArgsNoRet, false),
+			newExport("main", "main.Exported", "Exported", llvmgen.NoArgsNoRet, false),
 		})
 		if err == nil || !strings.Contains(err.Error(), "not found") {
 			t.Fatalf("linkedCExports() error = %v, want missing implementation", err)
@@ -210,7 +210,7 @@ func TestLinkedCExportsValidation(t *testing.T) {
 
 	t.Run("foreign implementation", func(t *testing.T) {
 		exports, err := linkedCExports(ctx, []Package{
-			newExport("main", "dependency.Exported", "Exported", llssa.NoArgsNoRet, false),
+			newExport("main", "dependency.Exported", "Exported", llvmgen.NoArgsNoRet, false),
 		})
 		if err != nil || len(exports) != 0 {
 			t.Fatalf("linkedCExports() = (%+v, %v), want no foreign export", exports, err)
@@ -219,8 +219,8 @@ func TestLinkedCExportsValidation(t *testing.T) {
 
 	t.Run("sorted", func(t *testing.T) {
 		exports, err := linkedCExports(ctx, []Package{
-			newExport("zed", "zed.Exported", "Zed", llssa.NoArgsNoRet, true),
-			newExport("add", "add.Exported", "Add", llssa.NoArgsNoRet, true),
+			newExport("zed", "zed.Exported", "Zed", llvmgen.NoArgsNoRet, true),
+			newExport("add", "add.Exported", "Add", llvmgen.NoArgsNoRet, true),
 		})
 		if err != nil || len(exports) != 2 || exports[0].cName != "Add" || exports[1].cName != "Zed" {
 			t.Fatalf("linkedCExports() = (%+v, %v), want exports sorted by C name", exports, err)
@@ -234,8 +234,8 @@ func TestCExportWrapperTargetPolicy(t *testing.T) {
 		mode                              BuildMode
 		want                              bool
 	}{
-		{name: "runtime bootstrap", goos: "linux", mode: BuildModeExe, path: llssa.PkgRuntime},
-		{name: "runtime subtree", goos: "windows", mode: BuildModeCShared, path: llssa.PkgRuntime + "/signal"},
+		{name: "runtime bootstrap", goos: "linux", mode: BuildModeExe, path: llvmgen.PkgRuntime},
+		{name: "runtime subtree", goos: "windows", mode: BuildModeCShared, path: llvmgen.PkgRuntime + "/signal"},
 		{name: "standard runtime", goos: "darwin", mode: BuildModeExe, path: "runtime"},
 		{name: "explicit target", goos: "linux", target: "wasi", mode: BuildModeExe, path: "example.com/callback"},
 		{name: "package C direct exports", goos: "linux", mode: BuildModeExe, path: "example.com/capi", pkgName: "C"},
@@ -329,7 +329,7 @@ func addMethodTypeGlobal(mod llvm.Module, name string) {
 
 func TestInterfacePredicatesRequireClosedProgram(t *testing.T) {
 	for _, closed := range []bool{false, true} {
-		prog := llssa.NewProgram(nil)
+		prog := llvmgen.NewProgram(nil)
 		defer prog.Dispose()
 		src := prog.NewPackage("source", "source")
 		dst := prog.NewPackage("entry", "entry")

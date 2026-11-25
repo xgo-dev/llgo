@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -40,12 +40,12 @@ define void @caller(ptr %largePtr, ptr %smallPtr, ptr %variadicPtr, i8 %a, i16 %
   ret void
 }
 `
-	for _, target := range []ssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "darwin", GOARCH: "arm64"},
 		{GOOS: "linux", GOARCH: "amd64"},
 	} {
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
-			prog := ssa.NewProgram(&target)
+			prog := llvmgen.NewProgram(&target)
 			defer prog.Dispose()
 			ctx := llvm.NewContext()
 			defer ctx.Dispose()

@@ -29,7 +29,7 @@ import (
 	"slices"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llvm "github.com/xgo-dev/llvm"
 )
@@ -43,7 +43,7 @@ type genConfig struct {
 	methodByIndex  map[int]none
 	methodByName   map[string]none
 	abiSymbols     map[string]none
-	abiTypes       []llssa.AbiTypeInfo
+	abiTypes       []llvmgen.AbiTypeInfo
 	funcInfo       []funcInfoRecord
 	pcLineInfo     []pcLineRecord
 	cExports       []cExport
@@ -131,38 +131,38 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	}
 
 	runtimeStub := defineWeakNoArgStub(mainPkg, "runtime.init")
-	var godebugInit llssa.Function
+	var godebugInit llvmgen.Function
 	if _, ok := cfg.abiSymbols["runtime.godebugDefault"]; ok && cfg.defaultGODEBUG != "" {
 		godebugInit = defineDefaultGODEBUGInit(mainPkg, cfg.defaultGODEBUG)
 	}
 	// TODO(lijie): workaround for syscall patch
 	defineWeakNoArgStub(mainPkg, "syscall.init")
 
-	var pyInit llssa.Function
-	var pyFinalize llssa.Function
+	var pyInit llvmgen.Function
+	var pyFinalize llvmgen.Function
 	if cfg.pyInit {
 		pyInit = declareNoArgFunc(mainPkg, "Py_Initialize")
 		pyFinalize = declareNoArgFunc(mainPkg, "Py_Finalize")
 	}
 
 	wasmRuntimeScheduler := needsWasmRuntimeScheduler(ctx)
-	var rtInit llssa.Function
+	var rtInit llvmgen.Function
 	if cfg.rtInit || wasmRuntimeScheduler {
 		rtInit = declareNoArgFunc(mainPkg, rtPkgPath+".init")
 	}
-	var processExit, stdioFlush llssa.Function
+	var processExit, stdioFlush llvmgen.Function
 	if ctx.buildConf.Goos == "windows" {
 		processExit = declareRuntimeExit(mainPkg, "runtime.exit")
 		stdioFlush = mainPkg.NewFunc("fflush", newSignature(
 			[]types.Type{types.Typ[types.UnsafePointer]},
 			[]types.Type{types.Typ[types.Int32]},
-		), llssa.CDecl)
+		), llvmgen.CDecl)
 	}
 
-	var abiInit llssa.Function
+	var abiInit llvmgen.Function
 	if cfg.abiInit != 0 {
 		mainPkg.RegisterAbiTypes(cfg.abiTypes)
-		abiInit = mainPkg.InitAbiTypesFor("init$abitypes", func(sym *llssa.AbiSymbol) bool {
+		abiInit = mainPkg.InitAbiTypesFor("init$abitypes", func(sym *llvmgen.AbiSymbol) bool {
 			if _, ok := cfg.abiSymbols[sym.Name]; !ok {
 				return false
 			}
@@ -179,7 +179,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 
 	mainInit := declareNoArgFunc(mainPkg, pkgPath+".init")
 	mainMain := declareNoArgFunc(mainPkg, pkgPath+".main")
-	packageInits := make([]llssa.Function, len(cfg.packageInits))
+	packageInits := make([]llvmgen.Function, len(cfg.packageInits))
 	for i, name := range cfg.packageInits {
 		packageInits[i] = declareNoArgFunc(mainPkg, name)
 	}
@@ -190,13 +190,13 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		if ctx.buildConf.BuildMode == BuildModeCShared && ctx.buildConf.Goos == "linux" {
 			initArraySection = ".init_array"
 		}
-		inits := []llssa.Function{godebugInit, pyInit, rtInit, abiInit, runtimeStub}
+		inits := []llvmgen.Function{godebugInit, pyInit, rtInit, abiInit, runtimeStub}
 		// Windows already enables this during runtime initialization because
 		// callbacks in ordinary executables also enter from foreign threads.
 		// Other platforms enable it at startup when linked C exports exist.
 		if len(cfg.cExports) != 0 && ctx.buildConf.Goos != "windows" {
 			inits = append(inits, declareNoArgFunc(
-				mainPkg, llssa.PkgRuntime+".EnableForeignThreadRegistration",
+				mainPkg, llvmgen.PkgRuntime+".EnableForeignThreadRegistration",
 			))
 		}
 		// The C test runner supplies argc/argv before calling the generated
@@ -205,7 +205,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 			inits = append(inits, packageInits...)
 			inits = append(inits, mainInit)
 		}
-		var ensureInit llssa.Function
+		var ensureInit llvmgen.Function
 		if ctx.buildConf.BuildMode == BuildModeCShared && ctx.buildConf.Goos == "windows" {
 			ensureInit = defineWindowsSharedRuntimeInit(mainPkg, ctx.buildConf.Goarch, inits...)
 		} else {
@@ -218,15 +218,15 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		return mainAPkg
 	}
 
-	var callbackInit llssa.Function
+	var callbackInit llvmgen.Function
 	if len(cfg.cExports) != 0 {
 		if ctx.buildConf.Goos != "windows" {
-			callbackInit = declareNoArgFunc(mainPkg, llssa.PkgRuntime+".EnableForeignThreadRegistration")
+			callbackInit = declareNoArgFunc(mainPkg, llvmgen.PkgRuntime+".EnableForeignThreadRegistration")
 		}
 		defineCExportWrappers(mainPkg, cfg.cExports, nil)
 	}
-	var wasmRunMain llssa.Function
-	var startPCLN llssa.Function
+	var wasmRunMain llvmgen.Function
+	var startPCLN llvmgen.Function
 	if ctx.buildConf.PCLNLoad.startsAtEntry() {
 		startPCLN = declareNoArgFunc(mainPkg, rtPkgPath+".StartWasmPCLN")
 	}
@@ -235,13 +235,13 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		startPCLN = nil
 		wasmRunMain = declareNoArgFunc(mainPkg, rtPkgPath+".RunWasmMain")
 	}
-	var coverageExit llssa.Function
+	var coverageExit llvmgen.Function
 	if ctx.buildConf.Coverage != nil {
 		// os.Exit runs this hook through os.runtime_beforeExit. Ordinary
 		// main returns bypass os.Exit, so the generated entry must flush too,
 		// before Windows terminates the process or we leave the local context.
 		coverageExit = mainPkg.NewFunc("runtime.runCoverageExitHook",
-			newSignature([]types.Type{types.Typ[types.Int]}, nil), llssa.GoDecl)
+			newSignature([]types.Type{types.Typ[types.Int]}, nil), llvmgen.GoDecl)
 	}
 	entryFn := defineEntryFunction(ctx, mainPkg, argcVar, argvVar, argvValueType, entryFunctions{
 		godebugInit:  godebugInit,
@@ -281,19 +281,19 @@ func libraryConstructorReceivesProcessArgs(goos string) bool {
 // machine lowers llvm.global_ctors to legacy .ctors. Linux c-archive and Darwin
 // library modes use LLVM's platform-specific global constructor lowering.
 func defineLibraryRuntimeInit(
-	pkg llssa.Package, initArraySection string,
-	argcVar, argvVar llssa.Global, argvType llssa.Type,
-	receivesProcessArgs bool, inits ...llssa.Function,
+	pkg llvmgen.Package, initArraySection string,
+	argcVar, argvVar llvmgen.Global, argvType llvmgen.Type,
+	receivesProcessArgs bool, inits ...llvmgen.Function,
 ) {
 	const ctorName = "__llgo_runtime_ctor"
-	ctorSig := llssa.NoArgsNoRet
+	ctorSig := llvmgen.NoArgsNoRet
 	if receivesProcessArgs {
 		ctorSig = newSignature(
 			[]types.Type{types.Typ[types.Int32], argvType.RawType()},
 			nil,
 		)
 	}
-	ctor := pkg.NewFunc(ctorName, ctorSig, llssa.CDecl)
+	ctor := pkg.NewFunc(ctorName, ctorSig, llvmgen.CDecl)
 	ctorValue := pkg.Module().NamedFunction(ctorName)
 	ctorValue.SetLinkage(llvm.InternalLinkage)
 	b := ctor.MakeBody(1)
@@ -335,14 +335,14 @@ func defineLibraryRuntimeInit(
 // constructor would hold the Windows loader lock while Go loads DLLs or starts
 // threads. The generated public wrappers live in this uncached link module and
 // call the returned InitOnce-backed guard before entering Go.
-func defineWindowsSharedRuntimeInit(pkg llssa.Package, goarch string, inits ...llssa.Function) llssa.Function {
+func defineWindowsSharedRuntimeInit(pkg llvmgen.Package, goarch string, inits ...llvmgen.Function) llvmgen.Function {
 	const (
 		initializeName = "__llgo_runtime_initialize"
 		ensureName     = "__llgo_runtime_ensure_initialized"
 		callbackName   = "__llgo_runtime_init_once_callback"
 	)
 
-	initialize := pkg.NewFunc(initializeName, llssa.NoArgsNoRet, llssa.CDecl)
+	initialize := pkg.NewFunc(initializeName, llvmgen.NoArgsNoRet, llvmgen.CDecl)
 	initializeValue := pkg.Module().NamedFunction(initializeName)
 	initializeValue.SetLinkage(llvm.InternalLinkage)
 	b := initialize.MakeBody(1)
@@ -380,7 +380,7 @@ func defineWindowsSharedRuntimeInit(pkg llssa.Package, goarch string, inits ...l
 	builder.CreateCall(llvm.FunctionType(voidType, nil, false), initializeValue, nil, "")
 	builder.CreateRet(llvm.ConstInt(i32Type, 1, false))
 
-	ensure := pkg.NewFunc(ensureName, llssa.NoArgsNoRet, llssa.CDecl)
+	ensure := pkg.NewFunc(ensureName, llvmgen.NoArgsNoRet, llvmgen.CDecl)
 	ensureValue := mod.NamedFunction(ensureName)
 	ensureValue.SetVisibility(llvm.HiddenVisibility)
 	block := llvmCtx.AddBasicBlock(ensureValue, "entry")
@@ -395,26 +395,26 @@ func defineWindowsSharedRuntimeInit(pkg llssa.Package, goarch string, inits ...l
 	return ensure
 }
 
-func defineCExportWrappers(pkg llssa.Package, exports []cExport, ensureInit llssa.Function) {
+func defineCExportWrappers(pkg llvmgen.Package, exports []cExport, ensureInit llvmgen.Function) {
 	if len(exports) == 0 {
 		return
 	}
 	enterForeignThread := pkg.NewFunc(
-		llssa.PkgRuntime+".EnterForeignThread",
-		newSignature(nil, []types.Type{types.Typ[types.Bool]}), llssa.GoDecl,
+		llvmgen.PkgRuntime+".EnterForeignThread",
+		newSignature(nil, []types.Type{types.Typ[types.Bool]}), llvmgen.GoDecl,
 	)
 	exitForeignThread := pkg.NewFunc(
-		llssa.PkgRuntime+".ExitForeignThread",
-		newSignature([]types.Type{types.Typ[types.Bool]}, nil), llssa.GoDecl,
+		llvmgen.PkgRuntime+".ExitForeignThread",
+		newSignature([]types.Type{types.Typ[types.Bool]}, nil), llvmgen.GoDecl,
 	)
 	for _, export := range exports {
-		implementation := pkg.NewFunc(export.goName, export.sig, llssa.GoDecl)
-		wrapperBackground := llssa.GoDecl
+		implementation := pkg.NewFunc(export.goName, export.sig, llvmgen.GoDecl)
+		wrapperBackground := llvmgen.GoDecl
 		if target := pkg.Prog.Target(); target != nil && target.GOARCH == "wasm" && target.WasmProfile != "" {
 			// Go's wasm32 uintptr is 64-bit, while C size_t and uintptr_t at
 			// a Memory32 entry are 32-bit. Keep the implementation on the Go
 			// ABI and adapt widths at the externally visible wrapper.
-			wrapperBackground = llssa.CDecl
+			wrapperBackground = llvmgen.CDecl
 		}
 		wrapper := pkg.NewFunc(export.cName, export.sig, wrapperBackground)
 		b := wrapper.MakeBody(1)
@@ -422,7 +422,7 @@ func defineCExportWrappers(pkg llssa.Package, exports []cExport, ensureInit llss
 			b.Call(ensureInit.Expr)
 		}
 		registered := b.Call(enterForeignThread.Expr)
-		args := make([]llssa.Expr, export.sig.Params().Len())
+		args := make([]llvmgen.Expr, export.sig.Params().Len())
 		for i := range args {
 			args[i] = wrapper.Param(i)
 		}
@@ -436,37 +436,37 @@ func defineCExportWrappers(pkg llssa.Package, exports []cExport, ensureInit llss
 	}
 }
 
-func filterAbiSymbol(abiInit int, sym *llssa.AbiSymbol) bool {
+func filterAbiSymbol(abiInit int, sym *llvmgen.AbiSymbol) bool {
 	switch sym.Raw.(type) {
 	case *types.Array:
-		if abiInit&llssa.ReflectArrayOf != 0 {
+		if abiInit&llvmgen.ReflectArrayOf != 0 {
 			return true
 		}
 	case *types.Chan:
-		if abiInit&llssa.ReflectChanOf != 0 {
+		if abiInit&llvmgen.ReflectChanOf != 0 {
 			return true
 		}
 	case *types.Signature:
-		if abiInit&llssa.ReflectFuncOf != 0 {
+		if abiInit&llvmgen.ReflectFuncOf != 0 {
 			return true
 		}
-		if abiInit&llssa.ReflectMethodMask != 0 {
+		if abiInit&llvmgen.ReflectMethodMask != 0 {
 			return true
 		}
 	case *types.Map:
-		if abiInit&llssa.ReflectMapOf != 0 {
+		if abiInit&llvmgen.ReflectMapOf != 0 {
 			return true
 		}
 	case *types.Pointer:
-		if abiInit&llssa.ReflectPointerTo != 0 {
+		if abiInit&llvmgen.ReflectPointerTo != 0 {
 			return true
 		}
 	case *types.Slice:
-		if abiInit&llssa.ReflectSliceOf != 0 {
+		if abiInit&llvmgen.ReflectSliceOf != 0 {
 			return true
 		}
 	case *types.Struct:
-		if abiInit&llssa.ReflectStructOf != 0 {
+		if abiInit&llvmgen.ReflectStructOf != 0 {
 			return true
 		}
 	}
@@ -474,21 +474,21 @@ func filterAbiSymbol(abiInit int, sym *llssa.AbiSymbol) bool {
 }
 
 type entryFunctions struct {
-	godebugInit  llssa.Function
-	runtimeStub  llssa.Function
-	mainInit     llssa.Function
-	mainMain     llssa.Function
-	wasmRunMain  llssa.Function
-	startPCLN    llssa.Function
-	pyInit       llssa.Function
-	pyFinalize   llssa.Function
-	rtInit       llssa.Function
-	callbackInit llssa.Function
-	processExit  llssa.Function
-	stdioFlush   llssa.Function
-	coverageExit llssa.Function
-	abiInit      llssa.Function
-	packageInits []llssa.Function
+	godebugInit  llvmgen.Function
+	runtimeStub  llvmgen.Function
+	mainInit     llvmgen.Function
+	mainMain     llvmgen.Function
+	wasmRunMain  llvmgen.Function
+	startPCLN    llvmgen.Function
+	pyInit       llvmgen.Function
+	pyFinalize   llvmgen.Function
+	rtInit       llvmgen.Function
+	callbackInit llvmgen.Function
+	processExit  llvmgen.Function
+	stdioFlush   llvmgen.Function
+	coverageExit llvmgen.Function
+	abiInit      llvmgen.Function
+	packageInits []llvmgen.Function
 }
 
 // defineEntryFunction creates the program's entry function. The name is
@@ -502,7 +502,7 @@ type entryFunctions struct {
 // runtime.main; other builds run it inline. That sequence initializes Python,
 // the runtime stub/package, ABI types, and packages, calls main.main, and then
 // finalizes Python. The entry leaves the local context and returns 0.
-func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa.Global, argvType llssa.Type, fns entryFunctions) llssa.Function {
+func defineEntryFunction(ctx *context, pkg llvmgen.Package, argcVar, argvVar llvmgen.Global, argvType llvmgen.Type, fns entryFunctions) llvmgen.Function {
 	prog := pkg.Prog
 	entryName := processEntrySymbol
 	if isWasmTarget(ctx.buildConf.Goos) &&
@@ -510,7 +510,7 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 		entryName = "__main_argc_argv"
 	}
 	sig := newEntrySignature(argvType.RawType())
-	fn := pkg.NewFunc(entryName, sig, llssa.CDecl)
+	fn := pkg.NewFunc(entryName, sig, llvmgen.CDecl)
 	fnVal := pkg.Module().NamedFunction(entryName)
 	if entryName != processEntrySymbol {
 		fnVal.SetVisibility(llvm.HiddenVisibility)
@@ -524,14 +524,14 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 		(ctx.buildConf.Goarch == "amd64" || ctx.buildConf.Goarch == "arm64") &&
 		slices.Contains(tags, "llgo.allthreads") {
 		setup := pkg.NewFunc("llgo_allthreads_enable_controlled", newSignature(
-			[]types.Type{types.Typ[types.Int32]}, nil), llssa.CDecl)
+			[]types.Type{types.Typ[types.Int32]}, nil), llvmgen.CDecl)
 		gc := uint64(1)
 		if slices.Contains(tags, "nogc") {
 			gc = 0
 		}
 		b.Call(setup.Expr, prog.IntVal(gc, prog.Int32()))
 	}
-	var localCtx, previousLocalCtx llssa.Expr
+	var localCtx, previousLocalCtx llvmgen.Expr
 	// The single-worker runtime itself uses owner-local state even when the
 	// user program has no TLS/GLS declarations. Root that state on the host
 	// entry stack before runtime.init and keep it installed while logical Go
@@ -561,9 +561,9 @@ func defineEntryFunction(ctx *context, pkg llssa.Package, argcVar, argvVar llssa
 // defineRuntimeMainFunction gives native executables the same logical tail as
 // gc: user code is called by runtime.main, while the C entry below it is named
 // runtime.goexit in funcinfo metadata. The wrapper is a startup-only call.
-func defineRuntimeMainFunction(pkg llssa.Package, fns entryFunctions) llssa.Function {
-	fn := pkg.NewFunc(runtimeMainSymbol, llssa.NoArgsNoRet, llssa.GoDecl)
-	fn.Inline(llssa.NoInline)
+func defineRuntimeMainFunction(pkg llvmgen.Package, fns entryFunctions) llvmgen.Function {
+	fn := pkg.NewFunc(runtimeMainSymbol, llvmgen.NoArgsNoRet, llvmgen.GoDecl)
+	fn.Inline(llvmgen.NoInline)
 	fn.DisableTailCalls()
 	b := fn.MakeBody(1)
 	emitRuntimeMainBody(b, fns)
@@ -571,7 +571,7 @@ func defineRuntimeMainFunction(pkg llssa.Package, fns entryFunctions) llssa.Func
 	return fn
 }
 
-func emitRuntimeMainBody(b llssa.Builder, fns entryFunctions) {
+func emitRuntimeMainBody(b llvmgen.Builder, fns entryFunctions) {
 	if fns.godebugInit != nil {
 		b.Call(fns.godebugInit.Expr)
 	}
@@ -617,21 +617,21 @@ func emitRuntimeMainBody(b llssa.Builder, fns entryFunctions) {
 
 // This uncached entry initializer runs before runtime and package init, so
 // internal/godebug's first update already observes the executable's defaults.
-func defineDefaultGODEBUGInit(pkg llssa.Package, defaults string) llssa.Function {
+func defineDefaultGODEBUGInit(pkg llvmgen.Package, defaults string) llvmgen.Function {
 	prog := pkg.Prog
 	global := pkg.NewVarEx("runtime.godebugDefault", prog.Pointer(prog.String()))
 	// The entry bypasses source-module optimization, which normally names
 	// anonymous literals before ThinLTO summary emission. Give these bytes
 	// an explicit local name so ThinLTO can rename and import them safely.
-	array := prog.Type(types.NewArray(types.Typ[types.Byte], int64(len(defaults))), llssa.GoDecl)
+	array := prog.Type(types.NewArray(types.Typ[types.Byte], int64(len(defaults))), llvmgen.GoDecl)
 	data := pkg.NewVarEx("__llgo_godebug_data", prog.Pointer(array))
 	data.Init(prog.ConstByteArray(array, []byte(defaults)))
 	dataValue := pkg.Module().NamedGlobal("__llgo_godebug_data")
 	dataValue.SetLinkage(llvm.PrivateLinkage)
 	dataValue.SetGlobalConstant(true)
 	dataValue.SetUnnamedAddr(true)
-	value := prog.ConstStruct(prog.String(), []llssa.Expr{data.Expr, prog.IntVal(uint64(len(defaults)), prog.Uintptr())})
-	fn := pkg.NewFunc("__llgo_godebug_init", llssa.NoArgsNoRet, llssa.GoDecl)
+	value := prog.ConstStruct(prog.String(), []llvmgen.Expr{data.Expr, prog.IntVal(uint64(len(defaults)), prog.Uintptr())})
+	fn := pkg.NewFunc("__llgo_godebug_init", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	fnValue := pkg.Module().NamedFunction("__llgo_godebug_init")
 	fnValue.SetLinkage(llvm.InternalLinkage)
 	b := fn.MakeBody(1)
@@ -640,13 +640,13 @@ func defineDefaultGODEBUGInit(pkg llssa.Package, defaults string) llssa.Function
 	return fn
 }
 
-func defineWasmMainTask(pkg llssa.Package, startPCLN llssa.Function, packageInits []llssa.Function, mainInit, mainMain llssa.Function) {
+func defineWasmMainTask(pkg llvmgen.Package, startPCLN llvmgen.Function, packageInits []llvmgen.Function, mainInit, mainMain llvmgen.Function) {
 	prog := pkg.Prog
 	sig := newSignature(
 		[]types.Type{types.Typ[types.UnsafePointer]},
 		[]types.Type{types.Typ[types.UnsafePointer]},
 	)
-	fn := pkg.NewFunc("__llgo_wasm_main", sig, llssa.CDecl)
+	fn := pkg.NewFunc("__llgo_wasm_main", sig, llvmgen.CDecl)
 	fnVal := pkg.Module().NamedFunction("__llgo_wasm_main")
 	fnVal.SetVisibility(llvm.HiddenVisibility)
 	b := fn.MakeBody(1)
@@ -661,8 +661,8 @@ func defineWasmMainTask(pkg llssa.Package, startPCLN llssa.Function, packageInit
 	b.Return(prog.Nil(prog.VoidPtr()))
 }
 
-func defineStart(pkg llssa.Package, entry llssa.Function, argvType llssa.Type) {
-	fn := pkg.NewFunc("_start", llssa.NoArgsNoRet, llssa.CDecl)
+func defineStart(pkg llvmgen.Package, entry llvmgen.Function, argvType llvmgen.Type) {
+	fn := pkg.NewFunc("_start", llvmgen.NoArgsNoRet, llvmgen.CDecl)
 	pkg.Module().NamedFunction("_start").SetLinkage(llvm.WeakAnyLinkage)
 	b := fn.MakeBody(1)
 	prog := pkg.Prog
@@ -670,26 +670,26 @@ func defineStart(pkg llssa.Package, entry llssa.Function, argvType llssa.Type) {
 	b.Return()
 }
 
-func declareNoArgFunc(pkg llssa.Package, name string) llssa.Function {
-	return pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.CDecl)
+func declareNoArgFunc(pkg llvmgen.Package, name string) llvmgen.Function {
+	return pkg.NewFunc(name, llvmgen.NoArgsNoRet, llvmgen.CDecl)
 }
 
-func declareRuntimeExit(pkg llssa.Package, name string) llssa.Function {
+func declareRuntimeExit(pkg llvmgen.Package, name string) llvmgen.Function {
 	sig := newSignature([]types.Type{types.Typ[types.Int32]}, nil)
-	return pkg.NewFunc(name, sig, llssa.GoDecl)
+	return pkg.NewFunc(name, sig, llvmgen.GoDecl)
 }
 
 // defineRootInitTask exposes the header of the compiler-generated Go init task.
 // LLGo runs package initialization through guarded package init functions, so
 // there are no runtime-dispatched function entries in this compatibility task.
-func defineRootInitTask(pkg llssa.Package, pkgPath string) {
+func defineRootInitTask(pkg llvmgen.Package, pkgPath string) {
 	prog := pkg.Prog
 	taskType := prog.Struct(prog.Uint32(), prog.Uint32())
 	pkg.NewVarEx(pkgPath+"..inittask", prog.Pointer(taskType)).InitNil()
 }
 
-func defineWeakNoArgStub(pkg llssa.Package, name string) llssa.Function {
-	fn := pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.CDecl)
+func defineWeakNoArgStub(pkg llvmgen.Package, name string) llvmgen.Function {
+	fn := pkg.NewFunc(name, llvmgen.NoArgsNoRet, llvmgen.CDecl)
 	pkg.Module().NamedFunction(name).SetLinkage(llvm.WeakAnyLinkage)
 	b := fn.MakeBody(1)
 	b.Return()
@@ -708,12 +708,12 @@ const (
 // when the LLGO_STDIO_NOBUF environment variable is set. Darwin exposes
 // pointer globals with alternate names, while the Universal CRT exposes
 // standard streams only through __acrt_iob_func.
-func emitStdioNobuf(b llssa.Builder, pkg llssa.Package, goos string) {
+func emitStdioNobuf(b llvmgen.Builder, pkg llvmgen.Package, goos string) {
 	prog := pkg.Prog
 	streamType := prog.VoidPtr()
 	streamPtrType := prog.Pointer(streamType)
 
-	var stdoutPtr, stderrPtr llssa.Expr
+	var stdoutPtr, stderrPtr llvmgen.Expr
 	if goos == "windows" {
 		indexType := prog.Uint32()
 		iob := declareAcrtIobFunc(pkg, streamPtrType, indexType)
@@ -746,21 +746,21 @@ func emitStdioNobuf(b llssa.Builder, pkg llssa.Package, goos string) {
 	b.Call(setvbuf.Expr, stderrPtr, nullBuf, noBufMode, zeroSize)
 }
 
-func declareAcrtIobFunc(pkg llssa.Package, streamPtrType, indexType llssa.Type) llssa.Function {
+func declareAcrtIobFunc(pkg llvmgen.Package, streamPtrType, indexType llvmgen.Type) llvmgen.Function {
 	sig := newSignature(
 		[]types.Type{indexType.RawType()},
 		[]types.Type{streamPtrType.RawType()},
 	)
-	return pkg.NewFunc("__acrt_iob_func", sig, llssa.CDecl)
+	return pkg.NewFunc("__acrt_iob_func", sig, llvmgen.CDecl)
 }
 
-func declareExternalPtrGlobal(pkg llssa.Package, name string, valueType llssa.Type) llssa.Expr {
+func declareExternalPtrGlobal(pkg llvmgen.Package, name string, valueType llvmgen.Type) llvmgen.Expr {
 	global := pkg.NewVarEx(name, valueType)
 	pkg.Module().NamedGlobal(name).SetLinkage(llvm.ExternalLinkage)
 	return global.Expr
 }
 
-func declareSetvbuf(pkg llssa.Package, streamPtrType, bufPtrType, intType, sizeType llssa.Type) llssa.Function {
+func declareSetvbuf(pkg llvmgen.Package, streamPtrType, bufPtrType, intType, sizeType llvmgen.Type) llvmgen.Function {
 	sig := newSignature(
 		[]types.Type{
 			streamPtrType.RawType(),
@@ -770,7 +770,7 @@ func declareSetvbuf(pkg llssa.Package, streamPtrType, bufPtrType, intType, sizeT
 		},
 		[]types.Type{intType.RawType()},
 	)
-	return pkg.NewFunc("setvbuf", sig, llssa.CDecl)
+	return pkg.NewFunc("setvbuf", sig, llvmgen.CDecl)
 }
 
 func tupleOf(tys ...types.Type) *types.Tuple {

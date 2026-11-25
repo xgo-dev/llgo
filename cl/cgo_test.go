@@ -12,18 +12,18 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
-	gossa "golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 func init() {
 	// Keep these tests self-contained (other packages may not call Initialize).
-	llssa.Initialize(llssa.InitAll | llssa.InitNative)
+	llvmgen.Initialize(llvmgen.InitAll | llvmgen.InitNative)
 }
 
-func buildGoSSAPkg(t *testing.T, src string) (*gossa.Package, *token.FileSet, []*ast.File) {
+func buildGoSSAPkg(t *testing.T, src string) (*ssa.Package, *token.FileSet, []*ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "foo.go", src, parser.ParseComments)
@@ -33,7 +33,7 @@ func buildGoSSAPkg(t *testing.T, src string) (*gossa.Package, *token.FileSet, []
 	files := []*ast.File{f}
 	pkg := types.NewPackage(f.Name.Name, f.Name.Name)
 	imp := packages.NewImporter(fset)
-	mode := gossa.SanityCheckFunctions | gossa.InstantiateGenerics
+	mode := ssa.SanityCheckFunctions | ssa.InstantiateGenerics
 	ssaPkg, _, err := ssautil.BuildPackage(&types.Config{Importer: imp}, fset, pkg, files, mode)
 	if err != nil {
 		t.Fatal(err)
@@ -41,11 +41,11 @@ func buildGoSSAPkg(t *testing.T, src string) (*gossa.Package, *token.FileSet, []
 	return ssaPkg, fset, files
 }
 
-func newLLSSAProg(t *testing.T) llssa.Program {
+func newLLSSAProg(t *testing.T) llvmgen.Program {
 	t.Helper()
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	prog.SetRuntime(func() *types.Package {
-		rt, err := importer.For("source", nil).Import(llssa.PkgRuntime)
+		rt, err := importer.For("source", nil).Import(llvmgen.PkgRuntime)
 		if err != nil {
 			t.Fatal("load runtime failed:", err)
 		}
@@ -55,7 +55,7 @@ func newLLSSAProg(t *testing.T) llssa.Program {
 	return prog
 }
 
-func mustCompileLLPkgFromSrc(t *testing.T, src string) (llssa.Package, llvm.Module) {
+func mustCompileLLPkgFromSrc(t *testing.T, src string) (llvmgen.Package, llvm.Module) {
 	t.Helper()
 	ssaPkg, _, files := buildGoSSAPkg(t, src)
 	prog := newLLSSAProg(t)
@@ -199,11 +199,11 @@ func _Cmacro_magic() int32 {
 // -----------------------------------------------------------------------------
 // White-box coverage tests for the highlighted branches in cl/instr.go and cl/compile.go
 
-func findStaticCall(t *testing.T, fn *gossa.Function, name string) *gossa.Call {
+func findStaticCall(t *testing.T, fn *ssa.Function, name string) *ssa.Call {
 	t.Helper()
 	for _, blk := range fn.Blocks {
 		for _, instr := range blk.Instrs {
-			c, ok := instr.(*gossa.Call)
+			c, ok := instr.(*ssa.Call)
 			if !ok {
 				continue
 			}
@@ -231,8 +231,8 @@ func usesRecover() {
 
 func plain() {}
 `)
-	usesRecover := ssaPkg.Members["usesRecover"].(*gossa.Function)
-	plain := ssaPkg.Members["plain"].(*gossa.Function)
+	usesRecover := ssaPkg.Members["usesRecover"].(*ssa.Function)
+	plain := ssaPkg.Members["plain"].(*ssa.Function)
 	if !ctx.functionUsesRecover(usesRecover) {
 		t.Fatal("usesRecover should report direct recover use")
 	}
@@ -245,16 +245,16 @@ func plain() {}
 	if ctx.callMayRecover(plain) {
 		t.Fatal("plain static function should not be recover-capable")
 	}
-	if !ctx.callMayRecover(&gossa.MakeClosure{}) {
+	if !ctx.callMayRecover(&ssa.MakeClosure{}) {
 		t.Fatal("unknown closure target should conservatively be recover-capable")
 	}
-	if !ctx.callMayRecover(&gossa.Call{}) {
+	if !ctx.callMayRecover(&ssa.Call{}) {
 		t.Fatal("function value returned by a call should conservatively be recover-capable")
 	}
 	if !ctx.callMayRecover(nil) {
 		t.Fatal("unknown call value should conservatively be recover-capable")
 	}
-	if !ctx.callMayRecover(&gossa.Function{}) {
+	if !ctx.callMayRecover(&ssa.Function{}) {
 		t.Fatal("bodyless function should conservatively be recover-capable")
 	}
 }
@@ -272,12 +272,12 @@ func _C2func_withparams(a int) (int, error) {
 	return 0, nil
 }
 `)
-	goFn := ssaPkg.Members["_C2func_withparams"].(*gossa.Function)
+	goFn := ssaPkg.Members["_C2func_withparams"].(*ssa.Function)
 	call := findStaticCall(t, goFn, "_cgo_runtime_cgocall")
 
 	prog := newLLSSAProg(t)
 	pkg := prog.NewPackage("foo", "foo")
-	fn := pkg.NewFunc("_C2func_withparams", goFn.Signature, llssa.GoDecl)
+	fn := pkg.NewFunc("_C2func_withparams", goFn.Signature, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 
 	ctx := &context{prog: prog, pkg: pkg, fn: fn}
@@ -305,12 +305,12 @@ func _C2func_void(a int) {
 	_cgo_runtime_cgocall(nil, nil)
 }
 `)
-	goFn := ssaPkg.Members["_C2func_void"].(*gossa.Function)
+	goFn := ssaPkg.Members["_C2func_void"].(*ssa.Function)
 	call := findStaticCall(t, goFn, "_cgo_runtime_cgocall")
 
 	prog := newLLSSAProg(t)
 	pkg := prog.NewPackage("foo", "foo")
-	fn := pkg.NewFunc("_C2func_void", goFn.Signature, llssa.GoDecl)
+	fn := pkg.NewFunc("_C2func_void", goFn.Signature, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 
 	ctx := &context{prog: prog, pkg: pkg, fn: fn}
@@ -360,8 +360,8 @@ func TestCgoReturn_PanicWrongResultsLen(t *testing.T) {
 		types.NewTuple(types.NewVar(0, nil, "a", types.Typ[types.Int])),
 		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])),
 		false)
-	fn := pkg.NewFunc("_C2func_bad", sig, llssa.GoDecl)
-	var b llssa.Builder // nil is fine for panic path
+	fn := pkg.NewFunc("_C2func_bad", sig, llvmgen.GoDecl)
+	var b llvmgen.Builder // nil is fine for panic path
 	ctx := &context{prog: prog, pkg: pkg, fn: fn}
 
 	defer func() {
@@ -382,12 +382,12 @@ func TestCgoC2Return_ErrnoNil(t *testing.T) {
 			types.NewVar(0, nil, "", errType),
 		),
 		false)
-	fn := pkg.NewFunc("main", sig, llssa.GoDecl)
+	fn := pkg.NewFunc("main", sig, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 
 	ctx := &context{prog: prog, pkg: pkg, fn: fn}
-	ctx.cgoErrno = llssa.Nil
-	ret := b.Const(constant.MakeInt64(123), ctx.type_(types.Typ[types.Int], llssa.GoDecl))
+	ctx.cgoErrno = llvmgen.Nil
+	ret := b.Const(constant.MakeInt64(123), ctx.type_(types.Typ[types.Int], llvmgen.GoDecl))
 
 	ctx.cgoC2Return(b, ret, errType)
 }
@@ -403,7 +403,7 @@ func TestCgoC2Return_ErrnoNeedsConvert(t *testing.T) {
 			types.NewVar(0, nil, "", errType),
 		),
 		false)
-	fn := pkg.NewFunc("main", sig, llssa.GoDecl)
+	fn := pkg.NewFunc("main", sig, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 
 	errnoPkg := types.NewPackage("syscall", "syscall")
@@ -415,7 +415,7 @@ func TestCgoC2Return_ErrnoNeedsConvert(t *testing.T) {
 	ctx := &context{prog: prog, pkg: pkg, fn: fn}
 	ctx.cgoErrnoTy = errnoType
 	ctx.cgoErrno = fn.Param(0)
-	ret := b.Const(constant.MakeInt64(7), ctx.type_(types.Typ[types.Int], llssa.GoDecl))
+	ret := b.Const(constant.MakeInt64(7), ctx.type_(types.Typ[types.Int], llvmgen.GoDecl))
 
 	ctx.cgoC2Return(b, ret, errType)
 	ir := pkg.Module().String()

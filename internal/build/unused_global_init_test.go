@@ -11,7 +11,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/env"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
@@ -51,7 +51,7 @@ func main() { Read() }
 	assembly := []byte("TEXT ·Read(SB),NOSPLIT,$0-8\n\tMOVD ·Kept(SB), R0\n\tMOVD R0, ret+0(FP)\n\tRET\n")
 	p := &packages.Package{ID: "main", PkgPath: "main", Dir: dir, Types: pkg.Pkg,
 		TypesSizes: &types.StdSizes{WordSize: 4, MaxAlign: 8}, OtherFiles: []string{path, filepath.Join(dir, "textflag.h")}}
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
 	ctx := &context{prog: prog, progSSA: pkg.Prog,
 		buildConf: &Config{BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", PrintCommands: true, Overlay: map[string][]byte{path: assembly}},
@@ -78,8 +78,8 @@ func TestUnusedGlobalInitLinkAliases(t *testing.T) {
 	t.Setenv("LDFLAGS", "")
 	pkg := buildWasmReflectTestProgram(t, `package main; var M = map[string]int{"key":42}; func main() {}`)
 	for _, alias := range []string{"", "source", "target", "thread local", "goroutine local"} {
-		prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
-		name := llssa.FullName(pkg.Pkg, "M")
+		prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"})
+		name := llvmgen.FullName(pkg.Pkg, "M")
 		if alias == "source" {
 			prog.SetLinkname(name, "C.map")
 		}
@@ -87,10 +87,10 @@ func TestUnusedGlobalInitLinkAliases(t *testing.T) {
 			prog.SetLinkname("other.alias", name)
 		}
 		if alias == "thread local" {
-			prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.ThreadLocal})
+			prog.SetLocalityInfo(name, llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
 		}
 		if alias == "goroutine local" {
-			prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.GoroutineLocal})
+			prog.SetLocalityInfo(name, llvmgen.LocalityInfo{Locality: llvmgen.GoroutineLocal})
 		}
 		ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Goarch: "wasm"}}
 		configureUnusedGlobalInits(ctx, nil)
@@ -125,7 +125,7 @@ func TestUnusedGlobalInitScope(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("LDFLAGS", tc.ldflags)
-			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: tc.arch})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: tc.arch})
 			defer prog.Dispose()
 			ctx := &context{prog: prog, progSSA: pkg.Prog, mode: tc.mode,
 				buildConf: &Config{BuildMode: tc.buildMode, Goarch: tc.arch, OptLevel: tc.level}}
@@ -148,7 +148,7 @@ func TestUnusedGlobalInitExportAnnotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
 	p := &packages.Package{ID: "main", PkgPath: "main", Types: pkg.Pkg, Syntax: []*ast.File{file}}
 	ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Goarch: "wasm"},
@@ -168,7 +168,7 @@ func TestUnusedGlobalInitExportAnnotation(t *testing.T) {
 func TestUnusedGlobalInitRewrite(t *testing.T) {
 	t.Setenv("LDFLAGS", "")
 	pkg := buildWasmReflectTestProgram(t, `package main; var Version = "dev"; func main() {}`)
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
 	p := &packages.Package{ID: "main", PkgPath: "main", Types: pkg.Pkg}
 	ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Goarch: "wasm"},
@@ -221,7 +221,7 @@ func TestUnusedGlobalInitNativeInputs(t *testing.T) {
 			}
 			p := &packages.Package{ID: "main", PkgPath: "main", Dir: dir, Types: pkg.Pkg,
 				TypesSizes: &types.StdSizes{WordSize: 4, MaxAlign: 8}, Syntax: []*ast.File{file}}
-			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"})
 			defer prog.Dispose()
 			conf := &Config{BuildMode: BuildModeExe, Goos: "wasip1", Goarch: "wasm", Verbose: true}
 			if tc.native != "" {
@@ -250,7 +250,7 @@ func TestUnusedGlobalInitNativeInputs(t *testing.T) {
 func TestWasmMetadataEligibilityWithoutInitializerPlan(t *testing.T) {
 	t.Setenv("LDFLAGS", "")
 	pkg := buildWasmReflectTestProgram(t, "package main; func main() {}")
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
 	ctx := &context{prog: prog, progSSA: pkg.Prog, mode: ModeBuild, buildConf: &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe, OptLevel: optlevel.O2}}
 	configureUnusedGlobalInits(ctx, nil)

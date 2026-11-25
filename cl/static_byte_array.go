@@ -23,7 +23,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xgo-dev/llgo/internal/directive"
+	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/internal/locality"
 	"golang.org/x/tools/go/ssa"
 )

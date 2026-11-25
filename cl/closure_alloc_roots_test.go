@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestImmediateClosureExplicitRoots(t *testing.T) {
 	ir := cltest.CompileIREx(t, `package captureroots
 func use(p *int) *int { return func() *int { return p }() }
-`, "captureroots.go", false, func(prog llssa.Program) {
+`, "captureroots.go", false, func(prog llvmgen.Program) {
 		prog.EnableGCRoots(true)
 		prog.Target().GOARCH = "wasm"
 	})

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -29,7 +29,7 @@ func Composite(x any) (struct{}, bool) { v, ok := x.(struct{}); return v, ok }
 				source += fmt.Sprintf("func Used%d() bool { return used(%d) }\n", kind, kind)
 			}
 			ssapkg, _, files := buildGoSSAPkg(t, source)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOARCH: tc.arch})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOARCH: tc.arch})
 			defer prog.Dispose()
 			prog.EnableDeadcodeDrop(tc.enabled)
 			pkg, err := NewPackage(prog, ssapkg, files)
@@ -75,7 +75,7 @@ func TestInterfaceKindUsedInvalidArguments(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := "package domain\n//llgo:link used llgo.interfaceKindUsed\n" + tc.decl + "\nfunc bad(kind int) bool { return " + tc.call + " }"
 			ssapkg, _, files := buildGoSSAPkg(t, src)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOARCH: "wasm"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOARCH: "wasm"})
 			defer prog.Dispose()
 			defer func() {
 				if got := fmt.Sprint(recover()); !strings.Contains(got, tc.want) {

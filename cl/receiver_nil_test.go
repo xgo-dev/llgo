@@ -10,7 +10,7 @@ import (
 
 	"github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llvm"
-	gossa "golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
@@ -40,7 +40,7 @@ func savedPromotedExpression(p *P) { f := (*P).M; f(p, arg()) }
 	}
 	files := []*ast.File{file}
 	ssaPkg, info, err := ssautil.BuildPackage(&types.Config{Importer: packages.NewImporter(fset)}, fset,
-		types.NewPackage("foo", "foo"), files, gossa.SanityCheckFunctions)
+		types.NewPackage("foo", "foo"), files, ssa.SanityCheckFunctions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func Invoke(p *dep.T, arg func() int) { dep.Call(p, arg, 1); dep.Bound(p, 1)(arg
 		}
 		return nil, types.Error{Msg: "unexpected import " + path}
 	}))
-	goProg := gossa.NewProgram(fset, gossa.SanityCheckFunctions|gossa.InstantiateGenerics)
+	goProg := ssa.NewProgram(fset, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
 	goProg.CreatePackage(dep, []*ast.File{depFile}, depInfo, true)
 	rootSSA := goProg.CreatePackage(root, []*ast.File{rootFile}, rootInfo, true)
 	goProg.Build()
@@ -238,7 +238,7 @@ func F(p *P) { (*P).M(p) }
 	if err != nil {
 		t.Fatal(err)
 	}
-	pkg, _, err := ssautil.BuildPackage(new(types.Config), fset, types.NewPackage("foo", "foo"), []*ast.File{file}, gossa.SanityCheckFunctions)
+	pkg, _, err := ssautil.BuildPackage(new(types.Config), fset, types.NewPackage("foo", "foo"), []*ast.File{file}, ssa.SanityCheckFunctions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func promoted(value *U) { value.M() }
 		t.Fatal(err)
 	}
 	files := []*ast.File{file}
-	ssaPkg, info, err := ssautil.BuildPackage(new(types.Config), fset, types.NewPackage("foo", "foo"), files, gossa.SanityCheckFunctions)
+	ssaPkg, info, err := ssautil.BuildPackage(new(types.Config), fset, types.NewPackage("foo", "foo"), files, ssa.SanityCheckFunctions)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func promoted(value *U) { value.M() }
 	}
 	// An unrelated closure with no source metadata requires neither a
 	// receiver check nor a builder. Keep that fast path independent of LLVM.
-	new(context).checkBoundMethodReceiver(nil, new(gossa.MakeClosure))
+	new(context).checkBoundMethodReceiver(nil, new(ssa.MakeClosure))
 	// Selection.Index exposes a mutable slice. Malformed metadata must be
 	// rejected by the existing guard instead of indexing outside the struct.
 	for _, selection := range info.Selections {

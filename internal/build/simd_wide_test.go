@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llvm"
 )
@@ -116,8 +116,8 @@ func main() {}
 
 // LTO's target machine can default to x86-64 even when the frontend used v4.
 func TestWideBaselineInLTOBitcode(t *testing.T) {
-	llssa.Initialize(llssa.InitAll)
-	generic := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64", GOAMD64: "v1"})
+	llvmgen.Initialize(llvmgen.InitAll)
+	generic := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64", GOAMD64: "v1"})
 	defer generic.Dispose()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module wide\n\ngo 1.27\n"), 0600); err != nil {

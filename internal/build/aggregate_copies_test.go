@@ -9,7 +9,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/cabi"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/packages"
 )
@@ -233,13 +233,13 @@ func TestCompilePackageModuleLowersNativeArrayCopies(t *testing.T) {
 	llvm.InitializeAllTargetInfos()
 	for _, tc := range []struct {
 		name, goos, goarch string
-		target             *llssa.Target
+		target             *llvmgen.Target
 	}{
-		{name: "native", goos: "linux", goarch: "amd64", target: &llssa.Target{GOOS: "linux", GOARCH: "amd64"}},
-		{name: "wasm", goos: "js", goarch: "wasm", target: &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"}},
+		{name: "native", goos: "linux", goarch: "amd64", target: &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"}},
+		{name: "wasm", goos: "js", goarch: "wasm", target: &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			prog := llssa.NewProgram(tc.target)
+			prog := llvmgen.NewProgram(tc.target)
 			defer prog.Dispose()
 			lpkg := prog.NewPackage("p", "p")
 			mod := lpkg.Module()

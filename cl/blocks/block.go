@@ -17,12 +17,12 @@
 package blocks
 
 import (
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
 type Info struct {
-	Kind llssa.DoAction
+	Kind llvmgen.DoAction
 	Next int
 }
 
@@ -40,16 +40,16 @@ type blockState struct {
 	fdel   bool
 }
 
-func (p *blockState) kind() llssa.DoAction {
+func (p *blockState) kind() llvmgen.DoAction {
 	// Defer semantics depend on whether the block can be re-entered (loop),
 	// not whether it was selected as a "loop path" by the ordering algorithm.
 	if p.inLoop {
-		return llssa.DeferInLoop
+		return llvmgen.DeferInLoop
 	}
 	if p.always {
-		return llssa.DeferAlways
+		return llvmgen.DeferAlways
 	}
-	return llssa.DeferInCond
+	return llvmgen.DeferInCond
 }
 
 func newSuccs(succs []*ssa.BasicBlock) []int {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -35,7 +35,7 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 	}{{"wasm", true}, {"wasm", false}, {"amd64", true}} {
 		t.Run(fmt.Sprintf("%s/%v", tc.arch, tc.enabled), func(t *testing.T) {
 			ssapkg, _, files := buildGoSSAPkg(t, src)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOARCH: tc.arch})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOARCH: tc.arch})
 			defer prog.Dispose()
 			prog.EnableDeadcodeDrop(tc.enabled)
 			pkg, err := NewPackage(prog, ssapkg, files)

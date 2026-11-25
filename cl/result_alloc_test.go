@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -61,7 +61,7 @@ func changeType(x uint64) (r Pair) {
 func borrowZero(*struct{}) {}
 func zero() (r struct{}) { borrowZero(&r); return }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "darwin", GOARCH: "arm64"},
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "386"},

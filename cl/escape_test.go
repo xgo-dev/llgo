@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/goescape"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
@@ -94,7 +94,7 @@ func local(p *int) *int { var values [2]*int; values[0] = p; return values[0] }
 func borrow(p **int) *int { return *p }
 func promoted(p *int) *int { return borrow(&p) }
 `
-	target := &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}
+	target := &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"}
 	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, target, true)
 	for _, name := range []string{"large"} {
 		if body := llvmFunction(t, ir, "placement."+name); !strings.Contains(body, "runtime.Alloc") {
@@ -156,7 +156,7 @@ func pointers(n int)int{s:=make([]*int,n);return len(s)}
 			if tc.arch == "386" || tc.arch == "wasm" {
 				source = strings.ReplaceAll(source, "func wide(n int64)int{b:=make([]byte,n);return bytesUse(b)}", "")
 			}
-			ir := compileInterfaceBoxIR(t, source, ssa.InstantiateGenerics, &llssa.Target{GOOS: tc.os, GOARCH: tc.arch}, tc.roots)
+			ir := compileInterfaceBoxIR(t, source, ssa.InstantiateGenerics, &llvmgen.Target{GOOS: tc.os, GOARCH: tc.arch}, tc.roots)
 			for name, helper := range map[string]string{
 				"dynamic": "MakeSliceBuffer", "fromBytes": "StringFromBytesReadOnly", "toBytes": "StringToBytesBuffer",
 				"fromRunes": "StringFromRunesBuffer", "toRunes": "StringToRunesBuffer", "concat": "StringCatBuffer", "readOnly": "StringToBytesReadOnly", "compare": "StringFromBytesReadOnly", "lookup": "StringFromBytesReadOnly",
@@ -211,7 +211,7 @@ func f() *T { return new(T) }
 	PrepareEscapeAnalysis(prog, pkg.Prog, nil)
 	original := pkg.Pkg.Scope().Lookup("T").Type().(*types.Named)
 	replacement := types.NewNamed(types.NewTypeName(token.NoPos, pkg.Pkg, "T", nil), original.Underlying(), nil)
-	if got := prog.Type(replacement, llssa.GoDecl).RawType().(*types.Named); got.NumMethods() != 0 {
+	if got := prog.Type(replacement, llvmgen.GoDecl).RawType().(*types.Named); got.NumMethods() != 0 {
 		t.Fatal("layout queries cached the original type's methods in the backend")
 	}
 }

@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"github.com/xgo-dev/llvm"
 )
@@ -32,20 +32,20 @@ func TestDeferInLoopIR(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
-	callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.GoDecl)
+	callee := pkg.NewFunc("callee", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	cb := callee.MakeBody(1)
 	cb.Return()
 	cb.EndBuild()
 
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	fn.SetRecover(fn.MakeBlock())
 
 	// Ensure entry block has a terminator like real codegen
 	b.Return()
-	b.SetBlockEx(fn.Block(0), ssa.BeforeLast, true)
+	b.SetBlockEx(fn.Block(0), llvmgen.BeforeLast, true)
 
-	b.Defer(ssa.DeferInLoop, callee.Expr, ssa.Builder.Call)
+	b.Defer(llvmgen.DeferInLoop, callee.Expr, llvmgen.Builder.Call)
 	b.EndBuild()
 
 	ir := pkg.Module().String()
@@ -66,18 +66,18 @@ func TestDeferAtomicInLoopIR(t *testing.T) {
 	int64PtrType := types.NewPointer(types.Typ[types.Int64])
 	params := types.NewTuple(types.NewParam(token.NoPos, nil, "", int64PtrType))
 	IntPtrArgSig := types.NewSignatureType(nil, nil, nil, params, nil, false)
-	fn := pkg.NewFunc("main", IntPtrArgSig, ssa.GoDecl)
+	fn := pkg.NewFunc("main", IntPtrArgSig, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	fn.SetRecover(fn.MakeBlock())
 
 	// Ensure entry block has a terminator like real codegen
 	b.Return()
-	b.SetBlockEx(fn.Block(0), ssa.BeforeLast, true)
+	b.SetBlockEx(fn.Block(0), llvmgen.BeforeLast, true)
 
 	ptr := fn.Param(0)
 	val := b.Const(constant.MakeInt64(1), prog.Int64())
-	b.Defer(ssa.DeferInLoop, ssa.Nil, func(b ssa.Builder, _ ssa.Expr, args ...ssa.Expr) ssa.Expr {
-		return b.Store(ptr, val).SetOrdering(ssa.OrderingSeqConsistent)
+	b.Defer(llvmgen.DeferInLoop, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
+		return b.Store(ptr, val).SetOrdering(llvmgen.OrderingSeqConsistent)
 	})
 	b.EndBuild()
 
@@ -99,21 +99,21 @@ func TestDeferInLoopMaterializesArgsBeforeFree(t *testing.T) {
 
 	params := types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Int64]))
 	int64ArgSig := types.NewSignatureType(nil, nil, nil, params, nil, false)
-	callee := pkg.NewFunc("callee", int64ArgSig, ssa.GoDecl)
+	callee := pkg.NewFunc("callee", int64ArgSig, llvmgen.GoDecl)
 	cb := callee.MakeBody(1)
 	cb.Return()
 	cb.EndBuild()
 
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	fn.SetRecover(fn.MakeBlock())
 
 	// Ensure entry block has a terminator like real codegen.
 	b.Return()
-	b.SetBlockEx(fn.Block(0), ssa.BeforeLast, true)
+	b.SetBlockEx(fn.Block(0), llvmgen.BeforeLast, true)
 
 	arg := b.Const(constant.MakeInt64(7), prog.Int64())
-	b.Defer(ssa.DeferInLoop, callee.Expr, ssa.Builder.Call, arg)
+	b.Defer(llvmgen.DeferInLoop, callee.Expr, llvmgen.Builder.Call, arg)
 	b.EndBuild()
 
 	ir := pkg.Module().String()
@@ -134,15 +134,15 @@ func TestDeferInLoopMaterializesArgsBeforeFree(t *testing.T) {
 func TestStdcallLoopDeferIR(t *testing.T) {
 	for _, arch := range []string{"386", "amd64", "arm64"} {
 		t.Run(arch, func(t *testing.T) {
-			prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "windows", GOARCH: arch})
+			prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "windows", GOARCH: arch})
 			defer prog.Dispose()
 			prog.TypeSizes(types.SizesFor("gc", arch))
 			goPkg := types.NewPackage("callback", "callback")
-			typ := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "Stdcall", nil), ssa.NoArgsNoRet, nil)
-			prog.SetTypeCallConv("callback.Stdcall", ssa.Stdcall)
+			typ := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "Stdcall", nil), llvmgen.NoArgsNoRet, nil)
+			prog.SetTypeCallConv("callback.Stdcall", llvmgen.Stdcall)
 			pkg := prog.NewPackage("callback", "callback")
 			params := types.NewTuple(types.NewParam(token.NoPos, nil, "fn", typ))
-			fn := pkg.NewFunc("deferNative", types.NewSignatureType(nil, nil, nil, params, nil, false), ssa.GoDecl)
+			fn := pkg.NewFunc("deferNative", types.NewSignatureType(nil, nil, nil, params, nil, false), llvmgen.GoDecl)
 			b := fn.MakeBody(1)
 			recoverBlock := fn.MakeBlock()
 			fn.SetRecover(recoverBlock)
@@ -150,8 +150,8 @@ func TestStdcallLoopDeferIR(t *testing.T) {
 			b.Return()
 			b.SetBlock(fn.Block(0))
 			b.Return()
-			b.SetBlockEx(fn.Block(0), ssa.BeforeLast, true)
-			b.Defer(ssa.DeferInLoop, fn.Param(0), ssa.Builder.Call)
+			b.SetBlockEx(fn.Block(0), llvmgen.BeforeLast, true)
+			b.Defer(llvmgen.DeferInLoop, fn.Param(0), llvmgen.Builder.Call)
 			b.EndBuild()
 			ir := pkg.Module().String()
 			word, cc := "i64", ""

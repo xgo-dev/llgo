@@ -27,7 +27,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/env"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
@@ -71,7 +71,7 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
 				for _, comment := range group.List {
 					fields := strings.Fields(comment.Text)
 					if len(fields) >= 2 && fields[0] == "//go:linkname" {
-						exported[llssa.FullName(pkg, fields[1])] = true
+						exported[llvmgen.FullName(pkg, fields[1])] = true
 					}
 				}
 			}
@@ -83,19 +83,19 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
 			inspect(pkg.AltPkg.Types, pkg.AltPkg.Syntax)
 		}
 		for name := range pkg.rewriteVars {
-			exported[llssa.FullName(pkg.Types, name)] = true
+			exported[llvmgen.FullName(pkg.Types, name)] = true
 		}
 	}
 
 	ctx.frontendOptions.UnusedGlobalInits = cl.FindUnusedGlobalInits(ctx.progSSA, func(global *ssa.Global) bool {
-		name := llssa.FullName(global.Pkg.Pkg, global.Name())
+		name := llvmgen.FullName(global.Pkg.Pkg, global.Name())
 		if exported[name] || global.Pkg.Pkg.Name() == "C" {
 			return true
 		}
 		if _, alias := ctx.prog.Linkname(name); alias || ctx.prog.HasLinknameTarget(name) {
 			return true
 		}
-		if _, locality, ok, err := ctx.prog.ResolveLocalityFor(global.Pkg.Pkg, name); err != nil || ok && locality.Locality != llssa.LocalityNone {
+		if _, locality, ok, err := ctx.prog.ResolveLocalityFor(global.Pkg.Pkg, name); err != nil || ok && locality.Locality != llvmgen.LocalityNone {
 			return true
 		}
 		return false

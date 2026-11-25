@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/env"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestRuntimeSourceVersionSelection(t *testing.T) {
@@ -308,7 +308,7 @@ func TestRuntimeSourceToolchains(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, arch := range []string{"386", "amd64"} {
-				abi, err := auditRuntimeABI(env.LLGoRuntimeDir(), goroot, goVersion, &llssa.Target{GOOS: "linux", GOARCH: arch})
+				abi, err := auditRuntimeABI(env.LLGoRuntimeDir(), goroot, goVersion, &llvmgen.Target{GOOS: "linux", GOARCH: arch})
 				if err != nil {
 					t.Fatal(err)
 				}

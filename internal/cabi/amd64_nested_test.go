@@ -3,7 +3,7 @@ package cabi
 import (
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -11,7 +11,7 @@ func TestAMD64NestedAggregateOffsets(t *testing.T) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	tr := NewTransformer(prog, "x86_64-unknown-linux-gnu", "", false)
 	ctx := llvm.NewContext()

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -23,7 +23,7 @@ func async(x int) { go func(){consume(x)}() }
 func unknown(func() int)
 func argument(x int) { unknown(func() int { return x }) }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"}, {GOOS: "darwin", GOARCH: "arm64"},
 		{GOOS: "windows", GOARCH: "386"},
 	} {

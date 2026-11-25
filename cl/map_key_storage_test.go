@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -30,7 +30,7 @@ func stringRange(s string) int { sum:=0; for _,r:=range s { sum+=int(r) }; retur
 func mapBudget(m map[Key]int,p [65536]byte) int { KeepAlive(p); sum:=0; for _,v:=range m { sum+=v }; return sum }
 func stringBudget(s string,p [65536]byte) int { KeepAlive(p); sum:=0; for _,r:=range s { sum+=int(r) }; return sum }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "darwin", GOARCH: "arm64"},
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "386"},

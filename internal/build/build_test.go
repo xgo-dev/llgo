@@ -25,7 +25,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/mockable"
@@ -483,7 +483,7 @@ func TestBuildUsesSyntheticPythonPackage(t *testing.T) {
 	calls := 0
 	conf.TestPythonPackage = func() *types.Package {
 		calls++
-		return types.NewPackage(llssa.PkgPython, "py")
+		return types.NewPackage(llvmgen.PkgPython, "py")
 	}
 	t.Setenv(llgoBuildCache, "0")
 	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
@@ -826,7 +826,7 @@ func TestRewritePrebuiltFuncTabEligibilityAndDiagnostic(t *testing.T) {
 	rewritePrebuiltFuncTab(nil, "missing", true)
 	rewritePrebuiltFuncTab(&context{}, "missing", true)
 
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	ctx := &context{prog: prog, buildConf: &Config{
 		BuildMode: BuildModeExe,
@@ -1556,7 +1556,7 @@ func TestLinkedModuleGlobalsSkipsDeclarations(t *testing.T) {
 		t.Fatalf("backend-free linked globals = %#v, want empty", got)
 	}
 
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	lpkg := prog.NewPackage("example.com/p", "example.com/p")
 	mod := lpkg.Module()
 	i32 := mod.Context().Int32Type()
@@ -2575,7 +2575,7 @@ func TestCmpTestNonexistentPatternReturnsError(t *testing.T) {
 }
 
 func TestParsePkgSyntaxCollectsRuntimeLinknames(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "runtime.go", `package runtime
 import _ "unsafe"
@@ -2585,11 +2585,11 @@ func Sigsetjmp()
 	if err != nil {
 		t.Fatalf("ParseFile failed: %v", err)
 	}
-	pkg := types.NewPackage(llssa.PkgRuntime, "runtime")
+	pkg := types.NewPackage(llvmgen.PkgRuntime, "runtime")
 	if err := cl.ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); !ok || got != "C.sigsetjmp" {
+	if got, ok := prog.Linkname(llvmgen.PkgRuntime + ".Sigsetjmp"); !ok || got != "C.sigsetjmp" {
 		t.Fatalf("pre-collected runtime linkname = (%q,%v), want (%q,%v)", got, ok, "C.sigsetjmp", true)
 	}
 }
@@ -2614,15 +2614,15 @@ func TestPrepareLocalVariables(t *testing.T) {
 	}
 
 	t.Run("accepts no package groups", func(t *testing.T) {
-		if err := prepareLocalVariables(llssa.NewProgram(nil)); err != nil {
+		if err := prepareLocalVariables(llvmgen.NewProgram(nil)); err != nil {
 			t.Fatal(err)
 		}
 	})
 
 	t.Run("filters and deduplicates packages", func(t *testing.T) {
-		prog := llssa.NewProgram(nil)
+		prog := llvmgen.NewProgram(nil)
 		loaded, file := newLocalPackage("example.com/local", true)
-		prog.SetLocalityInfo("example.com/local.value", llssa.LocalityInfo{Locality: llssa.ThreadLocal, HasInitializer: true})
+		prog.SetLocalityInfo("example.com/local.value", llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal, HasInitializer: true})
 		duplicate := *loaded
 
 		err := prepareLocalVariables(prog,
@@ -2638,9 +2638,9 @@ func TestPrepareLocalVariables(t *testing.T) {
 	})
 
 	t.Run("returns dependency error", func(t *testing.T) {
-		prog := llssa.NewProgram(nil)
+		prog := llvmgen.NewProgram(nil)
 		dependency, _ := newLocalPackage("example.com/dependency", false)
-		prog.SetLocalityInfo("example.com/dependency.value", llssa.LocalityInfo{Locality: llssa.GoroutineLocal, HasInitializer: true})
+		prog.SetLocalityInfo("example.com/dependency.value", llvmgen.LocalityInfo{Locality: llvmgen.GoroutineLocal, HasInitializer: true})
 		root := &packages.Package{
 			Types:   types.NewPackage("example.com/root", "root"),
 			Imports: map[string]*packages.Package{"example.com/dependency": dependency},
@@ -2653,7 +2653,7 @@ func TestPrepareLocalVariables(t *testing.T) {
 	})
 
 	t.Run("skips inactive alternate roots", func(t *testing.T) {
-		prog := llssa.NewProgram(nil)
+		prog := llvmgen.NewProgram(nil)
 		active := &packages.Package{Types: types.NewPackage("example.com/active", "active")}
 		inactive := &packages.Package{Types: types.NewPackage("example.com/inactive", "inactive")}
 		err := prepareLocalVariables(prog,
@@ -2693,7 +2693,7 @@ var threadState uintptr
 		t.Fatal(err)
 	}
 
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	if err := cl.ParsePkgSyntax(prog, fset, alt, []*ast.File{file}); err != nil {
 		t.Fatal(err)
 	}
@@ -2705,14 +2705,14 @@ var threadState uintptr
 	if err != nil {
 		t.Fatalf("prepareLocalVariables confused standard and alternate runtime packages: %v", err)
 	}
-	for name, want := range map[string]llssa.VariableLocality{
+	for name, want := range map[string]llvmgen.VariableLocality{
 		"runtime.goroutineState": {
-			Info:         llssa.LocalityInfo{Locality: llssa.GoroutineLocal},
-			LocalStorage: llssa.LocalStoragePackage,
+			Info:         llvmgen.LocalityInfo{Locality: llvmgen.GoroutineLocal},
+			LocalStorage: llvmgen.LocalStoragePackage,
 		},
 		"runtime.threadState": {
-			Info:         llssa.LocalityInfo{Locality: llssa.ThreadLocal},
-			LocalStorage: llssa.LocalStorageNativeTLS,
+			Info:         llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal},
+			LocalStorage: llvmgen.LocalStorageNativeTLS,
 		},
 	} {
 		got, ok := prog.VariableLocality(name)
@@ -2791,7 +2791,7 @@ func TestCSharedExportArgs(t *testing.T) {
 	if got := cSharedExportArgs(nil, nil); got != nil {
 		t.Fatalf("nil cSharedExportArgs = %v, want nil", got)
 	}
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	lpkg := prog.NewPackage("example.com/p", "example.com/p")
 	lpkg.SetExport("example.com/p.Z", "Zed")
 	lpkg.SetExport("example.com/p.A", "Add")
@@ -2821,7 +2821,7 @@ func TestCSharedExportArgs(t *testing.T) {
 }
 
 func TestCSharedExportArgsKeepsTestMain(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	lpkg := prog.NewPackage("example.com/p.test", "example.com/p.test")
 	pkgs := []*aPackage{{
@@ -2934,7 +2934,7 @@ func TestWASIThreadsRequired(t *testing.T) {
 }
 
 func TestCHeaderPackagesExcludesStandardRuntime(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	userLPkg := prog.NewPackage("example.com/p", "example.com/p")
 	userLPkg.SetExport("example.com/p.Export", "Export")
@@ -3450,7 +3450,7 @@ func TestLinkExecutionKeepsSitePolicyAfterBackendDisposal(t *testing.T) {
 	} {
 		for _, enabled := range []bool{false, true} {
 			t.Run(fmt.Sprintf("mode=%d/%s/dwarf=%v/sites=%v", test.mode, test.goos, test.dwarf, enabled), func(t *testing.T) {
-				prog := llssa.NewProgram(nil)
+				prog := llvmgen.NewProgram(nil)
 				defer prog.Dispose()
 				prog.EnableFuncInfoSites(enabled)
 				ctx := &context{

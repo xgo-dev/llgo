@@ -22,26 +22,26 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
-func NewProgram(t *testing.T, target *ssa.Target) ssa.Program {
+func NewProgram(t *testing.T, target *llvmgen.Target) llvmgen.Program {
 	fset := token.NewFileSet()
 	imp := packages.NewImporter(fset)
 	return NewProgramEx(t, target, imp)
 }
 
-func NewProgramEx(t *testing.T, target *ssa.Target, imp types.Importer) ssa.Program {
-	prog := ssa.NewProgram(target)
+func NewProgramEx(t *testing.T, target *llvmgen.Target, imp types.Importer) llvmgen.Program {
+	prog := llvmgen.NewProgram(target)
 	prog.SetRuntime(func() *types.Package {
-		rt, err := imp.Import(ssa.PkgRuntime)
+		rt, err := imp.Import(llvmgen.PkgRuntime)
 		if err != nil {
 			t.Fatal("load runtime failed:", err)
 		}
 		return rt
 	})
 	prog.SetPython(func() *types.Package {
-		rt, err := imp.Import(ssa.PkgPython)
+		rt, err := imp.Import(llvmgen.PkgPython)
 		if err != nil {
 			t.Fatal("load python failed:", err)
 		}
@@ -50,9 +50,9 @@ func NewProgramEx(t *testing.T, target *ssa.Target, imp types.Importer) ssa.Prog
 	return prog
 }
 
-func Assert(t *testing.T, p ssa.Package, expected string) {
+func Assert(t *testing.T, p llvmgen.Package, expected string) {
 	t.Helper()
-	if v := p.String(); ssa.StripModuleTarget(v) != expected {
+	if v := p.String(); llvmgen.StripModuleTarget(v) != expected {
 		t.Fatalf("\n==> got:\n%s\n==> expected:\n%s\n", v, expected)
 	}
 }

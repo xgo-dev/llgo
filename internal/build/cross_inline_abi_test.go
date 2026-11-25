@@ -3,7 +3,7 @@ package build
 import (
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 )
@@ -21,7 +21,7 @@ func TestCrossPackageInlineAggregateABI(t *testing.T) {
 			conf := NewDefaultConf(ModeGen)
 			conf.Goos, conf.Goarch, conf.OptLevel = target.os, target.arch, optlevel.Os
 			conf.ForceRebuild = true
-			var owner llssa.Package
+			var owner llvmgen.Package
 			conf.ModuleHook = func(pkg Package) {
 				if pkg.PkgPath == dependency {
 					owner = pkg.LPkg

@@ -31,13 +31,13 @@ import (
 	"github.com/xgo-dev/llvm"
 
 	"github.com/xgo-dev/llgo/internal/env"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	prog.EnableFuncInfoSites(true)
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
@@ -60,7 +60,7 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 			PCLNMode:  PCLNNone, // Keep exact table assertions limited to supplied records.
 		},
 	}
-	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+	entry := genMainModule(ctx, llvmgen.PkgRuntime, &packages.Package{
 		PkgPath:    "example.com/main",
 		ExportFile: "main.a",
 	}, &genConfig{funcInfo: records})
@@ -102,7 +102,7 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 }
 
 func TestFuncInfoSiteLayoutArgs(t *testing.T) {
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	prog.EnableFuncInfoSites(true)
 	ctx := &context{prog: prog, buildConf: &Config{
@@ -143,7 +143,7 @@ func TestFuncInfoSiteLayoutArgs(t *testing.T) {
 
 func TestFuncInfoSiteLayoutArgsEligibilityAndCreateFailure(t *testing.T) {
 	newContext := func() (*context, func()) {
-		prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+		prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 		prog.EnableFuncInfoSites(true)
 		return &context{prog: prog, buildConf: &Config{
 			BuildMode: BuildModeExe,
@@ -212,18 +212,18 @@ func TestRuntimeEntrySiteSectionInfo(t *testing.T) {
 }
 
 func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
 	// Instruction function values use their original Go symbol for the
 	// synthesized physical entry, without a separate PCLN class.
 	src.EmitFuncInfo("example.com/p.intrinsic", "example.com/p.Live", "live.go", 17, 3)
 	src.EmitFuncInfo("example.com/p.missing", "example.com/p.Missing", "missing.go", 19, 1)
-	liveFn := src.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.CDecl)
+	liveFn := src.NewFunc("example.com/p.live", llvmgen.NoArgsNoRet, llvmgen.CDecl)
 	liveFn.MakeBody(1).Return()
-	intrinsicWrapper := src.NewFunc("example.com/p.intrinsic", llssa.NoArgsNoRet, llssa.CDecl)
+	intrinsicWrapper := src.NewFunc("example.com/p.intrinsic", llvmgen.NoArgsNoRet, llvmgen.CDecl)
 	intrinsicWrapper.MakeBody(1).Return()
-	otherFn := src.NewFunc("example.com/p.other", llssa.NoArgsNoRet, llssa.CDecl)
+	otherFn := src.NewFunc("example.com/p.other", llvmgen.NoArgsNoRet, llvmgen.CDecl)
 	otherFn.MakeBody(1).Return()
 	ctx := &context{
 		prog: prog,
@@ -268,7 +268,7 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 	}
 
 	records := collectFuncInfo([]Package{{LPkg: src}})
-	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+	entry := genMainModule(ctx, llvmgen.PkgRuntime, &packages.Package{
 		PkgPath:    "example.com/main",
 		ExportFile: "main.a",
 	}, &genConfig{funcInfo: records})
@@ -292,7 +292,7 @@ func TestFuncInfoTableMaterializesEntrySites(t *testing.T) {
 			LTO:       lto.Full,
 		},
 	}
-	ltoEntry := genMainModule(ltoCtx, llssa.PkgRuntime, &packages.Package{
+	ltoEntry := genMainModule(ltoCtx, llvmgen.PkgRuntime, &packages.Package{
 		PkgPath:    "example.com/main",
 		ExportFile: "main.a",
 	}, &genConfig{funcInfo: records})
@@ -315,7 +315,7 @@ func TestFuncInfoUsesExactEntryForAddressTakenFunction(t *testing.T) {
 		{"windows", "386"}, {"windows", "amd64"}, {"windows", "arm64"},
 	} {
 		t.Run(target.goos+"/"+target.goarch, func(t *testing.T) {
-			prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: target.goos, GOARCH: target.goarch})
 			defer prog.Dispose()
 			prog.EnableFuncInfoMetadata(true)
 			prog.EnableFuncInfoSites(true)
@@ -331,7 +331,7 @@ func TestFuncInfoUsesExactEntryForAddressTakenFunction(t *testing.T) {
 			pkg := prog.NewPackage("example.com/p", "example.com/p")
 			for _, name := range []string{"example.com/p.direct", "example.com/p.addressed"} {
 				pkg.EmitFuncInfo(name, name, "p.go", 1, 1)
-				pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.GoDecl).MakeBody(1).Return()
+				pkg.NewFunc(name, llvmgen.NoArgsNoRet, llvmgen.GoDecl).MakeBody(1).Return()
 			}
 			addressed := pkg.Module().NamedFunction("example.com/p.addressed")
 			keep := llvm.AddGlobal(pkg.Module(), addressed.Type(), "example.com/p.funcValue")
@@ -362,7 +362,7 @@ func TestFuncInfoUsesExactEntryForAddressTakenFunction(t *testing.T) {
 }
 
 func TestWasmFuncInfoUsesTableIndexForAddressTakenFunction(t *testing.T) {
-	prog := llssa.NewProgram(&llssa.Target{
+	prog := llvmgen.NewProgram(&llvmgen.Target{
 		GOOS:                "js",
 		GOARCH:              "wasm",
 		LLVMTarget:          "wasm32-unknown-emscripten",
@@ -382,9 +382,9 @@ func TestWasmFuncInfoUsesTableIndexForAddressTakenFunction(t *testing.T) {
 	pkg := prog.NewPackage("example.com/p", "example.com/p")
 	for _, name := range []string{"example.com/p.direct", "example.com/p.addressed"} {
 		pkg.EmitFuncInfo(name, name, "p.go", 1, 1)
-		pkg.NewFunc(name, llssa.NoArgsNoRet, llssa.GoDecl).MakeBody(1).Return()
+		pkg.NewFunc(name, llvmgen.NoArgsNoRet, llvmgen.GoDecl).MakeBody(1).Return()
 	}
-	pkg.NewFunc("example.com/p.unindexed", llssa.NoArgsNoRet, llssa.GoDecl).MakeBody(1).Return()
+	pkg.NewFunc("example.com/p.unindexed", llvmgen.NoArgsNoRet, llvmgen.GoDecl).MakeBody(1).Return()
 	addressed := pkg.Module().NamedFunction("example.com/p.addressed")
 	keep := llvm.AddGlobal(pkg.Module(), addressed.Type(), "example.com/p.funcValue")
 	keep.SetInitializer(addressed)
@@ -458,11 +458,11 @@ func TestEmitRuntimeFuncInfoSitesWasm(t *testing.T) {
 }
 
 func TestFuncInfoTableSitesDisabledKeepsTables(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
 	src.EmitPCLineInfo(0x1234, "example.com/p.live", "call.go", 23, 5)
-	liveFn := src.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.CDecl)
+	liveFn := src.NewFunc("example.com/p.live", llvmgen.NoArgsNoRet, llvmgen.CDecl)
 	liveFn.MakeBody(1).Return()
 	ctx := &context{
 		prog: prog,
@@ -485,7 +485,7 @@ func TestFuncInfoTableSitesDisabledKeepsTables(t *testing.T) {
 
 	records := collectFuncInfo([]Package{{LPkg: src}})
 	pcLines := collectPCLineInfo([]Package{{LPkg: src}})
-	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+	entry := genMainModule(ctx, llvmgen.PkgRuntime, &packages.Package{
 		PkgPath:    "example.com/main",
 		ExportFile: "main.a",
 	}, &genConfig{funcInfo: records, pcLineInfo: pcLines})
@@ -513,7 +513,7 @@ func TestFuncInfoTableSitesDisabledKeepsTables(t *testing.T) {
 }
 
 func TestFuncInfoTableMaterializesPCLineMetadata(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	prog.EnableFuncInfoSites(true)
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
@@ -538,7 +538,7 @@ func TestFuncInfoTableMaterializesPCLineMetadata(t *testing.T) {
 			PCLNMode:  PCLNNone, // Keep exact table assertions limited to supplied records.
 		},
 	}
-	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+	entry := genMainModule(ctx, llvmgen.PkgRuntime, &packages.Package{
 		PkgPath:    "example.com/main",
 		ExportFile: "main.a",
 	}, &genConfig{funcInfo: records, pcLineInfo: pcLines})
@@ -588,7 +588,7 @@ func TestPrepareFuncInfoTableRecordsFiltersLiveSymbols(t *testing.T) {
 }
 
 func TestFuncInfoTablePoolsRepeatedStrings(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	records := []funcInfoRecord{
 		{symbol: "example.com/p.a", name: "example.com/p.A", file: "shared.go", line: 10},
 		{symbol: "example.com/p.b", name: "example.com/p.B", file: "shared.go", line: 20},
@@ -601,7 +601,7 @@ func TestFuncInfoTablePoolsRepeatedStrings(t *testing.T) {
 			Goarch:    "amd64",
 		},
 	}
-	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+	entry := genMainModule(ctx, llvmgen.PkgRuntime, &packages.Package{
 		PkgPath:    "example.com/main",
 		ExportFile: "main.a",
 	}, &genConfig{funcInfo: records})
@@ -611,7 +611,7 @@ func TestFuncInfoTablePoolsRepeatedStrings(t *testing.T) {
 }
 
 func TestFuncInfoTableEmptyDefinitions(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	ctx := &context{
 		prog: prog,
 		buildConf: &Config{
@@ -621,7 +621,7 @@ func TestFuncInfoTableEmptyDefinitions(t *testing.T) {
 			PCLNMode:  PCLNNone, // Keep exact table assertions limited to supplied records.
 		},
 	}
-	entry := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+	entry := genMainModule(ctx, llvmgen.PkgRuntime, &packages.Package{
 		PkgPath:    "example.com/main",
 		ExportFile: "main.a",
 	}, &genConfig{})
@@ -650,7 +650,7 @@ func TestFuncInfoTableEmptyDefinitions(t *testing.T) {
 }
 
 func TestFuncInfoTableIgnoresInvalidMetadata(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	pkg := prog.NewPackage("example.com/p", "example.com/p")
 	mod := pkg.Module()
 	ctx := mod.Context()
@@ -660,7 +660,7 @@ func TestFuncInfoTableIgnoresInvalidMetadata(t *testing.T) {
 		return llvm.ConstInt(i32, v, false).ConstantAsMetadata()
 	}
 	add := func(fields ...llvm.Metadata) {
-		mod.AddNamedMetadataOperand(llssa.FuncInfoMetadataName, ctx.MDNode(fields))
+		mod.AddNamedMetadataOperand(llvmgen.FuncInfoMetadataName, ctx.MDNode(fields))
 	}
 
 	add()
@@ -756,7 +756,7 @@ func TestRuntimeSitePolicy(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			defer prog.Dispose()
 			prog.EnableFuncInfoSites(tt.enableSites)
 			ctx := &context{prog: prog, buildConf: &tt.conf}
@@ -802,7 +802,7 @@ func TestFuncInfoTableEmissionMatrix(t *testing.T) {
 			name += "/" + c.lto.String()
 		}
 		t.Run(name, func(t *testing.T) {
-			prog := llssa.NewProgram(&llssa.Target{GOOS: c.goos, GOARCH: c.goarch})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: c.goos, GOARCH: c.goarch})
 			prog.EnableFuncInfoMetadata(true)
 			prog.EnableFuncInfoSites(true)
 			src := prog.NewPackage("example.com/p", "example.com/p")
@@ -810,7 +810,7 @@ func TestFuncInfoTableEmissionMatrix(t *testing.T) {
 				src.EmitFuncInfo(`example.com/p.we$ird"sym`, "example.com/p.Live", "live.go", 17, 3)
 				src.EmitFuncInfo("example.com/p.other", "example.com/p.Other", "other.go", 5, 1)
 				src.EmitPCLineInfo(0x1234, `example.com/p.we$ird"sym`, "call.go", 23, 5)
-				fn := src.NewFunc(`example.com/p.we$ird"sym`, llssa.NoArgsNoRet, llssa.GoDecl)
+				fn := src.NewFunc(`example.com/p.we$ird"sym`, llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 				fn.MakeBody(1).Return()
 			}
 			ctx := &context{
@@ -888,7 +888,7 @@ func TestELFFuncInfoSiteSectionsAllowSharedLibraryRelocations(t *testing.T) {
 }
 
 func TestCOFFFuncInfoEntrySiteIsAssociative(t *testing.T) {
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "arm64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: "arm64"})
 	defer prog.Dispose()
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
@@ -902,7 +902,7 @@ func TestCOFFFuncInfoEntrySiteIsAssociative(t *testing.T) {
 	}
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
-	fn := src.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.GoDecl)
+	fn := src.NewFunc("example.com/p.live", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	fn.MakeBody(1).Return()
 	emitFuncInfoEntrySites(ctx, src)
 
@@ -955,7 +955,7 @@ func testCOFFFuncInfoMetadataLinksIntoDLL(t *testing.T) {
 		t.Fatal("lld-link is required for the PE shared-library regression test")
 	}
 
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: runtime.GOARCH})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: runtime.GOARCH})
 	defer prog.Dispose()
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
@@ -970,7 +970,7 @@ func testCOFFFuncInfoMetadataLinksIntoDLL(t *testing.T) {
 
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
-	fn := src.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.GoDecl)
+	fn := src.NewFunc("example.com/p.live", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	fn.MakeBody(1).Return()
 	records := collectFuncInfo([]Package{{LPkg: src}})
 	emitFuncInfoEntrySites(ctx, src)
@@ -1038,7 +1038,7 @@ func testELFFuncInfoMetadataLinksIntoSharedLibrary(t *testing.T) {
 		t.Skip("ld.lld is required for the ELF shared-library regression test")
 	}
 
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
@@ -1053,7 +1053,7 @@ func testELFFuncInfoMetadataLinksIntoSharedLibrary(t *testing.T) {
 
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
-	fn := src.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.GoDecl)
+	fn := src.NewFunc("example.com/p.live", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	fn.MakeBody(1).Return()
 	records := collectFuncInfo([]Package{{LPkg: src}})
 	emitFuncInfoEntrySites(ctx, src)
@@ -1159,7 +1159,7 @@ func testELFFuncInfoMetadataLinksIntoSharedLibrary(t *testing.T) {
 // Empty encoded tables must materialize null initializers (the ~20-line
 // branch in emitFuncInfoTable that only fires for funcinfo-less programs).
 func TestFuncInfoTableEmptyEncodedInitializers(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	prog.EnableFuncInfoMetadata(true)
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	ctx := &context{
@@ -1197,13 +1197,13 @@ func TestExternalFuncInfoTableKeepsPayloadOutOfIR(t *testing.T) {
 		{name: "wasm", goos: "wasip1", goarch: "wasm", identitySect: "llgo_pclntab_id", entryBoundary: "__llgo_funcinfo_entry"},
 	} {
 		t.Run(target.name, func(t *testing.T) {
-			prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: target.goos, GOARCH: target.goarch})
 			prog.EnableFuncInfoMetadata(true)
 			prog.EnableFuncInfoSites(true)
 			src := prog.NewPackage("example.com/p", "example.com/p")
 			src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "external.go", 17, 3)
 			src.EmitPCLineInfo(0x1234, "example.com/p.live", "external.go", 19, 5)
-			fn := src.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.GoDecl)
+			fn := src.NewFunc("example.com/p.live", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			fn.MakeBody(1).Return()
 			ctx := &context{
 				prog: prog,
@@ -1257,7 +1257,7 @@ func TestExternalFuncInfoTableKeepsPayloadOutOfIR(t *testing.T) {
 // Targets without the frame-pointer attribute must declare the chain
 // broken so the runtime never attempts a physical walk there.
 func TestFuncInfoTableFPChainOff(t *testing.T) {
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "riscv32", Target: "esp32c3"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "riscv32", Target: "esp32c3"})
 	prog.EnableFuncInfoMetadata(true)
 	src := prog.NewPackage("example.com/p", "example.com/p")
 	ctx := &context{

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -14,7 +14,7 @@ func TestAMD64ZeroLengthMemberLowering(t *testing.T) {
 	llvm.InitializeAllTargetInfos()
 	for _, goos := range []string{"linux", "darwin"} {
 		t.Run(goos, func(t *testing.T) {
-			prog := llssa.NewProgram(&llssa.Target{GOOS: goos, GOARCH: "amd64"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: goos, GOARCH: "amd64"})
 			defer prog.Dispose()
 			ctx := llvm.NewContext()
 			defer ctx.Dispose()
@@ -100,7 +100,7 @@ func TestAMD64AlignedIntegerAggregate(t *testing.T) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	tr := NewTransformer(prog, "x86_64-unknown-linux-gnu", "", false)
 	ctx := llvm.NewContext()
@@ -125,7 +125,7 @@ func BenchmarkAMD64NestedArrayClassification(b *testing.B) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
@@ -145,7 +145,7 @@ func TestAMD64PackedAggregate(t *testing.T) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	tr := NewTransformer(prog, "x86_64-unknown-linux-gnu", "", false)
 	ctx := llvm.NewContext()

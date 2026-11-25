@@ -26,7 +26,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 // parseSyntaxCapturingStderr parses src through ParsePkgSyntax and returns the
@@ -39,7 +39,7 @@ func parseSyntaxCapturingStderr(t *testing.T, pkgPath, src string) (string, erro
 	if err != nil {
 		t.Fatalf("ParseFile failed: %v", err)
 	}
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	pkg := types.NewPackage(pkgPath, "p")
 
 	old := os.Stderr
@@ -139,7 +139,7 @@ func TestCdeclStdcallEquivalentToLegacyType(t *testing.T) {
 		tmpl   string
 		new    string
 		old    string
-		target *llssa.Target
+		target *llvmgen.Target
 	}{
 		{"cdecl", cdeclTmpl, "//llgo:cdecl", "//llgo:type C", nil},
 		// //llgo:cdecl on a struct type (the opaque-C-struct case) must be
@@ -147,7 +147,7 @@ func TestCdeclStdcallEquivalentToLegacyType(t *testing.T) {
 		{"cdecl struct", structTmpl, "//llgo:cdecl", "//llgo:type C", nil},
 		// stdcall only diverges from the C ABI on windows/386; use that target
 		// to exercise the dedicated x86 stdcall path.
-		{"stdcall", stdcallTmpl, "//llgo:stdcall", "//llgo:type stdcall", &llssa.Target{GOOS: "windows", GOARCH: "386"}},
+		{"stdcall", stdcallTmpl, "//llgo:stdcall", "//llgo:type stdcall", &llvmgen.Target{GOOS: "windows", GOARCH: "386"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -33,7 +33,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/env"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -466,7 +466,7 @@ func TestBuildPackageGroupReturnsCoordinatorBuildError(t *testing.T) {
 func TestBuildPackageGroupReturnsParallelBuildError(t *testing.T) {
 	t.Setenv(llgoBuildCache, "off")
 	fset, pkg := invalidEmbedPackage(t)
-	coordinator := llssa.NewProgram(&llssa.Target{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
+	coordinator := llvmgen.NewProgram(&llvmgen.Target{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
 	defer coordinator.Dispose()
 	ctx := &context{
 		conf: &packages.Config{Fset: fset},
@@ -515,7 +515,7 @@ func TestBuildAllPkgsReturnsPackageGroupErrors(t *testing.T) {
 }
 
 func TestExecuteIsolatedPackageReleasesProgramWithoutModule(t *testing.T) {
-	coordinator := llssa.NewProgram(&llssa.Target{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
+	coordinator := llvmgen.NewProgram(&llvmgen.Target{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
 	defer coordinator.Dispose()
 	ctx := &context{
 		prog: coordinator,
@@ -550,9 +550,9 @@ func TestExecuteIsolatedPackageReleasesProgramWithoutModule(t *testing.T) {
 }
 
 func TestSnapshotBackendPackageAndConsumers(t *testing.T) {
-	coordinator := llssa.NewProgram(nil)
+	coordinator := llvmgen.NewProgram(nil)
 	defer coordinator.Dispose()
-	isolated := llssa.NewProgram(nil)
+	isolated := llvmgen.NewProgram(nil)
 	disposed := false
 	defer func() {
 		if !disposed {
@@ -563,7 +563,7 @@ func TestSnapshotBackendPackageAndConsumers(t *testing.T) {
 	lpkg := isolated.NewPackage("p", "example.com/p")
 	lpkg.NeedAbiInit = 3
 	lpkg.SetExport("example.com/p.Export", "Export")
-	lpkg.NewFunc("example.com/p.Export", llssa.NoArgsNoRet, llssa.GoDecl)
+	lpkg.NewFunc("example.com/p.Export", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	lpkg.RecordReflectMethodByIndex("example.com/p.useIndex", 7)
 	lpkg.RecordReflectMethodByName("example.com/p.useName", "Method")
 	pkg := &aPackage{
@@ -584,7 +584,7 @@ func TestSnapshotBackendPackageAndConsumers(t *testing.T) {
 	}
 
 	snapshot.abiSymbols = map[string]none{"example.com/p.global": {}}
-	snapshot.abiTypes = []llssa.AbiTypeInfo{{Name: "example.com/p.Type", Raw: types.Typ[types.Int]}}
+	snapshot.abiTypes = []llvmgen.AbiTypeInfo{{Name: "example.com/p.Type", Raw: types.Typ[types.Int]}}
 	if !snapshot.hasLocalExports {
 		t.Fatal("snapshot lost the package C export")
 	}

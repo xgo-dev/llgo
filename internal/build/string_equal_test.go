@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestStringEqualWordUsesStackMemory(t *testing.T) {
@@ -14,7 +14,7 @@ func TestStringEqualWordUsesStackMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("LLGO_ROOT", root)
-	pkgs, err := Build(Invocation{Args: []string{llssa.PkgRuntime}, Config: NewDefaultConf(ModeGen)})
+	pkgs, err := Build(Invocation{Args: []string{llvmgen.PkgRuntime}, Config: NewDefaultConf(ModeGen)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestStringEqualWordUsesStackMemory(t *testing.T) {
 		t.Fatal("missing runtime package")
 	}
 	defer pkgs[0].LPkg.Prog.Dispose()
-	fn := pkgs[0].LPkg.Module().NamedFunction(llssa.PkgRuntime + ".loadStringWord64")
+	fn := pkgs[0].LPkg.Module().NamedFunction(llvmgen.PkgRuntime + ".loadStringWord64")
 	if fn.IsNil() || fn.FirstBasicBlock().IsNil() {
 		t.Fatal("missing string equality word reader")
 	}

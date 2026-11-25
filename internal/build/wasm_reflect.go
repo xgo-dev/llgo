@@ -21,7 +21,7 @@ import (
 	"slices"
 	"strings"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -207,7 +207,7 @@ func programUsesWasmReflectBridges(prog *ssa.Program, roots []*ssa.Function) boo
 	return analyzeWasmProgramUse(prog, roots).usesWasmReflectBridges(nil)
 }
 
-func (use *wasmProgramUse) usesWasmReflectBridges(prog llssa.Program) bool {
+func (use *wasmProgramUse) usesWasmReflectBridges(prog llvmgen.Program) bool {
 	if use == nil {
 		return false
 	}

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -55,7 +55,7 @@ func Saturate(x float64) int32 { return saturate(x) }
 var RotateValue = Rotate
 var OverflowValue = Overflow
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "linux", GOARCH: "arm64"},
 		{GOOS: "windows", GOARCH: "386"},
@@ -131,7 +131,7 @@ func next() uint8 { counter++; return counter }
 func Use() uint8 { return rotate(next(), 3) }
 `
 	ssapkg, _, files := buildGoSSAPkg(t, src)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	pkg, err := NewPackage(prog, ssapkg, files)
 	if err != nil {
@@ -183,7 +183,7 @@ func TestLLVMIntrinsicLinkErrors(t *testing.T) {
 			}
 			src := "package invalid\n//llgo:link f " + tc.target + "\n" + decl + "\n" + tc.use
 			ssapkg, _, files := buildGoSSAPkg(t, src)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			defer func() {
 				got := fmt.Sprint(recover())

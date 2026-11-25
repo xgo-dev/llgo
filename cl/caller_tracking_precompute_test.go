@@ -21,7 +21,7 @@ import (
 	"sync"
 	"testing"
 
-	gossa "golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa"
 )
 
 func TestCallerTrackingPrecomputeSupportsConcurrentReads(t *testing.T) {
@@ -48,7 +48,7 @@ func CrossLeaf() {}
 		t.Fatal("lazy analysis lost the subtree below a cross-package recovering defer")
 	}
 	tracking := NewCallerTracking()
-	tracking.Precompute([]*gossa.Package{dep, root})
+	tracking.Precompute([]*ssa.Package{dep, root})
 	if !runtimeCallerBaseSet(tracking, dep)[dep.Func("Where")] {
 		t.Fatal("precomputed base set lost runtime caller function")
 	}
@@ -105,7 +105,7 @@ import "example.com/dep"
 func Logs() { dep.Where() }
 func Plain() { dep.Quiet() }
 `)
-	pkgs := []*gossa.Package{root, dep}
+	pkgs := []*ssa.Package{root, dep}
 	lazy := NewCallerTracking()
 	for _, pkg := range pkgs {
 		runtimeCallerBaseSet(lazy, pkg)
@@ -136,22 +136,22 @@ func Logs() { dep.Where() }
 `)
 	tests := []struct {
 		name   string
-		lookup func(*CallerTracking, *gossa.Package)
+		lookup func(*CallerTracking, *ssa.Package)
 	}{
-		{name: "base", lookup: func(c *CallerTracking, pkg *gossa.Package) {
+		{name: "base", lookup: func(c *CallerTracking, pkg *ssa.Package) {
 			runtimeCallerBaseSet(c, pkg)
 		}},
-		{name: "extended", lookup: func(c *CallerTracking, pkg *gossa.Package) {
+		{name: "extended", lookup: func(c *CallerTracking, pkg *ssa.Package) {
 			runtimeCallerFuncSet(c, pkg)
 		}},
-		{name: "recover-panic-sites", lookup: func(c *CallerTracking, pkg *gossa.Package) {
+		{name: "recover-panic-sites", lookup: func(c *CallerTracking, pkg *ssa.Package) {
 			recoverPanicSiteFuncSet(c, pkg)
 		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			tracking := NewCallerTracking()
-			tracking.Precompute([]*gossa.Package{dep})
+			tracking.Precompute([]*ssa.Package{dep})
 			defer func() {
 				if recover() == nil {
 					t.Fatal("late caller-tracking lookup did not panic")

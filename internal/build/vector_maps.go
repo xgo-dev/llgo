@@ -6,12 +6,12 @@ import (
 	"go/token"
 	"go/types"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
 )
 
-func validateVectorMaps(prog llssa.Program, groups ...[]*packages.Package) error {
+func validateVectorMaps(prog llvmgen.Program, groups ...[]*packages.Package) error {
 	seen := make(map[*packages.Package]bool)
 	validate := prog.VectorMapValidator()
 	var firstErr error

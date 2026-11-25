@@ -9,10 +9,10 @@ import (
 	"sync"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
-	gossa "golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa"
 )
 
 func TestCrossPackageInlineBodies(t *testing.T) {
@@ -34,7 +34,7 @@ func Recursive(x uint64) uint64 { return dep.Recursive(x) }
 var Value = dep.Sum
 var KeptValue = dep.Kept
 `)
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "386"},
 		{GOOS: "linux", GOARCH: "arm64"},
@@ -44,7 +44,7 @@ var KeptValue = dep.Kept
 			prog := newLLSSAProgForTarget(t, &target)
 			defer prog.Dispose()
 			tracking := NewCallerTracking()
-			tracking.Precompute([]*gossa.Package{dep, root})
+			tracking.Precompute([]*ssa.Package{dep, root})
 			owner, _, err := NewPackageExWithEmbed(prog, tracking, nil, nil, dep, nil, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -144,7 +144,7 @@ func Function(x int64) int64 { return dep.Add(x) }
 func Method(x dep.T) int64 { return x.Add() }
 func Kept(x dep.T) int64 { return x.Kept() }
 `)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	options := Options{DisableInlineBodyImports: true}
 	pkg, _, err := NewPackageExWithEmbedMetaOptions(prog, nil, nil, nil, root, nil, nil, false, options)
@@ -179,7 +179,7 @@ func Kept(x dep.T) int64 { return x.Kept() }
 	}
 }
 
-func runModulePasses(t *testing.T, prog llssa.Program, mod llvm.Module, passes string) {
+func runModulePasses(t *testing.T, prog llvmgen.Program, mod llvm.Module, passes string) {
 	t.Helper()
 	mod.SetDataLayout(prog.DataLayout())
 	mod.SetTarget(prog.Target().Spec().Triple)
@@ -200,7 +200,7 @@ func Sum(x, y uint64) uint64 { return dep.Sum(x, y) }
 `)
 	for _, level := range []optlevel.Level{optlevel.O0, optlevel.O2, optlevel.Os} {
 		t.Run(level.String(), func(t *testing.T) {
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64", OptLevel: level})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64", OptLevel: level})
 			defer prog.Dispose()
 			pkg, _, err := NewPackageExWithEmbed(prog, NewCallerTracking(), nil, nil, root, nil, nil)
 			if err != nil {
@@ -277,7 +277,7 @@ func Size(s string)int{return dep.Size(s)}
 	if newInlineFacts().cost(dep.Func("Apply")) > inlineBodyBudget {
 		t.Fatal("single indirect call exceeds body budget")
 	}
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	pkg, err := NewPackage(prog, root, nil)
 	if err != nil {
@@ -304,7 +304,7 @@ func TestCrossPackageInlineCostIndependentOfQueryOrder(t *testing.T) {
 	}
 	src += fmt.Sprintf("func F%d(x int)int{return x}\n", count-1)
 	pkg, _, _ := buildGoSSAPkg(t, src)
-	functions := make([]*gossa.Function, count)
+	functions := make([]*ssa.Function, count)
 	want := make([]inlineCost, count)
 	for i := range functions {
 		functions[i] = pkg.Func(fmt.Sprintf("F%d", i))
@@ -353,14 +353,14 @@ func TestCrossPackageInlineCostIndependentOfQueryOrder(t *testing.T) {
 func TestCrossPackageInlineRejectsUnownedGlobal(t *testing.T) {
 	dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", "package dep\nvar State int\nfunc F()int{return State}\n",
 		"example.com/root", "package root\nimport \"example.com/dep\"\nfunc Use()int{return dep.F()}\n")
-	global := dep.Members["State"].(*gossa.Global)
+	global := dep.Members["State"].(*ssa.Global)
 	owner := global.Pkg
 	defer func() { global.Pkg = owner }()
 	missingTypes := *owner
 	missingTypes.Pkg = nil
-	for _, invalid := range []*gossa.Package{nil, &missingTypes} {
+	for _, invalid := range []*ssa.Package{nil, &missingTypes} {
 		global.Pkg = invalid
-		prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+		prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 		defer prog.Dispose()
 		pkg := prog.NewPackage("root", "example.com/root")
 		defer pkg.Module().Dispose()
@@ -388,7 +388,7 @@ func TestCrossPackageInlinePatchGuards(t *testing.T) {
 			}
 			alt, _, _ := buildGoSSAPkg(t, "package dep\nfunc F("+params+")int{return x+2}\n")
 			alt.Pkg = dep.Pkg
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			pkg := prog.NewPackage("root", "example.com/root")
 			defer pkg.Module().Dispose()
@@ -421,7 +421,7 @@ func TestCrossPackageInlinePreservesExistingDefinition(t *testing.T) {
 		"example.com/root", "package root\nimport \"example.com/dep\"\nfunc Use(x int)int{return dep.F(x)}\n")
 	for _, late := range []bool{false, true} {
 		t.Run(fmt.Sprint(late), func(t *testing.T) {
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			pkg := prog.NewPackage("root", "example.com/root")
 			defer pkg.Module().Dispose()
@@ -430,7 +430,7 @@ func TestCrossPackageInlinePreservesExistingDefinition(t *testing.T) {
 			if late {
 				ctx.importInlineBody(dep.Func("F"))
 			}
-			entry := pkg.NewFunc("example.com/dep.F", dep.Func("F").Signature, llssa.GoDecl)
+			entry := pkg.NewFunc("example.com/dep.F", dep.Func("F").Signature, llvmgen.GoDecl)
 			b := entry.MakeBody(1)
 			b.Return(entry.Param(0))
 			b.EndBuild()
@@ -457,7 +457,7 @@ func TestCrossPackageInlineDisabledAndDepth(t *testing.T) {
 	dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", src,
 		"example.com/root", "package root\nimport \"example.com/dep\"\nfunc Use(x int) int {return dep.F0(x)}\n")
 	tracking := NewCallerTracking()
-	tracking.Precompute([]*gossa.Package{dep, root})
+	tracking.Precompute([]*ssa.Package{dep, root})
 	// Prewarm an accepted result; disabling inlining must still prevent import.
 	tracking.inlines.cost(dep.Func("F0"))
 	for _, disabled := range []bool{false, true} {
@@ -465,7 +465,7 @@ func TestCrossPackageInlineDisabledAndDepth(t *testing.T) {
 			old := disableInline
 			disableInline = disabled
 			defer func() { disableInline = old }()
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			pkg, _, err := NewPackageExWithEmbed(prog, tracking, nil, nil, root, nil, nil)
 			if err != nil {
@@ -513,7 +513,7 @@ func TestCrossPackageInlineModuleBudget(t *testing.T) {
 			}
 			rootSrc += "}\n"
 			dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", depSrc, "example.com/root", rootSrc)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			pkg, err := NewPackage(prog, root, nil)
 			if err != nil {

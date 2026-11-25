@@ -8,7 +8,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/debugabi"
 	"github.com/xgo-dev/llgo/internal/debuginfo"
-	ssaabi "github.com/xgo-dev/llgo/internal/llvmgen/abi"
+	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -520,7 +520,7 @@ func (b diBuilder) createMapType(name string, ty Type, mapType *types.Map) DITyp
 
 func (b diBuilder) createMapBucketType(mapType *types.Map, key, elem Type,
 	pos token.Position) DIType {
-	bucketStorage := b.prog.rawType(ssaabi.MapBucketType(mapType, b.prog.sizes))
+	bucketStorage := b.prog.rawType(abi.MapBucketType(mapType, b.prog.sizes))
 	bucketStruct := bucketStorage.RawType().Underlying().(*types.Struct)
 	name := fmt.Sprintf("bucket<%s,%s>", diTypeName(key.RawType()), diTypeName(elem.RawType()))
 	bucket := b.createSyntheticStructPlaceholder(name, bucketStorage, pos)
@@ -535,12 +535,12 @@ func (b diBuilder) createMapBucketType(mapType *types.Map, key, elem Type,
 		case "topbits":
 			fieldName = "tophash"
 		case "keys":
-			if b.prog.SizeOf(key) > ssaabi.MAXKEYSIZE {
+			if b.prog.SizeOf(key) > abi.MAXKEYSIZE {
 				fieldName = "indirectkeys"
 			}
 		case "elems":
 			fieldName = "values"
-			if b.prog.SizeOf(elem) > ssaabi.MAXELEMSIZE {
+			if b.prog.SizeOf(elem) > abi.MAXELEMSIZE {
 				fieldName = "indirectvalues"
 			}
 		case "overflow":
@@ -836,7 +836,7 @@ func (b diBuilder) dbgValue(v Expr, dv DIVar, scope DIScope, pos token.Position,
 
 // Match runtime metadata, including main packages and source overlays.
 func diTypeName(t types.Type) string {
-	return types.TypeString(t, ssaabi.PathOf)
+	return types.TypeString(t, abi.PathOf)
 }
 
 func (b diBuilder) diType(t Type, pos token.Position) DIType {

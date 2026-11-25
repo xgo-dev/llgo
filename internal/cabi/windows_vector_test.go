@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -43,7 +43,7 @@ define <4 x float> @forward(<4 x float> %x, ptr %indirect) {
 				t.Fatal(err)
 			}
 			defer mod.Dispose()
-			prog := ssa.NewProgram(&ssa.Target{GOOS: goos, GOARCH: "amd64"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: goos, GOARCH: "amd64"})
 			defer prog.Dispose()
 			tr := NewTransformer(prog, "", "", true)
 			tr.lowerWindowsVectorParams(mod)

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"github.com/xgo-dev/llvm"
 )
@@ -65,7 +65,7 @@ func TestWasmNoScanStringsShareAcrossPackages(t *testing.T) {
 	if err != nil {
 		t.Skip("wasm-ld unavailable")
 	}
-	prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "js", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-unknown"})
+	prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "js", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-unknown"})
 	defer prog.Dispose()
 	prog.EnableGCRoots(true)
 	const text = "shared-no-scan-string-across-packages"

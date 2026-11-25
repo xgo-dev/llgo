@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -30,87 +30,87 @@ type Uint64x4 struct { tag v256; vals [4]uint64 }
 `
 	for _, tc := range []struct {
 		receiver, method string
-		want             llssa.SIMDOp
+		want             llvmgen.SIMDOp
 	}{
-		{"Float32x8", "ConvertToInt32() Int32x8", llssa.SIMDConvert},
-		{"Int64x4", "ConvertToFloat64() Float64x4", llssa.SIMDConvert},
-		{"Uint32x8", "ConvertToInt32() Int32x8", llssa.SIMDConvert},
-		{"Float64x4", "ConvertToFloat32() Float32x4", llssa.SIMDConvert},
-		{"Float64x4", "ConvertToFloat32() Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x4", "ConvertToFloat64() Float64x4", llssa.SIMDConvert},
-		{"Uint64x4", "carrylessMultiply(uint8, Uint64x4) Uint64x4", llssa.SIMDCarrylessMultiply},
-		{"Uint32x8", "carrylessMultiply(uint8, Uint32x8) Uint32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "MulAdd(Float32x8, Float32x8) Float32x8", llssa.SIMDFMA},
-		{"Int32x8", "MulAdd(Int32x8, Int32x8) Int32x8", llssa.SIMDUnimplemented},
-		{"Float32x4", "ConcatAddPairs(Float32x4) Float32x4", llssa.SIMDConcatAddPairs},
-		{"Float32x4", "ConcatSubPairs(Float32x4) Float32x4", llssa.SIMDConcatSubPairs},
-		{"Float32x8", "ConcatAddPairsGrouped(Float32x8) Float32x8", llssa.SIMDConcatAddPairsGrouped},
-		{"Float32x8", "ConcatSubPairsGrouped(Float32x8) Float32x8", llssa.SIMDConcatSubPairsGrouped},
-		{"Float32x4", "ConcatAddPairsGrouped(Float32x4) Float32x4", llssa.SIMDUnimplemented},
-		{"Float32x4", "ConcatSubPairsGrouped(Float32x4) Float32x4", llssa.SIMDUnimplemented},
-		{"Float32x8", "ConcatAddPairs(Float32x8) Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "ConcatSubPairs(Float32x8) Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "ConcatAddPairsGrouped(Float32x4) Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "ConcatSubPairsGrouped(Float32x4) Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "ConcatAddPairsGrouped(Float32x8) Int32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "ConcatSubPairsGrouped(Float32x8) Int32x8", llssa.SIMDUnimplemented},
-		{"Int32x4", "InterleaveLo(Int32x4) Int32x4", llssa.SIMDInterleaveLo},
-		{"Int32x4", "InterleaveHi(Int32x4) Int32x4", llssa.SIMDInterleaveHi},
-		{"Int32x8", "InterleaveLoGrouped(Int32x8) Int32x8", llssa.SIMDInterleaveLoGrouped},
-		{"Int32x8", "InterleaveHiGrouped(Int32x8) Int32x8", llssa.SIMDInterleaveHiGrouped},
-		{"Int32x4", "ConcatEven(Int32x4) Int32x4", llssa.SIMDConcatEven},
-		{"Int32x4", "ConcatOdd(Int32x4) Int32x4", llssa.SIMDConcatOdd},
-		{"Int32x4", "InterleaveEven(Int32x4) Int32x4", llssa.SIMDInterleaveEven},
-		{"Int32x4", "InterleaveOdd(Int32x4) Int32x4", llssa.SIMDInterleaveOdd},
-		{"Int32x8", "InterleaveLo(Int32x8) Int32x8", llssa.SIMDUnimplemented},
-		{"Int32x8", "InterleaveHi(Int32x8) Int32x8", llssa.SIMDUnimplemented},
-		{"Int32x8", "ConcatEven(Int32x8) Int32x8", llssa.SIMDUnimplemented},
-		{"Int32x8", "ConcatOdd(Int32x8) Int32x8", llssa.SIMDUnimplemented},
-		{"Int32x8", "InterleaveEven(Int32x8) Int32x8", llssa.SIMDUnimplemented},
-		{"Int32x8", "InterleaveOdd(Int32x8) Int32x8", llssa.SIMDUnimplemented},
-		{"Int32x4", "InterleaveLoGrouped(Int32x4) Int32x4", llssa.SIMDUnimplemented},
-		{"Int32x4", "InterleaveHiGrouped(Int32x4) Int32x4", llssa.SIMDUnimplemented},
-		{"Int32x8", "InterleaveHiGrouped(Int32x4) Int32x8", llssa.SIMDUnimplemented},
-		{"Int32x8", "InterleaveHiGrouped(Int32x8) Uint32x8", llssa.SIMDUnimplemented},
-		{"Float32x4", "InterleaveLo(Float32x4) Float32x4", llssa.SIMDUnimplemented},
-		{"Float32x8", "Ceil() Float32x8", llssa.SIMDCeil},
+		{"Float32x8", "ConvertToInt32() Int32x8", llvmgen.SIMDConvert},
+		{"Int64x4", "ConvertToFloat64() Float64x4", llvmgen.SIMDConvert},
+		{"Uint32x8", "ConvertToInt32() Int32x8", llvmgen.SIMDConvert},
+		{"Float64x4", "ConvertToFloat32() Float32x4", llvmgen.SIMDConvert},
+		{"Float64x4", "ConvertToFloat32() Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "ConvertToFloat64() Float64x4", llvmgen.SIMDConvert},
+		{"Uint64x4", "carrylessMultiply(uint8, Uint64x4) Uint64x4", llvmgen.SIMDCarrylessMultiply},
+		{"Uint32x8", "carrylessMultiply(uint8, Uint32x8) Uint32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "MulAdd(Float32x8, Float32x8) Float32x8", llvmgen.SIMDFMA},
+		{"Int32x8", "MulAdd(Int32x8, Int32x8) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "ConcatAddPairs(Float32x4) Float32x4", llvmgen.SIMDConcatAddPairs},
+		{"Float32x4", "ConcatSubPairs(Float32x4) Float32x4", llvmgen.SIMDConcatSubPairs},
+		{"Float32x8", "ConcatAddPairsGrouped(Float32x8) Float32x8", llvmgen.SIMDConcatAddPairsGrouped},
+		{"Float32x8", "ConcatSubPairsGrouped(Float32x8) Float32x8", llvmgen.SIMDConcatSubPairsGrouped},
+		{"Float32x4", "ConcatAddPairsGrouped(Float32x4) Float32x4", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "ConcatSubPairsGrouped(Float32x4) Float32x4", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "ConcatAddPairs(Float32x8) Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "ConcatSubPairs(Float32x8) Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "ConcatAddPairsGrouped(Float32x4) Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "ConcatSubPairsGrouped(Float32x4) Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "ConcatAddPairsGrouped(Float32x8) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "ConcatSubPairsGrouped(Float32x8) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "InterleaveLo(Int32x4) Int32x4", llvmgen.SIMDInterleaveLo},
+		{"Int32x4", "InterleaveHi(Int32x4) Int32x4", llvmgen.SIMDInterleaveHi},
+		{"Int32x8", "InterleaveLoGrouped(Int32x8) Int32x8", llvmgen.SIMDInterleaveLoGrouped},
+		{"Int32x8", "InterleaveHiGrouped(Int32x8) Int32x8", llvmgen.SIMDInterleaveHiGrouped},
+		{"Int32x4", "ConcatEven(Int32x4) Int32x4", llvmgen.SIMDConcatEven},
+		{"Int32x4", "ConcatOdd(Int32x4) Int32x4", llvmgen.SIMDConcatOdd},
+		{"Int32x4", "InterleaveEven(Int32x4) Int32x4", llvmgen.SIMDInterleaveEven},
+		{"Int32x4", "InterleaveOdd(Int32x4) Int32x4", llvmgen.SIMDInterleaveOdd},
+		{"Int32x8", "InterleaveLo(Int32x8) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Int32x8", "InterleaveHi(Int32x8) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Int32x8", "ConcatEven(Int32x8) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Int32x8", "ConcatOdd(Int32x8) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Int32x8", "InterleaveEven(Int32x8) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Int32x8", "InterleaveOdd(Int32x8) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "InterleaveLoGrouped(Int32x4) Int32x4", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "InterleaveHiGrouped(Int32x4) Int32x4", llvmgen.SIMDUnimplemented},
+		{"Int32x8", "InterleaveHiGrouped(Int32x4) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Int32x8", "InterleaveHiGrouped(Int32x8) Uint32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "InterleaveLo(Float32x4) Float32x4", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "Ceil() Float32x8", llvmgen.SIMDCeil},
 
 		// Broadcasting may widen, but must preserve the element type and
 		// match the lane count encoded in the declaration name.
-		{"Float32x4", "broadcast1To8() Float32x8", llssa.SIMDSplatLane0},
-		{"Float32x8", "broadcast1To8() Float32x8", llssa.SIMDSplatLane0},
-		{"Float32x4", "broadcast1To4() Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x4", "broadcast1To8()", llssa.SIMDUnimplemented},
-		{"Float32x4", "broadcast1To8() (Float32x8, int)", llssa.SIMDUnimplemented},
-		{"Float32x4", "broadcast1To8() float32", llssa.SIMDUnimplemented},
-		{"Float32x4", "broadcast1To8() Int32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "broadcast1To4() Float32x4", llssa.SIMDUnimplemented},
-		{"Float32x4", "broadcast1To8(int) Float32x8", llssa.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8() Float32x8", llvmgen.SIMDSplatLane0},
+		{"Float32x8", "broadcast1To8() Float32x8", llvmgen.SIMDSplatLane0},
+		{"Float32x4", "broadcast1To4() Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8()", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8() (Float32x8, int)", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8() float32", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8() Int32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "broadcast1To4() Float32x4", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "broadcast1To8(int) Float32x8", llvmgen.SIMDUnimplemented},
 
 		// Half operations connect a 256-bit vector to a 128-bit vector
 		// of the same element type, with distinct getter/setter signatures.
-		{"Float32x8", "GetLo() Float32x4", llssa.SIMDGetLo},
-		{"Float32x8", "GetHi() Float32x4", llssa.SIMDGetHi},
-		{"Float32x8", "SetLo(Float32x4) Float32x8", llssa.SIMDSetLo},
-		{"Float32x8", "SetHi(Float32x4) Float32x8", llssa.SIMDSetHi},
-		{"Float32x4", "GetLo() Float32x4", llssa.SIMDUnimplemented},
-		{"Float32x8", "GetLo()", llssa.SIMDUnimplemented},
-		{"Float32x8", "GetHi() (Float32x4, int)", llssa.SIMDUnimplemented},
-		{"Float32x8", "GetLo() float32", llssa.SIMDUnimplemented},
-		{"Float32x8", "GetLo() Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "GetHi() Int32x4", llssa.SIMDUnimplemented},
-		{"Float32x8", "GetHi(int) Float32x4", llssa.SIMDUnimplemented},
-		{"Float32x8", "SetLo() Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "SetHi(Float32x4, Float32x4) Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "SetLo(float32) Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "SetLo(Float32x8) Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "SetHi(Int32x4) Float32x8", llssa.SIMDUnimplemented},
-		{"Float32x8", "SetHi(Float32x4) Float32x4", llssa.SIMDUnimplemented},
+		{"Float32x8", "GetLo() Float32x4", llvmgen.SIMDGetLo},
+		{"Float32x8", "GetHi() Float32x4", llvmgen.SIMDGetHi},
+		{"Float32x8", "SetLo(Float32x4) Float32x8", llvmgen.SIMDSetLo},
+		{"Float32x8", "SetHi(Float32x4) Float32x8", llvmgen.SIMDSetHi},
+		{"Float32x4", "GetLo() Float32x4", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "GetLo()", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "GetHi() (Float32x4, int)", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "GetLo() float32", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "GetLo() Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "GetHi() Int32x4", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "GetHi(int) Float32x4", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "SetLo() Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "SetHi(Float32x4, Float32x4) Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "SetLo(float32) Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "SetLo(Float32x8) Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "SetHi(Int32x4) Float32x8", llvmgen.SIMDUnimplemented},
+		{"Float32x8", "SetHi(Float32x4) Float32x4", llvmgen.SIMDUnimplemented},
 
 		// Bit reinterpretation preserves total width in either direction.
-		{"Float32x8", "BitsToInt32() Int32x8", llssa.SIMDBitcast},
-		{"Float32x8", "BitsToInt32() Int32x4", llssa.SIMDUnimplemented},
-		{"Float32x4", "BitsToInt32() Int32x8", llssa.SIMDUnimplemented},
+		{"Float32x8", "BitsToInt32() Int32x8", llvmgen.SIMDBitcast},
+		{"Float32x8", "BitsToInt32() Int32x4", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "BitsToInt32() Int32x8", llvmgen.SIMDUnimplemented},
 	} {
 		t.Run(tc.receiver+"."+tc.method, func(t *testing.T) {
 			fs := token.NewFileSet()
@@ -126,7 +126,7 @@ type Uint64x4 struct { tag v256; vals [4]uint64 }
 			prog.CreatePackage(pkg, nil, nil, true)
 			method := pkg.Scope().Lookup(tc.receiver).Type().(*types.Named).Method(0)
 			op, ok := lookupSIMD(prog.FuncValue(method), "amd64")
-			wantOK := tc.want != llssa.SIMDUnimplemented
+			wantOK := tc.want != llvmgen.SIMDUnimplemented
 			if ok != wantOK || ok && op.op != tc.want {
 				t.Fatalf("operation = %v (%v), want %v", op.op, ok, tc.want)
 			}
@@ -158,7 +158,7 @@ func TestSIMD256BasicClosure(t *testing.T) {
 		}
 		sig := fn.Signature
 		if sig.Recv() != nil {
-			if _, ok := llssa.SIMDVectorShape(sig.Recv().Type()); !ok {
+			if _, ok := llvmgen.SIMDVectorShape(sig.Recv().Type()); !ok {
 				continue // In particular, 512->256 extraction is a later stage.
 			}
 		}
@@ -186,7 +186,7 @@ func TestSIMD256BasicClosure(t *testing.T) {
 		if fn.Pkg != nil && !strings.HasPrefix(fn.Pkg.Pkg.Path(), "simd/") {
 			continue
 		}
-		if op, ok := lookupSIMD(fn, "amd64"); ok && op.op == llssa.SIMDUnimplemented {
+		if op, ok := lookupSIMD(fn, "amd64"); ok && op.op == llvmgen.SIMDUnimplemented {
 			t.Errorf("basic API reaches unsupported intrinsic: %s", fn)
 		}
 		for _, bb := range fn.Blocks {

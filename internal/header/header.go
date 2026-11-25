@@ -25,19 +25,19 @@ import (
 	"sort"
 	"strings"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 // cheaderWriter handles C header generation with type definition management
 type cheaderWriter struct {
-	p             ssa.Program
+	p             llvmgen.Program
 	typeBuf       *bytes.Buffer   // buffer for type definitions
 	funcBuf       *bytes.Buffer   // buffer for function declarations
 	declaredTypes map[string]bool // track declared types to avoid duplicates
 }
 
 // newCHeaderWriter creates a new C header writer
-func newCHeaderWriter(p ssa.Program) *cheaderWriter {
+func newCHeaderWriter(p llvmgen.Program) *cheaderWriter {
 	return &cheaderWriter{
 		p:             p,
 		typeBuf:       &bytes.Buffer{},
@@ -113,7 +113,7 @@ func (hw *cheaderWriter) processDependentTypes(t types.Type, visiting map[string
 		// For named types, handle the underlying type dependencies
 		underlying := typ.Underlying()
 		if structType, ok := underlying.(*types.Struct); ok {
-			if ssa.IsClosure(structType) {
+			if llvmgen.IsClosure(structType) {
 				return fmt.Errorf("closure type %s can't export to C header", typ.Obj().Name())
 			}
 			// For named struct types, handle field dependencies directly
@@ -220,7 +220,7 @@ retry:
 	case *types.Interface:
 		return "GoInterface"
 	case *types.Struct:
-		if ssa.IsClosure(typ) {
+		if llvmgen.IsClosure(typ) {
 			panic("closure type can't export to C header")
 		}
 		// For anonymous structs, generate a descriptive name
@@ -519,7 +519,7 @@ func (hw *cheaderWriter) typeReferencesSelf(t types.Type, selfTypeName string) b
 // writeFunctionDecl writes C function declaration for exported Go function
 // fullName: the C function name to display in header
 // linkName: the actual Go function name for linking
-func (hw *cheaderWriter) writeFunctionDecl(fullName, linkName string, fn ssa.Function) error {
+func (hw *cheaderWriter) writeFunctionDecl(fullName, linkName string, fn llvmgen.Function) error {
 	if fn.IsNil() {
 		return nil
 	}
@@ -634,7 +634,7 @@ func (hw *cheaderWriter) writeTo(w io.Writer) error {
 	return nil
 }
 
-func genHeader(p ssa.Program, pkgs []ssa.Package, w io.Writer) error {
+func genHeader(p llvmgen.Program, pkgs []llvmgen.Package, w io.Writer) error {
 	hw := newCHeaderWriter(p)
 
 	// Write common header includes and type definitions
@@ -725,7 +725,7 @@ func exportBelongsToPackage(pkgPath, name string) bool {
 	return strings.HasPrefix(name, pkgPath+".")
 }
 
-func GenHeaderFile(p ssa.Program, pkgs []ssa.Package, libName, headerPath string, verbose bool) error {
+func GenHeaderFile(p llvmgen.Program, pkgs []llvmgen.Package, libName, headerPath string, verbose bool) error {
 	// Write header file
 	w, err := os.Create(headerPath)
 	if err != nil {

@@ -11,25 +11,25 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"golang.org/x/tools/go/ssa"
 )
 
-func compileLocalitySource(t *testing.T, src string) (llssa.Program, string) {
+func compileLocalitySource(t *testing.T, src string) (llvmgen.Program, string) {
 	return compileLocalitySourceWithOptions(t, src, Options{})
 }
 
-func compileLocalitySourceWithOptions(t *testing.T, src string, options Options) (llssa.Program, string) {
+func compileLocalitySourceWithOptions(t *testing.T, src string, options Options) (llvmgen.Program, string) {
 	return compileLocalitySourceMode(t, src, options, false)
 }
 
-func compileLogicalGLSSource(t *testing.T, src string) (llssa.Program, string) {
+func compileLogicalGLSSource(t *testing.T, src string) (llvmgen.Program, string) {
 	return compileLocalitySourceMode(t, src, Options{}, true)
 }
 
-func compileLocalitySourceMode(t *testing.T, src string, options Options, logicalGLS bool) (llssa.Program, string) {
+func compileLocalitySourceMode(t *testing.T, src string, options Options, logicalGLS bool) (llvmgen.Program, string) {
 	t.Helper()
 	options.AllowInternalDirectives = true
 	fset := token.NewFileSet()
@@ -66,7 +66,7 @@ func compileLocalitySourceMode(t *testing.T, src string, options Options, logica
 	return prog, compiled.String()
 }
 
-func newLocalityTestPackage(prog llssa.Program, pkg *ssa.Package, files []*ast.File) (llssa.Package, error) {
+func newLocalityTestPackage(prog llvmgen.Program, pkg *ssa.Package, files []*ast.File) (llvmgen.Package, error) {
 	compiled, _, err := NewPackageExWithEmbedMetaOptions(
 		prog, nil, nil, nil, pkg, files, nil, false,
 		Options{AllowInternalDirectives: true},
@@ -87,7 +87,7 @@ func newLocalityTypeInfo() *types.Info {
 }
 
 func localityRuntimePackage() *types.Package {
-	pkg := types.NewPackage(llssa.PkgRuntime, "runtime")
+	pkg := types.NewPackage(llvmgen.PkgRuntime, "runtime")
 	unsafePointer := types.Typ[types.UnsafePointer]
 	blocks := types.NewField(token.NoPos, pkg, "blocks", unsafePointer, false)
 	localContextName := types.NewTypeName(token.NoPos, pkg, "LocalContext", nil)
@@ -150,7 +150,7 @@ func value() *int { return pointer }
 	}
 	accessor := llvmFunction(t, ir, "example.com/locality.__llgo_local_block")
 	cacheLoad := `load i64, ptr @"example.com/locality.__llgo_local_cache"`
-	slow := `call ptr @"` + llssa.PkgRuntime + `.LocalPackage"(ptr @"example.com/locality.__llgo_local_cache"`
+	slow := `call ptr @"` + llvmgen.PkgRuntime + `.LocalPackage"(ptr @"example.com/locality.__llgo_local_cache"`
 	if loadAt, slowAt := strings.Index(accessor, cacheLoad), strings.Index(accessor, slow); loadAt < 0 || slowAt < 0 || loadAt >= slowAt {
 		t.Fatalf("accessor does not load its direct cache before the cold path:\n%s", accessor)
 	}
@@ -204,13 +204,13 @@ func values() (int, *int, int, *int) {
 `)
 
 	checks := map[string]struct {
-		kind    llssa.Locality
-		storage llssa.LocalStorage
+		kind    llvmgen.Locality
+		storage llvmgen.LocalStorage
 	}{
-		"tlsScalar":  {llssa.ThreadLocal, llssa.LocalStorageNativeTLS},
-		"tlsPointer": {llssa.ThreadLocal, llssa.LocalStoragePackage},
-		"glsScalar":  {llssa.GoroutineLocal, llssa.LocalStorageNativeTLS},
-		"glsPointer": {llssa.GoroutineLocal, llssa.LocalStoragePackage},
+		"tlsScalar":  {llvmgen.ThreadLocal, llvmgen.LocalStorageNativeTLS},
+		"tlsPointer": {llvmgen.ThreadLocal, llvmgen.LocalStoragePackage},
+		"glsScalar":  {llvmgen.GoroutineLocal, llvmgen.LocalStorageNativeTLS},
+		"glsPointer": {llvmgen.GoroutineLocal, llvmgen.LocalStoragePackage},
 	}
 	for name, want := range checks {
 		got, ok := prog.VariableLocality("example.com/locality." + name)
@@ -284,7 +284,7 @@ func values() (int, *int, int, *int) {
 	}
 	glsAccessor := llvmFunction(t, ir, "example.com/locality.__llgo_gls_block")
 	if !strings.Contains(glsAccessor, `GoroutineLocalPackage`) ||
-		strings.Contains(glsAccessor, llssa.PkgRuntime+`.LocalPackage"(`) {
+		strings.Contains(glsAccessor, llvmgen.PkgRuntime+`.LocalPackage"(`) {
 		t.Fatalf("logical GLS accessor uses the physical locality cache:\n%s", glsAccessor)
 	}
 	glsEnsure := llvmFunction(t, ir, "example.com/locality.__llgo_gls_init$ensure")
@@ -575,7 +575,7 @@ var alias = 1
 	if err != nil {
 		t.Fatal(err)
 	}
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, files, Options{AllowInternalDirectives: true}); err == nil || !strings.Contains(err.Error(), "cannot apply to a //go:linkname variable") {
 		t.Fatalf("ParsePkgSyntax error = %v", err)
 	}
@@ -584,12 +584,12 @@ var alias = 1
 func TestValidateLocalInitializers(t *testing.T) {
 	pkg := types.NewPackage("example.com/locality", "locality")
 	prog := ssatest.NewProgram(t, nil)
-	name := llssa.FullName(pkg, "value")
-	prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.ThreadLocal, HasInitializer: true})
+	name := llvmgen.FullName(pkg, "value")
+	prog.SetLocalityInfo(name, llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal, HasInitializer: true})
 	if err := validateLocalInitializers(prog, pkg); err == nil || !strings.Contains(err.Error(), "inconsistent initializer metadata") {
 		t.Fatalf("validateLocalInitializers error = %v", err)
 	}
-	prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.ThreadLocal, HasInitializer: true, InitFunc: "example.com/locality.init", InitOrder: 1})
+	prog.SetLocalityInfo(name, llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal, HasInitializer: true, InitFunc: "example.com/locality.init", InitOrder: 1})
 	if err := validateLocalInitializers(prog, pkg); err != nil {
 		t.Fatal(err)
 	}
@@ -604,15 +604,15 @@ func TestConcretePackageLocalityMetadata(t *testing.T) {
 
 	prog := ssatest.NewProgram(t, nil)
 	name := "runtime.state"
-	prog.DeclareLocality(std, "state", llssa.LocalityInfo{
-		Locality:       llssa.ThreadLocal,
+	prog.DeclareLocality(std, "state", llvmgen.LocalityInfo{
+		Locality:       llvmgen.ThreadLocal,
 		HasInitializer: true,
 	})
-	prog.DeclareLocality(alt, "state", llssa.LocalityInfo{
-		Locality: llssa.GoroutineLocal,
+	prog.DeclareLocality(alt, "state", llvmgen.LocalityInfo{
+		Locality: llvmgen.GoroutineLocal,
 	})
-	prog.SetLocalStorageFor(std, name, llssa.LocalStorageNativeTLS)
-	prog.SetLocalStorageFor(alt, name, llssa.LocalStoragePackage)
+	prog.SetLocalStorageFor(std, name, llvmgen.LocalStorageNativeTLS)
+	prog.SetLocalStorageFor(alt, name, llvmgen.LocalStoragePackage)
 
 	if err := validateLocalInitializers(prog, std); err == nil || !strings.Contains(err.Error(), "inconsistent initializer metadata") {
 		t.Fatalf("standard validation error = %v", err)
@@ -625,7 +625,7 @@ func TestConcretePackageLocalityMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, ok := plan.Lookup(name)
-	if !ok || state.Info.Locality != llssa.GoroutineLocal {
+	if !ok || state.Info.Locality != llvmgen.GoroutineLocal {
 		t.Fatalf("alternate plan state = %+v, %v", state, ok)
 	}
 }
@@ -716,8 +716,8 @@ var value int
 	ssaPkg.Build()
 
 	prog := ssatest.NewProgram(t, nil)
-	name := llssa.FullName(pkg, "value")
-	prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.ThreadLocal})
+	name := llvmgen.FullName(pkg, "value")
+	prog.SetLocalityInfo(name, llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
 	prog.SetLinkname(name, name+"Alias")
 	if _, err := newLocalityTestPackage(prog, ssaPkg, files); err == nil || !strings.Contains(err.Error(), "cannot use go:linkname") {
 		t.Fatalf("NewPackage locality validation error = %v", err)
@@ -759,7 +759,7 @@ func TestPrepareLocalVariablesEarlyReturns(t *testing.T) {
 	}
 	value := types.NewVar(token.NoPos, pkg, "value", types.Typ[types.Int])
 	pkg.Scope().Insert(value)
-	prog.SetLocalityInfo(llssa.FullName(pkg, value.Name()), llssa.LocalityInfo{Locality: llssa.ThreadLocal, HasInitializer: true})
+	prog.SetLocalityInfo(llvmgen.FullName(pkg, value.Name()), llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal, HasInitializer: true})
 	info.InitOrder = []*types.Initializer{{Lhs: []*types.Var{value}, Rhs: ast.NewIdent("rhs")}}
 	if err := PrepareLocalVariables(prog, nil, pkg, info, nil); err == nil || !strings.Contains(err.Error(), "without syntax files") {
 		t.Fatalf("PrepareLocalVariables without files error = %v", err)
@@ -771,7 +771,7 @@ func TestPrepareLocalVariablesRejectsInvalidMetadata(t *testing.T) {
 	t.Run("missing object", func(t *testing.T) {
 		prog := ssatest.NewProgram(t, nil)
 		pkg := types.NewPackage("example.com/missing", "missing")
-		prog.SetLocalityInfo(llssa.FullName(pkg, "Value"), llssa.LocalityInfo{Locality: llssa.ThreadLocal})
+		prog.SetLocalityInfo(llvmgen.FullName(pkg, "Value"), llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
 		if err := PrepareLocalVariables(prog, nil, pkg, &types.Info{}, nil); err == nil || !strings.Contains(err.Error(), "has no variable") {
 			t.Fatalf("PrepareLocalVariables error = %v", err)
 		}
@@ -779,10 +779,10 @@ func TestPrepareLocalVariablesRejectsInvalidMetadata(t *testing.T) {
 	t.Run("local linkname", func(t *testing.T) {
 		prog := ssatest.NewProgram(t, nil)
 		pkg := types.NewPackage("example.com/cycle", "cycle")
-		first := llssa.FullName(pkg, "First")
-		second := llssa.FullName(pkg, "Second")
+		first := llvmgen.FullName(pkg, "First")
+		second := llvmgen.FullName(pkg, "Second")
 		pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "First", types.Typ[types.Int]))
-		prog.SetLocalityInfo(first, llssa.LocalityInfo{Locality: llssa.ThreadLocal})
+		prog.SetLocalityInfo(first, llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
 		prog.SetLinkname(first, second)
 		prog.SetLinkname(second, first)
 		if err := PrepareLocalVariables(prog, nil, pkg, &types.Info{}, nil); err == nil || !strings.Contains(err.Error(), "cannot use go:linkname") {
@@ -798,15 +798,15 @@ func TestPlanLocalPackageDiagnostics(t *testing.T) {
 	}
 
 	pkg := types.NewPackage("example.com/plan", "plan")
-	ordinary := llssa.FullName(pkg, "Ordinary")
+	ordinary := llvmgen.FullName(pkg, "Ordinary")
 	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "Ordinary", types.Typ[types.Int]))
-	prog.SetLocalStorage(ordinary, llssa.LocalStorageNativeTLS)
+	prog.SetLocalStorage(ordinary, llvmgen.LocalStorageNativeTLS)
 	if plan, err := planLocalPackage(prog, pkg); err != nil || len(plan.Variables) != 0 {
 		t.Fatalf("non-local metadata plan = %+v, %v", plan, err)
 	}
 
-	missing := llssa.FullName(pkg, "Missing")
-	prog.SetLocalityInfo(missing, llssa.LocalityInfo{Locality: llssa.ThreadLocal})
+	missing := llvmgen.FullName(pkg, "Missing")
+	prog.SetLocalityInfo(missing, llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
 	if _, err := planLocalPackage(prog, pkg); err == nil || !strings.Contains(err.Error(), "has no variable") {
 		t.Fatalf("missing object plan error = %v", err)
 	}
@@ -833,7 +833,7 @@ var value = makeHandle()
 func get() Handle { return value }
 `)
 	info, ok := prog.VariableLocality("example.com/locality.value")
-	if !ok || info.LocalStorage != llssa.LocalStoragePackage {
+	if !ok || info.LocalStorage != llvmgen.LocalStoragePackage {
 		t.Fatalf("named pointer metadata = %+v, %v", info, ok)
 	}
 	if !strings.Contains(ir, `call ptr @"example.com/locality.__llgo_local_block"()`) {

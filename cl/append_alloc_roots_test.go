@@ -5,12 +5,12 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestAppendTemporaryExplicitRoots(t *testing.T) {
 	for _, elem := range []string{"int", "*int"} {
-		ir := cltest.CompileIREx(t, "package appendroots\nfunc appendOne(s []"+elem+", x "+elem+") []"+elem+" { return append(s, x) }", "appendroots.go", false, func(prog llssa.Program) {
+		ir := cltest.CompileIREx(t, "package appendroots\nfunc appendOne(s []"+elem+", x "+elem+") []"+elem+" { return append(s, x) }", "appendroots.go", false, func(prog llvmgen.Program) {
 			prog.EnableGCRoots(true)
 			prog.Target().GOARCH = "wasm"
 		})

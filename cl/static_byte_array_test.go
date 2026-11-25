@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	gpackages "github.com/goplus/gogen/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"github.com/xgo-dev/llgo/internal/typepatch"
@@ -18,7 +18,7 @@ import (
 )
 
 func init() {
-	llssa.Initialize(llssa.InitAll | llssa.InitNative)
+	llvmgen.Initialize(llvmgen.InitAll | llvmgen.InitNative)
 }
 
 func TestStripLargeStaticByteArraySkipsSSAStores(t *testing.T) {
@@ -192,7 +192,7 @@ func TestStripLargeStaticByteArrayDistinctPackagePaths(t *testing.T) {
 		StripLargeStaticByteArrays(first, []*ast.File{fileA}, nil),
 		StripLargeStaticByteArrays(second, []*ast.File{fileB}, nil),
 	)
-	if payloads[StaticByteArrayKey(llssa.PathOf(first), "Table")] != nil {
+	if payloads[StaticByteArrayKey(llvmgen.PathOf(first), "Table")] != nil {
 		t.Fatal("payloads collided under PathOf(\"main\")")
 	}
 	gotA := payloads[StaticByteArrayKey(first.Path(), "Table")]
@@ -713,7 +713,7 @@ func TestInitStaticByteArrayGlobalUsesObjectPackage(t *testing.T) {
 }
 
 func TestInitStaticByteArrayGlobalRejects(t *testing.T) {
-	var g llssa.Global
+	var g llvmgen.Global
 	p := &context{staticByteArrays: map[string][]byte{StaticByteArrayKey("p", "T"): {1, 2, 3}}}
 	if p.initStaticByteArrayGlobal(false, &ssa.Global{}, g) {
 		t.Fatal("define=false accepted")

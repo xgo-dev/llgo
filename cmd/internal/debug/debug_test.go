@@ -36,26 +36,26 @@ import (
 	"github.com/xgo-dev/llgo/internal/browserdebug"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	"github.com/xgo-dev/llgo/internal/targets"
+	"github.com/xgo-dev/llgo/target"
 )
 
 func TestBackendRouting(t *testing.T) {
 	tests := []struct {
 		name   string
 		conf   build.Config
-		target *targets.Config
+		target *target.Config
 		want   backend
 	}{
 		{name: "native", conf: build.Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH}, want: backendLLDB},
-		{name: "embedded", conf: build.Config{Target: "board"}, target: &targets.Config{LLVMTarget: "thumbv7m-none-eabi"}, want: backendGDB},
-		{name: "WASI", conf: build.Config{Target: "wasip1"}, target: &targets.Config{GOOS: "wasip1", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-wasi"}, want: backendWasmtime},
-		{name: "browser", conf: build.Config{Target: "wasm"}, target: &targets.Config{GOOS: "js", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-wasi"}, want: backendBrowser},
-		{name: "Wasm name with WASI ABI", conf: build.Config{Target: "wasm-custom"}, target: &targets.Config{GOOS: "wasip1", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-wasip1"}, want: backendWasmtime},
-		{name: "raw Wasm target", conf: build.Config{Target: "wasm-unknown"}, target: &targets.Config{GOARCH: "wasm", LLVMTarget: "wasm32-unknown-unknown"}, want: backendWasmtime},
-		{name: "inherited browser OS", conf: build.Config{Goos: "js", Goarch: "wasm"}, target: &targets.Config{LLVMTarget: "wasm32-unknown-unknown"}, want: backendBrowser},
-		{name: "browser profile", target: &targets.Config{WasmProfile: "j64", LLVMTarget: "wasm64-unknown-unknown"}, want: backendBrowser},
+		{name: "embedded", conf: build.Config{Target: "board"}, target: &target.Config{LLVMTarget: "thumbv7m-none-eabi"}, want: backendGDB},
+		{name: "WASI", conf: build.Config{Target: "wasip1"}, target: &target.Config{GOOS: "wasip1", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-wasi"}, want: backendWasmtime},
+		{name: "browser", conf: build.Config{Target: "wasm"}, target: &target.Config{GOOS: "js", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-wasi"}, want: backendBrowser},
+		{name: "Wasm name with WASI ABI", conf: build.Config{Target: "wasm-custom"}, target: &target.Config{GOOS: "wasip1", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-wasip1"}, want: backendWasmtime},
+		{name: "raw Wasm target", conf: build.Config{Target: "wasm-unknown"}, target: &target.Config{GOARCH: "wasm", LLVMTarget: "wasm32-unknown-unknown"}, want: backendWasmtime},
+		{name: "inherited browser OS", conf: build.Config{Goos: "js", Goarch: "wasm"}, target: &target.Config{LLVMTarget: "wasm32-unknown-unknown"}, want: backendBrowser},
+		{name: "browser profile", target: &target.Config{WasmProfile: "j64", LLVMTarget: "wasm64-unknown-unknown"}, want: backendBrowser},
 		{name: "raw js source mode", conf: build.Config{Goos: "js", Goarch: "wasm"}, want: backendBrowser},
-		{name: "memory64 inherited profile", conf: build.Config{Target: "custom"}, target: &targets.Config{GOOS: "js", GOARCH: "wasm", LLVMTarget: "wasm64-unknown-emscripten", WasmProfile: "j64"}, want: backendBrowser},
+		{name: "memory64 inherited profile", conf: build.Config{Target: "custom"}, target: &target.Config{GOOS: "js", GOARCH: "wasm", LLVMTarget: "wasm64-unknown-emscripten", WasmProfile: "j64"}, want: backendBrowser},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -89,7 +89,7 @@ func TestBrowserAndWASISessionBoundaries(t *testing.T) {
 		}
 	}
 	for _, opts := range []options{{remote: ":3333"}, {server: "must-not-execute"}, {load: true}} {
-		err := runSession(session{backend: backendWasmtime, options: opts, target: &targets.Config{DebugServer: "must-not-execute"}}, nil, nil, nil)
+		err := runSession(session{backend: backendWasmtime, options: opts, target: &target.Config{DebugServer: "must-not-execute"}}, nil, nil, nil)
 		if err == nil || !strings.Contains(err.Error(), "-remote, -server and -load") {
 			t.Fatalf("WASI accepted a native server transport: %v", err)
 		}
@@ -149,7 +149,7 @@ func TestSessionPlanning(t *testing.T) {
 		t.Fatalf("remote plan = (%+v, %v)", remote, err)
 	}
 
-	openocd, err := makeServerPlan(&targets.Config{
+	openocd, err := makeServerPlan(&target.Config{
 		Name:             "board",
 		OpenOCDInterface: "cmsis-dap",
 		OpenOCDTransport: "swd",
@@ -219,12 +219,12 @@ func TestExplicitRemoteImageLoading(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name   string
-		target *targets.Config
+		target *target.Config
 		opts   options
 	}{
 		{name: "existing remote", opts: options{remote: ":3333"}},
-		{name: "target remote", target: &targets.Config{Name: "board"}, opts: options{remote: ":3333"}},
-		{name: "custom server", target: &targets.Config{Name: "board"}, opts: options{server: "server --image {} --port {debug-port}"}},
+		{name: "target remote", target: &target.Config{Name: "board"}, opts: options{remote: ":3333"}},
+		{name: "custom server", target: &target.Config{Name: "board"}, opts: options{server: "server --image {} --port {debug-port}"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, load := range []bool{false, true} {
@@ -253,7 +253,7 @@ func TestGDBSessionStartsConfiguredServer(t *testing.T) {
 	err := runSession(session{
 		backend:  backendGDB,
 		artifact: filepath.Join(t.TempDir(), "program.elf"),
-		target: &targets.Config{
+		target: &target.Config{
 			Name:        "test-target",
 			DebugServer: template,
 			GDB:         []string{gdbPath},

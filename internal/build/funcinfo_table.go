@@ -24,7 +24,7 @@ import (
 	"github.com/xgo-dev/llvm"
 
 	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
@@ -198,7 +198,7 @@ func prepareFuncInfoTableRecords(records []funcInfoRecord, liveSymbols map[strin
 }
 
 func readFuncInfo(mod llvm.Module) []funcInfoRecord {
-	rows := mod.NamedMetadataOperands(llssa.FuncInfoMetadataName)
+	rows := mod.NamedMetadataOperands(llvmgen.FuncInfoMetadataName)
 	if len(rows) == 0 {
 		return nil
 	}
@@ -231,7 +231,7 @@ func readFuncInfo(mod llvm.Module) []funcInfoRecord {
 }
 
 func readPCLineInfo(mod llvm.Module) []pcLineRecord {
-	rows := mod.NamedMetadataOperands(llssa.PCLineMetadataName)
+	rows := mod.NamedMetadataOperands(llvmgen.PCLineMetadataName)
 	if len(rows) == 0 {
 		return nil
 	}
@@ -255,7 +255,7 @@ func readPCLineInfo(mod llvm.Module) []pcLineRecord {
 	return out
 }
 
-func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord, pcLines []pcLineRecord) {
+func emitFuncInfoTable(ctx *context, pkg llvmgen.Package, records []funcInfoRecord, pcLines []pcLineRecord) {
 	mod := pkg.Module()
 	llvmCtx := mod.Context()
 	i8Type := llvmCtx.Int8Type()
@@ -891,7 +891,7 @@ func emitRuntimeSiteBoundaries(mod llvm.Module, recordType llvm.Type, pointerSiz
 	return emitSentinel(coffStartName, "$a"), emitSentinel(coffEndName, "$z")
 }
 
-func emitFuncInfoEntrySites(ctx *context, pkg llssa.Package) {
+func emitFuncInfoEntrySites(ctx *context, pkg llvmgen.Package) {
 	if !shouldEmitRuntimeEntrySites(ctx) || darwinSymbolEntries(ctx) || pkg == nil || !ctx.prog.FuncInfoMetadataEnabled() {
 		return
 	}

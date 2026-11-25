@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestZeroSizedFieldDerefEmitsBaseNilGuard(t *testing.T) {
@@ -43,10 +43,10 @@ func keepPointer(pointer *struct{}) func() bool {
 `
 	targets := []struct {
 		name   string
-		target *llssa.Target
+		target *llvmgen.Target
 	}{
 		{name: "native"},
-		{name: "wasm-explicit", target: &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}},
+		{name: "wasm-explicit", target: &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"}},
 	}
 	for _, target := range targets {
 		t.Run(target.name, func(t *testing.T) {

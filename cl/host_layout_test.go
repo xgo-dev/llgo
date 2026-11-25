@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestHostLayoutWasmFieldAccess(t *testing.T) {
@@ -19,7 +19,7 @@ func GoNested(p *Record) uintptr { p.Inner.W = 9; return p.Inner.W }
 func NativePointer(p *Record, q *byte) *byte { p.P = q; return p.P }
 func GoPointer(p *Record, q *byte) *byte { p.Inner.P = q; return p.Inner.P }
 `
-	ir := compileWithRewritesTarget(t, src, nil, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
+	ir := compileWithRewritesTarget(t, src, nil, &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
 	for _, forbidden := range []string{"inttoptr { ptr, i32 }", "getelementptr inbounds %hostaccess.Record, { ptr, i32 }"} {
 		if strings.Contains(ir, forbidden) {
 			t.Fatalf("host layout leaked into a Go slice header: %s\n%s", forbidden, ir)
@@ -74,7 +74,7 @@ var _ [int(unsafe.Sizeof([2]Nested{})) - 2*control]byte
 func Size() uintptr { return unsafe.Sizeof(Nested{}) }
 `
 	for _, directive := range []string{"//llgo:cdecl", "//llgo:type C"} {
-		for _, target := range []*llssa.Target{
+		for _, target := range []*llvmgen.Target{
 			{GOOS: "linux", GOARCH: "amd64"},
 			{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"},
 		} {

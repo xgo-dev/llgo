@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	gossa "golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
@@ -221,7 +221,7 @@ func TestNamedStructLayoutEquivalent(t *testing.T) {
 	}
 }
 
-func buildGoSSAPackageForInternalTypes(t *testing.T, src string) *gossa.Package {
+func buildGoSSAPackageForInternalTypes(t *testing.T, src string) *ssa.Package {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "internaltypes.go", src, 0)
@@ -231,7 +231,7 @@ func buildGoSSAPackageForInternalTypes(t *testing.T, src string) *gossa.Package 
 	files := []*ast.File{f}
 	pkg := types.NewPackage("foo", "foo")
 	imp := packages.NewImporter(fset)
-	mode := gossa.SanityCheckFunctions | gossa.InstantiateGenerics
+	mode := ssa.SanityCheckFunctions | ssa.InstantiateGenerics
 	ssapkg, _, err := ssautil.BuildPackage(&types.Config{Importer: imp}, fset, pkg, files, mode)
 	if err != nil {
 		t.Fatal(err)
@@ -256,11 +256,11 @@ func f(m map[string]int) {
 		for _, block := range fn.Blocks {
 			for _, instr := range block.Instrs {
 				switch instr := instr.(type) {
-				case *gossa.Defer:
+				case *ssa.Defer:
 					if instr.DeferStack != nil {
 						internalTypes["defer stack"] = instr.DeferStack.Type()
 					}
-				case *gossa.Range:
+				case *ssa.Range:
 					internalTypes["range iterator"] = instr.Type()
 				}
 			}

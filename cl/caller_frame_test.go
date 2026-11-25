@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
-	gossa "golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
+	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
@@ -114,7 +114,7 @@ func f() { Caller(0) }
 	}
 }
 
-func buildCallerFrameSSAPackage(t *testing.T, pkgPath, src string) (*gossa.Package, []*ast.File) {
+func buildCallerFrameSSAPackage(t *testing.T, pkgPath, src string) (*ssa.Package, []*ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "caller_frame_compile.go", src, parser.ParseComments)
@@ -123,7 +123,7 @@ func buildCallerFrameSSAPackage(t *testing.T, pkgPath, src string) (*gossa.Packa
 	}
 	files := []*ast.File{file}
 	imp := packages.NewImporter(fset)
-	mode := gossa.SanityCheckFunctions | gossa.InstantiateGenerics
+	mode := ssa.SanityCheckFunctions | ssa.InstantiateGenerics
 	ssapkg, _, err := ssautil.BuildPackage(
 		&types.Config{Importer: imp},
 		fset,
@@ -137,11 +137,11 @@ func buildCallerFrameSSAPackage(t *testing.T, pkgPath, src string) (*gossa.Packa
 	return ssapkg, files
 }
 
-func newLLSSAProgForTarget(t *testing.T, target *llssa.Target) llssa.Program {
+func newLLSSAProgForTarget(t *testing.T, target *llvmgen.Target) llvmgen.Program {
 	t.Helper()
-	prog := llssa.NewProgram(target)
+	prog := llvmgen.NewProgram(target)
 	prog.SetRuntime(func() *types.Package {
-		rt, err := importer.For("source", nil).Import(llssa.PkgRuntime)
+		rt, err := importer.For("source", nil).Import(llvmgen.PkgRuntime)
 		if err != nil {
 			t.Fatal("load runtime failed:", err)
 		}
@@ -153,7 +153,7 @@ func newLLSSAProgForTarget(t *testing.T, target *llssa.Target) llssa.Program {
 	return prog
 }
 
-func newRuntimeCallerAnalysis(pkg *gossa.Package) *runtimeCallerAnalysis {
+func newRuntimeCallerAnalysis(pkg *ssa.Package) *runtimeCallerAnalysis {
 	funcs, trackable := collectRuntimeCallerFunctions(pkg)
 	return &runtimeCallerAnalysis{
 		pkg:       pkg,
@@ -215,8 +215,8 @@ func plain() {}
 		t.Fatal("plain function should not report runtime caller usage")
 	}
 	runtimeCallerFuncs := runtimeCallerFuncSet(callerCaches, ssapkg)
-	var genericInstance *gossa.Function
-	forEachCall(ssapkg.Func("genericCaller"), func(call *gossa.CallCommon) {
+	var genericInstance *ssa.Function
+	forEachCall(ssapkg.Func("genericCaller"), func(call *ssa.CallCommon) {
 		genericInstance = call.StaticCallee()
 	})
 	if genericInstance == nil || !runtimeCallerFuncs[genericInstance] {
@@ -373,12 +373,12 @@ func unrelated() {}
 }
 
 func TestCompileRuntimeNilCheckCondition(t *testing.T) {
-	ssapkg, files := buildCallerFrameSSAPackage(t, llssa.PkgRuntime, `package runtime
+	ssapkg, files := buildCallerFrameSSAPackage(t, llvmgen.PkgRuntime, `package runtime
 //go:noinline
 func AssertNilDeref(b bool) { if b { for {} } }
 func ordinary(b bool) { if b { for {} } }
 `)
-	for _, target := range []*llssa.Target{
+	for _, target := range []*llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "js", GOARCH: "wasm"},
 	} {
@@ -390,7 +390,7 @@ func ordinary(b bool) { if b { for {} } }
 			}
 			const barrier = `asm sideeffect "", "=r,0"`
 			for _, name := range []string{"AssertNilDeref", "ordinary"} {
-				ir := pkg.Module().NamedFunction(llssa.PkgRuntime + "." + name).String()
+				ir := pkg.Module().NamedFunction(llvmgen.PkgRuntime + "." + name).String()
 				want := name == "AssertNilDeref" && target.GOARCH != "wasm"
 				if strings.Contains(ir, barrier) != want {
 					t.Fatalf("unexpected LTO condition barrier for %s:\n%s", name, ir)
@@ -456,7 +456,7 @@ func pinnedPanicSite() {
 	_ = *p
 }
 `)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
 	pkg, err := NewPackage(prog, ssapkg, files)
@@ -545,7 +545,7 @@ func branchStorePanicLeaf(p *int, branch bool) {
 	} {
 		t.Run(test.goos+"/"+test.goarch, func(t *testing.T) {
 			ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", source)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: test.goos, GOARCH: test.goarch})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: test.goos, GOARCH: test.goarch})
 			prog.EnableFuncInfoMetadata(true)
 			prog.EnableFuncInfoSites(true)
 			pkg, err := NewPackage(prog, ssapkg, files)
@@ -587,7 +587,7 @@ func TestRuntimeCallerAnalysisEdgeCases(t *testing.T) {
 	if fnUsesRuntimeCaller(callerCaches, nil) {
 		t.Fatal("nil function should not use runtime caller metadata")
 	}
-	if fnUsesRuntimeCaller(callerCaches, &gossa.Function{}) {
+	if fnUsesRuntimeCaller(callerCaches, &ssa.Function{}) {
 		t.Fatal("function without a package should not use runtime caller metadata")
 	}
 	if runtimeCallerFuncSet(callerCaches, nil) != nil {
@@ -613,7 +613,7 @@ func TestRuntimeCallerAnalysisEdgeCases(t *testing.T) {
 		t.Fatal("nil function should not be a runtime caller lookup")
 	}
 	called := false
-	forEachCall(nil, func(*gossa.CallCommon) {
+	forEachCall(nil, func(*ssa.CallCommon) {
 		called = true
 	})
 	if called {
@@ -670,14 +670,14 @@ func passInterface() { var i I = T{}; viaParam(i) }
 	if targets, ok := analysis.interfaceMethodTargets(ssapkg.Func("viaParam"), ssapkg.Func("viaParam").Params[0], method); !ok || len(targets) == 0 {
 		t.Fatal("interface parameter callsites should resolve concrete method targets")
 	}
-	analysis.callsites[ssapkg.Func("viaParam")] = []*gossa.CallCommon{{}}
+	analysis.callsites[ssapkg.Func("viaParam")] = []*ssa.CallCommon{{}}
 	if _, ok := analysis.interfaceMethodTargets(ssapkg.Func("viaParam"), ssapkg.Func("viaParam").Params[0], method); ok {
 		t.Fatal("out-of-range interface argument should be unresolved")
 	}
 	if _, ok := analysis.interfaceMethodTargets(ssapkg.Func("viaStatic"), nil, method); ok {
 		t.Fatal("nil interface receiver should be unresolved")
 	}
-	if _, ok := analysis.staticInterfaceMethodTargets(&gossa.ChangeInterface{}, method); ok {
+	if _, ok := analysis.staticInterfaceMethodTargets(&ssa.ChangeInterface{}, method); ok {
 		t.Fatal("empty interface conversion should be unresolved")
 	}
 	viaParam := ssapkg.Func("viaParam")
@@ -744,7 +744,7 @@ func TestCallerFrameTrackingEligibility(t *testing.T) {
 		{name: "wasm", pkgPath: "example.com/foo", track: true, goarch: "wasm", want: true},
 		{name: "stdlib", pkgPath: "fmt", track: true, want: true},
 		{name: "runtime", pkgPath: "runtime", track: true, want: false},
-		{name: "llgo runtime", pkgPath: llssa.PkgRuntime, track: true, want: false},
+		{name: "llgo runtime", pkgPath: llvmgen.PkgRuntime, track: true, want: false},
 		{name: "llgo runtime internal", pkgPath: "github.com/xgo-dev/llgo/runtime/internal/foo", track: true, want: false},
 		{name: "command line package", pkgPath: "command-line-arguments", track: true, want: true},
 	}
@@ -754,7 +754,7 @@ func TestCallerFrameTrackingEligibility(t *testing.T) {
 import "runtime"
 func f() { runtime.Caller(0) }
 `)
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			if tt.targetName != "" {
 				prog.Target().Target = tt.targetName
 			}
@@ -762,7 +762,7 @@ func f() { runtime.Caller(0) }
 				prog.Target().GOARCH = tt.goarch
 			}
 			pkg := prog.NewPackage("foo", tt.pkgPath)
-			fn := pkg.NewFunc("f", llssa.NoArgsNoRet, llssa.GoDecl)
+			fn := pkg.NewFunc("f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			goFn := ssapkg.Func("f")
 			ctx := &context{
 				prog:               prog,
@@ -783,7 +783,7 @@ func f() { runtime.Caller(0) }
 		t.Fatal("stdlib packages must be trackable like any other code")
 	}
 	if canTrackCallerFramesForPackage("runtime") ||
-		canTrackCallerFramesForPackage(llssa.PkgRuntime) ||
+		canTrackCallerFramesForPackage(llvmgen.PkgRuntime) ||
 		canTrackCallerFramesForPackage("github.com/xgo-dev/llgo/runtime/internal/lib") {
 		t.Fatal("runtime core must stay untracked")
 	}
@@ -815,7 +815,7 @@ func TestRuntimeFrameNameNormalization(t *testing.T) {
 	prog := newLLSSAProg(t)
 	pkg := prog.NewPackage("main", "command-line-arguments")
 	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
-	ctx := &context{fn: pkg.NewFuncEx("command-line-arguments.f$1", sig, llssa.GoDecl, false, false)}
+	ctx := &context{fn: pkg.NewFuncEx("command-line-arguments.f$1", sig, llvmgen.GoDecl, false, false)}
 	if got, want := ctx.runtimeCallerFrameName(), "main.f.func1"; got != want {
 		t.Fatalf("fallback runtimeCallerFrameName() = %q, want %q", got, want)
 	}
@@ -903,7 +903,7 @@ func top() {
 	runtime.Caller(0)
 }
 `)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "386"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "386"})
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
 	pkg, err := NewPackage(prog, ssapkg, files)
@@ -966,11 +966,11 @@ func top() {
 	runtime.Caller(0)
 }
 `)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
 	pkg := prog.NewPackage("foo", "example.com/foo")
-	fn := pkg.NewFunc("example.com/foo.top", llssa.NoArgsNoRet, llssa.GoDecl)
+	fn := pkg.NewFunc("example.com/foo.top", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	ctx := &context{
 		prog:               prog,
 		pkg:                pkg,
@@ -980,7 +980,7 @@ func top() {
 		trackCallerFrames:  true,
 		runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(), ssapkg),
 	}
-	var b llssa.Builder
+	var b llvmgen.Builder
 	ctx.pushCallerLocationFrame(b, nil)
 	ctx.recordRuntimeLocation(b, token.NoPos, "RecordCallerLocation")
 	ctx.emitPCLineLabel(b, token.NoPos)
@@ -992,10 +992,10 @@ func top() {
 	if canEmitPCLineLabelsForTarget(nil) {
 		t.Fatal("nil target should not emit pc-line labels")
 	}
-	if canEmitPCLineLabelsForTarget(&llssa.Target{GOOS: "linux", GOARCH: "wasm"}) {
+	if canEmitPCLineLabelsForTarget(&llvmgen.Target{GOOS: "linux", GOARCH: "wasm"}) {
 		t.Fatal("wasm target should not emit pc-line labels")
 	}
-	if canEmitPCLineLabelsForTarget(&llssa.Target{GOOS: "linux", GOARCH: "amd64", Target: "esp32"}) {
+	if canEmitPCLineLabelsForTarget(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64", Target: "esp32"}) {
 		t.Fatal("named target should not emit pc-line labels")
 	}
 	if got, want := asmQuoteSymbol(`a\b"c$d`), `"a\\b\"c$$d"`; got != want {
@@ -1022,7 +1022,7 @@ func top() {
 	}
 	ir := pkg.Module().String()
 	// Funcinfo metadata still flows...
-	if !strings.Contains(ir, llssa.FuncInfoMetadataName) {
+	if !strings.Contains(ir, llvmgen.FuncInfoMetadataName) {
 		t.Fatalf("sites disabled should keep funcinfo metadata:\n%s", ir)
 	}
 	// ...but no pc-line site labels are emitted.
@@ -1107,7 +1107,7 @@ func top() {
 	runtime.Caller(0)
 }
 `)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "windows", GOARCH: "386"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "windows", GOARCH: "386"})
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
 	pkg, err := NewPackage(prog, ssapkg, files)
@@ -1269,7 +1269,7 @@ func (f importerFunc) Import(path string) (*types.Package, error) { return f(pat
 // buildCallerFrameSSAProgram builds dep and root packages with bodies in a
 // single SSA program, so cross-package analysis (runtimeCallerFuncSet
 // criterion 2) can consult the callee package's own base set.
-func buildCallerFrameSSAProgram(t *testing.T, depPath, depSrc, rootPath, rootSrc string) (dep, root *gossa.Package) {
+func buildCallerFrameSSAProgram(t *testing.T, depPath, depSrc, rootPath, rootSrc string) (dep, root *ssa.Package) {
 	t.Helper()
 	fset := token.NewFileSet()
 	parse := func(name, src string) *ast.File {
@@ -1282,7 +1282,7 @@ func buildCallerFrameSSAProgram(t *testing.T, depPath, depSrc, rootPath, rootSrc
 	depFile := parse("dep.go", depSrc)
 	rootFile := parse("root.go", rootSrc)
 	base := packages.NewImporter(fset)
-	prog := gossa.NewProgram(fset, gossa.SanityCheckFunctions|gossa.InstantiateGenerics)
+	prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
 	created := map[*types.Package]bool{}
 	var createDeps func(p *types.Package)
 	createDeps = func(p *types.Package) {
@@ -1476,7 +1476,7 @@ func TestDirectiveFilenameWindowsRootedSlash(t *testing.T) {
 		return lines[line-1], true
 	}
 	got := runtimeSourceFilename(
-		&llssa.Target{GOOS: "windows"},
+		&llvmgen.Target{GOOS: "windows"},
 		directiveFilename(fset, pos, adjusted, sourceLine),
 	)
 	if want := "/foo/bar.go"; got != want {
@@ -1551,8 +1551,8 @@ func TestParseLineDirectiveFilename(t *testing.T) {
 }
 
 func TestRuntimeSourceFilename(t *testing.T) {
-	windows := &llssa.Target{GOOS: "windows"}
-	linux := &llssa.Target{GOOS: "linux"}
+	windows := &llvmgen.Target{GOOS: "windows"}
+	linux := &llvmgen.Target{GOOS: "linux"}
 	const native = `C:\work\pkg\main.go`
 	if got, want := runtimeSourceFilename(windows, native), "C:/work/pkg/main.go"; got != want {
 		t.Fatalf("Windows runtime filename = %q, want %q", got, want)

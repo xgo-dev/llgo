@@ -4,11 +4,11 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/goembed"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestApplyEmbedInits_NoInitAndMissingGlobal(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	pkg := prog.NewPackage("p", "p")
 	c := &context{prog: prog, pkg: pkg}
 

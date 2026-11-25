@@ -8,7 +8,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/cabi"
 	"github.com/xgo-dev/llgo/internal/heap2stack"
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 )
@@ -62,7 +62,7 @@ func checkWasmSparseHeaderStorageCodegen(t *testing.T, tags string, level optlev
 			}
 			name := inst.CalledValue().Name()
 			switch {
-			case name == ssa.PkgRuntime+".AllocU", name == ssa.PkgRuntime+".AllocUAligned":
+			case name == llvmgen.PkgRuntime+".AllocU", name == llvmgen.PkgRuntime+".AllocUAligned":
 				allocations++
 			case strings.HasPrefix(name, "llvm.memcpy."), strings.HasPrefix(name, "llvm.memmove."):
 				if !inst.Operand(2).IsAConstantInt().IsNil() && inst.Operand(2).ZExtValue() == 2*(250*8+16) {
@@ -97,7 +97,7 @@ func checkWasmSparseHeaderStorageCodegen(t *testing.T, tags string, level optlev
 				if !inst.IsACallInst().IsNil() {
 					name := inst.CalledValue().Name()
 					switch {
-					case name == ssa.PkgRuntime+".AllocU", name == ssa.PkgRuntime+".AllocUAligned":
+					case name == llvmgen.PkgRuntime+".AllocU", name == llvmgen.PkgRuntime+".AllocUAligned":
 						allocations++
 					case strings.HasPrefix(name, "__llgo_clear_header_range"):
 						clear = inst
@@ -189,7 +189,7 @@ func checkWasmHeaderABICopies(t *testing.T, mod llvm.Module, gc bool) {
 					}
 					name := inst.CalledValue().Name()
 					switch {
-					case name == ssa.PkgRuntime+".AllocU", name == ssa.PkgRuntime+".AllocUAligned":
+					case name == llvmgen.PkgRuntime+".AllocU", name == llvmgen.PkgRuntime+".AllocUAligned":
 						allocations++
 					case name == tc.callee:
 						dst = inst.Operand(0)
@@ -343,7 +343,7 @@ func TestWasmStringBoundaryPadding(t *testing.T) {
 	// Stub the runtime context calls so LLVM can evaluate the header values
 	// without linking a Wasm runtime.
 	for _, name := range []string{"EnterLocalContext", "LeaveLocalContext"} {
-		fn := mod.NamedFunction(ssa.PkgRuntime + "." + name)
+		fn := mod.NamedFunction(llvmgen.PkgRuntime + "." + name)
 		if !fn.IsNil() && fn.IsDeclaration() {
 			b.SetInsertPointAtEnd(ctx.AddBasicBlock(fn, "stub"))
 			if fn.GlobalValueType().ReturnType().TypeKind() == llvm.VoidTypeKind {
@@ -411,7 +411,7 @@ func runWasmHeaderConfigs(t *testing.T, run func(*testing.T, string, optlevel.Le
 	}
 }
 
-func optimizeWasmModule(t *testing.T, pkg ssa.Package, level optlevel.Level) {
+func optimizeWasmModule(t *testing.T, pkg llvmgen.Package, level optlevel.Level) {
 	t.Helper()
 	opts := llvm.NewPassBuilderOptions()
 	defer opts.Dispose()
@@ -421,7 +421,7 @@ func optimizeWasmModule(t *testing.T, pkg ssa.Package, level optlevel.Level) {
 	}
 }
 
-func wasmAssembly(t *testing.T, pkg ssa.Package) string {
+func wasmAssembly(t *testing.T, pkg llvmgen.Package) string {
 	t.Helper()
 	buf, err := pkg.Prog.TargetMachine().EmitToMemoryBuffer(pkg.Module(), llvm.AssemblyFile)
 	if err != nil {

@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 // Layouts are measured from the selected sources, using gc's target sizes for
@@ -51,7 +51,7 @@ type RuntimeFieldLayout struct {
 	Size   uint64 `json:"size"`
 }
 
-func auditRuntimeABI(runtimeDir, goroot, goVersion string, target *llssa.Target) (*RuntimeABI, error) {
+func auditRuntimeABI(runtimeDir, goroot, goVersion string, target *llvmgen.Target) (*RuntimeABI, error) {
 	path, typeName := filepath.Join(goroot, "src/internal/abi/type.go"), "Type"
 	if version.Compare(goVersion, "go1.21") < 0 {
 		path, typeName = filepath.Join(goroot, "src/runtime/type.go"), "_type"
@@ -68,15 +68,15 @@ func auditRuntimeABI(runtimeDir, goroot, goVersion string, target *llssa.Target)
 	if sizes == nil {
 		return nil, fmt.Errorf("runtime ABI audit: no Go sizes for %s", target.GOARCH)
 	}
-	llssaInitOnce.Do(func() { llssa.Initialize(llssa.InitAll) })
-	prog := llssa.NewProgram(target)
+	llssaInitOnce.Do(func() { llvmgen.Initialize(llvmgen.InitAll) })
+	prog := llvmgen.NewProgram(target)
 	defer prog.Dispose()
 	stringABI, err := runtimeBoundaryPackage(filepath.Join(runtimeDir, "internal/runtime/z_string.go"), "String")
 	if err != nil {
 		return nil, err
 	}
 	prog.SetRuntime(stringABI)
-	lltyp := prog.Type(llgo, llssa.GoDecl)
+	lltyp := prog.Type(llgo, llvmgen.GoDecl)
 	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)
 	report := &RuntimeABI{
 		LLGoTarget:         target.Spec().Triple,
@@ -85,7 +85,7 @@ func auditRuntimeABI(runtimeDir, goroot, goVersion string, target *llssa.Target)
 		NativePointerBytes: uint64(prog.PointerSize()),
 		GoType:             RuntimeTypeLayout{Size: uint64(sizes.Sizeof(gc)), Align: uint64(sizes.Alignof(gc))},
 		LLGoType:           RuntimeTypeLayout{Size: prog.SizeOf(lltyp), Align: prog.AlignOf(lltyp)},
-		GoFuncValueBytes:   uint64(sizes.Sizeof(sig)), LLGoFuncValueBytes: prog.SizeOf(prog.Type(sig, llssa.GoDecl)),
+		GoFuncValueBytes:   uint64(sizes.Sizeof(sig)), LLGoFuncValueBytes: prog.SizeOf(prog.Type(sig, llvmgen.GoDecl)),
 		ClosureTransport: target.ClosureEnvBuildTag(),
 	}
 	var fields []*types.Var
@@ -98,7 +98,7 @@ func auditRuntimeABI(runtimeDir, goroot, goVersion string, target *llssa.Target)
 	}
 	for i := 0; i < llgo.NumFields(); i++ {
 		field := llgo.Field(i)
-		ft := prog.Type(field.Type(), llssa.GoDecl)
+		ft := prog.Type(field.Type(), llvmgen.GoDecl)
 		report.LLGoType.Fields = append(report.LLGoType.Fields, RuntimeFieldLayout{field.Name(), field.Type().String(), prog.OffsetOf(lltyp, i), prog.SizeOf(ft)})
 	}
 	report.Blockers = runtimeABIBlockers(report)

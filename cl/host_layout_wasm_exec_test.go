@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 // Exercise ordinary Go calls with addresses that no longer carry knowledge of
@@ -83,7 +83,7 @@ func PointerArrayProbe() uint32 {
  return 0
 }
 `
-	ir := compileWithRewritesTarget(t, src, nil, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
+	ir := compileWithRewritesTarget(t, src, nil, &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
 	// The IR test runs even on hosts without a WebAssembly execution toolchain.
 	if !strings.Contains(ir, "store i64 1234605616436508552") {
 		t.Fatalf("ordinary uintptr store missing:\n%s", ir)

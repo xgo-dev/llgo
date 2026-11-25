@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestWasmNilChecksDoNotRelyOnTrappingMemory(t *testing.T) {
@@ -19,7 +19,7 @@ func Selected(p, q *int, b bool) int { if b { p = q }; return *p }
 `
 	for _, goos := range []string{"js", "wasip1"} {
 		t.Run(goos, func(t *testing.T) {
-			ir := compileWithRewritesTarget(t, source, nil, &llssa.Target{GOOS: goos, GOARCH: "wasm"})
+			ir := compileWithRewritesTarget(t, source, nil, &llvmgen.Target{GOOS: goos, GOARCH: "wasm"})
 			for _, name := range []string{"Field", "Aggregate", "Store", "Array", "Indirect", "Selected"} {
 				body := llvmFunction(t, ir, "wasmnil."+name)
 				if !strings.Contains(body, "AssertNilDeref") {
@@ -54,7 +54,7 @@ func NestedField(p *Outer) byte { return p.inner.value }
 `
 	for _, arch := range []string{"amd64", "arm64", "386"} {
 		t.Run(arch, func(t *testing.T) {
-			ir := compileWithRewritesTarget(t, source, nil, &llssa.Target{GOOS: "linux", GOARCH: arch})
+			ir := compileWithRewritesTarget(t, source, nil, &llvmgen.Target{GOOS: "linux", GOARCH: arch})
 			for _, name := range []string{"SliceHeader", "Field", "Store", "SliceArray", "EmptyArray", "SmallAggregate", "OutsidePage", "NestedField"} {
 				body := llvmFunction(t, ir, "nativenil."+name)
 				if !strings.Contains(body, "AssertNilDeref") {
@@ -83,10 +83,10 @@ func TestWasmNilChecksExcludeRuntimeSupportPackages(t *testing.T) {
 		{path: "runtime"},
 		{path: "runtime/internal/sys"},
 		{path: "internal/runtime/atomic"},
-		{path: llssa.PkgRuntime},
-		{path: strings.TrimSuffix(llssa.PkgRuntime, "/internal/runtime") + "/internal/lib/runtime"},
+		{path: llvmgen.PkgRuntime},
+		{path: strings.TrimSuffix(llvmgen.PkgRuntime, "/internal/runtime") + "/internal/lib/runtime"},
 	} {
-		if got := !llssa.IsRuntimeSupportPackage(test.path); got != test.want {
+		if got := !llvmgen.IsRuntimeSupportPackage(test.path); got != test.want {
 			t.Errorf("recoverable nil checks for %q = %v, want %v", test.path, got, test.want)
 		}
 	}

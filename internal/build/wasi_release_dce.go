@@ -7,7 +7,7 @@ import (
 	"slices"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	"github.com/xgo-dev/llgo/internal/directive"
+	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"github.com/xgo-dev/llvm"

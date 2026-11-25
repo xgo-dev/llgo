@@ -14,7 +14,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -390,9 +390,9 @@ func TestDefaultGODEBUGEntryInitialization(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin", "windows"} {
 		for _, mode := range []BuildMode{BuildModeExe, BuildModeCArchive, BuildModeCShared} {
 			t.Run(goos+"/"+string(mode), func(t *testing.T) {
-				ctx := &context{prog: llssa.NewProgram(nil), buildConf: &Config{Goos: goos, Goarch: "amd64", BuildMode: mode}}
+				ctx := &context{prog: llvmgen.NewProgram(nil), buildConf: &Config{Goos: goos, Goarch: "amd64", BuildMode: mode}}
 				defer ctx.prog.Dispose()
-				rt := types.NewPackage(llssa.PkgRuntime, "runtime")
+				rt := types.NewPackage(llvmgen.PkgRuntime, "runtime")
 				str := types.NewNamed(types.NewTypeName(token.NoPos, rt, "String", nil), types.NewStruct([]*types.Var{
 					types.NewField(token.NoPos, rt, "Data", types.NewPointer(types.Typ[types.Byte]), false),
 					types.NewField(token.NoPos, rt, "Len", types.Typ[types.Int], false),
@@ -401,7 +401,7 @@ func TestDefaultGODEBUGEntryInitialization(t *testing.T) {
 				ctx.prog.SetRuntime(rt)
 				pkg := &packages.Package{PkgPath: "example.com/debugentry"}
 				cfg := &genConfig{rtInit: true, defaultGODEBUG: "randseednop=0", abiSymbols: map[string]none{"runtime.godebugDefault": {}}}
-				entry := genMainModule(ctx, llssa.PkgRuntime, pkg, cfg)
+				entry := genMainModule(ctx, llvmgen.PkgRuntime, pkg, cfg)
 				ir := entry.LPkg.String()
 				assertInOrder(t, ir, "call void @__llgo_godebug_init()", `call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.init"()`)
 				if !strings.Contains(ir, "@runtime.godebugDefault = external global") {

@@ -54,7 +54,6 @@ import (
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/firmware"
 	"github.com/xgo-dev/llgo/internal/flash"
-	"github.com/xgo-dev/llgo/internal/goarch"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/header"
 	"github.com/xgo-dev/llgo/internal/heap2stack"
@@ -70,10 +69,11 @@ import (
 	"github.com/xgo-dev/llgo/internal/quoted"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"github.com/xgo-dev/llgo/internal/wasmworkers"
+	"github.com/xgo-dev/llgo/target"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
 	gllvm "github.com/xgo-dev/llvm"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 )
 
@@ -414,28 +414,28 @@ func resolveGOARCHConfig(conf *Config, getenv func(string) string) error {
 		if go386 == "" {
 			go386 = getenv("GO386")
 		}
-		value, err := goarch.Resolve386(go386)
+		value, err := target.Resolve386(go386)
 		conf.GO386 = value
 		return err
 	case "amd64":
 		if goamd64 == "" {
 			goamd64 = getenv("GOAMD64")
 		}
-		value, err := goarch.ResolveAMD64(goamd64)
+		value, err := target.ResolveAMD64(goamd64)
 		conf.GOAMD64 = value
 		return err
 	case "arm":
 		if goarm == "" {
 			goarm = getenv("GOARM")
 		}
-		value, err := goarch.ParseARM(goarm)
+		value, err := target.ParseARM(goarm)
 		conf.GOARM = value.String()
 		return err
 	case "arm64":
 		if goarm64 == "" {
 			goarm64 = getenv("GOARM64")
 		}
-		value, err := goarch.ParseARM64(goarm64)
+		value, err := target.ParseARM64(goarm64)
 		conf.GOARM64 = value.String()
 		return err
 	}
@@ -722,7 +722,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	verbose := conf.Verbose
 	patterns := slices.Clone(inv.Args)
-	target := &llssa.Target{
+	target := &llvmgen.Target{
 		GOOS:                 conf.Goos,
 		GOARCH:               conf.Goarch,
 		GO386:                conf.GO386,
@@ -797,10 +797,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	preloadOptions := frontendOptions
 	llssaInitOnce.Do(func() {
-		llssa.Initialize(llssa.InitAll)
+		llvmgen.Initialize(llvmgen.InitAll)
 	})
 
-	prog := llssa.NewProgram(target)
+	prog := llvmgen.NewProgram(target)
 	prog.DisableBoundsChecks(conf.DisableBoundsChecks)
 	if conf.Mode != ModeGen {
 		// ModeGen callers (llgen and the golden suites) read LPkg.String()
@@ -989,7 +989,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, err
 	}
-	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
+	altPkgPaths := altPkgs(initial, conf, llvmgen.PkgRuntime)
 	altCfg := runtimePackageConfig(cfg, env.LLGoRuntimeDir())
 	// The runtime submodule may otherwise select a different toolchain from its go.mod.
 	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourcePatchGoVersion)
@@ -1007,7 +1007,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 
 	prog.SetRuntime(altPkgs[0].Types)
 	var pythonPackage *types.Package
-	if python := dedup.Check(llssa.PkgPython); python != nil {
+	if python := dedup.Check(llvmgen.PkgPython); python != nil {
 		pythonPackage = python.Types
 	} else if conf.TestPythonPackage != nil {
 		pythonPackage = conf.TestPythonPackage()
@@ -1661,8 +1661,8 @@ func parseNativeToolchainInput(commands commandEnv, options LinkOptions, resolve
 // cHeaderPackages excludes the patched standard runtime implementation. Its
 // //export callbacks are linker implementation details and may use internal C
 // types that are deliberately not representable in a public generated header.
-func cHeaderPackages(allPkgs []*aPackage) []llssa.Package {
-	pkgs := make([]llssa.Package, 0, len(allPkgs))
+func cHeaderPackages(allPkgs []*aPackage) []llvmgen.Package {
+	pkgs := make([]llvmgen.Package, 0, len(allPkgs))
 	for _, pkg := range allPkgs {
 		if pkg == nil || pkg.LPkg == nil || pkg.Package == nil || pkg.PkgPath == "runtime" || isRuntimePkg(pkg.PkgPath) || !hasLocalCExports(pkg.LPkg) {
 			continue
@@ -1672,7 +1672,7 @@ func cHeaderPackages(allPkgs []*aPackage) []llssa.Package {
 	return pkgs
 }
 
-func hasLocalCExports(pkg llssa.Package) bool {
+func hasLocalCExports(pkg llvmgen.Package) bool {
 	if pkg == nil {
 		return false
 	}
@@ -1918,7 +1918,7 @@ const (
 type context struct {
 	conf           *packages.Config
 	progSSA        *ssa.Program
-	prog           llssa.Program
+	prog           llvmgen.Program
 	dedup          packages.Deduper
 	patches        cl.Patches
 	callerTracking *cl.CallerTracking
@@ -2007,9 +2007,9 @@ type context struct {
 // in stable linked-package order. Entry generation may consume the result in
 // another Program after the source Programs have been disposed; no LLVM value
 // may cross that ownership boundary.
-func (c *context) backendAbiTypes(pkgs []Package) []llssa.AbiTypeInfo {
-	seen := make(map[llssa.Program]none)
-	var infos []llssa.AbiTypeInfo
+func (c *context) backendAbiTypes(pkgs []Package) []llvmgen.AbiTypeInfo {
+	seen := make(map[llvmgen.Program]none)
+	var infos []llvmgen.AbiTypeInfo
 	for _, pkg := range pkgs {
 		if pkg == nil {
 			continue
@@ -2035,7 +2035,7 @@ func (c *context) backendAbiTypes(pkgs []Package) []llssa.AbiTypeInfo {
 }
 
 func (c *context) disposeBackendPrograms() {
-	programs := make(map[llssa.Program]none)
+	programs := make(map[llvmgen.Program]none)
 	// Clear every package reference before destroying any LLVM context so no
 	// later observer can retain a dangling cross-context module.
 	for _, pkg := range c.pkgs {
@@ -2069,7 +2069,7 @@ func (c *context) closePackageMetas() {
 // backendSession owns all LLVM state used to lower one package. The Program
 // shares only the coordinator's already-prepared Go metadata.
 type backendSession struct {
-	prog        llssa.Program
+	prog        llvmgen.Program
 	transformer *cabi.Transformer
 }
 
@@ -2089,7 +2089,7 @@ func (c *context) newBackendSession() backendSession {
 // preloadPatchedPackageSyntax prepares the effective types.Package used by
 // patched lowering. Normal and alternate packages are already covered by the
 // packages loader's preload callback, but patch.Types has a distinct identity.
-func preloadPatchedPackageSyntax(prog llssa.Program, patches cl.Patches, dedup packages.Deduper, options cl.Options, goroot string) error {
+func preloadPatchedPackageSyntax(prog llvmgen.Program, patches cl.Patches, dedup packages.Deduper, options cl.Options, goroot string) error {
 	paths := make([]string, 0, len(patches))
 	for pkgPath := range patches {
 		paths = append(paths, pkgPath)
@@ -2624,7 +2624,7 @@ type mainLinkPlan struct {
 	pclnExternal         *pclnmap.Data
 	embeddedPCLN         *pclnmap.Data
 	entryIR              string
-	entryTarget          llssa.Target
+	entryTarget          llvmgen.Target
 	stripDarwinLTOLocals bool
 	darwinHiddenGlobals  []string
 }
@@ -2801,7 +2801,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	ctx.pclnEmbedded = nil
 	ctx.stripDarwinLTOLocals = false
 	ctx.darwinHiddenGlobals = nil
-	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &preparation.gen)
+	entryPkg := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &preparation.gen)
 	cExports := preparation.gen.cExports
 	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
 		return nil, err
@@ -2973,14 +2973,14 @@ func dceEntryRootCandidates(pkgs []Package, needRuntime bool) []string {
 	slices.Sort(exports)
 	roots = append(roots, exports...)
 	if needRuntime {
-		roots = append(roots, llssa.PkgRuntime+".init")
+		roots = append(roots, llvmgen.PkgRuntime+".init")
 	}
 	return roots
 }
 
 // packageCExportDeclarations snapshots Go-owned export names and signatures.
 // It deliberately retains no LLVM values after an isolated worker is disposed.
-func packageCExportDeclarations(pkg llssa.Package) []cExport {
+func packageCExportDeclarations(pkg llvmgen.Package) []cExport {
 	if pkg == nil {
 		return nil
 	}
@@ -3682,7 +3682,7 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 
 // lowerLargeAggregates is shared by package, export-wrapper, and translated
 // assembly modules so every late allocation follows the selected GC policy.
-func lowerLargeAggregates(prog llssa.Program, mod gllvm.Module) {
+func lowerLargeAggregates(prog llvmgen.Program, mod gllvm.Module) {
 	llabi.LowerLargeAggregates(prog.TargetData(), mod, llabi.AggregateLoweringConfig{
 		GoWordSize: prog.GoWordSize(),
 		GCRoots:    prog.GCRootsEnabled(),
@@ -3690,7 +3690,7 @@ func lowerLargeAggregates(prog llssa.Program, mod gllvm.Module) {
 	})
 }
 
-func lowerMainCExportAggregates(prog llssa.Program, mod gllvm.Module, exports []cExport) bool {
+func lowerMainCExportAggregates(prog llvmgen.Program, mod gllvm.Module, exports []cExport) bool {
 	if len(exports) == 0 {
 		return false
 	}
@@ -3698,7 +3698,7 @@ func lowerMainCExportAggregates(prog llssa.Program, mod gllvm.Module, exports []
 	return true
 }
 
-func lowerMainCExportModule(ctx *context, pkg llssa.Package, exports []cExport) (bool, error) {
+func lowerMainCExportModule(ctx *context, pkg llvmgen.Package, exports []cExport) (bool, error) {
 	mod := pkg.Module()
 	if !lowerMainCExportAggregates(ctx.prog, mod, exports) {
 		return false, nil
@@ -3924,7 +3924,7 @@ func printCompletedPackage(conf *Config, pkg *aPackage) {
 	}
 }
 
-func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, error) {
+func exportObject(ctx *context, pkgPath string, exportFile string, pkg llvmgen.Package) (string, error) {
 	prepareWasmGCGlobals(pkg.Module(), pkg.Prog.GCRootsEnabled(), pkgPath+"/"+filepath.Base(exportFile), ctx.buildConf.goGlobalDCEEnabled())
 	applySizeOptimizationAttributes(pkg.Module(), ctx.buildConf.OptLevel)
 	applyWASILTOFeatures(ctx, pkg.Module())
@@ -3935,7 +3935,7 @@ func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Pac
 	return exportObjectWithClang(ctx, pkgPath, exportFile, []byte(pkg.String()))
 }
 
-func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, packageArchiveBuffer, error) {
+func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg llvmgen.Package) (string, packageArchiveBuffer, error) {
 	prepareWasmGCGlobals(pkg.Module(), pkg.Prog.GCRootsEnabled(), pkgPath+"/"+filepath.Base(exportFile), ctx.buildConf.goGlobalDCEEnabled())
 	applyWASILTOFeatures(ctx, pkg.Module())
 	applyEmscriptenEHFeature(ctx, pkg.Module())
@@ -4041,7 +4041,7 @@ func dumpLLVMIRIfNeeded(ctx *context, pkgPath string, exportFile string, data st
 	return nil
 }
 
-func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, error) {
+func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg llvmgen.Package) (string, error) {
 	if ctx.buildConf.CheckLLFiles || ctx.buildConf.GenLL {
 		// Avoid formatting large IR unless a debug/check path needs it.
 		if err := dumpLLVMIRIfNeeded(ctx, pkgPath, exportFile, pkg.String()); err != nil {
@@ -4056,7 +4056,7 @@ func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg l
 	return writeObjectBufferToFile(ctx, pkgPath, exportFile, buf, kind)
 }
 
-func emitObjectToMemoryBuffer(conf *Config, prog llssa.Program, mod gllvm.Module) (gllvm.MemoryBuffer, string, error) {
+func emitObjectToMemoryBuffer(conf *Config, prog llvmgen.Program, mod gllvm.Module) (gllvm.MemoryBuffer, string, error) {
 	ltoMode := conf.ltoMode()
 	var (
 		buf  gllvm.MemoryBuffer
@@ -4177,7 +4177,7 @@ func altPkgs(initial []*packages.Package, conf *Config, alts ...string) []string
 	return alts
 }
 
-func prepareLocalVariables(prog llssa.Program, groups ...[]*packages.Package) error {
+func prepareLocalVariables(prog llvmgen.Program, groups ...[]*packages.Package) error {
 	seen := make(map[*types.Package]bool)
 	var firstErr error
 	for _, roots := range groups {
@@ -4211,13 +4211,13 @@ func activeLocalityPackages(groups ...[]*packages.Package) []*types.Package {
 		if p.Types == nil || p.IllTyped {
 			return
 		}
-		active[llssa.PathOf(p.Types)] = true
+		active[llvmgen.PathOf(p.Types)] = true
 		result = append(result, p.Types)
 	}
 	packages.Visit(groups[0], nil, activate)
 	for _, roots := range groups[1:] {
 		for _, root := range roots {
-			if root == nil || root.Types == nil || !active[llssa.PathOf(root.Types)] {
+			if root == nil || root.Types == nil || !active[llvmgen.PathOf(root.Types)] {
 				continue
 			}
 			packages.Visit([]*packages.Package{root}, nil, activate)
@@ -4274,7 +4274,7 @@ type aPackage struct {
 	*packages.Package
 	SSA    *ssa.Package
 	AltPkg *packages.Cached
-	LPkg   llssa.Package
+	LPkg   llvmgen.Package
 
 	NeedRt          bool
 	NeedPyInit      bool

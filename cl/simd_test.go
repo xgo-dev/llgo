@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -31,7 +31,7 @@ var Load = archsimd.LoadFloat32x4Array
 		funcName(dep.Pkg, method, false),
 		funcName(dep.Pkg, dep.Func("LoadFloat32x4Array"), false),
 	}
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "arm64"},
@@ -51,7 +51,7 @@ var Load = archsimd.LoadFloat32x4Array
 			// SIMD emits entries in its defining package even without taking
 			// their values there. Importers synthesize the same original names;
 			// both definitions need COMDAT on COFF to coalesce at native link.
-			for i, pkg := range []llssa.Package{owner, consumer} {
+			for i, pkg := range []llvmgen.Package{owner, consumer} {
 				entries := names
 				linkage := llvm.ExternalLinkage
 				if i == 1 {
@@ -142,7 +142,7 @@ func TestSIMDOperationIdentity(t *testing.T) {
 	// A test-only package-function registration exercises the same signature
 	// family without adding an operation to the supported official API.
 	key := simdKey{"", "Sum"}
-	simdOperations[key] = simdOperation{llssa.SIMDAdd, simdBinary, 0}
+	simdOperations[key] = simdOperation{llvmgen.SIMDAdd, simdBinary, 0}
 	defer delete(simdOperations, key)
 	for _, tc := range []struct {
 		name, path, arch, source string
@@ -190,7 +190,7 @@ func TestSIMDOperationIdentity(t *testing.T) {
 			if ok != tc.want {
 				t.Fatalf("lookup = %v, want %v", ok, tc.want)
 			}
-			if ok && desc.op != llssa.SIMDAdd {
+			if ok && desc.op != llvmgen.SIMDAdd {
 				t.Fatalf("unexpected operation %v", desc.op)
 			}
 		})
@@ -239,30 +239,30 @@ type Mask64x2 struct { tag v128; vals [2]int64 }
 `
 	for _, tc := range []struct {
 		name, receiver, method string
-		want                   llssa.SIMDOp
+		want                   llvmgen.SIMDOp
 	}{
-		{"masked blend", "Uint32x4", "blendMasked(Uint32x4, Mask32x4) Uint32x4", llssa.SIMDBlend},
-		{"blend missing mask", "Uint32x4", "blendMasked(Uint32x4) Uint32x4", llssa.SIMDUnimplemented},
-		{"blend different mask lanes", "Uint32x4", "blendMasked(Uint32x4, Mask64x2) Uint32x4", llssa.SIMDUnimplemented},
-		{"masked store", "Float32x4", "StoreArrayMasked(*[4]float32, Mask32x4)", llssa.SIMDStoreMasked},
-		{"missing mask", "Float32x4", "StoreArrayMasked(*[4]float32)", llssa.SIMDUnimplemented},
-		{"numeric mask", "Float32x4", "StoreArrayMasked(*[4]float32, Float32x4)", llssa.SIMDUnimplemented},
-		{"different mask lanes", "Float32x4", "StoreArrayMasked(*[4]float32, Mask64x2)", llssa.SIMDUnimplemented},
-		{"different memory shape", "Float32x4", "StoreArrayMasked(*[8]float32, Mask32x4)", llssa.SIMDUnimplemented},
-		{"widen", "Uint32x4", "MulWidenLo(Uint32x4) Uint64x2", llssa.SIMDMulWidenLo},
-		{"missing widened result", "Uint32x4", "MulWidenLo(Uint32x4)", llssa.SIMDUnimplemented},
-		{"nonvector widened result", "Uint32x4", "MulWidenLo(Uint32x4) uint64", llssa.SIMDUnimplemented},
-		{"unchanged lane width", "Uint32x4", "MulWidenLo(Uint32x4) Uint32x4", llssa.SIMDUnimplemented},
-		{"floating widened result", "Uint32x4", "MulWidenLo(Uint32x4) Float64x2", llssa.SIMDUnimplemented},
-		{"changed signedness", "Uint32x4", "MulWidenLo(Uint32x4) Int64x2", llssa.SIMDUnimplemented},
-		{"carryless selection", "Uint64x2", "carrylessMultiply(uint8, Uint64x2) Uint64x2", llssa.SIMDCarrylessMultiply},
-		{"wrong selection type", "Uint64x2", "carrylessMultiply(uint64, Uint64x2) Uint64x2", llssa.SIMDUnimplemented},
-		{"wrong polynomial width", "Uint32x4", "carrylessMultiply(uint8, Uint32x4) Uint32x4", llssa.SIMDUnimplemented},
-		{"carryless low", "Uint64x2", "carrylessMultiplyWidenLo(Uint64x2) Uint64x2", llssa.SIMDCarrylessMultiplyLo},
-		{"integer FMA", "Uint32x4", "MulAdd(Uint32x4, Uint32x4) Uint32x4", llssa.SIMDUnimplemented},
-		{"floating average", "Float32x4", "Average(Float32x4) Float32x4", llssa.SIMDUnimplemented},
-		{"rotate count", "Uint32x4", "RotateAllLeft(uint64) Uint32x4", llssa.SIMDRotateAllLeft},
-		{"wrong rotate count", "Uint32x4", "RotateAllLeft(uint32) Uint32x4", llssa.SIMDUnimplemented},
+		{"masked blend", "Uint32x4", "blendMasked(Uint32x4, Mask32x4) Uint32x4", llvmgen.SIMDBlend},
+		{"blend missing mask", "Uint32x4", "blendMasked(Uint32x4) Uint32x4", llvmgen.SIMDUnimplemented},
+		{"blend different mask lanes", "Uint32x4", "blendMasked(Uint32x4, Mask64x2) Uint32x4", llvmgen.SIMDUnimplemented},
+		{"masked store", "Float32x4", "StoreArrayMasked(*[4]float32, Mask32x4)", llvmgen.SIMDStoreMasked},
+		{"missing mask", "Float32x4", "StoreArrayMasked(*[4]float32)", llvmgen.SIMDUnimplemented},
+		{"numeric mask", "Float32x4", "StoreArrayMasked(*[4]float32, Float32x4)", llvmgen.SIMDUnimplemented},
+		{"different mask lanes", "Float32x4", "StoreArrayMasked(*[4]float32, Mask64x2)", llvmgen.SIMDUnimplemented},
+		{"different memory shape", "Float32x4", "StoreArrayMasked(*[8]float32, Mask32x4)", llvmgen.SIMDUnimplemented},
+		{"widen", "Uint32x4", "MulWidenLo(Uint32x4) Uint64x2", llvmgen.SIMDMulWidenLo},
+		{"missing widened result", "Uint32x4", "MulWidenLo(Uint32x4)", llvmgen.SIMDUnimplemented},
+		{"nonvector widened result", "Uint32x4", "MulWidenLo(Uint32x4) uint64", llvmgen.SIMDUnimplemented},
+		{"unchanged lane width", "Uint32x4", "MulWidenLo(Uint32x4) Uint32x4", llvmgen.SIMDUnimplemented},
+		{"floating widened result", "Uint32x4", "MulWidenLo(Uint32x4) Float64x2", llvmgen.SIMDUnimplemented},
+		{"changed signedness", "Uint32x4", "MulWidenLo(Uint32x4) Int64x2", llvmgen.SIMDUnimplemented},
+		{"carryless selection", "Uint64x2", "carrylessMultiply(uint8, Uint64x2) Uint64x2", llvmgen.SIMDCarrylessMultiply},
+		{"wrong selection type", "Uint64x2", "carrylessMultiply(uint64, Uint64x2) Uint64x2", llvmgen.SIMDUnimplemented},
+		{"wrong polynomial width", "Uint32x4", "carrylessMultiply(uint8, Uint32x4) Uint32x4", llvmgen.SIMDUnimplemented},
+		{"carryless low", "Uint64x2", "carrylessMultiplyWidenLo(Uint64x2) Uint64x2", llvmgen.SIMDCarrylessMultiplyLo},
+		{"integer FMA", "Uint32x4", "MulAdd(Uint32x4, Uint32x4) Uint32x4", llvmgen.SIMDUnimplemented},
+		{"floating average", "Float32x4", "Average(Float32x4) Float32x4", llvmgen.SIMDUnimplemented},
+		{"rotate count", "Uint32x4", "RotateAllLeft(uint64) Uint32x4", llvmgen.SIMDRotateAllLeft},
+		{"wrong rotate count", "Uint32x4", "RotateAllLeft(uint32) Uint32x4", llvmgen.SIMDUnimplemented},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := token.NewFileSet()
@@ -278,7 +278,7 @@ type Mask64x2 struct { tag v128; vals [2]int64 }
 			prog.CreatePackage(pkg, nil, nil, true)
 			method := pkg.Scope().Lookup(tc.receiver).Type().(*types.Named).Method(0)
 			op, ok := lookupSIMD(prog.FuncValue(method), "amd64")
-			wantOK := tc.want != llssa.SIMDUnimplemented
+			wantOK := tc.want != llvmgen.SIMDUnimplemented
 			if ok != wantOK || ok && op.op != tc.want {
 				t.Fatalf("operation = %v (%v), want %v", op.op, ok, tc.want)
 			}
@@ -317,7 +317,7 @@ func TestSIMDFallbackDeclarations(t *testing.T) {
 		{pkg.Prog.FuncValue(vector.Method(0)), false},
 	} {
 		op, ok := lookupSIMD(tc.fn, "amd64")
-		if ok != tc.want || ok && op.op != llssa.SIMDUnimplemented {
+		if ok != tc.want || ok && op.op != llvmgen.SIMDUnimplemented {
 			t.Errorf("%s: fallback=%v op=%v", tc.fn, ok, op.op)
 		}
 	}
@@ -342,9 +342,9 @@ func TestSIMDLookupOrZeroTargets(t *testing.T) {
 	fn := pkg.Prog.FuncValue(vector.Method(0))
 	for _, arch := range []string{"arm64", "wasm", "amd64"} {
 		t.Run(arch, func(t *testing.T) {
-			want := llssa.SIMDLookupOrZero
+			want := llvmgen.SIMDLookupOrZero
 			if arch == "amd64" {
-				want = llssa.SIMDUnimplemented
+				want = llvmgen.SIMDUnimplemented
 			}
 			op, ok := lookupSIMD(fn, arch)
 			if !ok || op.op != want {

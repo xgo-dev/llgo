@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/env"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestLinknameParsersAgree(t *testing.T) {
@@ -22,7 +22,7 @@ func TestLinknameParsersAgree(t *testing.T) {
 		"// llgo:link F\tllvm.fshl.i8",
 	} {
 		t.Run(line, func(t *testing.T) {
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			defer prog.Dispose()
 			ctx := &context{prog: prog}
 			if got := ctx.initLinkname(line, false, func(name string, _ bool) (string, bool, bool) {
@@ -121,7 +121,7 @@ func (A) StackedHidden() {}
 	if err != nil {
 		t.Fatalf("ParseFile failed: %v", err)
 	}
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	pkg := types.NewPackage("example.com/p", "p")
 	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
 		t.Fatal(err)
@@ -147,7 +147,7 @@ func (A) StackedHidden() {}
 }
 
 func TestParsePkgSyntaxReportsLocalityErrors(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	if err := ParsePkgSyntax(prog, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestParsePkgSyntaxReportsLocalityErrors(t *testing.T) {
 				t.Fatal(err)
 			}
 			pkg := types.NewPackage("example.com/"+strings.ReplaceAll(test.name, " ", "-"), "p")
-			err = ParsePkgSyntaxWithOptions(llssa.NewProgram(nil), fset, pkg, []*ast.File{file}, Options{AllowInternalDirectives: test.allow})
+			err = ParsePkgSyntaxWithOptions(llvmgen.NewProgram(nil), fset, pkg, []*ast.File{file}, Options{AllowInternalDirectives: test.allow})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("ParsePkgSyntax error = %v, want %q", err, test.want)
 			}
@@ -239,7 +239,7 @@ func TestPkgSymInfoAddSymAndInitLinknamesCoverage(t *testing.T) {
 		t.Fatalf("symbol should still be recorded when file read fails")
 	}
 
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	ctx := &context{prog: prog}
 	syms.initLinknames(ctx)
 	if got, ok := prog.Linkname("example.com/p.Foo"); !ok || got != "c_foo" {
@@ -319,7 +319,7 @@ func TestParsePkgSyntaxSkipsInvalidMethodReceivers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			defer prog.Dispose()
 			pkg := types.NewPackage("example.com/p", "p")
 			if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{ExportRename: true}); err != nil {
@@ -372,19 +372,19 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseFile failed: %v", err)
 			}
-			prog := llssa.NewProgram(nil)
-			pkg := types.NewPackage(llssa.PkgRuntime, "runtime")
+			prog := llvmgen.NewProgram(nil)
+			pkg := types.NewPackage(llvmgen.PkgRuntime, "runtime")
 			if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
 				t.Fatal(err)
 			}
-			if got, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); !ok || got != tt.want {
+			if got, ok := prog.Linkname(llvmgen.PkgRuntime + ".Sigsetjmp"); !ok || got != tt.want {
 				t.Fatalf("pre-collected linkname = (%q,%v), want (%q,%v)", got, ok, tt.want, true)
 			}
 		})
 	}
-	prog := llssa.NewProgram(nil)
-	collectDeclarationDirectives(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llssa.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos)
-	if _, ok := prog.Linkname(llssa.PkgRuntime + ".Sigsetjmp"); ok {
+	prog := llvmgen.NewProgram(nil)
+	collectDeclarationDirectives(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llvmgen.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos)
+	if _, ok := prog.Linkname(llvmgen.PkgRuntime + ".Sigsetjmp"); ok {
 		t.Fatal("mismatched linkname was collected")
 	}
 
@@ -401,7 +401,7 @@ func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
 		}
 		crossFiles = append(crossFiles, file)
 	}
-	prog = llssa.NewProgram(nil)
+	prog = llvmgen.NewProgram(nil)
 	crossPkg := types.NewPackage("example.com/p", "p")
 	crossPkg.Scope().Insert(types.NewFunc(token.NoPos, crossPkg, "alias", types.NewSignature(nil, nil, nil, false)))
 	if err := ParsePkgSyntax(prog, crossFset, crossPkg, crossFiles); err != nil {
@@ -429,7 +429,7 @@ func plain() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	pkg := types.NewPackage("example.com/p", "p")
 	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
 		t.Fatal(err)
@@ -472,7 +472,7 @@ func malformed()
 	if err != nil {
 		t.Fatal(err)
 	}
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	pkg := types.NewPackage("example.com/p", "p")
 	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
 		t.Fatal(err)
@@ -489,7 +489,7 @@ func malformed()
 }
 
 func TestCollectDeclarationDirectivesIgnoresOtherDirectives(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	doc := &ast.CommentGroup{List: []*ast.Comment{
 		{Text: "//go:noinline"},
 		{Text: "//llgointernal:tls"},
@@ -512,7 +512,7 @@ func TestBoolToUint8InvalidArgs(t *testing.T) {
 			t.Fatalf("panic = %q, want invalid arguments", msg)
 		}
 	}()
-	_ = ctx.boolToUint8(nil, []llssa.Expr{})
+	_ = ctx.boolToUint8(nil, []llvmgen.Expr{})
 }
 
 func TestNativeEmbeddedFieldPositions(t *testing.T) {
@@ -539,7 +539,7 @@ type F struct{ Pair[int, string] }
 	if err != nil {
 		t.Fatal(err)
 	}
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	pkg := types.NewPackage("p", "p")
 	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {

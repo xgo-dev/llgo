@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"github.com/xgo-dev/llvm"
 )
@@ -33,8 +33,8 @@ func TestCompileRuntimeGoroutineStackSize(t *testing.T) {
 		size       uint64
 		injected   bool
 	}{
-		{"default", llssa.PkgRuntime, 0, true},
-		{"configured", llssa.PkgRuntime, 32 << 20, true},
+		{"default", llvmgen.PkgRuntime, 0, true},
+		{"configured", llvmgen.PkgRuntime, 32 << 20, true},
 		{"ordinary_package", "example.com/runtime", 32 << 20, false},
 		{"public_runtime", "runtime", 32 << 20, false},
 	} {
@@ -45,7 +45,7 @@ func TestCompileRuntimeGoroutineStackSize(t *testing.T) {
 var goroutineStackSize uintptr
 func Size() uintptr { return goroutineStackSize }
 `)
-			prog := ssatest.NewProgram(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			prog.TypeSizes(types.SizesFor("gc", "amd64"))
 			prog.SetPthreadStackSize(tc.size)

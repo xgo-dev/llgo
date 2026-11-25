@@ -33,10 +33,11 @@ import (
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
 	"github.com/xgo-dev/llgo/internal/browserdebug"
 	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/mockable"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
-	"github.com/xgo-dev/llgo/internal/targets"
+	"github.com/xgo-dev/llgo/target"
 )
 
 // Cmd is the llgo debug command.
@@ -245,14 +246,14 @@ func builtSourceRoots(built []build.Package) []string {
 	return roots
 }
 
-func validateSessionTarget(conf *build.Config, target *targets.Config, selected backend, opts options) error {
+func validateSessionTarget(conf *build.Config, cfg *target.Config, selected backend, opts options) error {
 	if err := validateBackendOptions(selected, opts); err != nil {
 		return err
 	}
-	if target == nil && (conf.Goos == "darwin" || conf.Goos == "windows") && selected == backendLLDB && conf.LinkOptions.DWARFCompression == build.DWARFCompressionEnabled {
+	if cfg == nil && (conf.Goos == "darwin" || conf.Goos == "windows") && selected == backendLLDB && conf.LinkOptions.DWARFCompression == build.DWARFCompressionEnabled {
 		return errors.New("llgo debug: LLDB cannot read experimental compressed Mach-O/PE DWARF; use -ldflags=-compressdwarf=false")
 	}
-	if selected != backendBrowser && selected != backendWasmtime && target == nil && opts.remote == "" && (conf.Goos != runtime.GOOS || conf.Goarch != runtime.GOARCH) {
+	if selected != backendBrowser && selected != backendWasmtime && cfg == nil && opts.remote == "" && (conf.Goos != runtime.GOOS || conf.Goarch != runtime.GOARCH) {
 		return fmt.Errorf("llgo debug: cannot launch a %s/%s program on %s/%s without -remote", conf.Goos, conf.Goarch, runtime.GOOS, runtime.GOARCH)
 	}
 	return nil
@@ -267,15 +268,15 @@ func browserModulePath(artifact string) string {
 	}
 }
 
-func resolveTarget(name string) (*targets.Config, error) {
+func resolveTarget(name string) (*target.Config, error) {
 	if name == "" {
 		return nil, nil
 	}
-	target, err := targets.NewDefaultResolver().Resolve(name)
+	cfg, err := target.NewResolver(env.LLGoTargetsDir()).Resolve(name)
 	if err != nil {
 		return nil, fmt.Errorf("llgo debug: %w", err)
 	}
-	return target, nil
+	return cfg, nil
 }
 
 func prepareArtifact(conf *build.Config) (cleanup func(), artifact string, err error) {

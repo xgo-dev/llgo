@@ -23,8 +23,9 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/goflags"
-	"github.com/xgo-dev/llgo/internal/targets"
+	"github.com/xgo-dev/llgo/target"
 )
 
 // GeneratedIR is an LLVM IR snapshot together with its effective target.
@@ -235,12 +236,12 @@ func applyFlagsFile(conf *build.Config, flagsFile string) error {
 		}
 	}
 	if next.Target != "" {
-		target, err := targets.NewDefaultResolver().Resolve(next.Target)
+		cfg, err := target.NewResolver(env.LLGoTargetsDir()).Resolve(next.Target)
 		if err != nil {
 			return fmt.Errorf("apply %s: %w", flagsFile, err)
 		}
-		next.Goos = target.GOOS
-		next.Goarch = target.GOARCH
+		next.Goos = cfg.GOOS
+		next.Goarch = cfg.GOARCH
 	}
 	if err := goflags.ApplyBuildFlags(&next, goFlags); err != nil {
 		return fmt.Errorf("apply %s: %w", flagsFile, err)

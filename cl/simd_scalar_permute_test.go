@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -25,13 +25,13 @@ func TestSIMDScalarPermuteDeclarations(t *testing.T) {
 	}
 	prog, _ := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
 	prog.Build()
-	wants := map[string]llssa.SIMDOp{
-		"permuteScalars":          llssa.SIMDPermuteScalars,
-		"permuteScalarsGrouped":   llssa.SIMDPermuteScalarsGrouped,
-		"permuteScalarsHi":        llssa.SIMDPermuteScalarsHi,
-		"permuteScalarsLo":        llssa.SIMDPermuteScalarsLo,
-		"permuteScalarsHiGrouped": llssa.SIMDPermuteScalarsHiGrouped,
-		"permuteScalarsLoGrouped": llssa.SIMDPermuteScalarsLoGrouped,
+	wants := map[string]llvmgen.SIMDOp{
+		"permuteScalars":          llvmgen.SIMDPermuteScalars,
+		"permuteScalarsGrouped":   llvmgen.SIMDPermuteScalarsGrouped,
+		"permuteScalarsHi":        llvmgen.SIMDPermuteScalarsHi,
+		"permuteScalarsLo":        llvmgen.SIMDPermuteScalarsLo,
+		"permuteScalarsHiGrouped": llvmgen.SIMDPermuteScalarsHiGrouped,
+		"permuteScalarsLoGrouped": llvmgen.SIMDPermuteScalarsLoGrouped,
 	}
 	counts := make(map[string]int)
 	for fn := range ssautil.AllFunctions(prog) {
@@ -45,14 +45,14 @@ func TestSIMDScalarPermuteDeclarations(t *testing.T) {
 			continue
 		}
 		if simdVectorBits(fn.Signature.Recv().Type()) == 0 {
-			want = llssa.SIMDUnimplemented
+			want = llvmgen.SIMDUnimplemented
 		} else {
 			counts[obj.Name()]++
 		}
 		for _, arch := range []string{"amd64", "arm64", "wasm"} {
 			expected := want
 			if arch != "amd64" {
-				expected = llssa.SIMDUnimplemented
+				expected = llvmgen.SIMDUnimplemented
 			}
 			desc, ok := lookupSIMD(fn, arch)
 			if !ok || desc.op != expected {
@@ -84,30 +84,30 @@ func TestSIMDScalarPermuteShapes(t *testing.T) {
     `
 	for _, tc := range []struct {
 		recv, method string
-		want         llssa.SIMDOp
+		want         llvmgen.SIMDOp
 	}{
-		{"Int32x4", "permuteScalars(uint8) Int32x4", llssa.SIMDPermuteScalars},
-		{"Int32x8", "permuteScalarsGrouped(uint8) Int32x8", llssa.SIMDPermuteScalarsGrouped},
-		{"Int16x8", "permuteScalarsHi(uint8) Int16x8", llssa.SIMDPermuteScalarsHi},
-		{"Int16x8", "permuteScalarsLo(uint8) Int16x8", llssa.SIMDPermuteScalarsLo},
-		{"Int16x16", "permuteScalarsHiGrouped(uint8) Int16x16", llssa.SIMDPermuteScalarsHiGrouped},
-		{"Int16x16", "permuteScalarsLoGrouped(uint8) Int16x16", llssa.SIMDPermuteScalarsLoGrouped},
-		{"Int32x8", "permuteScalars(uint8) Int32x8", llssa.SIMDUnimplemented},
-		{"Int32x4", "permuteScalarsGrouped(uint8) Int32x4", llssa.SIMDUnimplemented},
-		{"Int16x16", "permuteScalarsHi(uint8) Int16x16", llssa.SIMDUnimplemented},
-		{"Int16x16", "permuteScalarsLo(uint8) Int16x16", llssa.SIMDUnimplemented},
-		{"Int16x8", "permuteScalarsHiGrouped(uint8) Int16x8", llssa.SIMDUnimplemented},
-		{"Int16x8", "permuteScalarsLoGrouped(uint8) Int16x8", llssa.SIMDUnimplemented},
-		{"Int16x8", "permuteScalars(uint8) Int16x8", llssa.SIMDUnimplemented},
-		{"Int32x4", "permuteScalarsHi(uint8) Int32x4", llssa.SIMDUnimplemented},
-		{"Int64x2", "permuteScalars(uint8) Int64x2", llssa.SIMDUnimplemented},
-		{"Float32x4", "permuteScalars(uint8) Float32x4", llssa.SIMDUnimplemented},
-		{"Int32x4", "permuteScalars(uint32) Int32x4", llssa.SIMDUnimplemented},
-		{"Int32x4", "permuteScalars(int8) Int32x4", llssa.SIMDUnimplemented},
-		{"Int32x4", "permuteScalars(uint8, uint8) Int32x4", llssa.SIMDUnimplemented},
-		{"Int32x4", "permuteScalars(...uint8) Int32x4", llssa.SIMDUnimplemented},
-		{"Int32x4", "permuteScalars(uint8) Uint32x4", llssa.SIMDUnimplemented},
-		{"Int32x4", "permuteScalars(uint8) Int32x8", llssa.SIMDUnimplemented},
+		{"Int32x4", "permuteScalars(uint8) Int32x4", llvmgen.SIMDPermuteScalars},
+		{"Int32x8", "permuteScalarsGrouped(uint8) Int32x8", llvmgen.SIMDPermuteScalarsGrouped},
+		{"Int16x8", "permuteScalarsHi(uint8) Int16x8", llvmgen.SIMDPermuteScalarsHi},
+		{"Int16x8", "permuteScalarsLo(uint8) Int16x8", llvmgen.SIMDPermuteScalarsLo},
+		{"Int16x16", "permuteScalarsHiGrouped(uint8) Int16x16", llvmgen.SIMDPermuteScalarsHiGrouped},
+		{"Int16x16", "permuteScalarsLoGrouped(uint8) Int16x16", llvmgen.SIMDPermuteScalarsLoGrouped},
+		{"Int32x8", "permuteScalars(uint8) Int32x8", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "permuteScalarsGrouped(uint8) Int32x4", llvmgen.SIMDUnimplemented},
+		{"Int16x16", "permuteScalarsHi(uint8) Int16x16", llvmgen.SIMDUnimplemented},
+		{"Int16x16", "permuteScalarsLo(uint8) Int16x16", llvmgen.SIMDUnimplemented},
+		{"Int16x8", "permuteScalarsHiGrouped(uint8) Int16x8", llvmgen.SIMDUnimplemented},
+		{"Int16x8", "permuteScalarsLoGrouped(uint8) Int16x8", llvmgen.SIMDUnimplemented},
+		{"Int16x8", "permuteScalars(uint8) Int16x8", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "permuteScalarsHi(uint8) Int32x4", llvmgen.SIMDUnimplemented},
+		{"Int64x2", "permuteScalars(uint8) Int64x2", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "permuteScalars(uint8) Float32x4", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "permuteScalars(uint32) Int32x4", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "permuteScalars(int8) Int32x4", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "permuteScalars(uint8, uint8) Int32x4", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "permuteScalars(...uint8) Int32x4", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "permuteScalars(uint8) Uint32x4", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "permuteScalars(uint8) Int32x8", llvmgen.SIMDUnimplemented},
 	} {
 		t.Run(tc.recv+"."+tc.method, func(t *testing.T) {
 			fs := token.NewFileSet()
@@ -123,7 +123,7 @@ func TestSIMDScalarPermuteShapes(t *testing.T) {
 			prog.CreatePackage(pkg, nil, nil, true)
 			fn := prog.FuncValue(pkg.Scope().Lookup(tc.recv).Type().(*types.Named).Method(0))
 			desc, ok := lookupSIMD(fn, "amd64")
-			if wantOK := tc.want != llssa.SIMDUnimplemented; ok != wantOK || ok && desc.op != tc.want {
+			if wantOK := tc.want != llvmgen.SIMDUnimplemented; ok != wantOK || ok && desc.op != tc.want {
 				t.Fatalf("lookup=%v (%t), want %v", desc.op, ok, tc.want)
 			}
 		})

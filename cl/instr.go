@@ -31,7 +31,7 @@ import (
 	"golang.org/x/tools/go/ssa"
 
 	"github.com/xgo-dev/llgo/internal/genmethod"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 var asmRegisterRegex = regexp.MustCompile(`\{[a-zA-Z]+\}`)
@@ -66,7 +66,7 @@ func constBool(v ssa.Value) (ret bool, ok bool) {
 }
 
 // func pystr(string) *py.Object
-func pystr(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func pystr(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 1 {
 		if sv, ok := constStr(args[0]); ok {
 			return b.PyStr(sv)
@@ -76,7 +76,7 @@ func pystr(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
 }
 
 // func cstr(string) *int8
-func cstr(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func cstr(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 1 {
 		if sv, ok := constStr(args[0]); ok {
 			return b.CStr(sv)
@@ -87,7 +87,7 @@ func cstr(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
 
 // func asm(string)
 // func asm(string, map[string]any)
-func (p *context) asm(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) asm(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 0 || len(args) > 2 {
 		panic("asm: invalid arguments - expected asm(<string-literal>) or asm(<string-literal>, <map-literal>)")
 	}
@@ -98,10 +98,10 @@ func (p *context) asm(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
 	}
 	if len(args) == 1 {
 		b.InlineAsm(asmString)
-		return llssa.Expr{Type: b.Prog.Void()}
+		return llvmgen.Expr{Type: b.Prog.Void()}
 	}
 
-	registers := make(map[string]llssa.Expr)
+	registers := make(map[string]llvmgen.Expr)
 	if registerMap, ok := args[1].(*ssa.MakeMap); ok {
 		referrers := registerMap.Referrers()
 		for _, r := range *referrers {
@@ -126,7 +126,7 @@ func (p *context) asm(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
 
 	finalAsm := asmString
 	var hasOutput bool
-	var inputValues []llssa.Expr
+	var inputValues []llvmgen.Expr
 	var constraints []string
 	registerNumbers := map[string]int{}
 
@@ -176,7 +176,7 @@ func (p *context) asm(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
 // -----------------------------------------------------------------------------
 
 // func _Cfunc_CString(s string) *int8
-func (p *context) cgoCString(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) cgoCString(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 1 {
 		return b.CString(p.compileValue(b, args[0]))
 	}
@@ -184,7 +184,7 @@ func (p *context) cgoCString(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 }
 
 // func _Cfunc_CBytes(bytes []byte) *int8
-func (p *context) cgoCBytes(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) cgoCBytes(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 1 {
 		return b.CBytes(p.compileValue(b, args[0]))
 	}
@@ -192,7 +192,7 @@ func (p *context) cgoCBytes(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) 
 }
 
 // func _Cfunc_GoString(s *int8) string
-func (p *context) cgoGoString(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) cgoGoString(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 1 {
 		return b.GoString(p.compileValue(b, args[0]))
 	}
@@ -200,7 +200,7 @@ func (p *context) cgoGoString(b llssa.Builder, args []ssa.Value) (ret llssa.Expr
 }
 
 // func _Cfunc_GoStringN(s *int8, n int) string
-func (p *context) cgoGoStringN(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) cgoGoStringN(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 2 {
 		return b.GoStringN(p.compileValue(b, args[0]), b.FitIntSize(p.compileValue(b, args[1])))
 	}
@@ -208,7 +208,7 @@ func (p *context) cgoGoStringN(b llssa.Builder, args []ssa.Value) (ret llssa.Exp
 }
 
 // func _Cfunc_GoBytes(s *int8, n int) []byte
-func (p *context) cgoGoBytes(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) cgoGoBytes(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 2 {
 		return b.GoBytes(p.compileValue(b, args[0]), b.FitIntSize(p.compileValue(b, args[1])))
 	}
@@ -216,7 +216,7 @@ func (p *context) cgoGoBytes(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 }
 
 // func _Cfunc__CMalloc(n int) unsafe.Pointer
-func (p *context) cgoCMalloc(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) cgoCMalloc(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 1 {
 		return b.CMalloc(p.compileValue(b, args[0]))
 	}
@@ -224,12 +224,12 @@ func (p *context) cgoCMalloc(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 }
 
 // func _cgoCheckPointer(ptr any, arg any)
-func (p *context) cgoCheckPointer(b llssa.Builder, args []ssa.Value) {
+func (p *context) cgoCheckPointer(b llvmgen.Builder, args []ssa.Value) {
 	// don't need to do anything
 }
 
 // func _cgo_runtime_cgocall(fn unsafe.Pointer, arg unsafe.Pointer) int
-func (p *context) cgoCgocall(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) cgoCgocall(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	fnName := p.fn.Name()
 	if dot := strings.LastIndex(fnName, "."); dot >= 0 {
 		fnName = fnName[dot+1:]
@@ -241,7 +241,7 @@ func (p *context) cgoCgocall(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 	}
 	if len(p.cgoArgs) == 0 && isC2 {
 		n := sig.Params().Len()
-		p.cgoArgs = make([]llssa.Expr, n)
+		p.cgoArgs = make([]llvmgen.Expr, n)
 		for i := 0; i < n; i++ {
 			p.cgoArgs[i] = b.Param(i)
 		}
@@ -255,7 +255,7 @@ func (p *context) cgoCgocall(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 		}
 		directSig := types.NewSignatureType(nil, nil, nil, sig.Params(),
 			types.NewTuple(types.NewVar(token.NoPos, nil, "", sig.Results().At(0).Type())), false)
-		fnTy = p.type_(directSig, llssa.CDecl)
+		fnTy = p.type_(directSig, llvmgen.CDecl)
 	}
 	pfn.Type = p.prog.Pointer(fnTy)
 	fn := b.Load(pfn)
@@ -264,11 +264,11 @@ func (p *context) cgoCgocall(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 	if isC2 {
 		errnoSig := types.NewSignatureType(nil, nil, nil, nil,
 			types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int32])), false)
-		errnoFn := b.Pkg.NewFunc("cliteErrno", errnoSig, llssa.CDecl)
+		errnoFn := b.Pkg.NewFunc("cliteErrno", errnoSig, llvmgen.CDecl)
 		p.cgoErrno = b.Call(errnoFn.Expr)
 		return p.cgoErrno
 	}
-	i32 := p.type_(types.Typ[types.Int32], llssa.GoDecl)
+	i32 := p.type_(types.Typ[types.Int32], llvmgen.GoDecl)
 	p.cgoErrno = p.prog.Zero(i32)
 	return p.cgoErrno
 }
@@ -276,12 +276,12 @@ func (p *context) cgoCgocall(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 // -----------------------------------------------------------------------------
 
 // func index(arr *T, idx int) T
-func (p *context) index(b llssa.Builder, args []ssa.Value, native ...bool) (ret llssa.Expr) {
+func (p *context) index(b llvmgen.Builder, args []ssa.Value, native ...bool) (ret llvmgen.Expr) {
 	return b.Load(p.advance(b, args, native...))
 }
 
 // func advance(ptr *T, offset int) *T
-func (p *context) advance(b llssa.Builder, args []ssa.Value, native ...bool) (ret llssa.Expr) {
+func (p *context) advance(b llvmgen.Builder, args []ssa.Value, native ...bool) (ret llvmgen.Expr) {
 	if len(args) == 2 {
 		ptr := p.compileValue(b, args[0])
 		if len(native) != 0 && native[0] {
@@ -289,7 +289,7 @@ func (p *context) advance(b llssa.Builder, args []ssa.Value, native ...bool) (re
 			// their pointer elements occupy four bytes even though Go pointer
 			// slots occupy eight. Preserve that distinction on the expression so
 			// Builder.Advance can select the physical element layout.
-			ptr.Type = p.type_(args[0].Type(), llssa.CDecl)
+			ptr.Type = p.type_(args[0].Type(), llvmgen.CDecl)
 		}
 		offset := p.compileValue(b, args[1])
 		return b.Advance(ptr, offset)
@@ -316,7 +316,7 @@ func isCLayoutPointerIntrinsic(fn *ssa.Function) bool {
 }
 
 // func alloca(size uintptr) unsafe.Pointer
-func (p *context) alloca(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) alloca(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 1 {
 		n := p.compileValue(b, args[0])
 		return b.Alloca(n)
@@ -325,7 +325,7 @@ func (p *context) alloca(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
 }
 
 // func allocaCStr(s string) *int8
-func (p *context) allocaCStr(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) allocaCStr(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 1 {
 		s := p.compileValue(b, args[0])
 		return b.AllocaCStr(s)
@@ -334,7 +334,7 @@ func (p *context) allocaCStr(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 }
 
 // func allocCStr(s string) *int8
-func (p *context) allocCStr(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) allocCStr(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 1 {
 		s := p.compileValue(b, args[0])
 		return b.AllocCStr(s)
@@ -343,7 +343,7 @@ func (p *context) allocCStr(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) 
 }
 
 // func allocaCStrs(strs []string, endWithNil bool) **int8
-func (p *context) allocaCStrs(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) allocaCStrs(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 2 {
 		endWithNil, ok := constBool(args[1])
 		if !ok {
@@ -356,10 +356,10 @@ func (p *context) allocaCStrs(b llssa.Builder, args []ssa.Value) (ret llssa.Expr
 }
 
 // func string(cstr *int8, n ...int) *int8
-func (p *context) string(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) string(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 2 {
 		cstr := p.compileValue(b, args[0])
-		n := make([]llssa.Expr, 0, 1)
+		n := make([]llvmgen.Expr, 0, 1)
 		n = p.compileVArg(n, b, args[1])
 		return b.MakeString(cstr, n...)
 	}
@@ -367,7 +367,7 @@ func (p *context) string(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
 }
 
 // func stringData(s string) *int8
-func (p *context) stringData(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) stringData(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 1 {
 		s := p.compileValue(b, args[0])
 		return b.StringData(s)
@@ -376,7 +376,7 @@ func (p *context) stringData(b llssa.Builder, args []ssa.Value) (ret llssa.Expr)
 }
 
 // func funcAddr(fn any) unsafe.Pointer
-func (p *context) funcAddr(b llssa.Builder, args []ssa.Value) llssa.Expr {
+func (p *context) funcAddr(b llvmgen.Builder, args []ssa.Value) llvmgen.Expr {
 	if len(args) == 1 {
 		if fn, ok := args[0].(*ssa.MakeInterface); ok {
 			switch f := fn.X.(type) {
@@ -396,7 +396,7 @@ func (p *context) funcAddr(b llssa.Builder, args []ssa.Value) llssa.Expr {
 }
 
 // func funcPCABI0(fn any) uintptr
-func (p *context) funcPCABI0(b llssa.Builder, args []ssa.Value) llssa.Expr {
+func (p *context) funcPCABI0(b llvmgen.Builder, args []ssa.Value) llvmgen.Expr {
 	pc := p.funcPCABI0Value(b, args[0])
 	if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" {
 		pc = b.BinOp(token.SHL, pc, p.prog.IntVal(2, pc.Type))
@@ -404,7 +404,7 @@ func (p *context) funcPCABI0(b llssa.Builder, args []ssa.Value) llssa.Expr {
 	return pc
 }
 
-func (p *context) funcPCABI0Value(b llssa.Builder, v ssa.Value) llssa.Expr {
+func (p *context) funcPCABI0Value(b llvmgen.Builder, v ssa.Value) llvmgen.Expr {
 	switch v := v.(type) {
 	case *ssa.MakeInterface:
 		return p.funcPCABI0Value(b, v.X)
@@ -412,11 +412,11 @@ func (p *context) funcPCABI0Value(b llssa.Builder, v ssa.Value) llssa.Expr {
 		if cname := extractTrampolineCName(v.Name()); cname != "" {
 			cname = p.remapTrampolineCName(cname)
 			fnSig := p.syscallFnSig(len(v.Params))
-			cfn := b.Pkg.NewFunc(cname, fnSig, llssa.CDecl)
-			return b.Convert(p.type_(types.Typ[types.Uintptr], llssa.GoDecl), cfn.Expr)
+			cfn := b.Pkg.NewFunc(cname, fnSig, llvmgen.CDecl)
+			return b.Convert(p.type_(types.Typ[types.Uintptr], llvmgen.GoDecl), cfn.Expr)
 		}
 		if aFn, _, _ := p.compileFunction(v); aFn != nil {
-			return b.Convert(p.type_(types.Typ[types.Uintptr], llssa.GoDecl), aFn.Expr)
+			return b.Convert(p.type_(types.Typ[types.Uintptr], llvmgen.GoDecl), aFn.Expr)
 		}
 	case *ssa.MakeClosure:
 		return p.funcPCABI0Value(b, v.Fn)
@@ -424,7 +424,7 @@ func (p *context) funcPCABI0Value(b llssa.Builder, v ssa.Value) llssa.Expr {
 		if t := v.Type(); t != nil {
 			if _, ok := t.Underlying().(*types.Interface); ok {
 				data := b.InterfaceData(p.compileValue(b, v))
-				uptr := p.type_(types.Typ[types.Uintptr], llssa.GoDecl)
+				uptr := p.type_(types.Typ[types.Uintptr], llvmgen.GoDecl)
 				uptrPtr := p.prog.Pointer(uptr)
 				codePtr := b.Convert(uptrPtr, data)
 				return b.Load(codePtr)
@@ -437,11 +437,11 @@ func (p *context) funcPCABI0Value(b llssa.Builder, v ssa.Value) llssa.Expr {
 // zeroResult returns the zero value for the intrinsic's result tuple.
 // Some intrinsics are specified as returning a tuple; in that case we need to
 // materialize a typed zero value of the tuple type.
-func (p *context) zeroResult(results *types.Tuple) llssa.Expr {
+func (p *context) zeroResult(results *types.Tuple) llvmgen.Expr {
 	if results.Len() == 1 {
-		return p.prog.Zero(p.type_(results.At(0).Type(), llssa.GoDecl))
+		return p.prog.Zero(p.type_(results.At(0).Type(), llvmgen.GoDecl))
 	}
-	return p.prog.Zero(p.type_(results, llssa.GoDecl))
+	return p.prog.Zero(p.type_(results, llvmgen.GoDecl))
 }
 
 // syscallFnSig returns a variadic C signature with argc uintptr parameters
@@ -451,7 +451,7 @@ func (p *context) syscallFnSig(argc int) *types.Signature {
 	for i := 0; i < argc; i++ {
 		params = append(params, types.NewParam(token.NoPos, nil, "", types.Typ[types.Uintptr]))
 	}
-	params = append(params, llssa.VArg())
+	params = append(params, llvmgen.VArg())
 	ret := types.NewVar(token.NoPos, nil, "", types.Typ[types.Uintptr])
 	return types.NewSignatureType(nil, nil, nil, types.NewTuple(params...), types.NewTuple(ret), true)
 }
@@ -473,11 +473,11 @@ var errnoSig = types.NewSignatureType(nil, nil, nil, nil,
 // syscallErrno returns errno (as uintptr) if r1 is -1, otherwise 0.
 // This matches the common libc syscall convention used by our llgo.syscall
 // intrinsic lowering.
-func (p *context) syscallErrno(b llssa.Builder, r1 llssa.Expr) llssa.Expr {
-	uptr := p.type_(types.Typ[types.Uintptr], llssa.GoDecl)
+func (p *context) syscallErrno(b llvmgen.Builder, r1 llvmgen.Expr) llvmgen.Expr {
+	uptr := p.type_(types.Typ[types.Uintptr], llvmgen.GoDecl)
 	minus1 := p.prog.IntVal(^uint64(0), uptr)
 	cond := b.BinOp(token.EQL, r1, minus1)
-	errnoFn := b.Pkg.NewFunc("cliteErrno", errnoSig, llssa.CDecl)
+	errnoFn := b.Pkg.NewFunc("cliteErrno", errnoSig, llvmgen.CDecl)
 	errno := b.Call(errnoFn.Expr)
 	errno = b.Convert(uptr, errno)
 	zero := p.prog.Zero(uptr)
@@ -488,11 +488,11 @@ func (p *context) syscallErrno(b llssa.Builder, r1 llssa.Expr) llssa.Expr {
 // The first argument is treated as a function pointer, called with the remaining
 // arguments, and it returns a (r1, r2, errno) tuple. r2 is always 0 and errno is
 // set iff r1 == -1.
-func (p *context) syscallIntrinsic(b llssa.Builder, args []ssa.Value, results *types.Tuple) llssa.Expr {
+func (p *context) syscallIntrinsic(b llvmgen.Builder, args []ssa.Value, results *types.Tuple) llvmgen.Expr {
 	if len(args) < 1 {
 		panic("syscall: missing arguments")
 	}
-	callArgs := make([]llssa.Expr, 0, len(args)-1)
+	callArgs := make([]llvmgen.Expr, 0, len(args)-1)
 	for _, arg := range args[1:] {
 		callArgs = append(callArgs, p.compileValue(b, arg))
 	}
@@ -502,13 +502,13 @@ func (p *context) syscallIntrinsic(b llssa.Builder, args []ssa.Value, results *t
 	}
 	fnSig := p.syscallFnSigFixed(callArgTypes)
 	fnArg := p.compileValue(b, args[0])
-	fnType := p.type_(fnSig, llssa.CDecl)
-	fnPtr := b.PtrCast(fnType, b.Convert(p.type_(types.Typ[types.UnsafePointer], llssa.GoDecl), fnArg))
+	fnType := p.type_(fnSig, llvmgen.CDecl)
+	fnPtr := b.PtrCast(fnType, b.Convert(p.type_(types.Typ[types.UnsafePointer], llvmgen.GoDecl), fnArg))
 	r1 := b.Call(fnPtr, callArgs...)
-	uptr := p.type_(types.Typ[types.Uintptr], llssa.GoDecl)
+	uptr := p.type_(types.Typ[types.Uintptr], llvmgen.GoDecl)
 	r2 := p.prog.Zero(uptr)
 	err := p.syscallErrno(b, r1)
-	tuple := p.type_(results, llssa.GoDecl)
+	tuple := p.type_(results, llvmgen.GoDecl)
 	return b.Aggregate(tuple, r1, r2, err)
 }
 
@@ -543,7 +543,7 @@ func (p *context) remapTrampolineCName(name string) string {
 	return name
 }
 
-func (p *context) sigsetjmp(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) {
+func (p *context) sigsetjmp(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.Expr) {
 	if len(args) == 2 {
 		jb := p.compileValue(b, args[0])
 		savemask := p.compileValue(b, args[1])
@@ -552,7 +552,7 @@ func (p *context) sigsetjmp(b llssa.Builder, args []ssa.Value) (ret llssa.Expr) 
 	panic("sigsetjmp(jb c.SigjmpBuf, savemask c.Int): invalid arguments")
 }
 
-func (p *context) siglongjmp(b llssa.Builder, args []ssa.Value) {
+func (p *context) siglongjmp(b llvmgen.Builder, args []ssa.Value) {
 	if len(args) == 2 {
 		jb := p.compileValue(b, args[0])
 		retval := p.compileValue(b, args[1])
@@ -562,14 +562,14 @@ func (p *context) siglongjmp(b llssa.Builder, args []ssa.Value) {
 	panic("siglongjmp(jb c.SigjmpBuf, retval c.Int): invalid arguments")
 }
 
-func (p *context) setjmp(b llssa.Builder, args []ssa.Value) llssa.Expr {
+func (p *context) setjmp(b llvmgen.Builder, args []ssa.Value) llvmgen.Expr {
 	if len(args) == 1 {
 		return b.Setjmp(p.compileValue(b, args[0]))
 	}
 	panic("setjmp(jb c.JmpBuf): invalid arguments")
 }
 
-func (p *context) longjmp(b llssa.Builder, args []ssa.Value) {
+func (p *context) longjmp(b llvmgen.Builder, args []ssa.Value) {
 	if len(args) == 2 {
 		b.Longjmp(p.compileValue(b, args[0]), p.compileValue(b, args[1]))
 		return
@@ -577,7 +577,7 @@ func (p *context) longjmp(b llssa.Builder, args []ssa.Value) {
 	panic("longjmp(jb c.JmpBuf, retval c.Int): invalid arguments")
 }
 
-func (p *context) atomic(b llssa.Builder, op llssa.AtomicOp, args []llssa.Expr) (ret llssa.Expr) {
+func (p *context) atomic(b llvmgen.Builder, op llvmgen.AtomicOp, args []llvmgen.Expr) (ret llvmgen.Expr) {
 	if len(args) == 2 {
 		addr := args[0]
 		val := args[1]
@@ -586,31 +586,31 @@ func (p *context) atomic(b llssa.Builder, op llssa.AtomicOp, args []llssa.Expr) 
 	panic("atomicOp(addr *T, val T) T: invalid arguments")
 }
 
-func (p *context) atomicLoad(b llssa.Builder, args []llssa.Expr) llssa.Expr {
+func (p *context) atomicLoad(b llvmgen.Builder, args []llvmgen.Expr) llvmgen.Expr {
 	if len(args) == 1 {
 		addr := args[0]
-		return b.Load(addr).SetOrdering(llssa.OrderingSeqConsistent)
+		return b.Load(addr).SetOrdering(llvmgen.OrderingSeqConsistent)
 	}
 	panic("atomicLoad(addr *T) T: invalid arguments")
 }
 
-func (p *context) atomicStore(b llssa.Builder, args []llssa.Expr) llssa.Expr {
+func (p *context) atomicStore(b llvmgen.Builder, args []llvmgen.Expr) llvmgen.Expr {
 	if len(args) == 2 {
 		addr := args[0]
 		val := args[1]
-		return b.Store(addr, val).SetOrdering(llssa.OrderingSeqConsistent)
+		return b.Store(addr, val).SetOrdering(llvmgen.OrderingSeqConsistent)
 	}
 	panic("atomicStore(addr *T, val T) T: invalid arguments")
 }
 
-func (p *context) atomicStoreUnordered(b llssa.Builder, args []llssa.Expr) llssa.Expr {
+func (p *context) atomicStoreUnordered(b llvmgen.Builder, args []llvmgen.Expr) llvmgen.Expr {
 	if len(args) == 2 {
-		return b.Store(args[0], args[1]).SetOrdering(llssa.OrderingUnordered)
+		return b.Store(args[0], args[1]).SetOrdering(llvmgen.OrderingUnordered)
 	}
 	panic("atomicStoreUnordered(addr *T, val T): invalid arguments")
 }
 
-func (p *context) atomicCmpXchg(b llssa.Builder, args []llssa.Expr) llssa.Expr {
+func (p *context) atomicCmpXchg(b llvmgen.Builder, args []llvmgen.Expr) llvmgen.Expr {
 	if len(args) == 3 {
 		addr := args[0]
 		old := args[1]
@@ -620,14 +620,14 @@ func (p *context) atomicCmpXchg(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	panic("atomicCmpXchg(addr *T, old, new T) T: invalid arguments")
 }
 
-func (p *context) atomicCmpXchgOK(b llssa.Builder, args []llssa.Expr) llssa.Expr {
+func (p *context) atomicCmpXchgOK(b llvmgen.Builder, args []llvmgen.Expr) llvmgen.Expr {
 	ret := p.atomicCmpXchg(b, args)
 	return b.Extract(ret, 1)
 }
 
-func (p *context) boolToUint8(b llssa.Builder, args []llssa.Expr) llssa.Expr {
+func (p *context) boolToUint8(b llvmgen.Builder, args []llvmgen.Expr) llvmgen.Expr {
 	if len(args) == 1 {
-		retType := p.type_(types.Typ[types.Uint8], llssa.GoDecl)
+		retType := p.type_(types.Typ[types.Uint8], llvmgen.GoDecl)
 		one := p.prog.IntVal(1, retType)
 		zero := p.prog.Zero(retType)
 		return b.SelectValue(args[0], one, zero)
@@ -635,11 +635,11 @@ func (p *context) boolToUint8(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	panic("boolToUint8(b bool) uint8: invalid arguments")
 }
 
-func (p *context) bitCastIntrinsic(b llssa.Builder, args []llssa.Expr, result types.Type, name string) llssa.Expr {
+func (p *context) bitCastIntrinsic(b llvmgen.Builder, args []llvmgen.Expr, result types.Type, name string) llvmgen.Expr {
 	if len(args) != 1 {
 		panic(name + ": invalid arguments")
 	}
-	return b.BitCast(p.type_(result, llssa.GoDecl), args[0])
+	return b.BitCast(p.type_(result, llvmgen.GoDecl), args[0])
 }
 
 // -----------------------------------------------------------------------------
@@ -718,7 +718,7 @@ var llgoInstrs = map[string]int{
 
 // funcOf returns a function by name and set ftype = goFunc, cFunc, etc.
 // or returns nil and set ftype = llgoCstr, llgoAlloca, llgoUnreachable, etc.
-func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObjRef, ftype int) {
+func (p *context) funcOf(fn *ssa.Function) (aFn llvmgen.Function, pyFn llvmgen.PyObjRef, ftype int) {
 	pkgTypes, name, ftype := p.funcName(fn)
 	switch ftype {
 	case llvmIntrinsic:
@@ -746,10 +746,10 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llssa.Function, pyFn llssa.PyObj
 			sig := p.patchType(fn.Signature).(*types.Signature)
 			// Source env-bearing bodies are created by compileFuncDecl before
 			// lowering. Imported declarations cannot reconstruct //llgo:env.
-			aFn = pkg.NewFuncEx(name, sig, llssa.CallConv(ftype), false, p.needsLinkOnce(fn))
+			aFn = pkg.NewFuncEx(name, sig, llvmgen.CallConv(ftype), false, p.needsLinkOnce(fn))
 			noInlineDirective := hasNoInlineDirective(fn)
 			if disableInline || noInlineDirective {
-				aFn.Inline(llssa.NoInline)
+				aFn.Inline(llvmgen.NoInline)
 			}
 			if noInlineDirective {
 				aFn.DisableTailCalls()
@@ -784,7 +784,7 @@ func (p *context) funcKind(vfn ssa.Value) int {
 	}
 	// Direct C symbols and indirect function values share the same varargs rule.
 	if vfn != nil {
-		if signature, ok := vfn.Type().Underlying().(*types.Signature); ok && llssa.HasNameValist(signature) {
+		if signature, ok := vfn.Type().Underlying().(*types.Signature); ok && llvmgen.HasNameValist(signature) {
 			return fnHasVArg
 		}
 	}
@@ -799,26 +799,26 @@ func (p *context) pkgNoInit(pkg *types.Package) bool {
 	return false
 }
 
-func (p *context) offsetOfBuiltinArg(arg ssa.Value) (llssa.Expr, bool) {
+func (p *context) offsetOfBuiltinArg(arg ssa.Value) (llvmgen.Expr, bool) {
 	if field, ok := arg.(*ssa.Field); ok {
 		st, ok := field.X.Type().Underlying().(*types.Struct)
 		if !ok || field.Field < 0 || field.Field >= st.NumFields() {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
-		typ := p.type_(field.X.Type(), llssa.GoDecl)
+		typ := p.type_(field.X.Type(), llvmgen.GoDecl)
 		return p.prog.IntVal(p.prog.OffsetOf(typ, field.Field), p.prog.Uintptr()), true
 	}
 	load, ok := arg.(*ssa.UnOp)
 	if !ok || load.Op != token.MUL {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	field, ok := load.X.(*ssa.FieldAddr)
 	if !ok {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	offset, ok := p.offsetOfFieldChain(field)
 	if !ok {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	return p.prog.IntVal(uint64(offset), p.prog.Uintptr()), true
 }
@@ -844,7 +844,7 @@ func (p *context) offsetOfFieldAddr(field *ssa.FieldAddr) (int, bool) {
 	if !ok {
 		return 0, false
 	}
-	typ := p.type_(ptr.Elem(), llssa.GoDecl)
+	typ := p.type_(ptr.Elem(), llvmgen.GoDecl)
 	return int(p.prog.OffsetOf(typ, field.Field)), true
 }
 
@@ -971,7 +971,7 @@ func (p *context) shouldTrackCallerFrames() bool {
 // slog's Logger.log, testing's decorate chains qualify exactly this way),
 // and packages that never read caller pcs track nothing and pay nothing.
 func canTrackCallerFramesForPackage(pkgPath string) bool {
-	return pkgPath != llssa.PkgRuntime &&
+	return pkgPath != llvmgen.PkgRuntime &&
 		pkgPath != "runtime" &&
 		!strings.HasPrefix(pkgPath, "github.com/xgo-dev/llgo/runtime/internal/")
 }
@@ -1997,7 +1997,7 @@ func (p *context) runtimeCallerFrameName() string {
 	return ""
 }
 
-func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
+func (p *context) pushCallerLocationFrame(b llvmgen.Builder, fn *ssa.Function) {
 	if !p.options.ShadowStack {
 		return
 	}
@@ -2031,15 +2031,15 @@ func (p *context) pushCallerLocationFrame(b llssa.Builder, fn *ssa.Function) {
 	}
 }
 
-func (p *context) recordCallerLocation(b llssa.Builder, pos token.Pos) {
+func (p *context) recordCallerLocation(b llvmgen.Builder, pos token.Pos) {
 	p.recordRuntimeLocation(b, pos, "RecordCallerLocation")
 }
 
-func (p *context) recordPanicLocation(b llssa.Builder, pos token.Pos) {
+func (p *context) recordPanicLocation(b llvmgen.Builder, pos token.Pos) {
 	p.recordRuntimeLocation(b, pos, "RecordPanicLocation")
 }
 
-func (p *context) recordPanicSite(b llssa.Builder, pos token.Pos) {
+func (p *context) recordPanicSite(b llvmgen.Builder, pos token.Pos) {
 	p.recordPanicLocation(b, pos)
 	if p.panicSiteFuncs[p.goFn] {
 		p.emitPCLineLabel(b, pos)
@@ -2047,7 +2047,7 @@ func (p *context) recordPanicSite(b llssa.Builder, pos token.Pos) {
 		// Install once per builder, not once per instruction. Nil-check
 		// lowering invokes it after entering its separate failure block.
 		if b.PanicSite == nil {
-			b.PanicSite = func(b llssa.Builder) {
+			b.PanicSite = func(b llvmgen.Builder) {
 				if p.panicSitePos.IsValid() {
 					p.lastPCLineFile = ""
 					p.emitPCLineLabel(b, p.panicSitePos)
@@ -2057,7 +2057,7 @@ func (p *context) recordPanicSite(b llssa.Builder, pos token.Pos) {
 	}
 }
 
-func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn string) {
+func (p *context) recordRuntimeLocation(b llvmgen.Builder, pos token.Pos, fn string) {
 	if !p.options.ShadowStack || !p.shouldTrackCallerFrames() {
 		return
 	}
@@ -2070,7 +2070,7 @@ func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn strin
 		return
 	}
 	name := p.runtimeCallerFrameName()
-	b.EmitLocationRecord(fn, name, position.Filename, position.Line, func() llssa.Expr {
+	b.EmitLocationRecord(fn, name, position.Filename, position.Line, func() llvmgen.Expr {
 		if p.options.CompactCallerLocations {
 			return p.callRuntimeLocationID(b, fn, b.Convert(p.prog.Uintptr(), p.fn.Expr), position)
 		}
@@ -2084,7 +2084,7 @@ func (p *context) recordRuntimeLocation(b llssa.Builder, pos token.Pos, fn strin
 	})
 }
 
-func (p *context) callRuntimeLocationID(b llssa.Builder, fn string, entry llssa.Expr, pos token.Position) llssa.Expr {
+func (p *context) callRuntimeLocationID(b llvmgen.Builder, fn string, entry llvmgen.Expr, pos token.Position) llvmgen.Expr {
 	key := pcLinePosition{p.fn.Name(), pos.Filename, pos.Line}
 	if p.pcLineIDs == nil {
 		p.pcLineIDs = make(map[pcLinePosition]uint64)
@@ -2106,7 +2106,7 @@ func (p *context) callRuntimeLocationID(b llssa.Builder, fn string, entry llssa.
 		results = types.NewTuple(types.NewVar(token.NoPos, nil, "mark", types.Typ[types.Int]))
 	}
 	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
-	return b.Call(p.runtimeFunc(llssa.RuntimeSymbol(fn+"ID", "PushCallerLocationFrameID", "RecordCallerLocationID", "RecordPanicLocationID"), sig), entry,
+	return b.Call(p.runtimeFunc(llvmgen.RuntimeSymbol(fn+"ID", "PushCallerLocationFrameID", "RecordCallerLocationID", "RecordPanicLocationID"), sig), entry,
 		p.prog.IntVal(id, p.prog.Uint64()), p.prog.IntVal(uint64(pos.Line), p.prog.Int()))
 }
 
@@ -2114,11 +2114,11 @@ func (p *context) callRuntimeLocationID(b llssa.Builder, fn string, entry llssa.
 // The C ABI passes each Go string indirectly; separate instrumentation calls
 // otherwise reserve separate aggregate argument slots in every recursive
 // frame, even though all those strings refer to immutable compiler literals.
-func (p *context) callRuntimeLocation(b llssa.Builder, fn string, entry, name, file, line llssa.Expr) llssa.Expr {
+func (p *context) callRuntimeLocation(b llvmgen.Builder, fn string, entry, name, file, line llvmgen.Expr) llvmgen.Expr {
 	push := fn == "PushCallerLocationFrame"
 	if target := p.prog.Target(); target != nil && target.GOARCH == "wasm" {
 		return b.Call(
-			p.runtimeFunc(llssa.RuntimeSymbol(fn+"Wasm", "PushCallerLocationFrameWasm", "RecordCallerLocationWasm", "RecordPanicLocationWasm"), wasmRuntimeLocationSig(push)),
+			p.runtimeFunc(llvmgen.RuntimeSymbol(fn+"Wasm", "PushCallerLocationFrameWasm", "RecordCallerLocationWasm", "RecordPanicLocationWasm"), wasmRuntimeLocationSig(push)),
 			entry, b.StringData(name), b.StringLen(name), b.StringData(file), b.StringLen(file), line,
 		)
 	}
@@ -2126,10 +2126,10 @@ func (p *context) callRuntimeLocation(b llssa.Builder, fn string, entry, name, f
 	if push {
 		sig = pushCallerLocationFrameSig()
 	}
-	return b.Call(p.runtimeFunc(llssa.RuntimeSymbol(fn, "PushCallerLocationFrame", "RecordCallerLocation", "RecordPanicLocation"), sig), entry, name, file, line)
+	return b.Call(p.runtimeFunc(llvmgen.RuntimeSymbol(fn, "PushCallerLocationFrame", "RecordCallerLocation", "RecordPanicLocation"), sig), entry, name, file, line)
 }
 
-func (p *context) recordCallerLocationForCall(b llssa.Builder, call *ssa.CallCommon) {
+func (p *context) recordCallerLocationForCall(b llvmgen.Builder, call *ssa.CallCommon) {
 	if !p.shouldTrackCallerFrames() {
 		return
 	}
@@ -2149,7 +2149,7 @@ type pcLinePosition struct {
 	line   int
 }
 
-func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
+func (p *context) emitPCLineLabel(b llvmgen.Builder, pos token.Pos) {
 	if p == nil || p.pkg == nil || p.fn == nil || !p.prog.FuncInfoSitesEnabled() || !p.shouldTrackCallerFrames() {
 		return
 	}
@@ -2243,7 +2243,7 @@ func (p *context) emitPCLineLabel(b llssa.Builder, pos token.Pos) {
 	)
 }
 
-func canEmitPCLineLabelsForTarget(target *llssa.Target) bool {
+func canEmitPCLineLabelsForTarget(target *llvmgen.Target) bool {
 	if target == nil {
 		return false
 	}
@@ -2322,20 +2322,20 @@ func asmQuoteSymbol(symbol string) string {
 	return b.String()
 }
 
-func (p *context) popCallerLocationFrame(b llssa.Builder) {
+func (p *context) popCallerLocationFrame(b llvmgen.Builder) {
 	if p.callerFrameMark.IsNil() {
 		return
 	}
 	b.Call(p.runtimeFunc("PopCallerLocationFrame", popCallerLocationFrameSig()), p.callerFrameMark)
 }
 
-func (p *context) runtimeFunc(name string, sig *types.Signature) llssa.Expr {
+func (p *context) runtimeFunc(name string, sig *types.Signature) llvmgen.Expr {
 	p.pkg.NeedRuntime = true
-	fullName := llssa.PkgRuntime + "." + name
+	fullName := llvmgen.PkgRuntime + "." + name
 	if fn := p.pkg.FuncOf(fullName); fn != nil {
 		return fn.Expr
 	}
-	return p.pkg.NewFuncEx(fullName, sig, llssa.GoDecl, false, false).Expr
+	return p.pkg.NewFuncEx(fullName, sig, llvmgen.GoDecl, false, false).Expr
 }
 
 func pushCallerLocationFrameSig() *types.Signature {
@@ -2413,15 +2413,15 @@ func normalizeRuntimeAnonFuncName(name string) string {
 // -----------------------------------------------------------------------------
 
 type explicitDeferStack struct {
-	stack llssa.Expr
-	owner llssa.Function
+	stack llvmgen.Expr
+	owner llvmgen.Function
 }
 
-func (p *context) call(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon) (ret llssa.Expr) {
+func (p *context) call(b llvmgen.Builder, act llvmgen.DoAction, call *ssa.CallCommon) (ret llvmgen.Expr) {
 	return p.callEx(b, act, call, nil)
 }
 
-func (p *context) callDeferStack(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, stack ssa.Value, fn *ssa.Function) (ret llssa.Expr) {
+func (p *context) callDeferStack(b llvmgen.Builder, act llvmgen.DoAction, call *ssa.CallCommon, stack ssa.Value, fn *ssa.Function) (ret llvmgen.Expr) {
 	return p.callEx(b, act, call, &explicitDeferStack{
 		stack: p.compileValue(b, stack),
 		owner: p.deferStackOwner(fn),
@@ -2433,7 +2433,7 @@ func (p *context) callDeferStack(b llssa.Builder, act llssa.DoAction, call *ssa.
 // but own real frames and must retain their deferred calls.
 // If the owner function has not been compiled yet, this helper will compile it
 // lazily so the explicit defer stack has a concrete LLVM function to target.
-func (p *context) deferStackOwner(fn *ssa.Function) llssa.Function {
+func (p *context) deferStackOwner(fn *ssa.Function) llvmgen.Function {
 	for fn != nil && fn.Synthetic == rangeOverFuncYieldSynthetic {
 		fn = fn.Parent()
 	}
@@ -2450,14 +2450,14 @@ func (p *context) deferStackOwner(fn *ssa.Function) llssa.Function {
 	return owner
 }
 
-func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, common *ssa.CallCommon, ds *explicitDeferStack, mayRecover bool, fn llssa.Expr, buildCall func(llssa.Builder, llssa.Expr, ...llssa.Expr) llssa.Expr, args ...llssa.Expr) llssa.Expr {
+func (p *context) emitDo(b llvmgen.Builder, act llvmgen.DoAction, common *ssa.CallCommon, ds *explicitDeferStack, mayRecover bool, fn llvmgen.Expr, buildCall func(llvmgen.Builder, llvmgen.Expr, ...llvmgen.Expr) llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 	if ds != nil {
 		b.DeferToRecover(ds.owner, ds.stack, mayRecover, fn, buildCall, args...)
-		return llssa.Nil
+		return llvmgen.Nil
 	}
 	switch act {
-	case llssa.Call, llssa.Go:
-		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
+	case llvmgen.Call, llvmgen.Go:
+		if act == llvmgen.Call && isRecoverTransparentWrapper(p.goFn) {
 			if p.canTailRecoverAlias(common) {
 				return b.CallRecoverTailAlias(p.fn.Expr, mayRecover, fn, buildCall, args...)
 			}
@@ -2473,14 +2473,14 @@ func (p *context) emitDo(b llssa.Builder, act llssa.DoAction, common *ssa.CallCo
 		if common != nil && p.shouldTrackCallerFrames() {
 			call := buildCall
 			pos := p.deferRunPos(common.Pos())
-			buildCall = func(b llssa.Builder, fn llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			buildCall = func(b llvmgen.Builder, fn llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				p.lastPCLineFile = ""
 				p.emitPCLineLabel(b, pos)
 				return call(b, fn, args...)
 			}
 		}
 		b.DeferRecover(act, mayRecover, fn, buildCall, args...)
-		return llssa.Nil
+		return llvmgen.Nil
 	}
 }
 
@@ -2502,7 +2502,7 @@ func (p *context) callMayRecover(v ssa.Value) bool {
 	return true
 }
 
-func (p *context) staticArrayLenBuiltinArg(b llssa.Builder, arg ssa.Value) (llssa.Expr, bool) {
+func (p *context) staticArrayLenBuiltinArg(b llvmgen.Builder, arg ssa.Value) (llvmgen.Expr, bool) {
 	var arr *types.Array
 	var sideEffect ssa.Value
 	if load, ok := arg.(*ssa.UnOp); ok && load.Op == token.MUL {
@@ -2517,10 +2517,10 @@ func (p *context) staticArrayLenBuiltinArg(b llssa.Builder, arg ssa.Value) (llss
 		}
 	}
 	if arr == nil {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	p.compileValue(b, sideEffect)
-	return b.Const(constant.MakeInt64(arr.Len()), p.type_(types.Typ[types.Int], llssa.GoDecl)), true
+	return b.Const(constant.MakeInt64(arr.Len()), p.type_(types.Typ[types.Int], llvmgen.GoDecl)), true
 }
 
 func isPointerGoType(t types.Type) bool {
@@ -2552,7 +2552,7 @@ func isWrapNilCheckCall(v ssa.Value) bool {
 // emitNilDerefBaseCheck emits cold failure branches without replacing cached
 // addresses. Keep its traversal in sync with assertNilDerefBase, whose checks
 // instead return safe addresses and rewrite p.bvals for ordinary compilation.
-func (p *context) emitNilDerefBaseCheck(b llssa.Builder, addr ssa.Value) {
+func (p *context) emitNilDerefBaseCheck(b llvmgen.Builder, addr ssa.Value) {
 	switch addr := addr.(type) {
 	case *ssa.UnOp:
 		if addr.Op != token.MUL || isKnownNonNilAddr(addr.X) || isWrapNilCheckCall(addr.X) {
@@ -2580,13 +2580,13 @@ func (p *context) emitNilDerefBaseCheck(b llssa.Builder, addr ssa.Value) {
 	}
 }
 
-func (p *context) emitCheckedDerefCheck(b llssa.Builder, arg *ssa.UnOp) {
+func (p *context) emitCheckedDerefCheck(b llvmgen.Builder, arg *ssa.UnOp) {
 	p.emitNilDerefBaseCheck(b, arg.X)
 	ptr := p.compileValue(b, arg.X)
 	b.AssertNilDeref(ptr)
 }
 
-func (p *context) compileCheckedDeref(b llssa.Builder, arg *ssa.UnOp) llssa.Expr {
+func (p *context) compileCheckedDeref(b llvmgen.Builder, arg *ssa.UnOp) llvmgen.Expr {
 	p.emitNilDerefBaseCheck(b, arg.X)
 	ptr := p.compileValue(b, arg.X)
 	// A field address is non-nil once emitNilDerefBaseCheck has validated its
@@ -2704,26 +2704,26 @@ func collectMethodNilDerefChecks(fn *ssa.Function, receiverChecks *ReceiverNilCh
 	return checks, receiverDerefChecks
 }
 
-func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
+func (p *context) callEx(b llvmgen.Builder, act llvmgen.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llvmgen.Expr) {
 	p.recordCallerLocationForCall(b, call)
 	p.emitPCLineLabel(b, call.Pos())
 	cv := call.Value
 	mayRecover := p.callMayRecover(cv)
-	if act == llssa.Call && p.emitDirectFinalizer(b, call, ds, mayRecover) {
+	if act == llvmgen.Call && p.emitDirectFinalizer(b, call, ds, mayRecover) {
 		return
 	}
 	if mthd := call.Method; mthd != nil {
 		p.recordReflectValueMethodInvoke(call, mthd)
 		reflectCheck := p.reflectTypeMethodCheck(call, mthd)
 		o := p.compileValue(b, cv)
-		var fn llssa.Expr
-		needsRecoverToken := act != llssa.Call && act != llssa.Go
-		if act == llssa.Call && isRecoverTransparentWrapper(p.goFn) {
+		var fn llvmgen.Expr
+		needsRecoverToken := act != llvmgen.Call && act != llvmgen.Go
+		if act == llvmgen.Call && isRecoverTransparentWrapper(p.goFn) {
 			needsRecoverToken = true
 		}
 		// Forwarding returns use owned receiver storage: a tail call cannot
 		// lend a word from the wrapper frame that it removes.
-		if act == llssa.Call && !p.canTailRecoverAlias(call) {
+		if act == llvmgen.Call && !p.canTailRecoverAlias(call) {
 			// Value-receiver adapters copy this borrowed word into the
 			// callee's parameter before it can be retained. A by-reference
 			// receiver ABI would require a separate lifetime proof here.
@@ -2734,12 +2734,12 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			fn = b.Imethod(o, mthd)
 		}
 		hasVArg := fnNormal
-		if llssa.HasNameValist(call.Signature()) {
+		if llvmgen.HasNameValist(call.Signature()) {
 			hasVArg = fnHasVArg
 		}
 		args := p.compileValues(b, call.Args, hasVArg)
-		ret = p.emitDo(b, act, call, ds, true, fn, llssa.Builder.Call, args...)
-		if reflectCheck.Kind&llssa.ReflectTypeMethodByName != 0 && reflectCheck.Name == "" {
+		ret = p.emitDo(b, act, call, ds, true, fn, llvmgen.Builder.Call, args...)
+		if reflectCheck.Kind&llvmgen.ReflectTypeMethodByName != 0 && reflectCheck.Name == "" {
 			b.MarkReflectTypeMethodByNameExpr(ret, 1)
 		}
 		b.EmitReflectTypeMethodCheckedLoad(ret, reflectCheck)
@@ -2760,29 +2760,29 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			methodName := p.compileValue(b, args[2])
 			ret = b.WrapNilCheck(ptr, recvType, methodName)
 			return
-		} else if (fn == "len" || fn == "cap") && len(args) == 1 && act == llssa.Call {
+		} else if (fn == "len" || fn == "cap") && len(args) == 1 && act == llvmgen.Call {
 			if n, ok := p.staticArrayLenBuiltinArg(b, args[0]); ok {
 				ret = n
 				return
 			}
-		} else if fn == "Offsetof" && act == llssa.Call {
+		} else if fn == "Offsetof" && act == llvmgen.Call {
 			if offset, ok := p.offsetOfBuiltinArg(args[0]); ok {
 				ret = offset
 				return
 			}
 		}
 		args := p.compileValues(b, args, kind)
-		ret = p.emitDo(b, act, call, ds, false, llssa.Builtin(fn), llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call, ds, false, llvmgen.Builtin(fn), llvmgen.Builder.Call, args...)
 	case *ssa.Function:
-		if act == llssa.Call {
+		if act == llvmgen.Call {
 			if folded, ok := p.foldConstantMakeValue(b, cv, call); ok {
 				return folded
 			}
 			p.importInlineBody(cv)
 		}
-		if _, ok := p.simdOperation(cv); ok && act != llssa.Call {
+		if _, ok := p.simdOperation(cv); ok && act != llvmgen.Call {
 			fn := p.compileValue(b, cv)
-			ret = p.emitDo(b, act, call, ds, mayRecover, fn, llssa.Builder.Call, p.compileValues(b, args, kind)...)
+			ret = p.emitDo(b, act, call, ds, mayRecover, fn, llvmgen.Builder.Call, p.compileValues(b, args, kind)...)
 			return
 		}
 		aFn, pyFn, ftype := p.compileFunction(cv)
@@ -2797,7 +2797,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			forward := false
 			if isCVariadicWrapperForwarding(p.goFn, call) {
 				reason := p.cVariadicWrapperForwardingReason(p.goFn, call)
-				if reason == "" && (act != llssa.Call || !b.CanForwardVarargs(aFn.Expr)) {
+				if reason == "" && (act != llvmgen.Call || !b.CanForwardVarargs(aFn.Expr)) {
 					reason = "incompatible fixed LLVM prototypes, calling conventions, or result conversion"
 				}
 				if reason == "" {
@@ -2814,14 +2814,14 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				// recover-frame alias may surround it (or run after the call).
 				ret = b.CallForwardVarargs(aFn.Expr, args...)
 			} else {
-				ret = p.emitDo(b, act, call, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
+				ret = p.emitDo(b, act, call, ds, mayRecover, aFn.Expr, llvmgen.Builder.Call, args...)
 			}
 		case goFunc:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, call, ds, mayRecover, aFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDo(b, act, call, ds, mayRecover, aFn.Expr, llvmgen.Builder.Call, args...)
 		case pyFunc:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, call, ds, mayRecover, pyFn.Expr, llssa.Builder.Call, args...)
+			ret = p.emitDo(b, act, call, ds, mayRecover, pyFn.Expr, llvmgen.Builder.Call, args...)
 		case llgoSIMD:
 			ret = p.simdCall(b, cv, args)
 		case llgoAESAlloca:
@@ -2838,11 +2838,11 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				panic("aesRound: expected an operation and three pointers")
 			}
 			op, ok := constInt(args[0])
-			if !ok || op < 0 || op > int(llssa.AESXORBlock) {
+			if !ok || op < 0 || op > int(llvmgen.AESXORBlock) {
 				panic("aesRound: invalid constant operation")
 			}
 			values := p.compileValues(b, args[1:], fnNormal)
-			ret = b.AESRound(llssa.AESOp(op), values[0], values[1], values[2])
+			ret = b.AESRound(llvmgen.AESOp(op), values[0], values[1], values[2])
 		case llgoAESSubWord:
 			if len(args) != 1 {
 				panic("aesSubWord: expected one uint32")
@@ -2916,7 +2916,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				panic("keepAlive(any): invalid arguments")
 			}
 			values := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				return b.KeepAlive(args[0])
 			}, values...)
 		case llgoSkip:
@@ -2928,14 +2928,14 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				panic("noescape(p unsafe.Pointer) unsafe.Pointer: invalid signature")
 			}
 			args := p.compileValues(b, args, kind)
-			ret = b.Do(act, llssa.Nil, func(_ llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = b.Do(act, llvmgen.Nil, func(_ llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				return args[0]
 			}, args...)
 		case llgoSyscall:
 			ret = p.syscallIntrinsic(b, args, call.Signature().Results())
 		case llgoBoolToUint8:
 			args := p.compileValues(b, args, kind)
-			ret = b.Do(act, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = b.Do(act, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				return p.boolToUint8(b, args)
 			}, args...)
 		case llgoInterfaceKindUsed:
@@ -2972,46 +2972,46 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				panic("umulOverflow(a, b T) (T, bool): invalid arguments")
 			}
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				return b.UMulOverflow(args[0], args[1])
 			}, args...)
 		case llgoUnreachable: // func unreachable()
 			b.Unreachable()
 		case llgoAtomicLoad:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				return p.atomicLoad(b, args)
 			}, args...)
 		case llgoAtomicStore:
 			args := p.compileValues(b, args, kind)
-			p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				return p.atomicStore(b, args)
 			}, args...)
 		case llgoAtomicStoreUnordered:
 			args := p.compileValues(b, args, kind)
-			p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				return p.atomicStoreUnordered(b, args)
 			}, args...)
 		case llgoAtomicCmpXchg:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				return p.atomicCmpXchg(b, args)
 			}, args...)
 		case llgoAtomicCmpXchgOK:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+			ret = p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				return p.atomicCmpXchgOK(b, args)
 			}, args...)
 		case llgoAtomicAddReturnNew:
 			args := p.compileValues(b, args, kind)
-			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
-				return b.BinOp(token.ADD, p.atomic(b, llssa.OpAdd, args), args[1])
+			ret = p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
+				return b.BinOp(token.ADD, p.atomic(b, llvmgen.OpAdd, args), args[1])
 			}, args...)
 		default:
 			if ftype >= llgoAtomicOpBase && ftype <= llgoAtomicOpLast {
 				args := p.compileValues(b, args, kind)
-				ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
-					return p.atomic(b, llssa.AtomicOp(ftype-llgoAtomicOpBase), args)
+				ret = p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
+					return p.atomic(b, llvmgen.AtomicOp(ftype-llgoAtomicOpBase), args)
 				}, args...)
 			} else {
 				log.Panicf("unknown ftype: %d for %s", ftype, cv.Name())
@@ -3020,14 +3020,14 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 	default:
 		fn := p.compileValue(b, cv)
 		args := p.compileDynamicCallValues(b, call, kind)
-		ret = p.emitDo(b, act, call, ds, mayRecover, fn, llssa.Builder.Call, args...)
+		ret = p.emitDo(b, act, call, ds, mayRecover, fn, llvmgen.Builder.Call, args...)
 	}
 	return
 }
 
 func isCVariadicWrapperForwarding(fn *ssa.Function, call *ssa.CallCommon) bool {
-	if fn == nil || fn.Synthetic == "" || !llssa.HasNameValist(fn.Signature) ||
-		!llssa.HasNameValist(call.Signature()) || len(call.Args) == 0 || len(fn.Params) == 0 {
+	if fn == nil || fn.Synthetic == "" || !llvmgen.HasNameValist(fn.Signature) ||
+		!llvmgen.HasNameValist(call.Signature()) || len(call.Args) == 0 || len(fn.Params) == 0 {
 		return false
 	}
 	param, ok := call.Args[len(call.Args)-1].(*ssa.Parameter)
@@ -3084,14 +3084,14 @@ func isCVariadicForwardScalar(t types.Type) bool {
 	return false
 }
 
-func (p *context) compileDynamicCallValues(b llssa.Builder, call *ssa.CallCommon, hasVArg int) []llssa.Expr {
+func (p *context) compileDynamicCallValues(b llvmgen.Builder, call *ssa.CallCommon, hasVArg int) []llvmgen.Expr {
 	args := p.compileValues(b, call.Args, hasVArg)
 	params := call.Signature().Params()
 	n := min(len(call.Args)-hasVArg, params.Len())
 	for i, arg := range call.Args[:n] {
 		want := params.At(i).Type()
 		if needsNamedClosureChange(arg.Type(), want) {
-			args[i] = b.ChangeType(p.type_(want, llssa.GoDecl), args[i])
+			args[i] = b.ChangeType(p.type_(want, llvmgen.GoDecl), args[i])
 		}
 	}
 	return args
@@ -3130,7 +3130,7 @@ func (p *context) recordReflectValueMethodInvoke(call *ssa.CallCommon, method *t
 	}
 }
 
-func (p *context) reflectTypeMethodCheck(call *ssa.CallCommon, method *types.Func) (check llssa.ReflectMethodCheck) {
+func (p *context) reflectTypeMethodCheck(call *ssa.CallCommon, method *types.Func) (check llvmgen.ReflectMethodCheck) {
 	if !isReflectType(call.Value.Type()) {
 		return
 	}
@@ -3144,23 +3144,23 @@ func (p *context) reflectTypeMethodCheck(call *ssa.CallCommon, method *types.Fun
 		}
 		if index, ok := constInt(call.Args[0]); ok {
 			p.pkg.RecordReflectMethodByIndex(p.fn.Name(), index)
-			check.Kind = llssa.ReflectTypeMethodByIndex
+			check.Kind = llvmgen.ReflectTypeMethodByIndex
 			break
 		}
 		p.pkg.MarkReflectMethod(p.fn.Name())
-		check.Kind = llssa.ReflectTypeMethodDynamic
+		check.Kind = llvmgen.ReflectTypeMethodDynamic
 	case "MethodByName":
 		if len(call.Args) != 1 {
 			return
 		}
 		if name, ok := constStr(call.Args[0]); ok {
 			p.pkg.RecordReflectMethodByName(p.fn.Name(), name)
-			check.Kind = llssa.ReflectTypeMethodByName
+			check.Kind = llvmgen.ReflectTypeMethodByName
 			check.Name = name
 			break
 		}
 		p.pkg.MarkReflectMethod(p.fn.Name())
-		check.Kind = llssa.ReflectTypeMethodDynamic | llssa.ReflectTypeMethodByName
+		check.Kind = llvmgen.ReflectTypeMethodDynamic | llvmgen.ReflectTypeMethodByName
 	}
 	p.pkg.NeedAbiInit |= check.Kind
 	return

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -25,7 +25,7 @@ func snapshot(b []byte,a string)bool{s:=string(b);b[0]++;return s==a}
 func compareSlices(a,b []byte)bool{return string(a)==string(b)}
 func snapshotSlices(a,b []byte)bool{s:=string(a);b[0]++;return s==string(b)}
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "darwin", GOARCH: "arm64"}, {GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "386"}, {GOOS: "wasip1", GOARCH: "wasm"},
 	} {

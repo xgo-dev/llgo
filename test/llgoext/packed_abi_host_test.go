@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/xgo-dev/llgo/internal/cabi"
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -31,7 +31,7 @@ func TestPackedCABIInterop(t *testing.T) {
 		{"darwin", "x86_64-apple-darwin"},
 	} {
 		t.Run(target.goos, func(t *testing.T) {
-			prog := ssa.NewProgram(&ssa.Target{GOOS: target.goos, GOARCH: "amd64"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: target.goos, GOARCH: "amd64"})
 			defer prog.Dispose()
 			ctx := llvm.NewContext()
 			defer ctx.Dispose()

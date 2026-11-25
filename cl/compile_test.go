@@ -33,7 +33,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/llgen"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	llvmenv "github.com/xgo-dev/llgo/xtool/env/llvm"
@@ -915,7 +915,7 @@ func TestRunAndTestFromTestpyDWARF(t *testing.T) {
 func pythonFixtureConfig() *build.Config {
 	conf := build.NewDefaultConf(build.ModeRun)
 	conf.TestPythonPackage = func() *types.Package {
-		pkg := types.NewPackage(llssa.PkgPython, "py")
+		pkg := types.NewPackage(llvmgen.PkgPython, "py")
 		obj := types.NewTypeName(token.NoPos, pkg, "Object", nil)
 		types.NewNamed(obj, types.NewStruct(nil, nil), nil)
 		pkg.Scope().Insert(obj)

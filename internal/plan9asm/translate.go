@@ -7,10 +7,9 @@ import (
 	"regexp"
 	"strings"
 
-	archcfg "github.com/xgo-dev/llgo/internal/goarch"
-	llssaabi "github.com/xgo-dev/llgo/internal/llvmgen/abi"
+	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	"github.com/xgo-dev/llgo/internal/packages"
-	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/target"
 	gllvm "github.com/xgo-dev/llvm"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
@@ -90,7 +89,7 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 	// Match the symbol identity used by LLGo's frontend. In particular, an
 	// executable package named main is linked as "main" even when go list
 	// reports its module-qualified import path.
-	symbolPkgPath := llssaabi.PathOf(pkg.Types)
+	symbolPkgPath := abi.PathOf(pkg.Types)
 	resolve := resolveSymFuncForTarget(symbolPkgPath, goos, goarch)
 	keep := func(textSym, resolved string) bool {
 		return shouldKeepResolvedFunc(pkg.PkgPath, goos, goarch, resolved)
@@ -110,7 +109,7 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		}
 	}
 	if goarch == "amd64" {
-		level, err := archcfg.ResolveAMD64(opt.GOAMD64)
+		level, err := target.ResolveAMD64(opt.GOAMD64)
 		if err != nil {
 			return nil, err
 		}
@@ -130,7 +129,7 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		GOARCH:         goarch,
 		Sizes:          pkg.TypesSizes,
 		FrameSizes:     types.SizesFor("gc", goarch),
-		TargetTriple:   intllvm.GetTargetTripleWithGOARM(goos, goarch, opt.GOARM),
+		TargetTriple:   target.TripleWithGOARM(goos, goarch, opt.GOARM),
 		X87Mode:        opt.X87Mode,
 		AnnotateSource: opt.AnnotateSource,
 		ResolveSym:     resolve,

@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -197,8 +197,8 @@ func cgoLayoutTypes(t *testing.T, target cLayoutTarget, cc string, flags ...stri
 // C compilation. The return value permits a negative ABI mismatch test.
 func cgoLayoutDifferences(t *testing.T, target cLayoutTarget, goPkg *types.Package, mod llvm.Module, names []string) []string {
 	t.Helper()
-	llssa.Initialize(llssa.InitAll)
-	prog := llssa.NewProgram(&llssa.Target{GOOS: target.os, GOARCH: target.arch, LLVMTarget: target.triple, WasmProfile: target.profile})
+	llvmgen.Initialize(llvmgen.InitAll)
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: target.os, GOARCH: target.arch, LLVMTarget: target.triple, WasmProfile: target.profile})
 	defer prog.Dispose()
 	prog.TypeSizes(types.SizesFor("gc", target.arch))
 	pkg := prog.NewPackage("layout", "layout")
@@ -218,8 +218,8 @@ func cgoLayoutDifferences(t *testing.T, target cLayoutTarget, goPkg *types.Packa
 			t.Fatalf("C oracle missing value_%s", name)
 		}
 		// Named C records retain C field alignment (e.g. Windows i686 double).
-		prog.SetTypeCallConv("layout."+name, llssa.CDecl)
-		pkg.NewVar("layout."+name, types.NewPointer(obj.Type()), llssa.CDecl)
+		prog.SetTypeCallConv("layout."+name, llvmgen.CDecl)
+		pkg.NewVar("layout."+name, types.NewPointer(obj.Type()), llvmgen.CDecl)
 		physical := pkg.Module().NamedGlobal("layout." + name).GlobalValueType()
 		got, want := td.TypeAllocSize(physical), cLayoutConstant(t, mod, "size_"+name)
 		if got != want {
@@ -230,7 +230,7 @@ func cgoLayoutDifferences(t *testing.T, target cLayoutTarget, goPkg *types.Packa
 		if typ := cGlobal.GlobalValueType(); name != "Bool" && name != "Record" && physical.String() != typ.String() {
 			diffs = append(diffs, fmt.Sprintf("%s: LLVM type=%s, C LLVM type=%s", name, physical, typ))
 		}
-		pkg.NewVar("layout.array_"+name, types.NewPointer(types.NewArray(obj.Type(), 2)), llssa.CDecl)
+		pkg.NewVar("layout.array_"+name, types.NewPointer(types.NewArray(obj.Type(), 2)), llvmgen.CDecl)
 		array := pkg.Module().NamedGlobal("layout.array_" + name).GlobalValueType()
 		if size := td.TypeAllocSize(array); size != 2*want {
 			diffs = append(diffs, fmt.Sprintf("%s: LLVM array bytes=%d, C array bytes=%d", name, size, 2*want))

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestCompileUintptrEscapesRoots(t *testing.T) {
@@ -21,7 +21,7 @@ func laterArgument() uintptr
 func two(uintptr, uintptr)
 func caller() { two(uintptr(source()), laterArgument()) }
 `
-	ir := cltest.CompileIREx(t, src, "uintptr_escapes.go", false, func(prog llssa.Program) {
+	ir := cltest.CompileIREx(t, src, "uintptr_escapes.go", false, func(prog llvmgen.Program) {
 		prog.EnableGCRoots(true)
 	})
 	function := func(name string) string {

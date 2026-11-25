@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"strings"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -101,7 +101,7 @@ func (p *context) collectStaticGlobalInits(pkg *ssa.Package) {
 			if _, rewritten := p.rewriteValue(globalName); rewritten {
 				continue
 			}
-			if info, ok := p.resolveLocality(global.Pkg.Pkg, llssa.FullName(global.Pkg.Pkg, global.Name())); ok && info.Locality != llssa.LocalityNone {
+			if info, ok := p.resolveLocality(global.Pkg.Pkg, llvmgen.FullName(global.Pkg.Pkg, global.Name())); ok && info.Locality != llvmgen.LocalityNone {
 				// Local initializers must remain executable so they can populate the
 				// current context rather than a process-wide LLVM initializer.
 				continue
@@ -186,7 +186,7 @@ func (p *context) collectStaticGlobalInits(pkg *ssa.Package) {
 		if candidate.invalid || (len(candidate.stores) == 0 && candidate.slice == nil) {
 			continue
 		}
-		var init llssa.Expr
+		var init llvmgen.Expr
 		var ok bool
 		if candidate.slice != nil {
 			init, ok = p.buildStaticSliceInit(global, candidate.slice)
@@ -633,32 +633,32 @@ func staticInitZeroSized(typ types.Type) bool {
 	}
 }
 
-func (p *context) buildStaticSliceInit(global *ssa.Global, init *staticSliceInit) (llssa.Expr, bool) {
+func (p *context) buildStaticSliceInit(global *ssa.Global, init *staticSliceInit) (llvmgen.Expr, bool) {
 	if global == nil || global.Object() == nil {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	sliceType, ok := global.Type().(*types.Pointer)
 	if !ok {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	return p.buildStaticSliceValue(p.globalFullName(global)+"$data", sliceType.Elem(), init)
 }
 
-func (p *context) buildStaticSliceValue(name string, typ types.Type, init *staticSliceInit) (llssa.Expr, bool) {
+func (p *context) buildStaticSliceValue(name string, typ types.Type, init *staticSliceInit) (llvmgen.Expr, bool) {
 	sliceType, ok := typ.Underlying().(*types.Slice)
 	if !ok || !types.Identical(sliceType.Elem(), init.array.Elem()) {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	n := int(init.array.Len())
 	elemType := init.array.Elem()
 	elemStores := make(map[int][]staticInitStore, n)
 	for _, s := range init.stores {
 		if len(s.path) == 0 {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		idx := s.path[0].index
 		if idx < 0 || idx >= n {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		elemStores[idx] = append(elemStores[idx], staticInitStore{
 			store:    s.store,
@@ -669,27 +669,27 @@ func (p *context) buildStaticSliceValue(name string, typ types.Type, init *stati
 			pointer:  s.pointer,
 		})
 	}
-	values := make([]llssa.Expr, n)
+	values := make([]llvmgen.Expr, n)
 	for i := range values {
 		stores := elemStores[i]
 		root := new(staticInitNode)
 		for _, store := range stores {
 			if !root.addStore(store) {
-				return llssa.Expr{}, false
+				return llvmgen.Expr{}, false
 			}
 		}
 		var ok bool
 		values[i], ok = p.buildStaticInitExprNamed(elemType, root, name+"$"+strconv.Itoa(i))
 		if !ok {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 	}
-	return p.pkg.ConstSlice(name, p.type_(typ, llssa.GoDecl), values), true
+	return p.pkg.ConstSlice(name, p.type_(typ, llvmgen.GoDecl), values), true
 }
 
 func (p *context) ensureStaticInitState() {
 	if p.staticGlobalInits == nil {
-		p.staticGlobalInits = make(map[*ssa.Global]llssa.Expr)
+		p.staticGlobalInits = make(map[*ssa.Global]llvmgen.Expr)
 	}
 	if p.staticInitStores == nil {
 		p.staticInitStores = make(map[*ssa.Store]none)
@@ -698,7 +698,7 @@ func (p *context) ensureStaticInitState() {
 		p.staticInitInstrs = make(map[ssa.Instruction]none)
 	}
 	if p.staticMapSliceValues == nil {
-		p.staticMapSliceValues = make(map[*ssa.MapUpdate]llssa.Expr)
+		p.staticMapSliceValues = make(map[*ssa.MapUpdate]llvmgen.Expr)
 	}
 }
 
@@ -750,7 +750,7 @@ func (p *context) staticMapSliceGlobals(pkg *ssa.Package) map[*ssa.Global]*types
 		if !define || vtype != goVar {
 			continue
 		}
-		if info, ok := p.resolveLocality(global.Pkg.Pkg, llssa.FullName(global.Pkg.Pkg, global.Name())); ok && info.Locality != llssa.LocalityNone {
+		if info, ok := p.resolveLocality(global.Pkg.Pkg, llvmgen.FullName(global.Pkg.Pkg, global.Name())); ok && info.Locality != llvmgen.LocalityNone {
 			continue
 		}
 		eligible[global] = mapType
@@ -864,7 +864,7 @@ func (p *context) tryStaticMapInit(global *ssa.Global, mapType *types.Map, store
 
 	type builtEntry struct {
 		update *ssa.MapUpdate
-		expr   llssa.Expr
+		expr   llvmgen.Expr
 		slice  *staticSliceInit
 	}
 	built := make([]builtEntry, 0, len(ordered))
@@ -940,16 +940,16 @@ func staticInitConstIndex(v ssa.Value) (int, bool) {
 	return int(index), true
 }
 
-func (p *context) buildStaticGlobalInit(global *ssa.Global, stores []staticInitStore) (llssa.Expr, bool) {
+func (p *context) buildStaticGlobalInit(global *ssa.Global, stores []staticInitStore) (llvmgen.Expr, bool) {
 	ptr, ok := global.Type().(*types.Pointer)
 	if !ok {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 
 	root := new(staticInitNode)
 	for _, store := range stores {
 		if !root.addStore(store) {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 	}
 	return p.buildStaticInitExprNamed(ptr.Elem(), root, p.globalFullName(global)+"$data")
@@ -998,12 +998,12 @@ func (n *staticInitNode) hasLeaf() bool {
 	return n.value != nil || n.function != nil || n.slice != nil || n.pointer != nil
 }
 
-func (p *context) buildStaticInitExpr(typ types.Type, node *staticInitNode) (llssa.Expr, bool) {
+func (p *context) buildStaticInitExpr(typ types.Type, node *staticInitNode) (llvmgen.Expr, bool) {
 	return p.buildStaticInitExprNamed(typ, node, "__llgo.staticinit$data")
 }
 
-func (p *context) buildStaticInitExprNamed(typ types.Type, node *staticInitNode, name string) (llssa.Expr, bool) {
-	lltyp := p.type_(typ, llssa.GoDecl)
+func (p *context) buildStaticInitExprNamed(typ types.Type, node *staticInitNode, name string) (llvmgen.Expr, bool) {
+	lltyp := p.type_(typ, llvmgen.GoDecl)
 	if node == nil {
 		return p.prog.Zero(lltyp), true
 	}
@@ -1012,16 +1012,16 @@ func (p *context) buildStaticInitExprNamed(typ types.Type, node *staticInitNode,
 	}
 	if node.function != nil {
 		if _, ok := typ.Underlying().(*types.Signature); !ok {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		// compileFunction is required here rather than funcOf: source declarations
 		// carrying //llgo:env must be materialized with their environment ABI before
 		// NeedsEnv is checked. Such functions then fail closed to runtime init.
 		function, _, ftype := p.compileFunction(node.function)
 		if function == nil || ftype != goFunc || function.NeedsEnv() {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
-		return p.prog.ConstStruct(lltyp, []llssa.Expr{
+		return p.prog.ConstStruct(lltyp, []llvmgen.Expr{
 			function.Expr,
 			p.prog.Nil(p.prog.VoidPtr()),
 		}), true
@@ -1035,7 +1035,7 @@ func (p *context) buildStaticInitExprNamed(typ types.Type, node *staticInitNode,
 
 	switch u := typ.Underlying().(type) {
 	case *types.Struct:
-		values := make([]llssa.Expr, u.NumFields())
+		values := make([]llvmgen.Expr, u.NumFields())
 		for i := range values {
 			child := node.children[i]
 			if u.Field(i).Name() == "_" {
@@ -1043,63 +1043,63 @@ func (p *context) buildStaticInitExprNamed(typ types.Type, node *staticInitNode,
 			}
 			value, ok := p.buildStaticInitExprNamed(u.Field(i).Type(), child, name+"$"+strconv.Itoa(i))
 			if !ok {
-				return llssa.Expr{}, false
+				return llvmgen.Expr{}, false
 			}
 			values[i] = value
 		}
 		if !staticInitChildrenInRange(node, u.NumFields()) {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		return p.prog.ConstStruct(lltyp, values), true
 	case *types.Array:
 		if !staticInitArraySizeAllowed(u) {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		if value, ok := staticInitByteArray(node, u); ok {
 			return p.prog.ConstByteArray(lltyp, value), true
 		}
 		n := int(u.Len())
-		values := make([]llssa.Expr, n)
+		values := make([]llvmgen.Expr, n)
 		for i := range values {
 			child := node.children[i]
 			value, ok := p.buildStaticInitExprNamed(u.Elem(), child, name+"$"+strconv.Itoa(i))
 			if !ok {
-				return llssa.Expr{}, false
+				return llvmgen.Expr{}, false
 			}
 			values[i] = value
 		}
 		if !staticInitChildrenInRange(node, n) {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		return p.prog.ConstArray(lltyp, values), true
 	default:
 		if len(node.children) == 0 {
 			return p.prog.Zero(lltyp), true
 		}
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 }
 
-func (p *context) buildStaticPointerValue(name string, typ types.Type, init *staticPointerInit) (llssa.Expr, bool) {
+func (p *context) buildStaticPointerValue(name string, typ types.Type, init *staticPointerInit) (llvmgen.Expr, bool) {
 	ptr, ok := typ.Underlying().(*types.Pointer)
 	if !ok {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	allocPtr, ok := init.alloc.Type().Underlying().(*types.Pointer)
 	if !ok || !types.Identical(ptr.Elem(), allocPtr.Elem()) {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	root := new(staticInitNode)
 	for _, store := range init.stores {
 		if !root.addStore(store) {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 	}
 	value, ok := p.buildStaticInitExprNamed(ptr.Elem(), root, name+"$value")
 	if !ok {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
-	data := p.pkg.NewVarEx(name, p.prog.Pointer(p.type_(ptr.Elem(), llssa.GoDecl)))
+	data := p.pkg.NewVarEx(name, p.prog.Pointer(p.type_(ptr.Elem(), llvmgen.GoDecl)))
 	data.Init(value)
 	return data.Expr, true
 }
@@ -1133,14 +1133,14 @@ func staticInitChildrenInRange(node *staticInitNode, n int) bool {
 	return true
 }
 
-func (p *context) staticConstExpr(c *ssa.Const, typ llssa.Type) (llssa.Expr, bool) {
+func (p *context) staticConstExpr(c *ssa.Const, typ llvmgen.Type) (llvmgen.Expr, bool) {
 	if c.Value == nil {
 		return p.prog.Zero(typ), true
 	}
 	raw := typ.RawType().Underlying()
 	basic, ok := raw.(*types.Basic)
 	if !ok {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	switch kind := basic.Kind(); {
 	case kind == types.Bool:
@@ -1148,13 +1148,13 @@ func (p *context) staticConstExpr(c *ssa.Const, typ llssa.Type) (llssa.Expr, boo
 	case kind >= types.Int && kind <= types.Int64:
 		v, exact := constant.Int64Val(constant.ToInt(c.Value))
 		if !exact {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		return p.prog.IntVal(uint64(v), typ), true
 	case kind >= types.Uint && kind <= types.Uintptr:
 		v, exact := constant.Uint64Val(constant.ToInt(c.Value))
 		if !exact {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		return p.prog.IntVal(v, typ), true
 	case kind == types.Float32 || kind == types.Float64:
@@ -1168,6 +1168,6 @@ func (p *context) staticConstExpr(c *ssa.Const, typ llssa.Type) (llssa.Expr, boo
 		im, _ := constant.Float64Val(constant.Imag(v))
 		return p.prog.ComplexVal(complex(re, im), typ), true
 	default:
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 }

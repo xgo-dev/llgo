@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 )
 
@@ -46,7 +46,7 @@ func TestStringSliceIndexABI(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			t.Setenv("GOOS", "windows")
 			t.Setenv("GOARCH", arch)
-			prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "windows", GOARCH: arch})
+			prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "windows", GOARCH: arch})
 			t.Cleanup(prog.Dispose)
 			for _, test := range []struct {
 				name               string
@@ -75,16 +75,16 @@ func TestStringSliceIndexABI(t *testing.T) {
 					results := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.String]))
 					sig := types.NewSignatureType(nil, nil, nil, params, results, false)
 					pkg := prog.NewPackage("bounds", "example.com/bounds/"+test.name)
-					fn := pkg.NewFunc(test.name, sig, ssa.GoDecl)
+					fn := pkg.NewFunc(test.name, sig, llvmgen.GoDecl)
 					b := fn.MakeBody(1)
 					low, high := fn.Param(1), fn.Param(2)
 					if test.omitLow {
-						low = ssa.Expr{}
+						low = llvmgen.Expr{}
 					}
 					if test.omitHigh {
-						high = ssa.Expr{}
+						high = llvmgen.Expr{}
 					}
-					b.Return(b.Slice(fn.Param(0), low, high, ssa.Expr{}))
+					b.Return(b.Slice(fn.Param(0), low, high, llvmgen.Expr{}))
 					b.EndBuild()
 					want, other := "StringSlice2", "StringSlice"
 					if (arch == "386" && test.native32) || (arch == "amd64" && test.native64) {
@@ -115,7 +115,7 @@ func TestSignedIndexUsesUnsignedCompare(t *testing.T) {
 	)
 	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
 	pkg := prog.NewPackage("bounds", "example.com/bounds")
-	fn := pkg.NewFunc("signedIndex", sig, ssa.GoDecl)
+	fn := pkg.NewFunc("signedIndex", sig, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	b.IndexAddr(fn.Param(0), fn.Param(2))
 	b.IndexAddr(fn.Param(1), fn.Param(2))
@@ -146,7 +146,7 @@ func TestSignedIndexUsesUnsignedCompare(t *testing.T) {
 func TestWideIndexBoundsCheck386(t *testing.T) {
 	t.Setenv("GOOS", "windows")
 	t.Setenv("GOARCH", "386")
-	prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "windows", GOARCH: "386"})
+	prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "windows", GOARCH: "386"})
 	t.Cleanup(prog.Dispose)
 
 	byteSlice := types.NewSlice(types.Typ[types.Byte])
@@ -157,7 +157,7 @@ func TestWideIndexBoundsCheck386(t *testing.T) {
 	)
 	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
 	pkg := prog.NewPackage("bounds", "example.com/bounds")
-	fn := pkg.NewFunc("wideIndex", sig, ssa.GoDecl)
+	fn := pkg.NewFunc("wideIndex", sig, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	b.IndexAddr(fn.Param(0), fn.Param(1))
 	b.IndexAddr(fn.Param(0), fn.Param(2))
@@ -201,7 +201,7 @@ func boundsCheckModeIR(t *testing.T, disable bool) string {
 	)
 	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
 	pkg := prog.NewPackage("bounds", "example.com/bounds")
-	fn := pkg.NewFunc("modes", sig, ssa.GoDecl)
+	fn := pkg.NewFunc("modes", sig, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 
 	str := fn.Param(0)
@@ -210,7 +210,7 @@ func boundsCheckModeIR(t *testing.T, disable bool) string {
 	low := fn.Param(3)
 	high := fn.Param(4)
 	max := fn.Param(5)
-	none := ssa.Expr{}
+	none := llvmgen.Expr{}
 
 	b.Index(str, low, nil)
 	b.IndexAddr(slice, low)
@@ -218,7 +218,7 @@ func boundsCheckModeIR(t *testing.T, disable bool) string {
 	b.Slice(slice, low, high, none)
 	b.Slice(slice, low, high, max)
 	b.Slice(array, none, none, none)
-	b.SliceToArrayPointer(slice, prog.Type(byteArrayPtr, ssa.GoDecl))
+	b.SliceToArrayPointer(slice, prog.Type(byteArrayPtr, llvmgen.GoDecl))
 	b.Return()
 	b.EndBuild()
 	return pkg.String()

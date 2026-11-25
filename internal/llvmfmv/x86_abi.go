@@ -1,7 +1,7 @@
 package llvmfmv
 
 import (
-	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -16,7 +16,7 @@ const (
 const x86VectorCall = llvm.CallConv(80)
 
 func x86ABIFor(mod llvm.Module) x86ABI {
-	if intllvm.IsWindowsTarget(mod.Target()) {
+	if target.IsWindowsTriple(mod.Target()) {
 		return x86Win64
 	}
 	return x86SysV

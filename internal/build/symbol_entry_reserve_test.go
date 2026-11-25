@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
 	"golang.org/x/tools/go/packages"
@@ -14,13 +14,13 @@ import (
 
 func TestDarwinSymbolEntriesPreserveFunctionBodies(t *testing.T) {
 	t.Setenv("LLGO_PCLNPOST", "1")
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	prog.EnableFuncInfoMetadata(true)
 	prog.EnableFuncInfoSites(true)
 	pkg := prog.NewPackage("example.com/p", "example.com/p")
 	pkg.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
-	pkg.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.CDecl).MakeBody(1).Return()
+	pkg.NewFunc("example.com/p.live", llvmgen.NoArgsNoRet, llvmgen.CDecl).MakeBody(1).Return()
 	c := &context{prog: prog, buildConf: &Config{
 		Goos: "darwin", Goarch: "arm64", BuildMode: BuildModeExe, PCLNMode: PCLNEmbedded, LTO: lto.Full,
 	}}
@@ -35,7 +35,7 @@ func TestDarwinSymbolEntriesPreserveFunctionBodies(t *testing.T) {
 		t.Fatal("post-link opt-out changed the legacy DWARF package IR")
 	}
 	t.Setenv("LLGO_PCLNPOST", "1")
-	entry := genMainModule(c, llssa.PkgRuntime, &packages.Package{
+	entry := genMainModule(c, llvmgen.PkgRuntime, &packages.Package{
 		PkgPath: "example.com/main", ExportFile: "main.a",
 	}, &genConfig{funcInfo: collectFuncInfo([]Package{{LPkg: pkg}})})
 	ir := entry.LPkg.String()

@@ -3,7 +3,7 @@ package cl
 import (
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -25,7 +25,7 @@ func convert(f func(Before) string) Callback { return Callback(Retagged(f)) }
 func RoundTrip() Callback { return convert(original) }
 `
 	source, _, files := buildGoSSAPkg(t, src)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
 	defer prog.Dispose()
 	pkg, err := NewPackage(prog, source, files)
 	if err != nil {
@@ -48,7 +48,7 @@ func RoundTrip() Callback { return convert(original) }
 		t.Fatalf("round trip did not return the original C callback:\n%s", fn)
 	}
 	for inst := fn.FirstBasicBlock().FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-		if inst.IsACallInst().IsNil() || inst.CalledValue().Name() != llssa.PkgRuntime+".AssertRuntimeError" {
+		if inst.IsACallInst().IsNil() || inst.CalledValue().Name() != llvmgen.PkgRuntime+".AssertRuntimeError" {
 			continue
 		}
 		if !inst.Operand(0).IsNull() {

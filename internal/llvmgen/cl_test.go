@@ -25,11 +25,11 @@ import (
 	"runtime"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestMain(m *testing.M) {
-	ssa.Initialize(ssa.InitAll | ssa.InitNative)
+	llvmgen.Initialize(llvmgen.InitAll | llvmgen.InitNative)
 	flag.Parse()
 	if !testing.Verbose() {
 		log.SetOutput(io.Discard)
@@ -38,17 +38,17 @@ func TestMain(m *testing.M) {
 }
 
 func TestMakeInterface(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(ssa.PkgRuntime)
+		pkg, err := importer.For("source", nil).Import(llvmgen.PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return pkg
 	})
 	pkg := prog.NewPackage("foo", "foo")
-	fn := pkg.NewFunc("main", types.NewSignatureType(nil, nil, nil, nil, nil, false), ssa.CDecl)
+	fn := pkg.NewFunc("main", types.NewSignatureType(nil, nil, nil, nil, nil, false), llvmgen.CDecl)
 	b := fn.MakeBody(1)
 	b.MakeInterface(prog.Any(), prog.IntVal(100, prog.Int64()))
 	b.MakeInterface(prog.Any(), prog.FloatVal(100, prog.Float64()))

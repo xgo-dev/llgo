@@ -12,20 +12,20 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llvm"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
 )
 
 func init() {
-	llssa.Initialize(llssa.InitAll)
+	llvmgen.Initialize(llvmgen.InitAll)
 }
 
 func TestGenMainModuleExecutable(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")
 	ctx := &context{
-		prog: llssa.NewProgram(nil),
+		prog: llvmgen.NewProgram(nil),
 		buildConf: &Config{
 			BuildMode: BuildModeExe,
 			Goos:      "linux",
@@ -35,7 +35,7 @@ func TestGenMainModuleExecutable(t *testing.T) {
 	ctx.prog.EnableFuncInfoMetadata(true)
 	ctx.prog.EnableFuncInfoSites(true)
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	mod := genMainModule(ctx, llssa.PkgRuntime, pkg,
+	mod := genMainModule(ctx, llvmgen.PkgRuntime, pkg,
 		&genConfig{rtInit: true, pyInit: true, packageInits: []string{"example.com/b.init", "example.com/z.init", "example.com/a.init"}})
 	if mod.ExportFile != "foo.a-main" {
 		t.Fatalf("unexpected export file: %s", mod.ExportFile)
@@ -88,7 +88,7 @@ func TestGenMainModuleExecutable(t *testing.T) {
 func TestGenMainModuleWasmPCLNStartup(t *testing.T) {
 	for _, scheduler := range []bool{false, true} {
 		conf := &Config{Goos: "wasip1", Goarch: "wasm", BuildMode: BuildModeExe, PCLNLoad: PCLNLoadRequired}
-		ctx := &context{prog: llssa.NewProgram(nil), buildConf: conf}
+		ctx := &context{prog: llvmgen.NewProgram(nil), buildConf: conf}
 		defer ctx.prog.Dispose()
 		if scheduler {
 			ctx.buildConf.Goos = "js"
@@ -97,12 +97,12 @@ func TestGenMainModuleWasmPCLNStartup(t *testing.T) {
 		}
 		pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
 		cfg := &genConfig{rtInit: true, packageInits: []string{"example.com/user.init"}}
-		ir := genMainModule(ctx, llssa.PkgRuntime, pkg, cfg).LPkg.String()
-		assertInOrder(t, ir, `call void @"`+llssa.PkgRuntime+`.StartWasmPCLN"()`,
+		ir := genMainModule(ctx, llvmgen.PkgRuntime, pkg, cfg).LPkg.String()
+		assertInOrder(t, ir, `call void @"`+llvmgen.PkgRuntime+`.StartWasmPCLN"()`,
 			`call void @"example.com/user.init"()`)
 		if scheduler {
 			assertInOrder(t, ir, `define hidden ptr @__llgo_wasm_main(`,
-				`call void @"`+llssa.PkgRuntime+`.StartWasmPCLN"()`, `call void @"example.com/user.init"()`)
+				`call void @"`+llvmgen.PkgRuntime+`.StartWasmPCLN"()`, `call void @"example.com/user.init"()`)
 		}
 	}
 }
@@ -110,7 +110,7 @@ func TestGenMainModuleWasmPCLNStartup(t *testing.T) {
 func TestGenMainModuleWindowsExitsAfterMain(t *testing.T) {
 	llvm.InitializeAllTargets()
 	ctx := &context{
-		prog: llssa.NewProgram(nil),
+		prog: llvmgen.NewProgram(nil),
 		buildConf: &Config{
 			BuildMode: BuildModeExe,
 			Goos:      "windows",
@@ -118,7 +118,7 @@ func TestGenMainModuleWindowsExitsAfterMain(t *testing.T) {
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: true})
+	mod := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{rtInit: true})
 	ir := mod.LPkg.String()
 	assertInOrder(t, ir,
 		`call void @"example.com/foo.main"()`,
@@ -136,12 +136,12 @@ func TestGenMainModuleBuildModeFlags(t *testing.T) {
 					arch = "wasm"
 				}
 				ctx := &context{
-					prog:      llssa.NewProgram(nil),
+					prog:      llvmgen.NewProgram(nil),
 					buildConf: &Config{BuildMode: mode, Goos: goos, Goarch: arch},
 				}
 				defer ctx.prog.Dispose()
 				pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
-				mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.Module()
+				mod := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.Module()
 				for name, want := range map[string]bool{
 					"runtime.islibrary": mode == BuildModeCShared,
 					"runtime.isarchive": mode == BuildModeCArchive,
@@ -178,12 +178,12 @@ func TestGenMainModuleControlledAllThreads(t *testing.T) {
 	} {
 		t.Run(tc.goos+"/"+tc.arch+"/"+string(tc.mode)+"/"+tc.tags, func(t *testing.T) {
 			ctx := &context{
-				prog:      llssa.NewProgram(nil),
+				prog:      llvmgen.NewProgram(nil),
 				buildConf: &Config{BuildMode: tc.mode, Goos: tc.goos, Goarch: tc.arch, Tags: tc.tags},
 			}
 			defer ctx.prog.Dispose()
 			pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
-			ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.String()
+			ir := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.String()
 			if strings.Contains(ir, "@llgo_allthreads_enable_controlled") != tc.enabled {
 				t.Fatalf("incorrect controlled-thread eligibility:\n%s", ir)
 			}
@@ -202,12 +202,12 @@ func TestGenMainModuleExecutableRegistersCExportThread(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux", "windows"} {
 		t.Run(goos, func(t *testing.T) {
 			ctx := &context{
-				prog:      llssa.NewProgram(nil),
+				prog:      llvmgen.NewProgram(nil),
 				buildConf: &Config{BuildMode: BuildModeExe, Goos: goos, Goarch: "amd64"},
 			}
 			defer ctx.prog.Dispose()
 			pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
-			ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
+			ir := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{
 				rtInit:       true,
 				packageInits: []string{"example.com/dep.init"},
 				cExports: []cExport{{
@@ -238,7 +238,7 @@ func TestGenMainModuleCoverageExit(t *testing.T) {
 		t.Run(goos, func(t *testing.T) {
 			for _, covered := range []bool{false, true} {
 				ctx := &context{
-					prog: llssa.NewProgram(nil),
+					prog: llvmgen.NewProgram(nil),
 					buildConf: &Config{
 						BuildMode: BuildModeExe,
 						Goos:      goos,
@@ -250,7 +250,7 @@ func TestGenMainModuleCoverageExit(t *testing.T) {
 					ctx.buildConf.Coverage = &CoverageConfig{}
 				}
 				pkg := &packages.Package{PkgPath: "example.com/app", ExportFile: "app.a"}
-				mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: true, pyInit: true})
+				mod := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{rtInit: true, pyInit: true})
 				ir := mod.LPkg.String()
 				if !covered {
 					if strings.Contains(ir, "runtime.runCoverageExitHook") {
@@ -276,7 +276,7 @@ func TestGenMainModuleWindowsStdioNobufUsesUCRTStreams(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "1")
 	ctx := &context{
-		prog: llssa.NewProgram(nil),
+		prog: llvmgen.NewProgram(nil),
 		buildConf: &Config{
 			BuildMode: BuildModeExe,
 			Goos:      "windows",
@@ -284,7 +284,7 @@ func TestGenMainModuleWindowsStdioNobufUsesUCRTStreams(t *testing.T) {
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{}).LPkg.String()
+	ir := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{}).LPkg.String()
 	for _, want := range []string{
 		"call ptr @__acrt_iob_func(i32 1)",
 		"call ptr @__acrt_iob_func(i32 2)",
@@ -437,7 +437,7 @@ func TestLinkMainPkgRejectsPackageInitCycle(t *testing.T) {
 
 func TestPrepareMainLinkBuildsEntryPlan(t *testing.T) {
 	llvm.InitializeAllTargets()
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	ctx := &context{
 		prog: prog,
@@ -463,7 +463,7 @@ func TestPrepareMainLinkBuildsEntryPlan(t *testing.T) {
 func TestGenMainModuleWASIAsyncifyEntry(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	installLocalContextTestRuntime(prog)
 	ctx := &context{
 		prog: prog,
@@ -478,7 +478,7 @@ func TestGenMainModuleWASIAsyncifyEntry(t *testing.T) {
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
+	mod := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{
 		packageInits: []string{"example.com/dependency.init"},
 	})
 	ir := mod.LPkg.String()
@@ -577,7 +577,7 @@ func TestNeedsWasmRuntimeScheduler(t *testing.T) {
 func TestGenMainModuleEmscriptenWorkerEntry(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	installLocalContextTestRuntime(prog)
 	ctx := &context{
 		prog: prog,
@@ -594,7 +594,7 @@ func TestGenMainModuleEmscriptenWorkerEntry(t *testing.T) {
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{})
+	mod := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{})
 	ir := mod.LPkg.String()
 	for _, want := range []string{
 		`define hidden ptr @__llgo_wasm_main(ptr %0)`,
@@ -614,7 +614,7 @@ func TestGenMainModuleLibrary(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")
 	ctx := &context{
-		prog: llssa.NewProgram(nil),
+		prog: llvmgen.NewProgram(nil),
 		buildConf: &Config{
 			BuildMode: BuildModeCArchive,
 			Goos:      "linux",
@@ -622,7 +622,7 @@ func TestGenMainModuleLibrary(t *testing.T) {
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{})
+	mod := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{})
 	ir := mod.LPkg.String()
 	if strings.Contains(ir, "__llgo_allthreads_executable") {
 		t.Fatal("C archive must not enable standalone all-thread ownership")
@@ -647,7 +647,7 @@ func TestGenMainModuleLibraryInitializesRuntime(t *testing.T) {
 	for _, mode := range []BuildMode{BuildModeCArchive, BuildModeCShared} {
 		t.Run(string(mode), func(t *testing.T) {
 			ctx := &context{
-				prog: llssa.NewProgram(nil),
+				prog: llvmgen.NewProgram(nil),
 				buildConf: &Config{
 					BuildMode: mode,
 					Goos:      "linux",
@@ -655,7 +655,7 @@ func TestGenMainModuleLibraryInitializesRuntime(t *testing.T) {
 				},
 			}
 			pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-			mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
+			mod := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{
 				rtInit:       true,
 				packageInits: []string{"example.com/dep.init"},
 			})
@@ -696,7 +696,7 @@ func TestGenMainModuleWindowsCSharedInitializesFromCExport(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")
 	ctx := &context{
-		prog: llssa.NewProgram(nil),
+		prog: llvmgen.NewProgram(nil),
 		buildConf: &Config{
 			BuildMode: BuildModeCShared,
 			Goos:      "windows",
@@ -704,13 +704,13 @@ func TestGenMainModuleWindowsCSharedInitializesFromCExport(t *testing.T) {
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
+	ir := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{
 		rtInit:       true,
 		packageInits: []string{"example.com/dep.init"},
 		cExports: []cExport{{
 			goName: "example.com/foo.Exported",
 			cName:  "Exported",
-			sig:    llssa.NoArgsNoRet,
+			sig:    llvmgen.NoArgsNoRet,
 		}, {
 			goName: "example.com/foo.Value",
 			cName:  "Value",
@@ -769,7 +769,7 @@ func TestGenMainModuleCArchiveRegistersCExportThread(t *testing.T) {
 	} {
 		t.Run(test.goos+"/"+test.goarch, func(t *testing.T) {
 			ctx := &context{
-				prog: llssa.NewProgram(nil),
+				prog: llvmgen.NewProgram(nil),
 				buildConf: &Config{
 					BuildMode: BuildModeCArchive,
 					Goos:      test.goos,
@@ -777,12 +777,12 @@ func TestGenMainModuleCArchiveRegistersCExportThread(t *testing.T) {
 				},
 			}
 			pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-			ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
+			ir := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{
 				rtInit: true,
 				cExports: []cExport{{
 					goName: "example.com/foo.Exported",
 					cName:  "Exported",
-					sig:    llssa.NoArgsNoRet,
+					sig:    llvmgen.NoArgsNoRet,
 				}},
 			}).LPkg.String()
 
@@ -812,7 +812,7 @@ func TestGenMainModuleWindowsCShared386UsesStdcallInitOnce(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")
 	ctx := &context{
-		prog: llssa.NewProgram(nil),
+		prog: llvmgen.NewProgram(nil),
 		buildConf: &Config{
 			BuildMode: BuildModeCShared,
 			Goos:      "windows",
@@ -820,7 +820,7 @@ func TestGenMainModuleWindowsCShared386UsesStdcallInitOnce(t *testing.T) {
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.String()
+	ir := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.String()
 	for _, want := range []string{
 		"declare dllimport x86_stdcallcc i32 @InitOnceExecuteOnce(",
 		"call x86_stdcallcc i32 @InitOnceExecuteOnce(",
@@ -844,7 +844,7 @@ func TestGenMainModuleLibraryConstructorArgsByPlatform(t *testing.T) {
 	} {
 		t.Run(test.goos, func(t *testing.T) {
 			ctx := &context{
-				prog: llssa.NewProgram(nil),
+				prog: llvmgen.NewProgram(nil),
 				buildConf: &Config{
 					BuildMode: BuildModeCShared,
 					Goos:      test.goos,
@@ -852,7 +852,7 @@ func TestGenMainModuleLibraryConstructorArgsByPlatform(t *testing.T) {
 				},
 			}
 			pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-			ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{}).LPkg.String()
+			ir := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{}).LPkg.String()
 			hasArgSignature := strings.Contains(ir, "define internal void @__llgo_runtime_ctor(i32 %0, ptr %1)")
 			hasArgStores := strings.Contains(ir, "store i32 %0, ptr @__llgo_argc") &&
 				strings.Contains(ir, "store ptr %1, ptr @__llgo_argv")
@@ -869,7 +869,7 @@ func TestGenMainModuleTestLibraryDefersMainInit(t *testing.T) {
 	for _, mode := range []BuildMode{BuildModeCArchive, BuildModeCShared} {
 		t.Run(string(mode), func(t *testing.T) {
 			ctx := &context{
-				prog: llssa.NewProgram(nil),
+				prog: llvmgen.NewProgram(nil),
 				mode: ModeTest,
 				buildConf: &Config{
 					Mode:      ModeTest,
@@ -879,7 +879,7 @@ func TestGenMainModuleTestLibraryDefersMainInit(t *testing.T) {
 				},
 			}
 			pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-			mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{
+			mod := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{
 				rtInit:       true,
 				packageInits: []string{"example.com/dep.init"},
 			})
@@ -900,10 +900,10 @@ func TestGenMainModuleTestLibraryDefersMainInit(t *testing.T) {
 func TestGenMainModuleInstallsLocalContextWhenNeeded(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	installLocalContextTestRuntime(prog)
-	prog.SetLocalityInfo("example.com/state.Value", llssa.LocalityInfo{Locality: llssa.GoroutineLocal})
-	prog.SetLocalStorage("example.com/state.Value", llssa.LocalStoragePackage)
+	prog.SetLocalityInfo("example.com/state.Value", llvmgen.LocalityInfo{Locality: llvmgen.GoroutineLocal})
+	prog.SetLocalStorage("example.com/state.Value", llvmgen.LocalStoragePackage)
 	ctx := &context{
 		prog: prog,
 		buildConf: &Config{
@@ -913,7 +913,7 @@ func TestGenMainModuleInstallsLocalContextWhenNeeded(t *testing.T) {
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{}).LPkg.String()
+	ir := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{}).LPkg.String()
 	assertInOrder(t, ir,
 		"EnterLocalContext",
 		"call void @runtime.main()",
@@ -924,7 +924,7 @@ func TestGenMainModuleInstallsLocalContextWhenNeeded(t *testing.T) {
 func TestGenMainModuleWASIThreadsInstallsLocalContextWithoutUserLocality(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoWasiThreads, "1")
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", Target: "wasi"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", Target: "wasi"})
 	installLocalContextTestRuntime(prog)
 	ctx := &context{
 		prog: prog,
@@ -936,7 +936,7 @@ func TestGenMainModuleWASIThreadsInstallsLocalContextWithoutUserLocality(t *test
 		},
 	}
 	pkg := &packages.Package{PkgPath: "example.com/foo", ExportFile: "foo.a"}
-	ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.String()
+	ir := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &genConfig{rtInit: true}).LPkg.String()
 	assertInOrder(t, ir,
 		"EnterLocalContext",
 		`call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.init"()`,
@@ -945,8 +945,8 @@ func TestGenMainModuleWASIThreadsInstallsLocalContextWithoutUserLocality(t *test
 	)
 }
 
-func installLocalContextTestRuntime(prog llssa.Program) {
-	runtimePkg := types.NewPackage(llssa.PkgRuntime, "runtime")
+func installLocalContextTestRuntime(prog llvmgen.Program) {
+	runtimePkg := types.NewPackage(llvmgen.PkgRuntime, "runtime")
 	contextName := types.NewTypeName(token.NoPos, runtimePkg, "LocalContext", nil)
 	contextType := types.NewNamed(contextName, types.NewStruct(nil, nil), nil)
 	runtimePkg.Scope().Insert(contextName)

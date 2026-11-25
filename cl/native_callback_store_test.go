@@ -3,7 +3,7 @@ package cl
 import (
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -19,7 +19,7 @@ func Capture() func() {
 }
 `
 	ssaPkg, _, files := buildGoSSAPkg(t, source)
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "darwin", GOARCH: "arm64"},
 		{GOOS: "windows", GOARCH: "386", LLVMTarget: "i686-pc-windows-msvc"},

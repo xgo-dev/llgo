@@ -39,6 +39,40 @@ func TestParseAndGroup(t *testing.T) {
 	if local != "Foo" || target != "C.foo" {
 		t.Fatalf("ParseLinknameArgs = (%q, %q)", local, target)
 	}
+	if _, ok := Parse(nil); ok {
+		t.Fatal("nil comment parsed as a directive")
+	}
+	if ParseGroup(nil) != nil {
+		t.Fatal("nil comment group returned directives")
+	}
+	for _, tc := range []struct {
+		text, name, args string
+		ok               bool
+	}{
+		{text: "// ordinary"},
+		{text: "//go:"},
+		{text: "// llgo:type C", name: "llgo:type", args: "C", ok: true},
+		{text: "// llgo:stdcall", name: "llgo:stdcall", ok: true},
+		{text: "//llgo:link\tF C.f", name: "llgo:link", args: "F C.f", ok: true},
+	} {
+		parsed, ok := Parse(&ast.Comment{Text: tc.text})
+		if ok != tc.ok || parsed.Name != tc.name || parsed.Args != tc.args {
+			t.Fatalf("Parse(%q) = %+v, %v", tc.text, parsed, ok)
+		}
+	}
+	for _, tc := range []struct{ args, local, target string }{
+		{"", "", ""},
+		{" Exported ", "Exported", ""},
+		{" F C.f ", "F", "C.f"},
+		{"F\tllvm.fshl.i8", "F", "llvm.fshl.i8"},
+		{"(*T).Method\t C.method", "(*T).Method", "C.method"},
+		{"F\t target  with\tspaces", "F", "target with spaces"},
+	} {
+		l, tgt := ParseLinknameArgs(tc.args)
+		if l != tc.local || tgt != tc.target {
+			t.Errorf("ParseLinknameArgs(%q) = (%q, %q), want (%q, %q)", tc.args, l, tgt, tc.local, tc.target)
+		}
+	}
 }
 
 func TestParseTypeCallConv(t *testing.T) {

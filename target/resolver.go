@@ -1,44 +1,45 @@
-package targets
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
-import (
-	"fmt"
-	"path/filepath"
+package target
 
-	"github.com/xgo-dev/llgo/internal/env"
-)
+import "fmt"
 
-// Resolver provides high-level interface for target configuration resolution
+// Resolver provides a high-level interface for resolving and validating target
+// configurations from a targets directory.
 type Resolver struct {
 	loader *Loader
 }
 
-// NewResolver creates a new target resolver
+// NewResolver creates a target resolver rooted at targetsDir.
 func NewResolver(targetsDir string) *Resolver {
 	return &Resolver{
 		loader: NewLoader(targetsDir),
 	}
 }
 
-// NewDefaultResolver creates a resolver with default targets directory
-func NewDefaultResolver() *Resolver {
-	llgoRoot := env.LLGoROOT()
-	targetsDir := filepath.Join(llgoRoot, "targets")
-
-	return NewResolver(targetsDir)
-}
-
-// Resolve resolves a target configuration by name
+// Resolve resolves and validates a target configuration by name.
 func (r *Resolver) Resolve(targetName string) (*Config, error) {
 	config, err := r.loader.Load(targetName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve target %s: %w", targetName, err)
 	}
-
-	// Validate required fields
 	if err := r.validateConfig(config); err != nil {
 		return nil, fmt.Errorf("invalid target config %s: %w", targetName, err)
 	}
-
 	return config, nil
 }
 
@@ -48,12 +49,13 @@ func (r *Resolver) ResolveAll() (map[string]*Config, error) {
 	return r.loader.LoadAll()
 }
 
-// ListAvailableTargets returns a list of all available target names
+// ListAvailableTargets returns all available target names in the directory.
 func (r *Resolver) ListAvailableTargets() ([]string, error) {
 	return r.loader.ListTargets()
 }
 
-// validateConfig validates that a resolved config has required fields
+// validateConfig validates that a resolved config has required fields and valid
+// WebAssembly memory/stack settings.
 func (r *Resolver) validateConfig(config *Config) error {
 	if config.Name == "" {
 		return fmt.Errorf("target name is required")
@@ -85,12 +87,12 @@ func (r *Resolver) validateConfig(config *Config) error {
 	return nil
 }
 
-// GetTargetsDirectory returns the path to the targets directory
+// GetTargetsDirectory returns the path to the targets directory.
 func (r *Resolver) GetTargetsDirectory() string {
 	return r.loader.GetTargetsDir()
 }
 
-// HasTarget checks if a target with the given name exists
+// HasTarget reports whether a target with the given name exists.
 func (r *Resolver) HasTarget(name string) bool {
 	_, err := r.loader.LoadRaw(name)
 	return err == nil

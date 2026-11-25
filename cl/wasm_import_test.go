@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestWasmImportDirective(t *testing.T) {
@@ -18,7 +18,7 @@ func read(buf *byte) uint32 {
 	return fdRead(0, buf, 1)
 }
 `
-	ir := cltest.CompileIREx(t, src, "foo.go", false, func(prog llssa.Program) {
+	ir := cltest.CompileIREx(t, src, "foo.go", false, func(prog llvmgen.Program) {
 		prog.Target().GOOS = "wasip1"
 		prog.Target().GOARCH = "wasm"
 	})

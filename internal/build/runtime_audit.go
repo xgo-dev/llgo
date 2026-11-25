@@ -21,8 +21,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xgo-dev/llgo/internal/directive"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/directive"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/plan9asm"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 )
@@ -114,7 +114,7 @@ func AuditRuntimeSources(conf RuntimeAuditConfig) (*RuntimeOwnership, error) {
 	if err != nil {
 		return nil, err
 	}
-	target := &llssa.Target{GOOS: conf.GOOS, GOARCH: conf.GOARCH}
+	target := &llvmgen.Target{GOOS: conf.GOOS, GOARCH: conf.GOARCH}
 	if conf.GOARCH == "wasm" {
 		switch conf.GOOS {
 		case "js":

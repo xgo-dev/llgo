@@ -26,7 +26,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -226,7 +226,7 @@ func TestWasmProfileAndProviderSeparatePackageFingerprints(t *testing.T) {
 
 func TestWasmReflectBridgesParticipateInFingerprint(t *testing.T) {
 	fingerprint := func(enabled bool) (*commonSection, string) {
-		prog := llssa.NewProgram(&llssa.Target{
+		prog := llvmgen.NewProgram(&llvmgen.Target{
 			GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi",
 			WasmReflectBridges: enabled,
 		})
@@ -253,7 +253,7 @@ func TestWasmReflectBridgesParticipateInFingerprint(t *testing.T) {
 
 func TestWasmFuncInfoEntriesParticipateInFingerprint(t *testing.T) {
 	fingerprint := func(enabled bool) (*commonSection, string) {
-		prog := llssa.NewProgram(&llssa.Target{
+		prog := llvmgen.NewProgram(&llvmgen.Target{
 			GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "gojs",
 			WasmFuncInfoEntries: enabled,
 		})
@@ -450,7 +450,7 @@ func TestCollectFingerprintIncludesPthreadStackSize(t *testing.T) {
 		{"linux", "amd64"}, {"windows", "amd64"}, {"js", "wasm"}, {"wasip1", "wasm"},
 	} {
 		t.Run(target.goos+"/"+target.goarch, func(t *testing.T) {
-			for _, pkgPath := range []string{llssa.PkgRuntime, "runtime", "test/stack"} {
+			for _, pkgPath := range []string{llvmgen.PkgRuntime, "runtime", "test/stack"} {
 				fingerprints := make(map[int64]string)
 				for _, size := range []int64{0, 256 << 10, 512 << 10, -1} {
 					ctx := &context{
@@ -467,7 +467,7 @@ func TestCollectFingerprintIncludesPthreadStackSize(t *testing.T) {
 						t.Fatal(err)
 					}
 					wantSize := max(0, size)
-					if pkgPath != llssa.PkgRuntime {
+					if pkgPath != llvmgen.PkgRuntime {
 						wantSize = 0
 					}
 					if data.Package == nil || data.Package.PthreadStackSize != wantSize {
@@ -481,7 +481,7 @@ func TestCollectFingerprintIncludesPthreadStackSize(t *testing.T) {
 				if fingerprints[0] != fingerprints[-1] {
 					t.Fatal("equivalent default stack settings have different fingerprints")
 				}
-				if pkgPath != llssa.PkgRuntime {
+				if pkgPath != llvmgen.PkgRuntime {
 					if fingerprints[0] != fingerprints[256<<10] || fingerprints[0] != fingerprints[512<<10] {
 						t.Fatal("changing the stack size invalidated an unrelated package")
 					}
@@ -773,7 +773,7 @@ func TestCollectFingerprintLocalContextMode(t *testing.T) {
 			GoFiles: []string{goFile},
 		}}
 	}
-	newContext := func(prog llssa.Program) *context {
+	newContext := func(prog llvmgen.Program) *context {
 		return &context{
 			conf:         &packages.Config{},
 			prog:         prog,
@@ -781,7 +781,7 @@ func TestCollectFingerprintLocalContextMode(t *testing.T) {
 			crossCompile: crosscompile.Export{LLVMTarget: "x86_64-unknown-linux"},
 		}
 	}
-	fingerprint := func(prog llssa.Program) (*aPackage, manifestData) {
+	fingerprint := func(prog llvmgen.Program) (*aPackage, manifestData) {
 		pkg := newPackage()
 		if err := newContext(prog).collectFingerprint(pkg); err != nil {
 			t.Fatal(err)
@@ -793,23 +793,23 @@ func TestCollectFingerprintLocalContextMode(t *testing.T) {
 		return pkg, data
 	}
 
-	plain, plainManifest := fingerprint(llssa.NewProgram(nil))
-	nativeProg := llssa.NewProgram(nil)
-	nativeProg.SetLocalityInfo("example.com/state.value", llssa.LocalityInfo{Locality: llssa.ThreadLocal})
-	nativeProg.SetLocalStorage("example.com/state.value", llssa.LocalStorageNativeTLS)
+	plain, plainManifest := fingerprint(llvmgen.NewProgram(nil))
+	nativeProg := llvmgen.NewProgram(nil)
+	nativeProg.SetLocalityInfo("example.com/state.value", llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
+	nativeProg.SetLocalStorage("example.com/state.value", llvmgen.LocalStorageNativeTLS)
 	native, nativeManifest := fingerprint(nativeProg)
-	contextProg := llssa.NewProgram(nil)
-	contextProg.SetLocalityInfo("example.com/state.value", llssa.LocalityInfo{Locality: llssa.GoroutineLocal})
-	contextProg.SetLocalStorage("example.com/state.value", llssa.LocalStoragePackage)
+	contextProg := llvmgen.NewProgram(nil)
+	contextProg.SetLocalityInfo("example.com/state.value", llvmgen.LocalityInfo{Locality: llvmgen.GoroutineLocal})
+	contextProg.SetLocalStorage("example.com/state.value", llvmgen.LocalStoragePackage)
 	withContext, contextManifest := fingerprint(contextProg)
-	initializedProg := llssa.NewProgram(nil)
-	initializedProg.SetLocalityInfo("example.com/state.value", llssa.LocalityInfo{
-		Locality:       llssa.ThreadLocal,
+	initializedProg := llvmgen.NewProgram(nil)
+	initializedProg.SetLocalityInfo("example.com/state.value", llvmgen.LocalityInfo{
+		Locality:       llvmgen.ThreadLocal,
 		HasInitializer: true,
 		InitFunc:       "example.com/state.__llgo_local_init_0",
 		InitOrder:      1,
 	})
-	initializedProg.SetLocalStorage("example.com/state.value", llssa.LocalStorageNativeTLS)
+	initializedProg.SetLocalStorage("example.com/state.value", llvmgen.LocalStorageNativeTLS)
 	initialized, initializedManifest := fingerprint(initializedProg)
 
 	if plain.Fingerprint != native.Fingerprint {

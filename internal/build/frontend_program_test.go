@@ -11,7 +11,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/goescape"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -29,7 +29,7 @@ func frontendProgramFixture(t *testing.T) *frontendCache {
 	}
 	root := &packages.Package{ID: pkg.Pkg.Path(), PkgPath: pkg.Pkg.Path(), Name: "main", Types: pkg.Pkg}
 	ap := &aPackage{Package: root, SSA: pkg}
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
 	t.Cleanup(prog.Dispose)
 	ctx := &context{prog: prog, progSSA: pkg.Prog, conf: &packages.Config{}, mode: ModeGen, buildConf: &Config{Goarch: "wasm", BuildMode: BuildModeExe, Overlay: map[string][]byte{"extra.go": []byte("package extra")}}, llvmVersion: "test",
 		initial: []*packages.Package{root}, pkgByID: map[string]*aPackage{root.ID: ap}, cacheManager: &cacheManager{root: t.TempDir()}}

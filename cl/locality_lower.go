@@ -22,7 +22,7 @@ import (
 	"go/types"
 	"strings"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/locality"
 	localitylayout "github.com/xgo-dev/llgo/internal/locality/layout"
 	"golang.org/x/tools/go/ssa"
@@ -39,24 +39,24 @@ type localVariable struct {
 
 type localPackage struct {
 	plan          localitylayout.Package
-	typ           llssa.Type
-	blockFunc     llssa.Function
+	typ           llvmgen.Type
+	blockFunc     llvmgen.Function
 	blockFields   map[string]int
-	glsTyp        llssa.Type
-	glsBlockFunc  llssa.Function
+	glsTyp        llvmgen.Type
+	glsBlockFunc  llvmgen.Function
 	glsFields     map[string]int
 	glsInitFields localInitializerFields
-	direct        map[string]llssa.Global
+	direct        map[string]llvmgen.Global
 	init          map[locality.Kind]*localInitializer
 }
 
 type localInitializer struct {
-	guard        llssa.Global
-	failureCache llssa.Global
+	guard        llvmgen.Global
+	failureCache llvmgen.Global
 	logical      bool
 	fields       localInitializerFields
-	dispatch     llssa.Function
-	ensure       llssa.Function
+	dispatch     llvmgen.Function
+	ensure       llvmgen.Function
 }
 
 type localInitializerFields struct {
@@ -86,14 +86,14 @@ type localityLowering struct {
 
 type localityFunction struct {
 	block          *ssa.BasicBlock
-	packageBases   map[localBaseCacheKey]llssa.Expr
+	packageBases   map[localBaseCacheKey]llvmgen.Expr
 	packageEnsures map[localEnsureCacheKey]bool
 	entry          *localEntryContext
 }
 
 type localEntryContext struct {
-	context  llssa.Expr
-	previous llssa.Expr
+	context  llvmgen.Expr
+	previous llvmgen.Expr
 	entered  bool
 }
 
@@ -108,7 +108,7 @@ func (p *context) prepareExportedLocalContext(f *ssa.Function) {
 	p.locality.function.entry = &localEntryContext{}
 }
 
-func (p *context) enterExportedLocalContext(b llssa.Builder) {
+func (p *context) enterExportedLocalContext(b llvmgen.Builder) {
 	entry := p.locality.function.entry
 	if entry == nil || entry.entered {
 		return
@@ -119,14 +119,14 @@ func (p *context) enterExportedLocalContext(b llssa.Builder) {
 	entry.entered = true
 }
 
-func (p *context) leaveExportedLocalContext(b llssa.Builder) {
+func (p *context) leaveExportedLocalContext(b llvmgen.Builder) {
 	entry := p.locality.function.entry
 	if entry != nil && entry.entered {
 		b.LeaveLocalContext(entry.context, entry.previous)
 	}
 }
 
-func (p *context) prepareLocalVariables(pkg llssa.Package, globals []*ssa.Global) {
+func (p *context) prepareLocalVariables(pkg llvmgen.Package, globals []*ssa.Global) {
 	_, err := p.localPackageFor(p.goTyps, pkg, true)
 	if err != nil {
 		panic(err)
@@ -149,8 +149,8 @@ func (p *context) prepareLocalVariables(pkg llssa.Package, globals []*ssa.Global
 // localVariableFor validates one Go SSA global and finds its declaring package
 // plan. Both definitions and references use this path so forbidden linkname
 // aliases and layout validation cannot diverge between lowering cases.
-func (p *context) localVariableFor(pkg llssa.Package, global *ssa.Global, defineCurrent bool) (*localVariable, bool, error) {
-	fullName := llssa.FullName(global.Pkg.Pkg, global.Name())
+func (p *context) localVariableFor(pkg llvmgen.Package, global *ssa.Global, defineCurrent bool) (*localVariable, bool, error) {
+	fullName := llvmgen.FullName(global.Pkg.Pkg, global.Name())
 	canonical, info, ok, err := p.prog.ResolveLocalityFor(global.Pkg.Pkg, fullName)
 	if err != nil {
 		return nil, false, err
@@ -173,8 +173,8 @@ func (p *context) localVariableFor(pkg llssa.Package, global *ssa.Global, define
 	return &localVariable{planned: planned, owner: owner}, true, nil
 }
 
-func (p *context) localityGlobalStorage(pkg llssa.Package, global *ssa.Global, name string, typ types.Type, cc llssa.CallConv) (llssa.Global, bool) {
-	info, ok := p.resolveLocality(global.Pkg.Pkg, llssa.FullName(global.Pkg.Pkg, global.Name()))
+func (p *context) localityGlobalStorage(pkg llvmgen.Package, global *ssa.Global, name string, typ types.Type, cc llvmgen.CallConv) (llvmgen.Global, bool) {
+	info, ok := p.resolveLocality(global.Pkg.Pkg, llvmgen.FullName(global.Pkg.Pkg, global.Name()))
 	if !ok || info.Locality == locality.None {
 		return pkg.NewVar(name, typ, cc), false
 	}
@@ -203,7 +203,7 @@ func (p *context) localTypesPackage(fullName string) *types.Package {
 		if pkg == nil {
 			return false
 		}
-		prefix := llssa.PathOf(pkg) + "."
+		prefix := llvmgen.PathOf(pkg) + "."
 		if !strings.HasPrefix(fullName, prefix) {
 			return false
 		}
@@ -229,7 +229,7 @@ func (p *context) localTypesPackage(fullName string) *types.Package {
 	return nil
 }
 
-func (p *context) localPackageFor(typesPkg *types.Package, pkg llssa.Package, define bool) (*localPackage, error) {
+func (p *context) localPackageFor(typesPkg *types.Package, pkg llvmgen.Package, define bool) (*localPackage, error) {
 	if typesPkg == nil {
 		return nil, nil
 	}
@@ -249,7 +249,7 @@ func (p *context) localPackageFor(typesPkg *types.Package, pkg llssa.Package, de
 	}
 	owner := &localPackage{
 		plan:   plan,
-		direct: make(map[string]llssa.Global),
+		direct: make(map[string]llvmgen.Global),
 		init:   make(map[locality.Kind]*localInitializer),
 	}
 	p.locality.packages[ownerPath] = owner
@@ -257,7 +257,7 @@ func (p *context) localPackageFor(typesPkg *types.Package, pkg llssa.Package, de
 	return owner, nil
 }
 
-func (p *context) buildLocalPackage(pkg llssa.Package, owner *localPackage, define bool) {
+func (p *context) buildLocalPackage(pkg llvmgen.Package, owner *localPackage, define bool) {
 	logicalGLS := p.prog.LogicalGoroutineLocalityEnabled()
 	blockVariables := owner.plan.Block
 	var glsVariables []localitylayout.Variable
@@ -281,7 +281,7 @@ func (p *context) buildLocalPackage(pkg llssa.Package, owner *localPackage, defi
 			continue
 		}
 		typ := types.NewPointer(p.patchType(variable.Type))
-		global := pkg.NewThreadLocalVar(variable.Name, typ, llssa.GoDecl)
+		global := pkg.NewThreadLocalVar(variable.Name, typ, llvmgen.GoDecl)
 		owner.direct[variable.Name] = global
 	}
 	if len(blockVariables) != 0 {
@@ -292,14 +292,14 @@ func (p *context) buildLocalPackage(pkg llssa.Package, owner *localPackage, defi
 			owner.blockFields[variable.Name] = index
 		}
 		structType := types.NewStruct(fields, nil)
-		owner.typ = p.prog.Type(structType, llssa.GoDecl)
-		cache := pkg.NewThreadLocalVar(localitylayout.BlockCacheName(owner.plan.Path), types.NewPointer(types.Typ[types.Uintptr]), llssa.GoDecl)
+		owner.typ = p.prog.Type(structType, llvmgen.GoDecl)
+		cache := pkg.NewThreadLocalVar(localitylayout.BlockCacheName(owner.plan.Path), types.NewPointer(types.Typ[types.Uintptr]), llvmgen.GoDecl)
 		if define {
 			cache.InitNil()
 		}
 		result := types.NewPointer(structType)
-		owner.blockFunc = pkg.NewFunc(localitylayout.BlockName(owner.plan.Path), noArgResultSignature(result), llssa.GoDecl)
-		owner.blockFunc.Inline(llssa.AlwaysInline)
+		owner.blockFunc = pkg.NewFunc(localitylayout.BlockName(owner.plan.Path), noArgResultSignature(result), llvmgen.GoDecl)
+		owner.blockFunc.Inline(llvmgen.AlwaysInline)
 		if define && !owner.blockFunc.HasBody() {
 			owner.blockFunc.BuildLocalPackageAccessor(
 				cache.Expr,
@@ -324,14 +324,14 @@ func (p *context) buildLocalPackage(pkg llssa.Package, owner *localPackage, defi
 			fields = append(fields, types.NewField(token.NoPos, nil, "initFailure", p.prog.Any().RawType(), false))
 		}
 		structType := types.NewStruct(fields, nil)
-		owner.glsTyp = p.prog.Type(structType, llssa.GoDecl)
-		key := pkg.NewVar(localitylayout.GoroutineBlockKeyName(owner.plan.Path), types.NewPointer(types.Typ[types.Uintptr]), llssa.GoDecl)
+		owner.glsTyp = p.prog.Type(structType, llvmgen.GoDecl)
+		key := pkg.NewVar(localitylayout.GoroutineBlockKeyName(owner.plan.Path), types.NewPointer(types.Typ[types.Uintptr]), llvmgen.GoDecl)
 		if define {
 			key.InitNil()
 		}
 		result := types.NewPointer(structType)
-		owner.glsBlockFunc = pkg.NewFunc(localitylayout.GoroutineBlockName(owner.plan.Path), noArgResultSignature(result), llssa.GoDecl)
-		owner.glsBlockFunc.Inline(llssa.AlwaysInline)
+		owner.glsBlockFunc = pkg.NewFunc(localitylayout.GoroutineBlockName(owner.plan.Path), noArgResultSignature(result), llvmgen.GoDecl)
+		owner.glsBlockFunc.Inline(llvmgen.AlwaysInline)
 		if define && !owner.glsBlockFunc.HasBody() {
 			owner.glsBlockFunc.BuildGoroutineLocalPackageAccessor(
 				key.Expr,
@@ -349,18 +349,18 @@ func (p *context) buildLocalPackage(pkg llssa.Package, owner *localPackage, defi
 	}
 }
 
-func (p *context) buildLocalInitializer(pkg llssa.Package, owner *localPackage, kind locality.Kind, initializers []localitylayout.Initializer, define bool) *localInitializer {
+func (p *context) buildLocalInitializer(pkg llvmgen.Package, owner *localPackage, kind locality.Kind, initializers []localitylayout.Initializer, define bool) *localInitializer {
 	ret := &localInitializer{}
 	ret.logical = p.prog.LogicalGoroutineLocalityEnabled() && kind == locality.Goroutine
 	if ret.logical {
 		ret.fields = owner.glsInitFields
 	} else {
-		ret.guard = pkg.NewThreadLocalVar(localitylayout.GuardName(owner.plan.Path, kind), types.NewPointer(types.Typ[types.Uint8]), llssa.GoDecl)
-		ret.failureCache = pkg.NewThreadLocalVar(localitylayout.FailureCacheName(owner.plan.Path, kind), types.NewPointer(types.Typ[types.Uintptr]), llssa.GoDecl)
+		ret.guard = pkg.NewThreadLocalVar(localitylayout.GuardName(owner.plan.Path, kind), types.NewPointer(types.Typ[types.Uint8]), llvmgen.GoDecl)
+		ret.failureCache = pkg.NewThreadLocalVar(localitylayout.FailureCacheName(owner.plan.Path, kind), types.NewPointer(types.Typ[types.Uintptr]), llvmgen.GoDecl)
 	}
-	ret.dispatch = pkg.NewFunc(localitylayout.InitName(owner.plan.Path, kind), llssa.NoArgsNoRet, llssa.GoDecl)
-	ret.ensure = pkg.NewFunc(localitylayout.EnsureName(owner.plan.Path, kind), llssa.NoArgsNoRet, llssa.GoDecl)
-	ret.ensure.Inline(llssa.AlwaysInline)
+	ret.dispatch = pkg.NewFunc(localitylayout.InitName(owner.plan.Path, kind), llvmgen.NoArgsNoRet, llvmgen.GoDecl)
+	ret.ensure = pkg.NewFunc(localitylayout.EnsureName(owner.plan.Path, kind), llvmgen.NoArgsNoRet, llvmgen.GoDecl)
+	ret.ensure.Inline(llvmgen.AlwaysInline)
 	if !define {
 		return ret
 	}
@@ -371,7 +371,7 @@ func (p *context) buildLocalInitializer(pkg llssa.Package, owner *localPackage, 
 	if !ret.dispatch.HasBody() {
 		b := ret.dispatch.MakeBody(1)
 		for _, initializer := range initializers {
-			helper := pkg.NewFunc(initializer.Name, llssa.NoArgsNoRet, llssa.GoDecl)
+			helper := pkg.NewFunc(initializer.Name, llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			b.Call(helper.Expr)
 		}
 		b.Return()
@@ -379,7 +379,7 @@ func (p *context) buildLocalInitializer(pkg llssa.Package, owner *localPackage, 
 	}
 	if !ret.ensure.HasBody() {
 		b := ret.ensure.MakeBody(3)
-		var guard, failure llssa.Expr
+		var guard, failure llvmgen.Expr
 		ensureFunc := "EnsureLocalInitializer"
 		if ret.logical {
 			base := b.Call(owner.glsBlockFunc.Expr)
@@ -395,7 +395,7 @@ func (p *context) buildLocalInitializer(pkg llssa.Package, owner *localPackage, 
 		b.SetBlock(ret.ensure.Block(1))
 		closure := b.MakeClosure(ret.dispatch.Expr, nil)
 		b.Call(
-			pkg.RuntimeFunc(llssa.RuntimeSymbol(ensureFunc, "EnsureLocalInitializer", "EnsureGoroutineLocalInitializer")),
+			pkg.RuntimeFunc(llvmgen.RuntimeSymbol(ensureFunc, "EnsureLocalInitializer", "EnsureGoroutineLocalInitializer")),
 			guard,
 			failure,
 			closure,
@@ -413,7 +413,7 @@ func noArgResultSignature(result types.Type) *types.Signature {
 	return types.NewSignatureType(nil, nil, nil, nil, results, false)
 }
 
-func (p *context) localVariableAddr(b llssa.Builder, v *ssa.Global, info llssa.VariableLocality, name string) llssa.Expr {
+func (p *context) localVariableAddr(b llvmgen.Builder, v *ssa.Global, info llvmgen.VariableLocality, name string) llvmgen.Expr {
 	variable := p.locality.variables[v]
 	if variable == nil {
 		var ok bool
@@ -456,15 +456,15 @@ func requireLocalityField(fields map[string]int, name, storage string) int {
 	return field
 }
 
-func (p *context) localVariableAddress(b llssa.Builder, variable *ssa.Global, name string) (llssa.Expr, bool) {
-	info, ok := p.resolveLocality(variable.Pkg.Pkg, llssa.FullName(variable.Pkg.Pkg, variable.Name()))
+func (p *context) localVariableAddress(b llvmgen.Builder, variable *ssa.Global, name string) (llvmgen.Expr, bool) {
+	info, ok := p.resolveLocality(variable.Pkg.Pkg, llvmgen.FullName(variable.Pkg.Pkg, variable.Name()))
 	if !ok || info.Locality == locality.None {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	return p.localVariableAddr(b, variable, info, name), true
 }
 
-func (p *context) resolveLocality(pkg *types.Package, name string) (llssa.VariableLocality, bool) {
+func (p *context) resolveLocality(pkg *types.Package, name string) (llvmgen.VariableLocality, bool) {
 	_, info, ok, err := p.prog.ResolveLocalityFor(pkg, name)
 	if err != nil {
 		panic(err)
@@ -472,7 +472,7 @@ func (p *context) resolveLocality(pkg *types.Package, name string) (llssa.Variab
 	return info, ok
 }
 
-func (p *context) localPackageBase(b llssa.Builder, owner *localPackage, logicalGLS bool) llssa.Expr {
+func (p *context) localPackageBase(b llvmgen.Builder, owner *localPackage, logicalGLS bool) llvmgen.Expr {
 	state := &p.locality.function
 	for block := state.block; block != nil; block = block.Idom() {
 		if base, ok := state.packageBases[localBaseCacheKey{block: block, owner: owner, logicalGLS: logicalGLS}]; ok {
@@ -486,14 +486,14 @@ func (p *context) localPackageBase(b llssa.Builder, owner *localPackage, logical
 	base := b.Call(blockFunc.Expr)
 	if state.block != nil {
 		if state.packageBases == nil {
-			state.packageBases = make(map[localBaseCacheKey]llssa.Expr)
+			state.packageBases = make(map[localBaseCacheKey]llvmgen.Expr)
 		}
 		state.packageBases[localBaseCacheKey{block: state.block, owner: owner, logicalGLS: logicalGLS}] = base
 	}
 	return base
 }
 
-func (p *context) ensureLocalInitializer(b llssa.Builder, owner *localPackage, kind locality.Kind) {
+func (p *context) ensureLocalInitializer(b llvmgen.Builder, owner *localPackage, kind locality.Kind) {
 	initializer := owner.init[kind]
 	if initializer == nil {
 		return
@@ -513,7 +513,7 @@ func (p *context) ensureLocalInitializer(b llssa.Builder, owner *localPackage, k
 	}
 }
 
-func (p *context) initializeLocalGuards(b llssa.Builder) {
+func (p *context) initializeLocalGuards(b llvmgen.Builder) {
 	if p.goTyps == nil {
 		return
 	}
@@ -523,7 +523,7 @@ func (p *context) initializeLocalGuards(b llssa.Builder) {
 	}
 	for _, kind := range []locality.Kind{locality.Thread, locality.Goroutine} {
 		if initializer := owner.init[kind]; initializer != nil {
-			var guard llssa.Expr
+			var guard llvmgen.Expr
 			if initializer.logical {
 				base := p.localPackageBase(b, owner, true)
 				guard = b.FieldAddr(base, initializer.fields.guard)

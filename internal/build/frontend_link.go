@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/frontcache"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 type frontendABIType struct {
@@ -120,7 +120,7 @@ func (f *frontendCache) importLink(data *frontendLinkExport) (*packageLinkSnapsh
 		if err != nil || info.Name == "" {
 			return nil, fmt.Errorf("invalid cached ABI type %s: %v", info.Name, err)
 		}
-		result.abiTypes = append(result.abiTypes, llssa.AbiTypeInfo{Name: info.Name, Raw: typ})
+		result.abiTypes = append(result.abiTypes, llvmgen.AbiTypeInfo{Name: info.Name, Raw: typ})
 	}
 	for _, export := range data.CExports {
 		if export.Signature == -1 && export.GoName != "" && export.CName != "" {

@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -123,7 +123,7 @@ func TestForeignARM64SelectionAndErrors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prog := llssa.NewProgram(&llssa.Target{GOOS: "darwin", GOARCH: "arm64"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "darwin", GOARCH: "arm64"})
 			defer prog.Dispose()
 			ctx := &context{prog: prog, buildConf: &Config{Goos: tc.goos, Goarch: "arm64"}, commands: commandEnv{environ: os.Environ()}}
 			ctx.crossCompile = crosscompile.Export{CC: filepath.Join(t.TempDir(), "missing-clang")}
@@ -169,7 +169,7 @@ DATA ·entry(SB)/8, $callback<>(SB)
 					if err != nil {
 						t.Fatal(err)
 					}
-					prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch})
+					prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: target.goos, GOARCH: target.goarch})
 					defer prog.Dispose()
 					pkg := &packages.Package{ID: "probe", PkgPath: "probe", Dir: dir, Types: types.NewPackage("probe", "p"), Syntax: []*ast.File{file}, OtherFiles: []string{sfile}}
 					apkg := &aPackage{Package: pkg, LPkg: prog.NewPackage("p", "probe")}

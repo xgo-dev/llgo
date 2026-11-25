@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/cabi"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -15,8 +15,8 @@ func TestLowerMainCExportModuleWindowsVectors(t *testing.T) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
-	target := &llssa.Target{GOOS: "windows", GOARCH: "amd64"}
-	prog := llssa.NewProgram(target)
+	target := &llvmgen.Target{GOOS: "windows", GOARCH: "amd64"}
+	prog := llvmgen.NewProgram(target)
 	defer prog.Dispose()
 	pkg := prog.NewPackage("exportprobe", "exportprobe")
 	rawPkg := types.NewPackage("simd/archsimd", "archsimd")
@@ -55,7 +55,7 @@ func TestLowerLargeAggregatesGCPolicy(t *testing.T) {
 	llvm.InitializeAllTargetInfos()
 	for _, enabled := range []bool{false, true} {
 		func() {
-			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"})
 			defer prog.Dispose()
 			prog.EnableGCRoots(enabled)
 			mod := prog.NewPackage("large", "large").Module()
@@ -88,23 +88,23 @@ func TestLowerMainCExportModuleCopies(t *testing.T) {
 	llvm.InitializeAllTargetInfos()
 	for _, tc := range []struct {
 		name   string
-		target *llssa.Target
+		target *llvmgen.Target
 		reuse  bool
 	}{
 		{
 			name:   "wasm",
 			reuse:  true,
-			target: &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"},
+			target: &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"},
 		},
 		{
 			name:   "native",
 			reuse:  true,
-			target: &llssa.Target{GOOS: "linux", GOARCH: "amd64"},
+			target: &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"},
 		},
-		{name: "native-copy", target: &llssa.Target{GOOS: "linux", GOARCH: "amd64"}},
+		{name: "native-copy", target: &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			prog := llssa.NewProgram(tc.target)
+			prog := llvmgen.NewProgram(tc.target)
 			defer prog.Dispose()
 			pkg := prog.NewPackage("large", "large")
 			sig := newSignature([]types.Type{types.NewArray(types.Typ[types.Uint8], 8192)}, nil)

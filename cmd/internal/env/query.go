@@ -20,7 +20,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/libc"
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/rtlib"
 	internalenv "github.com/xgo-dev/llgo/internal/env"
-	"github.com/xgo-dev/llgo/internal/targets"
+	"github.com/xgo-dev/llgo/target"
 	llvmenv "github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
@@ -221,7 +221,7 @@ func llgoVariables(targetName string) (map[string]func() string, error) {
 	if targetName == "" {
 		return variables, nil
 	}
-	config, err := targets.NewDefaultResolver().Resolve(targetName)
+	config, err := target.NewResolver(internalenv.LLGoTargetsDir()).Resolve(targetName)
 	if err != nil {
 		return nil, fmt.Errorf("-target %s: %w", targetName, err)
 	}
@@ -229,7 +229,7 @@ func llgoVariables(targetName string) (map[string]func() string, error) {
 	return variables, nil
 }
 
-func addTargetVariables(variables map[string]func() string, config *targets.Config, embeddedClangDir string) {
+func addTargetVariables(variables map[string]func() string, config *target.Config, embeddedClangDir string) {
 	value := func(s string) func() string { return func() string { return s } }
 	extraBin := joinIfSet(embeddedClangDir, "bin")
 	fields := map[string]string{

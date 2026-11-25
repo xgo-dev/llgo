@@ -12,18 +12,18 @@ import (
 	"testing"
 	"weak"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 	xpackages "golang.org/x/tools/go/packages"
 )
 
 func TestGroupInitialBuilds(t *testing.T) {
-	prog := llssa.NewProgram(&llssa.Target{GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOARCH: "amd64"})
 	defer prog.Dispose()
 	plain := &packages.Package{Types: types.NewPackage("example.com/plain", "main")}
 	local := &packages.Package{Types: types.NewPackage("example.com/local", "main")}
 	other := &packages.Package{Types: types.NewPackage("example.com/other", "main")}
-	prog.DeclareLocality(local.Types, "state", llssa.LocalityInfo{Locality: llssa.GoroutineLocal})
+	prog.DeclareLocality(local.Types, "state", llvmgen.LocalityInfo{Locality: llvmgen.GoroutineLocal})
 	ctx := &context{prog: prog, initial: []*packages.Package{plain, local, other}, mode: ModeBuild}
 	groups := groupInitialBuilds(ctx, nil)
 	if len(groups) != 2 || groups[0].features.localContext || !groups[1].features.localContext ||
@@ -45,7 +45,7 @@ func TestGroupInitialBuilds(t *testing.T) {
 }
 
 func TestGroupInitialWasmFeatures(t *testing.T) {
-	for _, target := range []*llssa.Target{
+	for _, target := range []*llvmgen.Target{
 		{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi"},
 		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "gojs"},
 		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"},
@@ -57,7 +57,7 @@ func TestGroupInitialWasmFeatures(t *testing.T) {
 				`package library; import ("reflect"; "runtime"); func Use() { reflect.ValueOf(func() {}).Call(nil); _ = runtime.FuncForPC(0) }`,
 			} {
 				pkg := buildWasmReflectTestProgram(t, source)
-				prog := llssa.NewProgram(target)
+				prog := llvmgen.NewProgram(target)
 				ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe}, initial: []*packages.Package{
 					{Types: types.NewPackage("example.com/plain", "plain")}, {Types: pkg.Pkg},
 				}}

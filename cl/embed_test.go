@@ -14,8 +14,8 @@ import (
 
 	"github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/internal/goembed"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
-	gossa "golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
+	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
@@ -741,7 +741,7 @@ func TestTryEmbedGlobalInit_EarlyAndDefaultBranches(t *testing.T) {
 }
 
 func TestApplyEmbedInits_SortAndMissingGlobal(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	pkg := prog.NewPackage("foo", "foo")
 	p := &context{
 		pkg: pkg,
@@ -756,7 +756,7 @@ func TestApplyEmbedInits_SortAndMissingGlobal(t *testing.T) {
 	}
 }
 
-func buildTestSSAGlobal(t *testing.T, name, src string) *gossa.Global {
+func buildTestSSAGlobal(t *testing.T, name, src string) *ssa.Global {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", src, parser.ParseComments)
@@ -765,7 +765,7 @@ func buildTestSSAGlobal(t *testing.T, name, src string) *gossa.Global {
 	}
 	imp := packages.NewImporter(fset)
 	pkg := types.NewPackage("foo", "foo")
-	mode := gossa.SanityCheckFunctions | gossa.InstantiateGenerics
+	mode := ssa.SanityCheckFunctions | ssa.InstantiateGenerics
 	ssaPkg, _, err := ssautil.BuildPackage(&types.Config{Importer: imp}, fset, pkg, []*ast.File{f}, mode)
 	if err != nil {
 		t.Fatalf("BuildPackage: %v", err)
@@ -774,7 +774,7 @@ func buildTestSSAGlobal(t *testing.T, name, src string) *gossa.Global {
 	if !ok {
 		t.Fatalf("missing global %q in ssa package", name)
 	}
-	global, ok := member.(*gossa.Global)
+	global, ok := member.(*ssa.Global)
 	if !ok {
 		t.Fatalf("member %q is %T, want *ssa.Global", name, member)
 	}

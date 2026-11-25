@@ -21,27 +21,27 @@ import (
 
 	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/goescape"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 // PrepareEscapeAnalysis runs after all source metadata and SSA bodies are ready,
 // and before isolated backend Programs are created. Its result is immutable.
-func PrepareEscapeAnalysis(prog llssa.Program, input *ssa.Program, patches Patches) *goescape.Result {
+func PrepareEscapeAnalysis(prog llvmgen.Program, input *ssa.Program, patches Patches) *goescape.Result {
 	return PrepareEscapeAnalysisCached(prog, input, patches, nil)
 }
 
 // PrepareEscapeAnalysisCached optionally reuses complete validated facts. SSA
 // bodies remain available for feature analysis and cross-package body import.
-func PrepareEscapeAnalysisCached(prog llssa.Program, input *ssa.Program, patches Patches, cache *goescape.Cache) *goescape.Result {
+func PrepareEscapeAnalysisCached(prog llvmgen.Program, input *ssa.Program, patches Patches, cache *goescape.Cache) *goescape.Result {
 	return PrepareEscapeAnalysisImported(prog, input, patches, cache, nil, nil, nil)
 }
 
 // PrepareEscapeAnalysisImported joins cached archive contracts with source
 // bodies that are being rebuilt or imported. The coordinator validates imports
 // and materializes required bodies before publishing the resulting decisions.
-func PrepareEscapeAnalysisImported(prog llssa.Program, input *ssa.Program, patches Patches, cache *goescape.Cache, imports map[*ssa.Function]goescape.Summary, keys map[*ssa.Function]string, extraRoots []*ssa.Function) *goescape.Result {
+func PrepareEscapeAnalysisImported(prog llvmgen.Program, input *ssa.Program, patches Patches, cache *goescape.Cache, imports map[*ssa.Function]goescape.Summary, keys map[*ssa.Function]string, extraRoots []*ssa.Function) *goescape.Result {
 	ctx := &context{
 		prog: prog, goProg: input, fset: input.Fset, patches: patches,
 		options: Options{PreloadedSyntax: true, EscapeImports: imports, EscapeImportKeys: keys, EscapeRoots: extraRoots},
@@ -101,12 +101,12 @@ func (p *context) analyzeEscapeCached(cache *goescape.Cache) *goescape.Result {
 		External:    external,
 		ExternalKey: func(fn *ssa.Function) string { return p.options.EscapeImportKeys[fn] },
 		IndirectInterface: func(typ types.Type) bool {
-			return p.prog.InterfaceIndirect(p.type_(typ, llssa.GoDecl))
+			return p.prog.InterfaceIndirect(p.type_(typ, llvmgen.GoDecl))
 		},
 		ForceHeap:   p.forceEscapeHeap,
 		StackLayout: p.escapeStackLayout,
 		LocalStackLayout: func(_ ssa.Instruction, typ types.Type) (uint64, uint64) {
-			return p.prog.StackRootBytes(p.type_(typ, llssa.GoDecl)), uint64(p.prog.GoWordSize())
+			return p.prog.StackRootBytes(p.type_(typ, llvmgen.GoDecl)), uint64(p.prog.GoWordSize())
 		},
 		MaxStackBytes: llabi.MaxEscapeStackBytes,
 	})
@@ -116,7 +116,7 @@ func (p *context) escapeStackLayout(site ssa.Instruction, typ types.Type) (size,
 	switch v := site.(type) {
 	case *ssa.MakeSlice:
 		elem := typ.Underlying().(*types.Slice).Elem()
-		n := p.prog.SizeOf(p.type_(elem, llssa.GoDecl))
+		n := p.prog.SizeOf(p.type_(elem, llvmgen.GoDecl))
 		if n == 0 || n > llabi.SmallStackBufferSize {
 			return 0, 1
 		}
@@ -132,7 +132,7 @@ func (p *context) escapeStackLayout(site ssa.Instruction, typ types.Type) (size,
 		}
 		typ = types.NewArray(elem, llabi.SmallStackBufferSize)
 	case *ssa.MakeMap:
-		header, bucket := p.prog.MapStackStorage(p.type_(v.Type(), llssa.GoDecl))
+		header, bucket := p.prog.MapStackStorage(p.type_(v.Type(), llvmgen.GoDecl))
 		size, alignment = p.prog.SizeOf(header), p.prog.AlignOf(header)
 		if bucket != nil {
 			a := p.prog.AlignOf(bucket)
@@ -150,7 +150,7 @@ func (p *context) escapeStackLayout(site ssa.Instruction, typ types.Type) (size,
 		}
 		return size, alignment
 	}
-	lowered := p.type_(typ, llssa.GoDecl)
+	lowered := p.type_(typ, llvmgen.GoDecl)
 	return p.escapeRootedStackSize(lowered), p.prog.AlignOf(lowered)
 }
 
@@ -208,7 +208,7 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 	switch site.(type) {
 	case *ssa.MakeSlice:
 		elem := typ.Underlying().(*types.Slice).Elem()
-		size := p.prog.SizeOf(p.type_(elem, llssa.GoDecl))
+		size := p.prog.SizeOf(p.type_(elem, llvmgen.GoDecl))
 		if size == 0 || size > llabi.SmallStackBufferSize {
 			return "no small slice stack buffer"
 		}
@@ -218,7 +218,7 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 		// pointer-bearing string/slice header used to describe the result.
 		typ = types.NewArray(types.Typ[types.Byte], llabi.SmallStackBufferSize)
 	}
-	lowered := p.type_(typ, llssa.GoDecl)
+	lowered := p.type_(typ, llvmgen.GoDecl)
 	size := p.prog.SizeOf(lowered)
 	limit := llabi.MaxImplicitStackVarSize
 	if alloc, ok := site.(*ssa.Alloc); ok {
@@ -264,7 +264,7 @@ func (p *context) stackStorage(site ssa.Instruction) bool {
 }
 
 // Promoted storage and its field-address root slots share one stack budget.
-func (p *context) escapeRootedStackSize(typ llssa.Type) uint64 {
+func (p *context) escapeRootedStackSize(typ llvmgen.Type) uint64 {
 	size := p.prog.SizeOf(typ)
 	if p.prog.GCRootsEnabled() {
 		size += p.prog.StackRootBytes(typ)

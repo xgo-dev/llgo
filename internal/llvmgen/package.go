@@ -30,7 +30,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	lltarget "github.com/xgo-dev/llgo/target"
+	"github.com/xgo-dev/llgo/target"
 	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/types/typeutil"
@@ -322,17 +322,17 @@ func (p Program) Dispose() {
 }
 
 // NewProgram creates a new program.
-func NewProgram(target *Target) Program {
-	if target == nil {
-		target = &Target{
+func NewProgram(tgt *Target) Program {
+	if tgt == nil {
+		tgt = &Target{
 			GOOS:   runtime.GOOS,
 			GOARCH: runtime.GOARCH,
 		}
 	}
 	ctx := llvm.NewContext()
-	td, tm := target.targetInfo()
+	td, tm := tgt.targetInfo()
 	/*
-		arch := target.GOARCH
+		arch := tgt.GOARCH
 		if arch == "" {
 			arch = runtime.GOARCH
 		}
@@ -344,25 +344,25 @@ func NewProgram(target *Target) Program {
 	packageSyntax := newPackageSyntaxData()
 	ptrSize := td.PointerSize()
 	goWordSize := ptrSize
-	if target.effectiveGOARCH() == "wasm" && target.WasmProfile != "" {
+	if tgt.effectiveGOARCH() == "wasm" && tgt.WasmProfile != "" {
 		goWordSize = 8
 	}
 	prog := &aProgram{
 		ctx: ctx, gocvt: newGoTypes(packageSyntax),
 		funcPtrs: make(map[types.Type]Type),
-		target:   target, td: td, tm: tm,
+		target:   tgt, td: td, tm: tm,
 		ptrSize: ptrSize, goWordSize: goWordSize,
 		named: make(map[string]Type), fnnamed: make(map[string]int),
 		packageSyntax: packageSyntax, localities: newLocalityInfos(),
 		abiSymbol:          make(map[string]*AbiSymbol),
-		debugInfoOptimized: target.effectiveOptLevel() != optlevel.O0,
-		nativeIntegerExt:   nativeIntegerExtensionForTarget(target),
+		debugInfoOptimized: tgt.effectiveOptLevel() != optlevel.O0,
+		nativeIntegerExt:   nativeIntegerExtensionForTarget(tgt),
 	}
 	for i, lanes := range []int{16, 32, 64} {
 		prog.simdAlignments[i] = int64(td.ABITypeAlignment(llvm.VectorType(ctx.Int8Type(), lanes)))
 		// Clang caps fixed-length AArch64 C vector alignment at 128 bits,
 		// even when LLVM's raw wide-vector type has a larger ABI alignment.
-		if target.effectiveGOARCH() == "arm64" {
+		if tgt.effectiveGOARCH() == "arm64" {
 			prog.simdAlignments[i] = min(prog.simdAlignments[i], 16)
 		}
 	}
@@ -378,11 +378,11 @@ func NewProgram(target *Target) Program {
 		ll := prog.nativeStorageLLVMType(raw, prog.toType(raw).ll)
 		prog.hostBasicLayouts[kind] = lltypes.LayoutPair{Size: int64(td.TypeAllocSize(ll)), Align: int64(td.ABITypeAlignment(ll))}
 	}
-	spec := lltarget.ResolveSpec(lltarget.Spec{
-		GOOS:         target.effectiveGOOS(),
-		GOARCH:       target.effectiveGOARCH(),
-		WasmProfile:  target.WasmProfile,
-		WasmProvider: target.WasmProvider,
+	spec := target.ResolveSpec(target.Spec{
+		GOOS:         tgt.effectiveGOOS(),
+		GOARCH:       tgt.effectiveGOARCH(),
+		WasmProfile:  tgt.WasmProfile,
+		WasmProvider: tgt.WasmProvider,
 	})
 	spec.PtrSize = ptrSize
 	spec.WordSize = goWordSize

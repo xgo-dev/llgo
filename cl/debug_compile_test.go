@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/debugabi"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
@@ -36,7 +36,7 @@ func TestWasmDebuggerMemoryLocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"},
 		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", LLVMTarget: "wasm32-unknown-emscripten"},
@@ -131,7 +131,7 @@ func capture(seed int) func() int {
 		t.Fatal(err)
 	}
 
-	prog := newLLSSAProgForTarget(t, &llssa.Target{
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{
 		GOOS:     runtime.GOOS,
 		GOARCH:   runtime.GOARCH,
 		OptLevel: optlevel.O0,
@@ -171,7 +171,7 @@ func capture(seed int) func() int {
 	assertDebugHomeStores(t, ir, pkg.Module().NamedFunction("debugcompile.inspect").String(), `name: "seed", arg: 2`, 4)
 	assertDebugLoopSnapshots(t, pkg.Module().NamedFunction("debugcompile.snapshots"))
 
-	optimizedProg := newLLSSAProgForTarget(t, &llssa.Target{
+	optimizedProg := newLLSSAProgForTarget(t, &llvmgen.Target{
 		GOOS:     runtime.GOOS,
 		GOARCH:   runtime.GOARCH,
 		OptLevel: optlevel.O2,
@@ -214,7 +214,7 @@ func capture(seed int) func() int {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, target := range []llssa.Target{
+		for _, target := range []llvmgen.Target{
 			{GOOS: "linux", GOARCH: "amd64"},
 			{GOOS: "linux", GOARCH: "arm64"},
 			{GOOS: "darwin", GOARCH: "amd64"},
@@ -293,7 +293,7 @@ func capture(seed int) func() int {
 
 // Decode emitted debug sections so tests cover the final DWARF tags as well
 // as LLVM metadata, including native COFF and Mach-O targets on any host.
-func readDebugObject(t *testing.T, prog llssa.Program, mod llvm.Module, goos string) *dwarf.Data {
+func readDebugObject(t *testing.T, prog llvmgen.Program, mod llvm.Module, goos string) *dwarf.Data {
 	t.Helper()
 	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)

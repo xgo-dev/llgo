@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -36,7 +36,7 @@ func TestSIMDCompleteDeclarations(t *testing.T) {
 					obj := pkgs[0].TypesInfo.Defs[decl.Name].(*types.Func)
 					fn := prog.FuncValue(obj)
 					desc, ok := lookupSIMD(fn, target.arch)
-					if !ok || desc.op == llssa.SIMDUnimplemented {
+					if !ok || desc.op == llvmgen.SIMDUnimplemented {
 						t.Errorf("unsupported intrinsic %s", obj.FullName())
 					}
 					count++

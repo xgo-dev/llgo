@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestAMD64FloatToIntegerConversionIR(t *testing.T) {
@@ -17,7 +17,7 @@ func U32(x float64) uint32 { return uint32(x) }
 func U64(x float64) uint64 { return uint64(x) }
 `
 	ssaPkg, _, files := buildGoSSAPkg(t, src)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	pkg, err := NewPackage(prog, ssaPkg, files)
 	if err != nil {
 		t.Fatal(err)

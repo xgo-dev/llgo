@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"golang.org/x/tools/go/ssa"
@@ -142,13 +142,13 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 			p.Syntax[0].Comments = []*ast.CommentGroup{{List: []*ast.Comment{{Text: "//export\tcallback"}}}}
 		}, false},
 		{"linked Go entry", func(_ *testing.T, c *context, p *aPackage) {
-			c.prog.SetLinkname(llssa.FullName(p.Types, "main"), "C.callback")
+			c.prog.SetLinkname(llvmgen.FullName(p.Types, "main"), "C.callback")
 		}, false},
 		{"aliased global", func(_ *testing.T, c *context, p *aPackage) {
-			c.prog.SetLinkname(llssa.FullName(p.Types, "n"), "C.number")
+			c.prog.SetLinkname(llvmgen.FullName(p.Types, "n"), "C.number")
 		}, false},
 		{"thread local global", func(_ *testing.T, c *context, p *aPackage) {
-			c.prog.SetLocalityInfoFor(p.Types, llssa.FullName(p.Types, "n"), llssa.LocalityInfo{Locality: llssa.ThreadLocal})
+			c.prog.SetLocalityInfoFor(p.Types, llvmgen.FullName(p.Types, "n"), llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
 		}, false},
 		{"cgo linker directive", func(_ *testing.T, _ *context, p *aPackage) {
 			p.Syntax[0].Comments = []*ast.CommentGroup{{List: []*ast.Comment{{Text: `//go:cgo_ldflag "-lforeign"`}}}}
@@ -156,15 +156,15 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 		{"compiler runtime input", func(_ *testing.T, _ *context, p *aPackage) { p.Dir = filepath.Join(root, "runtime") }, true},
 		{"runtime thread local global", func(_ *testing.T, c *context, p *aPackage) {
 			p.Dir = filepath.Join(root, "runtime")
-			c.prog.SetLocalityInfoFor(p.Types, llssa.FullName(p.Types, "n"), llssa.LocalityInfo{Locality: llssa.ThreadLocal})
+			c.prog.SetLocalityInfoFor(p.Types, llvmgen.FullName(p.Types, "n"), llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
 		}, false},
 		{"runtime goroutine local global", func(_ *testing.T, c *context, p *aPackage) {
 			p.Dir = filepath.Join(root, "runtime")
-			c.prog.SetLocalityInfoFor(p.Types, llssa.FullName(p.Types, "n"), llssa.LocalityInfo{Locality: llssa.GoroutineLocal})
+			c.prog.SetLocalityInfoFor(p.Types, llvmgen.FullName(p.Types, "n"), llvmgen.LocalityInfo{Locality: llvmgen.GoroutineLocal})
 		}, false},
 		{"runtime aliased global", func(_ *testing.T, c *context, p *aPackage) {
 			p.Dir = filepath.Join(root, "runtime")
-			c.prog.SetLinkname(llssa.FullName(p.Types, "n"), "C.number")
+			c.prog.SetLinkname(llvmgen.FullName(p.Types, "n"), "C.number")
 		}, false},
 		{"C import", func(_ *testing.T, _ *context, p *aPackage) {
 			p.Syntax[0].Imports = []*ast.ImportSpec{{Path: &ast.BasicLit{Kind: token.STRING, Value: `"C"`}}}
@@ -184,7 +184,7 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 				t.Fatal(err)
 			}
 			pkg := &aPackage{Package: &packages.Package{ID: "main", PkgPath: "main", Types: ssaPkg.Pkg, Dir: t.TempDir(), Syntax: []*ast.File{file}}, SSA: ssaPkg}
-			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
 			defer prog.Dispose()
 			prog.EnableGCRoots(true)
 			prog.EnableCooperativeSafepoints(true)
@@ -204,7 +204,7 @@ func TestConfigureWasmRuntimeFree(t *testing.T) {
 }
 
 func TestWasmRuntimeFreeFingerprint(t *testing.T) {
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"})
 	defer prog.Dispose()
 	ctx := &context{prog: prog, buildConf: &Config{Goos: "wasip1", Goarch: "wasm"}}
 	regular := newManifestBuilder()

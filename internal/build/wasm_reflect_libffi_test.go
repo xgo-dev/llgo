@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -72,13 +72,13 @@ func TestBuildRejectsWasmReflectLibffiWorkers(t *testing.T) {
 
 func TestWasmReflectLibffiProgramFeatures(t *testing.T) {
 	pkg := buildWasmReflectTestProgram(t, `package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`)
-	for _, target := range []*llssa.Target{
+	for _, target := range []*llvmgen.Target{
 		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "gojs"},
 		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"},
 		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", WasmProvider: "emscripten"},
 	} {
 		t.Run(target.WasmProfile+"/"+target.WasmProvider, func(t *testing.T) {
-			prog := llssa.NewProgram(target)
+			prog := llvmgen.NewProgram(target)
 			defer prog.Dispose()
 			ctx := &context{prog: prog, progSSA: pkg.Prog, buildConf: &Config{BuildMode: BuildModeExe, Tags: wasmReflectLibffiTag}, initial: []*packages.Package{
 				{Types: types.NewPackage("example.com/plain", "plain")}, {Types: pkg.Pkg},

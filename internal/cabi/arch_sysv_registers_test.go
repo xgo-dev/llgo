@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -43,7 +43,7 @@ func TestSysVAggregateRegisterExhaustion(t *testing.T) {
 	llvm.InitializeAllTargetInfos()
 	for _, goos := range []string{"linux", "darwin"} {
 		t.Run(goos, func(t *testing.T) {
-			prog := ssa.NewProgram(&ssa.Target{GOOS: goos, GOARCH: "amd64"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: goos, GOARCH: "amd64"})
 			defer prog.Dispose()
 			ctx := llvm.NewContext()
 			defer ctx.Dispose()
@@ -124,7 +124,7 @@ func TestSysVHiddenContextDoesNotConsumeArgumentRegisters(t *testing.T) {
 	llvm.InitializeAllTargetInfos()
 	for _, goos := range []string{"linux", "darwin"} {
 		t.Run(goos, func(t *testing.T) {
-			prog := ssa.NewProgram(&ssa.Target{GOOS: goos, GOARCH: "amd64"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: goos, GOARCH: "amd64"})
 			defer prog.Dispose()
 			ctx := llvm.NewContext()
 			defer ctx.Dispose()

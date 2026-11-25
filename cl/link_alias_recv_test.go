@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func linkedAliasReceiverCases(t *testing.T, test func(*testing.T, string, string)) {
@@ -69,7 +69,7 @@ func TestLinkedAliasReceiverSyntax(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		prog := llssa.NewProgram(nil)
+		prog := llvmgen.NewProgram(nil)
 		defer prog.Dispose()
 		// Match the build driver's preload callback: the type scope is empty.
 		if err := ParsePkgSyntax(prog, fset, types.NewPackage("p", "p"), []*ast.File{file}); err != nil {
@@ -110,7 +110,7 @@ type Data struct{}`,
 		}
 		files = append(files, file)
 	}
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	if err := ParsePkgSyntax(prog, fset, types.NewPackage("p", "p"), files); err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestReceiverAliasesLeaveInvalidTypesForTypeChecker(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			defer prog.Dispose()
 			// Syntax preloading must not panic or loop on invalid receivers.
 			if err := ParsePkgSyntax(prog, fset, types.NewPackage("p", "p"), []*ast.File{file}); err != nil {
@@ -158,7 +158,7 @@ func TestLinkedAliasReceiverImport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		prog := llssa.NewProgram(nil)
+		prog := llvmgen.NewProgram(nil)
 		defer prog.Dispose()
 		ctx := &context{prog: prog, fset: fset}
 		ctx.importPkg(pkg, &pkgInfo{})
@@ -192,7 +192,7 @@ func TestLinkDirectiveErrors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			defer prog.Dispose()
 			err = ParsePkgSyntax(prog, fset, types.NewPackage("p", "p"), []*ast.File{file})
 			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "badlink.go:") {

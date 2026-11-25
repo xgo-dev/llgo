@@ -28,9 +28,9 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
-	gossa "golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
@@ -92,13 +92,13 @@ func genericExplicit[T any](v *genericNested[T]) uintptr {
 	})
 	t.Run("explicit selector is detected", func(t *testing.T) {
 		args := offsetofArgs(t, ssaPkg.Func("genericExplicit"), 1)
-		load := args[0].(*gossa.UnOp)
-		field := load.X.(*gossa.FieldAddr)
+		load := args[0].(*ssa.UnOp)
+		field := load.X.(*ssa.FieldAddr)
 		if !ctx.isExplicitFieldAddr(field) {
 			t.Fatal("explicit FieldAddr was not detected")
 		}
 	})
-	if _, ok := ctx.offsetOfBuiltinArg(gossa.NewConst(constant.MakeInt64(0), types.Typ[types.Int])); ok {
+	if _, ok := ctx.offsetOfBuiltinArg(ssa.NewConst(constant.MakeInt64(0), types.Typ[types.Int])); ok {
 		t.Fatal("offsetOfBuiltinArg returned true for a non-load argument")
 	}
 }
@@ -125,8 +125,8 @@ func explicit[T any](v *outer[T]) uintptr {
 	ssaPkg, fset := buildOffsetofPackage(t, src)
 	ctx := &context{prog: newLLSSAProg(t), fset: fset}
 	arg := offsetofArgs(t, ssaPkg.Func("promoted"), 1)[0]
-	load := arg.(*gossa.UnOp)
-	field := load.X.(*gossa.FieldAddr)
+	load := arg.(*ssa.UnOp)
+	field := load.X.(*ssa.FieldAddr)
 
 	name, ok := fieldAddrName(field)
 	if !ok || name != "B" {
@@ -135,43 +135,43 @@ func explicit[T any](v *outer[T]) uintptr {
 	if _, _, ok := fieldAddrStruct(field); !ok {
 		t.Fatal("fieldAddrStruct returned false for valid FieldAddr")
 	}
-	parent := field.X.(*gossa.FieldAddr)
+	parent := field.X.(*ssa.FieldAddr)
 	if ctx.isExplicitFieldAddr(parent) {
 		t.Fatal("promoted FieldAddr parent should not be considered explicit")
 	}
 	explicitArg := offsetofArgs(t, ssaPkg.Func("explicit"), 1)[0]
-	explicitLoad := explicitArg.(*gossa.UnOp)
-	explicitField := explicitLoad.X.(*gossa.FieldAddr)
+	explicitLoad := explicitArg.(*ssa.UnOp)
+	explicitField := explicitLoad.X.(*ssa.FieldAddr)
 	if !ctx.isExplicitFieldAddr(explicitField) {
 		t.Fatal("explicit FieldAddr should be considered explicit")
 	}
-	if _, ok := fieldAddrName(&gossa.FieldAddr{}); ok {
+	if _, ok := fieldAddrName(&ssa.FieldAddr{}); ok {
 		t.Fatal("fieldAddrName returned true for invalid FieldAddr")
 	}
-	if ctx.isExplicitFieldAddr(&gossa.FieldAddr{}) != true {
+	if ctx.isExplicitFieldAddr(&ssa.FieldAddr{}) != true {
 		t.Fatal("invalid FieldAddr should be treated as explicit")
 	}
-	if _, ok := ctx.offsetOfFieldAddr(&gossa.FieldAddr{}); ok {
+	if _, ok := ctx.offsetOfFieldAddr(&ssa.FieldAddr{}); ok {
 		t.Fatal("offsetOfFieldAddr returned true for invalid FieldAddr")
 	}
-	if _, ok := ctx.offsetOfFieldChain(&gossa.FieldAddr{}); ok {
+	if _, ok := ctx.offsetOfFieldChain(&ssa.FieldAddr{}); ok {
 		t.Fatal("offsetOfFieldChain returned true for invalid FieldAddr")
 	}
-	if _, ok := ctx.offsetOfBuiltinArg(&gossa.UnOp{
+	if _, ok := ctx.offsetOfBuiltinArg(&ssa.UnOp{
 		Op: token.NOT,
-		X:  gossa.NewConst(constant.MakeBool(true), types.Typ[types.Bool]),
+		X:  ssa.NewConst(constant.MakeBool(true), types.Typ[types.Bool]),
 	}); ok {
 		t.Fatal("offsetOfBuiltinArg returned true for a non-deref UnOp")
 	}
-	if _, ok := ctx.offsetOfBuiltinArg(&gossa.UnOp{
+	if _, ok := ctx.offsetOfBuiltinArg(&ssa.UnOp{
 		Op: token.MUL,
-		X:  gossa.NewConst(constant.MakeInt64(1), types.Typ[types.Int]),
+		X:  ssa.NewConst(constant.MakeInt64(1), types.Typ[types.Int]),
 	}); ok {
 		t.Fatal("offsetOfBuiltinArg returned true for deref of a non-FieldAddr")
 	}
-	if _, ok := ctx.offsetOfBuiltinArg(&gossa.UnOp{
+	if _, ok := ctx.offsetOfBuiltinArg(&ssa.UnOp{
 		Op: token.MUL,
-		X:  &gossa.FieldAddr{},
+		X:  &ssa.FieldAddr{},
 	}); ok {
 		t.Fatal("offsetOfBuiltinArg returned true for invalid FieldAddr")
 	}
@@ -179,19 +179,19 @@ func explicit[T any](v *outer[T]) uintptr {
 	stubStruct := types.NewStruct([]*types.Var{
 		types.NewVar(token.NoPos, nil, "F", types.Typ[types.Int]),
 	}, nil)
-	if _, ok := ctx.offsetOfBuiltinArg(&gossa.Field{
+	if _, ok := ctx.offsetOfBuiltinArg(&ssa.Field{
 		X:     fakeSSAValue{typ: types.Typ[types.Int]},
 		Field: 0,
 	}); ok {
 		t.Fatal("offsetOfBuiltinArg returned true for Field of a non-struct value")
 	}
-	if _, ok := ctx.offsetOfBuiltinArg(&gossa.Field{
+	if _, ok := ctx.offsetOfBuiltinArg(&ssa.Field{
 		X:     fakeSSAValue{typ: stubStruct},
 		Field: stubStruct.NumFields(),
 	}); ok {
 		t.Fatal("offsetOfBuiltinArg returned true for an out-of-range Field")
 	}
-	if got, ok := ctx.offsetOfBuiltinArg(&gossa.Field{
+	if got, ok := ctx.offsetOfBuiltinArg(&ssa.Field{
 		X:     fakeSSAValue{typ: stubStruct},
 		Field: 0,
 	}); !ok || got.IsNil() {
@@ -199,26 +199,26 @@ func explicit[T any](v *outer[T]) uintptr {
 	} else if !types.Identical(got.RawType(), types.Typ[types.Uintptr]) {
 		t.Fatalf("offsetOfBuiltinArg(Field) type = %v, want uintptr", got.RawType())
 	}
-	validSynthetic := &gossa.FieldAddr{
+	validSynthetic := &ssa.FieldAddr{
 		X:     fakeSSAValue{typ: types.NewPointer(stubStruct)},
 		Field: 0,
 	}
 	if ctx.isExplicitFieldAddr(validSynthetic) {
 		t.Fatal("FieldAddr without source position should not be considered explicit")
 	}
-	if _, _, ok := fieldAddrStruct(&gossa.FieldAddr{
+	if _, _, ok := fieldAddrStruct(&ssa.FieldAddr{
 		X:     fakeSSAValue{typ: types.Typ[types.Int]},
 		Field: 0,
 	}); ok {
 		t.Fatal("fieldAddrStruct returned true for non-pointer receiver")
 	}
-	if _, _, ok := fieldAddrStruct(&gossa.FieldAddr{
+	if _, _, ok := fieldAddrStruct(&ssa.FieldAddr{
 		X:     fakeSSAValue{typ: types.NewPointer(types.Typ[types.Int])},
 		Field: 0,
 	}); ok {
 		t.Fatal("fieldAddrStruct returned true for pointer to non-struct receiver")
 	}
-	if _, _, ok := fieldAddrStruct(&gossa.FieldAddr{
+	if _, _, ok := fieldAddrStruct(&ssa.FieldAddr{
 		X:     fakeSSAValue{typ: types.NewPointer(stubStruct)},
 		Field: stubStruct.NumFields(),
 	}); ok {
@@ -339,12 +339,12 @@ func Result(shift uint) uintptr {
 `
 	for _, target := range []struct {
 		name string
-		arch *llssa.Target
+		arch *llvmgen.Target
 	}{
 		{"native", nil},
-		{"386", &llssa.Target{GOOS: "windows", GOARCH: "386"}},
-		{"wasm32", &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}},
-		{"wasm64", &llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", WasmProvider: "emscripten"}},
+		{"386", &llvmgen.Target{GOOS: "windows", GOARCH: "386"}},
+		{"wasm32", &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"}},
+		{"wasm64", &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", WasmProvider: "emscripten"}},
 	} {
 		t.Run(target.name, func(t *testing.T) {
 			ssaPkg, _, files := buildGoSSAPkg(t, src)
@@ -359,7 +359,7 @@ func Result(shift uint) uintptr {
 			if err := llvm.VerifyModule(module, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			if module.NamedFunction(llssa.PkgRuntime+".PrintUint").IsNil() || !module.NamedFunction(llssa.PkgRuntime+".PrintInt").IsNil() {
+			if module.NamedFunction(llvmgen.PkgRuntime+".PrintUint").IsNil() || !module.NamedFunction(llvmgen.PkgRuntime+".PrintInt").IsNil() {
 				t.Error("generic Offsetof printing did not use only the unsigned helper")
 			}
 			ir := module.String()
@@ -492,7 +492,7 @@ func fakeUnknown() {}
 		}
 	}()
 	mustPanic(t, "unknown llgo instruction ftype", func() {
-		ctx.call(nil, llssa.Call, &gossa.CallCommon{Value: fn})
+		ctx.call(nil, llvmgen.Call, &ssa.CallCommon{Value: fn})
 	})
 }
 
@@ -506,7 +506,7 @@ func funcPCABI0(fn any) uintptr
 func callback() {}
 func callbackPC() uintptr { return funcPCABI0(callback) }
 `)
-	target := &llssa.Target{
+	target := &llvmgen.Target{
 		GOOS:         "js",
 		GOARCH:       "wasm",
 		Target:       "emscripten",
@@ -540,19 +540,19 @@ type fakeSSAValue struct {
 	typ types.Type
 }
 
-func (v fakeSSAValue) Name() string                    { return "fake" }
-func (v fakeSSAValue) String() string                  { return "fake" }
-func (v fakeSSAValue) Type() types.Type                { return v.typ }
-func (v fakeSSAValue) Parent() *gossa.Function         { return nil }
-func (v fakeSSAValue) Referrers() *[]gossa.Instruction { return nil }
-func (v fakeSSAValue) Pos() token.Pos                  { return token.NoPos }
+func (v fakeSSAValue) Name() string                  { return "fake" }
+func (v fakeSSAValue) String() string                { return "fake" }
+func (v fakeSSAValue) Type() types.Type              { return v.typ }
+func (v fakeSSAValue) Parent() *ssa.Function         { return nil }
+func (v fakeSSAValue) Referrers() *[]ssa.Instruction { return nil }
+func (v fakeSSAValue) Pos() token.Pos                { return token.NoPos }
 
-func buildOffsetofPackage(t *testing.T, src string) (*gossa.Package, *token.FileSet) {
+func buildOffsetofPackage(t *testing.T, src string) (*ssa.Package, *token.FileSet) {
 	ssaPkg, fset, _ := buildPackageWithFiles(t, src)
 	return ssaPkg, fset
 }
 
-func buildPackageWithFiles(t *testing.T, src string) (*gossa.Package, *token.FileSet, []*ast.File) {
+func buildPackageWithFiles(t *testing.T, src string) (*ssa.Package, *token.FileSet, []*ast.File) {
 	t.Helper()
 	dir := t.TempDir()
 	filename := filepath.Join(dir, "foo.go")
@@ -567,7 +567,7 @@ func buildPackageWithFiles(t *testing.T, src string) (*gossa.Package, *token.Fil
 	files := []*ast.File{f}
 	pkg := types.NewPackage(f.Name.Name, f.Name.Name)
 	imp := packages.NewImporter(fset)
-	mode := gossa.SanityCheckFunctions | gossa.InstantiateGenerics
+	mode := ssa.SanityCheckFunctions | ssa.InstantiateGenerics
 	ssaPkg, _, err := ssautil.BuildPackage(&types.Config{Importer: imp}, fset, pkg, files, mode)
 	if err != nil {
 		t.Fatal(err)
@@ -575,15 +575,15 @@ func buildPackageWithFiles(t *testing.T, src string) (*gossa.Package, *token.Fil
 	return ssaPkg, fset, files
 }
 
-func offsetOfArg(t *testing.T, ctx *context, arg gossa.Value) int {
+func offsetOfArg(t *testing.T, ctx *context, arg ssa.Value) int {
 	t.Helper()
 	if got, ok := ctx.offsetOfBuiltinArg(arg); !ok {
 		t.Fatal("offsetOfBuiltinArg returned false")
 	} else if !types.Identical(got.RawType(), types.Typ[types.Uintptr]) {
 		t.Fatalf("offsetOfBuiltinArg type = %v, want uintptr", got.RawType())
 	}
-	load := arg.(*gossa.UnOp)
-	field := load.X.(*gossa.FieldAddr)
+	load := arg.(*ssa.UnOp)
+	field := load.X.(*ssa.FieldAddr)
 	got, ok := ctx.offsetOfFieldChain(field)
 	if !ok {
 		t.Fatal("offsetOfFieldChain returned false")
@@ -591,19 +591,19 @@ func offsetOfArg(t *testing.T, ctx *context, arg gossa.Value) int {
 	return got
 }
 
-func offsetofArgs(t *testing.T, fn *gossa.Function, want int) []gossa.Value {
+func offsetofArgs(t *testing.T, fn *ssa.Function, want int) []ssa.Value {
 	t.Helper()
 	if fn == nil {
 		t.Fatal("missing function")
 	}
-	var args []gossa.Value
+	var args []ssa.Value
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
-			call, ok := instr.(*gossa.Call)
+			call, ok := instr.(*ssa.Call)
 			if !ok {
 				continue
 			}
-			builtin, ok := call.Call.Value.(*gossa.Builtin)
+			builtin, ok := call.Call.Value.(*ssa.Builtin)
 			if ok && builtin.Name() == "Offsetof" {
 				args = append(args, call.Call.Args[0])
 			}
@@ -615,7 +615,7 @@ func offsetofArgs(t *testing.T, fn *gossa.Function, want int) []gossa.Value {
 	return args
 }
 
-func fieldAddrInstr(t *testing.T, fn *gossa.Function, name string) *gossa.FieldAddr {
+func fieldAddrInstr(t *testing.T, fn *ssa.Function, name string) *ssa.FieldAddr {
 	t.Helper()
 	for _, field := range fieldAddrInstrs(t, fn) {
 		got, ok := fieldAddrName(field)
@@ -627,15 +627,15 @@ func fieldAddrInstr(t *testing.T, fn *gossa.Function, name string) *gossa.FieldA
 	return nil
 }
 
-func fieldAddrInstrs(t *testing.T, fn *gossa.Function) []*gossa.FieldAddr {
+func fieldAddrInstrs(t *testing.T, fn *ssa.Function) []*ssa.FieldAddr {
 	t.Helper()
 	if fn == nil {
 		t.Fatal("missing function")
 	}
-	var fields []*gossa.FieldAddr
+	var fields []*ssa.FieldAddr
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {
-			field, ok := instr.(*gossa.FieldAddr)
+			field, ok := instr.(*ssa.FieldAddr)
 			if ok {
 				fields = append(fields, field)
 			}

@@ -23,7 +23,7 @@ import (
 	"sync"
 
 	"github.com/xgo-dev/llgo/cl"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
@@ -36,7 +36,7 @@ type packageLinkSnapshot struct {
 	methodByIndex   map[int]none
 	methodByName    map[string]none
 	abiSymbols      map[string]none
-	abiTypes        []llssa.AbiTypeInfo
+	abiTypes        []llvmgen.AbiTypeInfo
 	hasLocalExports bool
 	cExports        []cExport
 }
@@ -358,7 +358,7 @@ func (ctx *context) snapshotBackendPackage(pkg *aPackage) {
 		methodByIndex:   make(map[int]none, len(lpkg.MethodByIndex)),
 		methodByName:    make(map[string]none, len(lpkg.MethodByName)),
 		abiSymbols:      linkedModuleGlobals([]Package{pkg}),
-		abiTypes:        append([]llssa.AbiTypeInfo(nil), lpkg.Prog.AbiTypes()...),
+		abiTypes:        append([]llvmgen.AbiTypeInfo(nil), lpkg.Prog.AbiTypes()...),
 		hasLocalExports: hasLocalCExports(lpkg),
 		cExports:        packageCExportDeclarations(lpkg),
 	}

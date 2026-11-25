@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -156,7 +156,7 @@ func shared(p *Item) any { v := any(p); KeepAlive(v); return v }
 func indirect(p *Item) { Saved(p) }
 func dynamic(p any) { KeepAlive(p) }
 `
-	for _, target := range []*llssa.Target{
+	for _, target := range []*llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "386"},
 		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32"},

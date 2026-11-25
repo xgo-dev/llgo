@@ -7,7 +7,7 @@ import (
 	"go/types"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
@@ -60,7 +60,7 @@ func check() int {
 	} {
 		for _, level := range []optlevel.Level{optlevel.O0, optlevel.O2, optlevel.Os} {
 			t.Run(target.name+"/"+level.String(), func(t *testing.T) {
-				prog := newLLSSAProgForTarget(t, &llssa.Target{
+				prog := newLLSSAProgForTarget(t, &llvmgen.Target{
 					GOOS: target.goos, GOARCH: "arm64", LLVMTarget: target.triple, OptLevel: level,
 				})
 				defer prog.Dispose()

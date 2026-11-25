@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/debuginfo"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -77,7 +77,7 @@ func testParamHomeReuseWithDebug(t *testing.T, optimized bool) {
 	builder.CreateStore(loaded, replacement)
 	builder.CreateRetVoid()
 
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	prog.SetDebugInfoOptimized(optimized)
 	transformer := &Transformer{prog: prog}

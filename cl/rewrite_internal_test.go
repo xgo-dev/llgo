@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	gpackages "github.com/goplus/gogen/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
@@ -20,14 +20,14 @@ import (
 )
 
 func init() {
-	llssa.Initialize(llssa.InitAll | llssa.InitNative)
+	llvmgen.Initialize(llvmgen.InitAll | llvmgen.InitNative)
 }
 
 func compileWithRewrites(t *testing.T, src string, rewrites map[string]string) string {
 	return compileWithRewritesTarget(t, src, rewrites, nil)
 }
 
-func compileWithRewritesTarget(t *testing.T, src string, rewrites map[string]string, target *llssa.Target) string {
+func compileWithRewritesTarget(t *testing.T, src string, rewrites map[string]string, target *llvmgen.Target) string {
 	return compileWithRewritesModeTarget(t, src, rewrites,
 		ssa.SanityCheckFunctions|ssa.InstantiateGenerics, target)
 }
@@ -36,7 +36,7 @@ func compileWithRewritesMode(t *testing.T, src string, rewrites map[string]strin
 	return compileWithRewritesModeTarget(t, src, rewrites, mode, nil)
 }
 
-func compileWithRewritesModeTarget(t *testing.T, src string, rewrites map[string]string, mode ssa.BuilderMode, target *llssa.Target) string {
+func compileWithRewritesModeTarget(t *testing.T, src string, rewrites map[string]string, mode ssa.BuilderMode, target *llvmgen.Target) string {
 	t.Helper()
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "rewrite.go", src, parser.ParseComments)
@@ -83,7 +83,7 @@ func use(env *JmpBuf) int32 {
 	return ret
 }
 `
-	ir := compileWithRewritesTarget(t, src, nil, &llssa.Target{GOOS: "windows", GOARCH: "amd64"})
+	ir := compileWithRewritesTarget(t, src, nil, &llvmgen.Target{GOOS: "windows", GOARCH: "amd64"})
 	if !strings.Contains(ir, `call i32 @_setjmpex(ptr %0, ptr null)`) ||
 		!strings.Contains(ir, `call void @llgo_longjmp(ptr %0, i32 1)`) {
 		t.Fatalf("Windows setjmp intrinsics were not lowered in the caller:\n%s", ir)
@@ -100,7 +100,7 @@ import "math"
 func round32(bits uint32) uint32 { return math.Float32bits(math.Float32frombits(bits)) }
 func round64(bits uint64) uint64 { return math.Float64bits(math.Float64frombits(bits)) }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "windows", GOARCH: "386"},
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "darwin", GOARCH: "arm64"},
@@ -150,7 +150,7 @@ func use(callbackArg Callback, v int32) int32 {
 `
 	for _, arch := range []string{"386", "amd64", "arm64"} {
 		t.Run(arch, func(t *testing.T) {
-			ir := compileWithRewritesTarget(t, src, nil, &llssa.Target{GOOS: "windows", GOARCH: arch})
+			ir := compileWithRewritesTarget(t, src, nil, &llvmgen.Target{GOOS: "windows", GOARCH: arch})
 			if !strings.Contains(ir, "@Direct(i32") || !strings.Contains(ir, "@Invoke(ptr") {
 				t.Fatalf("stdcall linkname did not preserve the native symbol names:\n%s", ir)
 			}
@@ -273,7 +273,7 @@ func use(v int32) int32 {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			mustPanicContains(t, test.want, func() {
-				compileWithRewritesTarget(t, test.src, nil, &llssa.Target{GOOS: test.goos, GOARCH: test.goarch})
+				compileWithRewritesTarget(t, test.src, nil, &llvmgen.Target{GOOS: test.goos, GOARCH: test.goarch})
 			})
 		})
 	}
@@ -1658,7 +1658,7 @@ func TestStaticConstExprRejectsUnsupportedConstants(t *testing.T) {
 	}
 	if _, ok := ctx.staticConstExpr(
 		ssa.NewConst(constant.MakeInt64(0), types.Typ[types.Int]),
-		ctx.type_(types.Typ[types.UnsafePointer], llssa.GoDecl),
+		ctx.type_(types.Typ[types.UnsafePointer], llvmgen.GoDecl),
 	); ok {
 		t.Fatal("unsupported unsafe.Pointer constants should be rejected")
 	}
@@ -1913,21 +1913,21 @@ func TestEmitDoWithExplicitDeferStack(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
-	callee := pkg.NewFunc("callee", llssa.NoArgsNoRet, llssa.GoDecl)
+	callee := pkg.NewFunc("callee", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	cb := callee.MakeBody(1)
 	cb.Return()
 	cb.EndBuild()
 
-	owner := pkg.NewFunc("owner", llssa.NoArgsNoRet, llssa.GoDecl)
+	owner := pkg.NewFunc("owner", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := owner.MakeBody(1)
 	owner.SetRecover(owner.MakeBlock())
 	stack := b.BuiltinCall("ssa:deferstack")
 	b.Return()
-	b.SetBlockEx(owner.Block(0), llssa.BeforeLast, true)
+	b.SetBlockEx(owner.Block(0), llvmgen.BeforeLast, true)
 
 	ctx := &context{}
-	ctx.emitDo(b, llssa.DeferInLoop, nil, &explicitDeferStack{stack: stack, owner: owner}, false, callee.Expr, llssa.Builder.Call)
-	ctx.emitDo(b, llssa.DeferAlways, nil, nil, false, callee.Expr, llssa.Builder.Call)
+	ctx.emitDo(b, llvmgen.DeferInLoop, nil, &explicitDeferStack{stack: stack, owner: owner}, false, callee.Expr, llvmgen.Builder.Call)
+	ctx.emitDo(b, llvmgen.DeferAlways, nil, nil, false, callee.Expr, llvmgen.Builder.Call)
 	b.DeferStackDrain()
 	b.RunDefers()
 	b.Return()
@@ -2062,7 +2062,7 @@ func lifted() (result int) { return }
 func TestImplicitDeferResultSlotRejectsMissingSlot(t *testing.T) {
 	for _, ctx := range []*context{
 		{},
-		{implicitDeferResults: make([]llssa.Expr, 1)},
+		{implicitDeferResults: make([]llvmgen.Expr, 1)},
 	} {
 		func() {
 			defer func() {
@@ -2094,11 +2094,11 @@ func f() {
 	}
 	yieldFn := root.AnonFuncs[0]
 
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	pkg := prog.NewPackage("foo", "foo")
-	owner := pkg.NewFunc("f", llssa.NoArgsNoRet, llssa.GoDecl)
+	owner := pkg.NewFunc("f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 
-	ctx := &context{funcs: map[*ssa.Function]llssa.Function{root: owner}}
+	ctx := &context{funcs: map[*ssa.Function]llvmgen.Function{root: owner}}
 	if got := ctx.deferStackOwner(root); got != owner {
 		t.Fatalf("deferStackOwner(root) = %v, want %v", got, owner)
 	}
@@ -2162,16 +2162,16 @@ func TestEmitDoWithoutExplicitDeferStack(t *testing.T) {
 		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])),
 		false)
 
-	callee := pkg.NewFunc("callee", sig, llssa.GoDecl)
+	callee := pkg.NewFunc("callee", sig, llvmgen.GoDecl)
 	cb := callee.MakeBody(1)
 	cb.Return(prog.IntVal(7, prog.Int()))
 	cb.EndBuild()
 
-	fn := pkg.NewFunc("main", llssa.NoArgsNoRet, llssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 
 	ctx := &context{}
-	got := ctx.emitDo(b, llssa.Call, nil, nil, false, callee.Expr, llssa.Builder.Call)
+	got := ctx.emitDo(b, llvmgen.Call, nil, nil, false, callee.Expr, llvmgen.Builder.Call)
 	if got.IsNil() {
 		t.Fatal("emitDo without explicit defer stack should return direct call result")
 	}
@@ -2253,7 +2253,7 @@ func f() {}
 		goProg: ssapkg.Prog,
 		goTyps: ssapkg.Pkg,
 		goPkg:  ssapkg,
-		funcs:  map[*ssa.Function]llssa.Function{},
+		funcs:  map[*ssa.Function]llvmgen.Function{},
 	}
 	_ = files
 

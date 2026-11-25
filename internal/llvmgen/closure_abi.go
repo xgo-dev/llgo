@@ -3,7 +3,7 @@ package llvmgen
 import (
 	"strings"
 
-	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -55,7 +55,7 @@ func closureEnvABIForTarget(triple string) closureEnvABI {
 func aarch64UsesSwiftSelf(triple string) bool {
 	// Apple, Android, and Windows reserve X18, so LLGo uses LLVM's
 	// swiftself/X20 transport there.
-	return intllvm.IsDarwinTarget(triple) ||
+	return target.IsDarwinTriple(triple) ||
 		strings.Contains(triple, "android") ||
 		strings.Contains(triple, "windows") ||
 		strings.Contains(triple, "win32") ||

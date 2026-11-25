@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	gpackages "github.com/goplus/gogen/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -76,7 +76,7 @@ func FromEmpty(a [0]uintptr) Empty { return Empty(a) }
 func ToEmpty(a Empty) [0]uintptr { return [0]uintptr(a) }
 `
 	for _, directive := range []string{"//llgo:cdecl", "//llgo:type C"} {
-		for _, target := range []*llssa.Target{
+		for _, target := range []*llvmgen.Target{
 			{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32"},
 			{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"},
 		} {

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -32,37 +32,37 @@ func TestSIMDIntegerResizeSignatures(t *testing.T) {
  `
 	for _, tc := range []struct {
 		name, recv, method string
-		want               llssa.SIMDOp
+		want               llvmgen.SIMDOp
 	}{
-		{"zero extend", "Uint8x16", "ExtendLo8ToUint16() Uint16x8", llssa.SIMDExtendLo},
-		{"sign extend", "Int8x16", "ExtendLo2ToInt64() Int64x2", llssa.SIMDExtendLo},
-		{"high half", "Int16x8", "ExtendHi4ToInt32() Int32x4", llssa.SIMDExtendHi},
-		{"signed saturation", "Int32x4", "SaturateToInt8() Int8x16", llssa.SIMDSaturate},
-		{"unsigned saturation", "Uint64x2", "SaturateToUint8() Uint8x16", llssa.SIMDSaturate},
-		{"signed to unsigned", "Int16x8", "SaturateToUint8() Uint8x16", llssa.SIMDSaturate},
-		{"concat", "Int32x4", "SaturateToUint16Concat(Int32x4) Uint16x8", llssa.SIMDSaturateConcat},
-		{"missing result", "Int8x16", "ExtendLo8ToInt16()", llssa.SIMDUnimplemented},
-		{"scalar result", "Int8x16", "ExtendLo8ToInt16() int16", llssa.SIMDUnimplemented},
-		{"multiple results", "Int8x16", "ExtendLo8ToInt16() (Int16x8, int)", llssa.SIMDUnimplemented},
-		{"mask result", "Int8x16", "ExtendLo8ToInt16() Mask16x8", llssa.SIMDUnimplemented},
-		{"floating result", "Int8x16", "ExtendLo4ToInt32() Float32x4", llssa.SIMDUnimplemented},
-		{"floating input", "Float32x4", "SaturateToInt16() Int16x8", llssa.SIMDUnimplemented},
-		{"unchanged width", "Int16x8", "ExtendLo8ToInt16() Int16x8", llssa.SIMDUnimplemented},
-		{"narrow extension", "Int32x4", "ExtendLo8ToInt16() Int16x8", llssa.SIMDUnimplemented},
-		{"wrong signedness", "Int8x16", "ExtendLo8ToUint16() Uint16x8", llssa.SIMDUnimplemented},
-		{"wrong lane spelling", "Int8x16", "ExtendLo4ToInt32() Int64x2", llssa.SIMDUnimplemented},
-		{"high quarter", "Int8x16", "ExtendHi2ToInt64() Int64x2", llssa.SIMDUnimplemented},
-		{"extra argument", "Int8x16", "ExtendLo8ToInt16(int) Int16x8", llssa.SIMDUnimplemented},
-		{"variadic", "Int8x16", "ExtendLo8ToInt16(...int) Int16x8", llssa.SIMDUnimplemented},
-		{"wide result", "Uint8x16", "ExtendLo8ToUint16() Uint16x16", llssa.SIMDUnimplemented},
-		{"wrong narrowing spelling", "Int32x4", "SaturateToUint8() Int8x16", llssa.SIMDUnimplemented},
-		{"unsigned to signed", "Uint16x8", "SaturateToInt8() Int8x16", llssa.SIMDUnimplemented},
-		{"widening saturation", "Int8x16", "SaturateToInt16() Int16x8", llssa.SIMDUnimplemented},
-		{"unchanged saturation", "Int16x8", "SaturateToInt16() Int16x8", llssa.SIMDUnimplemented},
-		{"unary argument", "Int16x8", "SaturateToInt8(Int16x8) Int8x16", llssa.SIMDUnimplemented},
-		{"concat missing operand", "Int32x4", "SaturateToInt16Concat() Int16x8", llssa.SIMDUnimplemented},
-		{"concat wrong operand", "Int32x4", "SaturateToInt16Concat(Uint32x4) Int16x8", llssa.SIMDUnimplemented},
-		{"concat wrong width", "Int64x2", "SaturateToInt16Concat(Int64x2) Int16x8", llssa.SIMDUnimplemented},
+		{"zero extend", "Uint8x16", "ExtendLo8ToUint16() Uint16x8", llvmgen.SIMDExtendLo},
+		{"sign extend", "Int8x16", "ExtendLo2ToInt64() Int64x2", llvmgen.SIMDExtendLo},
+		{"high half", "Int16x8", "ExtendHi4ToInt32() Int32x4", llvmgen.SIMDExtendHi},
+		{"signed saturation", "Int32x4", "SaturateToInt8() Int8x16", llvmgen.SIMDSaturate},
+		{"unsigned saturation", "Uint64x2", "SaturateToUint8() Uint8x16", llvmgen.SIMDSaturate},
+		{"signed to unsigned", "Int16x8", "SaturateToUint8() Uint8x16", llvmgen.SIMDSaturate},
+		{"concat", "Int32x4", "SaturateToUint16Concat(Int32x4) Uint16x8", llvmgen.SIMDSaturateConcat},
+		{"missing result", "Int8x16", "ExtendLo8ToInt16()", llvmgen.SIMDUnimplemented},
+		{"scalar result", "Int8x16", "ExtendLo8ToInt16() int16", llvmgen.SIMDUnimplemented},
+		{"multiple results", "Int8x16", "ExtendLo8ToInt16() (Int16x8, int)", llvmgen.SIMDUnimplemented},
+		{"mask result", "Int8x16", "ExtendLo8ToInt16() Mask16x8", llvmgen.SIMDUnimplemented},
+		{"floating result", "Int8x16", "ExtendLo4ToInt32() Float32x4", llvmgen.SIMDUnimplemented},
+		{"floating input", "Float32x4", "SaturateToInt16() Int16x8", llvmgen.SIMDUnimplemented},
+		{"unchanged width", "Int16x8", "ExtendLo8ToInt16() Int16x8", llvmgen.SIMDUnimplemented},
+		{"narrow extension", "Int32x4", "ExtendLo8ToInt16() Int16x8", llvmgen.SIMDUnimplemented},
+		{"wrong signedness", "Int8x16", "ExtendLo8ToUint16() Uint16x8", llvmgen.SIMDUnimplemented},
+		{"wrong lane spelling", "Int8x16", "ExtendLo4ToInt32() Int64x2", llvmgen.SIMDUnimplemented},
+		{"high quarter", "Int8x16", "ExtendHi2ToInt64() Int64x2", llvmgen.SIMDUnimplemented},
+		{"extra argument", "Int8x16", "ExtendLo8ToInt16(int) Int16x8", llvmgen.SIMDUnimplemented},
+		{"variadic", "Int8x16", "ExtendLo8ToInt16(...int) Int16x8", llvmgen.SIMDUnimplemented},
+		{"wide result", "Uint8x16", "ExtendLo8ToUint16() Uint16x16", llvmgen.SIMDUnimplemented},
+		{"wrong narrowing spelling", "Int32x4", "SaturateToUint8() Int8x16", llvmgen.SIMDUnimplemented},
+		{"unsigned to signed", "Uint16x8", "SaturateToInt8() Int8x16", llvmgen.SIMDUnimplemented},
+		{"widening saturation", "Int8x16", "SaturateToInt16() Int16x8", llvmgen.SIMDUnimplemented},
+		{"unchanged saturation", "Int16x8", "SaturateToInt16() Int16x8", llvmgen.SIMDUnimplemented},
+		{"unary argument", "Int16x8", "SaturateToInt8(Int16x8) Int8x16", llvmgen.SIMDUnimplemented},
+		{"concat missing operand", "Int32x4", "SaturateToInt16Concat() Int16x8", llvmgen.SIMDUnimplemented},
+		{"concat wrong operand", "Int32x4", "SaturateToInt16Concat(Uint32x4) Int16x8", llvmgen.SIMDUnimplemented},
+		{"concat wrong width", "Int64x2", "SaturateToInt16Concat(Int64x2) Int16x8", llvmgen.SIMDUnimplemented},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fs := token.NewFileSet()
@@ -78,7 +78,7 @@ func TestSIMDIntegerResizeSignatures(t *testing.T) {
 			prog.CreatePackage(pkg, nil, nil, true)
 			fn := prog.FuncValue(pkg.Scope().Lookup(tc.recv).Type().(*types.Named).Method(0))
 			desc, ok := lookupSIMD(fn, "amd64")
-			if wantOK := tc.want != llssa.SIMDUnimplemented; ok != wantOK || ok && desc.op != tc.want {
+			if wantOK := tc.want != llvmgen.SIMDUnimplemented; ok != wantOK || ok && desc.op != tc.want {
 				t.Fatalf("lookup = %v (%t), want %v", desc.op, ok, tc.want)
 			}
 		})
@@ -113,28 +113,28 @@ func TestSIMDIntegerResizeDeclarations(t *testing.T) {
 				if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "simd/archsimd" || fn.Signature.Recv() == nil {
 					continue
 				}
-				if _, ok := llssa.SIMDNumericShape(fn.Signature.Recv().Type()); !ok {
+				if _, ok := llvmgen.SIMDNumericShape(fn.Signature.Recv().Type()); !ok {
 					continue
 				}
 				if fn.Signature.Results().Len() != 1 {
 					continue
 				}
-				if _, ok := llssa.SIMDNumericShape(fn.Signature.Results().At(0).Type()); !ok {
+				if _, ok := llvmgen.SIMDNumericShape(fn.Signature.Results().At(0).Type()); !ok {
 					continue
 				}
 				if simdVectorBits(fn.Signature.Recv().Type()) != 128 || simdVectorBits(fn.Signature.Results().At(0).Type()) != 128 {
 					continue // This regression qualifies the SIMD128 resize family.
 				}
-				var want llssa.SIMDOp
+				var want llvmgen.SIMDOp
 				switch name := obj.Name(); {
 				case strings.HasPrefix(name, "ExtendLo"):
-					want = llssa.SIMDExtendLo
+					want = llvmgen.SIMDExtendLo
 				case strings.HasPrefix(name, "ExtendHi"):
-					want = llssa.SIMDExtendHi
+					want = llvmgen.SIMDExtendHi
 				case strings.HasPrefix(name, "SaturateTo"):
-					want = llssa.SIMDSaturate
+					want = llvmgen.SIMDSaturate
 					if strings.HasSuffix(name, "Concat") {
-						want = llssa.SIMDSaturateConcat
+						want = llvmgen.SIMDSaturateConcat
 					}
 				default:
 					continue

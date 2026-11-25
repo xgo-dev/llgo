@@ -32,7 +32,7 @@ import (
 	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/genmethod"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/locality"
 )
 
@@ -131,7 +131,7 @@ func pkgKindByScope(scope *types.Scope) (int, string) {
 }
 
 func (p *context) importPkg(pkg *types.Package, i *pkgInfo) {
-	pkgPath := llssa.PathOf(pkg)
+	pkgPath := llvmgen.PathOf(pkg)
 	scope := pkg.Scope()
 	kind, _ := pkgKindByScope(scope)
 	if kind == PkgNormal {
@@ -299,11 +299,11 @@ func (p *context) collectSkip(line string, prefix int) {
 
 // collectDeclarationDirectives caches source metadata needed after the syntax
 // pass. funcPos is token.NoPos for non-function declarations.
-func collectDeclarationDirectives(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos) {
+func collectDeclarationDirectives(prog llvmgen.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos) {
 	_, _ = collectDeclarationDirectivesWithOptions(prog, fset, doc, fullName, inPkgName, funcPos, Options{})
 }
 
-func collectDeclarationDirectivesWithOptions(prog llssa.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos, options Options) (bool, error) {
+func collectDeclarationDirectivesWithOptions(prog llvmgen.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos, options Options) (bool, error) {
 	directives := directive.ParseGroup(doc)
 	linkCollected := false
 	hasClosureEnv := false
@@ -370,7 +370,7 @@ func parenthesizedMethodName(name string) string {
 
 // collectPackageLinknames follows cmd/compile's package-scoped go:linkname
 // behavior and diagnoses method names that would otherwise be silently ignored.
-func collectPackageLinknames(prog llssa.Program, fset *token.FileSet, files []*ast.File, syms map[string]string, linkDocs map[*ast.CommentGroup]bool) error {
+func collectPackageLinknames(prog llvmgen.Program, fset *token.FileSet, files []*ast.File, syms map[string]string, linkDocs map[*ast.CommentGroup]bool) error {
 	for _, file := range files {
 		importsUnsafe := false
 		for _, imp := range file.Imports {
@@ -653,7 +653,7 @@ func funcName(pkg *types.Package, fn *ssa.Function, org bool) string {
 	if org := fn.Origin(); org != nil {
 		fnName = org.Name()
 		if fn.Signature.Recv() == nil {
-			fnName += llssa.TypeArgs(fn.TypeArgs())
+			fnName += llvmgen.TypeArgs(fn.TypeArgs())
 		}
 	} else {
 		fnName = fn.Name()
@@ -662,10 +662,10 @@ func funcName(pkg *types.Package, fn *ssa.Function, org bool) string {
 		// Keep ordinary methods and interface metadata on the same symbol,
 		// including the declaring package of promoted unexported methods.
 		if method, ok := fn.Object().(*types.Func); ok {
-			fnName = llssa.MethodSymbolName(pkg, method, fnName)
+			fnName = llvmgen.MethodSymbolName(pkg, method, fnName)
 			if genmethod.SupportsGenericMethods && genmethod.IsGenericMethod(method.Type()) {
 				if targs := fn.TypeArgs(); len(targs) > 0 {
-					fnName += llssa.TypeArgs(targs)
+					fnName += llvmgen.TypeArgs(targs)
 				}
 			}
 		}
@@ -673,8 +673,8 @@ func funcName(pkg *types.Package, fn *ssa.Function, org bool) string {
 		// Preserve the receiver's package when imported types share a name.
 		if strings.HasSuffix(name, "$bound") || strings.HasSuffix(name, "$thunk") {
 			if named := recvNamedOk(recv.Type()); named != nil && named.Obj().Pkg() != nil {
-				recvPath := llssa.PathOf(named.Obj().Pkg())
-				if recvPath != llssa.PathOf(pkg) {
+				recvPath := llvmgen.PathOf(named.Obj().Pkg())
+				if recvPath != llvmgen.PathOf(pkg) {
 					prefix := recvPath + "."
 					if !strings.HasPrefix(fnName, prefix) {
 						fnName = prefix + fnName
@@ -683,7 +683,7 @@ func funcName(pkg *types.Package, fn *ssa.Function, org bool) string {
 			}
 		}
 	}
-	return llssa.FuncName(pkg, fnName, recv, org)
+	return llvmgen.FuncName(pkg, fnName, recv, org)
 }
 
 func checkCgo(fnName string) bool {
@@ -706,10 +706,10 @@ func cgoIgnored(fnName string) bool {
 
 const (
 	ignoredFunc   = iota
-	goFunc        = int(llssa.GoDecl)
-	cFunc         = int(llssa.CDecl)
-	pyFunc        = int(llssa.PyDecl)
-	stdcallFunc   = int(llssa.Stdcall)
+	goFunc        = int(llvmgen.GoDecl)
+	cFunc         = int(llvmgen.CDecl)
+	pyFunc        = int(llvmgen.PyDecl)
+	stdcallFunc   = int(llvmgen.Stdcall)
 	llgoInstr     = -1
 	llvmIntrinsic = -2
 
@@ -742,17 +742,17 @@ const (
 	llgoAtomicCmpXchg = llgoInstrBase + 0x1f
 	llgoAtomicOpBase  = llgoInstrBase + 0x20
 
-	llgoAtomicXchg = int(llgoAtomicOpBase + llssa.OpXchg)
-	llgoAtomicAdd  = int(llgoAtomicOpBase + llssa.OpAdd)
-	llgoAtomicSub  = int(llgoAtomicOpBase + llssa.OpSub)
-	llgoAtomicAnd  = int(llgoAtomicOpBase + llssa.OpAnd)
-	llgoAtomicNand = int(llgoAtomicOpBase + llssa.OpNand)
-	llgoAtomicOr   = int(llgoAtomicOpBase + llssa.OpOr)
-	llgoAtomicXor  = int(llgoAtomicOpBase + llssa.OpXor)
-	llgoAtomicMax  = int(llgoAtomicOpBase + llssa.OpMax)
-	llgoAtomicMin  = int(llgoAtomicOpBase + llssa.OpMin)
-	llgoAtomicUMax = int(llgoAtomicOpBase + llssa.OpUMax)
-	llgoAtomicUMin = int(llgoAtomicOpBase + llssa.OpUMin)
+	llgoAtomicXchg = int(llgoAtomicOpBase + llvmgen.OpXchg)
+	llgoAtomicAdd  = int(llgoAtomicOpBase + llvmgen.OpAdd)
+	llgoAtomicSub  = int(llgoAtomicOpBase + llvmgen.OpSub)
+	llgoAtomicAnd  = int(llgoAtomicOpBase + llvmgen.OpAnd)
+	llgoAtomicNand = int(llgoAtomicOpBase + llvmgen.OpNand)
+	llgoAtomicOr   = int(llgoAtomicOpBase + llvmgen.OpOr)
+	llgoAtomicXor  = int(llgoAtomicOpBase + llvmgen.OpXor)
+	llgoAtomicMax  = int(llgoAtomicOpBase + llvmgen.OpMax)
+	llgoAtomicMin  = int(llgoAtomicOpBase + llvmgen.OpMin)
+	llgoAtomicUMax = int(llgoAtomicOpBase + llvmgen.OpUMax)
+	llgoAtomicUMin = int(llgoAtomicOpBase + llvmgen.OpUMin)
 
 	llgoCgoBase         = llgoInstrBase + 0x30
 	llgoCgoCString      = llgoCgoBase + 0x0
@@ -787,7 +787,7 @@ const (
 	llgoKeepAlive            = llgoInstrBase + 0x54
 	llgoNoEscape             = llgoInstrBase + 0x55
 
-	llgoAtomicOpLast = llgoAtomicOpBase + int(llssa.OpUMin)
+	llgoAtomicOpLast = llgoAtomicOpBase + int(llvmgen.OpUMin)
 )
 
 func recvNamed(typ types.Type) *types.Named {
@@ -922,13 +922,13 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 
 const (
 	ignoredVar = iota
-	goVar      = int(llssa.GoDecl)
-	cVar       = int(llssa.CDecl)
-	pyVar      = int(llssa.PyDecl)
+	goVar      = int(llvmgen.GoDecl)
+	cVar       = int(llvmgen.CDecl)
+	pyVar      = int(llvmgen.PyDecl)
 )
 
 func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtype int, define bool) {
-	name := llssa.FullName(pkg, v.Name())
+	name := llvmgen.FullName(pkg, v.Name())
 	// TODO(lijie): need a bettery way to process linkname (maybe alias)
 	if !isCgoCfpvar(v.Name()) && !isCgoVar(v.Name()) {
 		if v, ok := p.prog.Linkname(name); ok {
@@ -942,7 +942,7 @@ func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtyp
 				panic(fmt.Errorf("llvm linkname namespace applies only to functions: %s", name))
 			}
 			if strings.HasPrefix(v, "go:") {
-				if llssa.PathOf(pkg) == "runtime" {
+				if llvmgen.PathOf(pkg) == "runtime" {
 					return v, goVar, true
 				}
 				return v, goVar, false
@@ -959,7 +959,7 @@ func (p *context) varName(pkg *types.Package, v *ssa.Global) (vName string, vtyp
 	return name, goVar, true
 }
 
-func (p *context) varOf(b llssa.Builder, v *ssa.Global) llssa.Expr {
+func (p *context) varOf(b llvmgen.Builder, v *ssa.Global) llvmgen.Expr {
 	pkgTypes := p.ensureLoaded(v.Pkg.Pkg)
 	pkg := p.pkg
 	name, vtype, _ := p.varName(pkgTypes, v)
@@ -974,7 +974,7 @@ func (p *context) varOf(b llssa.Builder, v *ssa.Global) llssa.Expr {
 	}
 	ret := pkg.VarOf(name)
 	if ret == nil {
-		ret = pkg.NewVar(name, p.patchType(v.Type()), llssa.CallConv(vtype))
+		ret = pkg.NewVar(name, p.patchType(v.Type()), llvmgen.CallConv(vtype))
 	}
 	return ret.Expr
 }
@@ -1006,13 +1006,13 @@ func (p *context) initPyModule() {
 
 // ParsePkgSyntax collects declaration directives in one syntax pass before SSA
 // creation using default frontend options.
-func ParsePkgSyntax(prog llssa.Program, fset *token.FileSet, pkg *types.Package, files []*ast.File) error {
+func ParsePkgSyntax(prog llvmgen.Program, fset *token.FileSet, pkg *types.Package, files []*ast.File) error {
 	return ParsePkgSyntaxWithOptions(prog, fset, pkg, files, Options{})
 }
 
 // ParsePkgSyntaxWithOptions collects all Program-side declaration metadata.
 // LLVM Package effects such as preserving //export symbols are applied later.
-func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *types.Package, files []*ast.File, options Options) error {
+func ParsePkgSyntaxWithOptions(prog llvmgen.Program, fset *token.FileSet, pkg *types.Package, files []*ast.File, options Options) error {
 	if pkg == nil {
 		return nil
 	}
@@ -1023,7 +1023,7 @@ func ParsePkgSyntaxWithOptions(prog llssa.Program, fset *token.FileSet, pkg *typ
 		return err
 	}
 	ctx := &context{prog: prog, options: options}
-	pkgPath := llssa.PathOf(pkg)
+	pkgPath := llvmgen.PathOf(pkg)
 	cPkg := IsCPackage(pkg.Name())
 	aliases := receiverAliases(files)
 	syms := make(map[string]string)
@@ -1121,7 +1121,7 @@ func validateInternalDirectives(fset *token.FileSet, pkgPath string, files []*as
 	return nil
 }
 
-func handleTypeDecl(prog llssa.Program, fset *token.FileSet, pkg *types.Package, decl *ast.GenDecl) error {
+func handleTypeDecl(prog llvmgen.Program, fset *token.FileSet, pkg *types.Package, decl *ast.GenDecl) error {
 	cc, err := typeCallConv(fset, decl.Doc)
 	if err != nil {
 		return err
@@ -1236,14 +1236,14 @@ func typeCallConv(fset *token.FileSet, doc *ast.CommentGroup) (cc callConv, err 
 	return cc, nil
 }
 
-func toCallConv(cc string) llssa.CallConv {
+func toCallConv(cc string) llvmgen.CallConv {
 	switch cc {
 	case "C":
-		return llssa.CDecl
+		return llvmgen.CDecl
 	case "stdcall":
-		return llssa.Stdcall
+		return llvmgen.Stdcall
 	}
-	return llssa.GoDecl
+	return llvmgen.GoDecl
 }
 
 // -----------------------------------------------------------------------------

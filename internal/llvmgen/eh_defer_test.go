@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 )
 
@@ -12,19 +12,19 @@ func TestExplicitDeferStackIR(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
-	callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.GoDecl)
+	callee := pkg.NewFunc("callee", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	cb := callee.MakeBody(1)
 	cb.Return()
 	cb.EndBuild()
 
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	fn.SetRecover(fn.MakeBlock())
 
 	stack := b.BuiltinCall("ssa:deferstack")
 	b.Return()
-	b.SetBlockEx(fn.Block(0), ssa.BeforeLast, true)
-	b.DeferTo(fn, stack, callee.Expr, ssa.Builder.Call)
+	b.SetBlockEx(fn.Block(0), llvmgen.BeforeLast, true)
+	b.DeferTo(fn, stack, callee.Expr, llvmgen.Builder.Call)
 	b.DeferStackDrain()
 	b.RunDefers()
 	b.Return()
@@ -47,15 +47,15 @@ func TestDeferCapturesGCRootChain(t *testing.T) {
 	prog.EnableGCRoots(true)
 	pkg := prog.NewPackage("foo", "foo")
 
-	callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.GoDecl)
+	callee := pkg.NewFunc("callee", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	cb := callee.MakeBody(1)
 	cb.Return()
 	cb.EndBuild()
 
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	fn.SetRecover(fn.MakeBlock())
-	b.Defer(ssa.DeferAlways, callee.Expr, ssa.Builder.Call)
+	b.Defer(llvmgen.DeferAlways, callee.Expr, llvmgen.Builder.Call)
 	b.Return()
 	b.EndBuild()
 
@@ -80,18 +80,18 @@ func TestExplicitDeferStackFallbackAndNilBuiltin(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
-	callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.GoDecl)
+	callee := pkg.NewFunc("callee", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	cb := callee.MakeBody(1)
 	cb.Return()
 	cb.EndBuild()
 
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	stack := b.BuiltinCall("ssa:deferstack")
 	if stack.Type != prog.VoidPtr() {
 		t.Fatalf("ssa:deferstack without recover returned %v, want %v", stack.Type, prog.VoidPtr())
 	}
-	b.DeferTo(nil, stack, callee.Expr, ssa.Builder.Call)
+	b.DeferTo(nil, stack, callee.Expr, llvmgen.Builder.Call)
 	b.Return()
 	b.EndBuild()
 
@@ -105,7 +105,7 @@ func TestExplicitDeferStackDrainWithoutLoopCases(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	fn.SetRecover(fn.MakeBlock())
 
@@ -128,7 +128,7 @@ func TestExplicitDeferStackDrainWithoutRecoverNoop(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	b.DeferStackDrain()
 	b.Return()
@@ -144,15 +144,15 @@ func TestPlainDeferWithoutSavedArgsIR(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
-	callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.GoDecl)
+	callee := pkg.NewFunc("callee", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	cb := callee.MakeBody(1)
 	cb.Return()
 	cb.EndBuild()
 
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	fn.SetRecover(fn.MakeBlock())
-	b.Defer(ssa.DeferAlways, callee.Expr, ssa.Builder.Call)
+	b.Defer(llvmgen.DeferAlways, callee.Expr, llvmgen.Builder.Call)
 	b.RunDefers()
 	b.Return()
 	b.EndBuild()
@@ -170,17 +170,17 @@ func TestConditionalDeferIR(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
-	callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.GoDecl)
+	callee := pkg.NewFunc("callee", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	cb := callee.MakeBody(1)
 	cb.Return()
 	cb.EndBuild()
 
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	fn.SetRecover(fn.MakeBlock())
 	b.Return()
-	b.SetBlockEx(fn.Block(0), ssa.BeforeLast, true)
-	b.Defer(ssa.DeferInCond, callee.Expr, ssa.Builder.Call)
+	b.SetBlockEx(fn.Block(0), llvmgen.BeforeLast, true)
+	b.Defer(llvmgen.DeferInCond, callee.Expr, llvmgen.Builder.Call)
 	b.RunDefers()
 	b.Return()
 	b.EndBuild()
@@ -194,13 +194,13 @@ func TestConditionalDeferIR(t *testing.T) {
 func TestDeferContinuationDispatch(t *testing.T) {
 	tests := []struct {
 		name        string
-		target      *ssa.Target
+		target      *llvmgen.Target
 		switchWidth string
 		wasm        bool
 	}{
-		{name: "linux-amd64", target: &ssa.Target{GOOS: "linux", GOARCH: "amd64"}, switchWidth: "i64"},
-		{name: "darwin-arm64", target: &ssa.Target{GOOS: "darwin", GOARCH: "arm64"}, switchWidth: "i64"},
-		{name: "wasip1-wasm", target: &ssa.Target{GOOS: "wasip1", GOARCH: "wasm"}, switchWidth: "i32", wasm: true},
+		{name: "linux-amd64", target: &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"}, switchWidth: "i64"},
+		{name: "darwin-arm64", target: &llvmgen.Target{GOOS: "darwin", GOARCH: "arm64"}, switchWidth: "i64"},
+		{name: "wasip1-wasm", target: &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"}, switchWidth: "i32", wasm: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -212,16 +212,16 @@ func TestDeferContinuationDispatch(t *testing.T) {
 			}
 			pkg := prog.NewPackage("foo", "foo")
 
-			callee := pkg.NewFunc("callee", ssa.NoArgsNoRet, ssa.GoDecl)
+			callee := pkg.NewFunc("callee", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			cb := callee.MakeBody(1)
 			cb.Return()
 			cb.EndBuild()
 
-			fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+			fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			b := fn.MakeBody(1)
 			fn.SetRecover(fn.MakeBlock())
-			b.Defer(ssa.DeferAlways, callee.Expr, ssa.Builder.Call)
-			b.Defer(ssa.DeferAlways, callee.Expr, ssa.Builder.Call)
+			b.Defer(llvmgen.DeferAlways, callee.Expr, llvmgen.Builder.Call)
+			b.Defer(llvmgen.DeferAlways, callee.Expr, llvmgen.Builder.Call)
 			b.RunDefers()
 			b.RunDefers()
 			b.Return()
@@ -252,11 +252,11 @@ func TestDeferContinuationDispatch(t *testing.T) {
 
 			// RunDefers can establish defer state before any defer statement has
 			// been registered. Its Reth selector still has to dispatch to procBlk.
-			empty := pkg.NewFunc("empty", ssa.NoArgsNoRet, ssa.GoDecl)
+			empty := pkg.NewFunc("empty", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			eb := empty.MakeBody(1)
 			empty.SetRecover(empty.MakeBlock())
 			eb.Return()
-			eb.SetBlockEx(empty.Block(0), ssa.BeforeLast, true)
+			eb.SetBlockEx(empty.Block(0), llvmgen.BeforeLast, true)
 			eb.RunDefers()
 			eb.Return()
 			eb.EndBuild()

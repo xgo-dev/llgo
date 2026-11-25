@@ -21,7 +21,7 @@ import (
 	"go/token"
 	"go/types"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -377,29 +377,29 @@ func constantMakeCall(v ssa.Value) (*ssa.Call, bool) {
 	}
 }
 
-func (p *context) compileMapLitConst(b llssa.Builder, c *ssa.Const) llssa.Expr {
+func (p *context) compileMapLitConst(b llvmgen.Builder, c *ssa.Const) llvmgen.Expr {
 	t := types.Default(c.Type())
 	if basic, ok := t.Underlying().(*types.Basic); ok && basic.Kind() == types.String {
 		return b.Pkg.ConstString(constant.StringVal(c.Value))
 	}
-	bg := llssa.GoDecl
+	bg := llvmgen.GoDecl
 	if p.inCFunc {
-		bg = llssa.CDecl
+		bg = llvmgen.CDecl
 	}
 	return b.Const(c.Value, p.type_(t, bg))
 }
 
-func (p *context) compileMapLitComplit(b llssa.Builder, v ssa.Value, structTy types.Type) (llssa.Expr, bool) {
+func (p *context) compileMapLitComplit(b llvmgen.Builder, v ssa.Value, structTy types.Type) (llvmgen.Expr, bool) {
 	_, _, fields, _, ok := mapValueComplit(v)
 	if !ok {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	st := structTy.Underlying().(*types.Struct)
-	flds := make([]llssa.Expr, st.NumFields())
+	flds := make([]llvmgen.Expr, st.NumFields())
 	for i := 0; i < st.NumFields(); i++ {
 		fv, ok := fields[i]
 		if !ok {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		if c, ok := fv.(*ssa.Const); ok {
 			flds[i] = p.compileMapLitConst(b, c)
@@ -407,40 +407,40 @@ func (p *context) compileMapLitComplit(b llssa.Builder, v ssa.Value, structTy ty
 		}
 		call, ok := constantMakeCall(fv)
 		if !ok {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		folded, ok := p.foldConstantMakeValue(b, call.Call.Value.(*ssa.Function), &call.Call)
 		if !ok {
-			return llssa.Expr{}, false
+			return llvmgen.Expr{}, false
 		}
 		flds[i] = p.mapLitConvertedValue(b, fv, call, folded)
 	}
-	bg := llssa.GoDecl
+	bg := llvmgen.GoDecl
 	if p.inCFunc {
-		bg = llssa.CDecl
+		bg = llvmgen.CDecl
 	}
 	return b.StructLit(p.type_(structTy, bg), flds), true
 }
 
 // Replay the wrappers removed by constantMakeCall so the field retains its
 // destination interface's type pointer and method ordering.
-func (p *context) mapLitConvertedValue(b llssa.Builder, v ssa.Value, call *ssa.Call, folded llssa.Expr) llssa.Expr {
+func (p *context) mapLitConvertedValue(b llvmgen.Builder, v ssa.Value, call *ssa.Call, folded llvmgen.Expr) llvmgen.Expr {
 	if v == call {
 		return folded
 	}
 	switch x := v.(type) {
 	case *ssa.ChangeInterface:
-		return b.ChangeInterface(p.type_(x.Type(), llssa.GoDecl), p.mapLitConvertedValue(b, x.X, call, folded))
+		return b.ChangeInterface(p.type_(x.Type(), llvmgen.GoDecl), p.mapLitConvertedValue(b, x.X, call, folded))
 	case *ssa.ChangeType:
-		return b.ChangeType(p.type_(x.Type(), llssa.GoDecl), p.mapLitConvertedValue(b, x.X, call, folded))
+		return b.ChangeType(p.type_(x.Type(), llvmgen.GoDecl), p.mapLitConvertedValue(b, x.X, call, folded))
 	case *ssa.MakeInterface:
-		return b.MakeInterface(p.type_(x.Type(), llssa.GoDecl), p.mapLitConvertedValue(b, x.X, call, folded))
+		return b.MakeInterface(p.type_(x.Type(), llvmgen.GoDecl), p.mapLitConvertedValue(b, x.X, call, folded))
 	default:
 		panic("map literal constant conversion chain became invalid")
 	}
 }
 
-func (p *context) compileMapLitUpdate(b llssa.Builder, v *ssa.MapUpdate) bool {
+func (p *context) compileMapLitUpdate(b llvmgen.Builder, v *ssa.MapUpdate) bool {
 	if p.mapLitLoops == nil {
 		return false
 	}
@@ -454,11 +454,11 @@ func (p *context) compileMapLitUpdate(b llssa.Builder, v *ssa.MapUpdate) bool {
 	p.recordPanicSite(b, v.Pos())
 	m := p.compileValue(b, v.Map)
 	n := len(plan.updates)
-	keys := make([]llssa.Expr, n)
+	keys := make([]llvmgen.Expr, n)
 	for i, u := range plan.updates {
 		keys[i] = p.compileMapLitConst(b, u.Key.(*ssa.Const))
 	}
-	vals := make([]llssa.Expr, n)
+	vals := make([]llvmgen.Expr, n)
 	if plan.kind == mapLitStaticComplit {
 		for i, u := range plan.updates {
 			val, ok := p.compileMapLitComplit(b, u.Value, plan.structTy)

@@ -21,14 +21,14 @@ import (
 	"strings"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 )
 
 func TestWideMakeOperandsUseCheckedHelpersOn386(t *testing.T) {
 	t.Setenv("GOOS", "windows")
 	t.Setenv("GOARCH", "386")
-	prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "windows", GOARCH: "386"})
+	prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "windows", GOARCH: "386"})
 	t.Cleanup(prog.Dispose)
 
 	params := types.NewTuple(
@@ -39,13 +39,13 @@ func TestWideMakeOperandsUseCheckedHelpersOn386(t *testing.T) {
 	)
 	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
 	pkg := prog.NewPackage("wide-make", "example.com/wide-make")
-	fn := pkg.NewFunc("makeWide", sig, ssa.GoDecl)
+	fn := pkg.NewFunc("makeWide", sig, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
-	b.MakeSlice(prog.Type(types.NewSlice(types.Typ[types.Byte]), ssa.GoDecl), fn.Param(0), fn.Param(1))
-	b.MakeSlice(prog.Type(types.NewSlice(types.Typ[types.Byte]), ssa.GoDecl), fn.Param(0), fn.Param(2))
-	b.MakeSlice(prog.Type(types.NewSlice(types.Typ[types.Byte]), ssa.GoDecl), fn.Param(0), fn.Param(3))
-	b.MakeSliceEx(prog.Type(types.NewSlice(types.Typ[types.Byte]), ssa.GoDecl), fn.Param(0), fn.Param(1), false)
-	b.MakeChan(prog.Type(types.NewChan(types.SendRecv, types.Typ[types.Byte]), ssa.GoDecl), fn.Param(1))
+	b.MakeSlice(prog.Type(types.NewSlice(types.Typ[types.Byte]), llvmgen.GoDecl), fn.Param(0), fn.Param(1))
+	b.MakeSlice(prog.Type(types.NewSlice(types.Typ[types.Byte]), llvmgen.GoDecl), fn.Param(0), fn.Param(2))
+	b.MakeSlice(prog.Type(types.NewSlice(types.Typ[types.Byte]), llvmgen.GoDecl), fn.Param(0), fn.Param(3))
+	b.MakeSliceEx(prog.Type(types.NewSlice(types.Typ[types.Byte]), llvmgen.GoDecl), fn.Param(0), fn.Param(1), false)
+	b.MakeChan(prog.Type(types.NewChan(types.SendRecv, types.Typ[types.Byte]), llvmgen.GoDecl), fn.Param(1))
 	b.Return()
 	b.EndBuild()
 

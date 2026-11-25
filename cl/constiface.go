@@ -17,7 +17,7 @@
 package cl
 
 import (
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"go/types"
 
 	"golang.org/x/tools/go/ssa"
@@ -30,13 +30,13 @@ import (
 // constructors. Convert is excluded:
 // it changes the value (int32→string, narrowing) and cannot reuse the
 // argument's raw constant.
-func (p *context) foldConstantMakeValue(b llssa.Builder, fn *ssa.Function, call *ssa.CallCommon) (llssa.Expr, bool) {
+func (p *context) foldConstantMakeValue(b llvmgen.Builder, fn *ssa.Function, call *ssa.CallCommon) (llvmgen.Expr, bool) {
 	if call == nil || call.Value == nil {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	param, concrete, ok := analyzeTrivialIfaceBox(fn)
 	if !ok {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	idx := -1
 	for i, p := range fn.Params {
@@ -46,14 +46,14 @@ func (p *context) foldConstantMakeValue(b llssa.Builder, fn *ssa.Function, call 
 		}
 	}
 	if idx < 0 || idx >= len(call.Args) {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
 	c, ok := call.Args[idx].(*ssa.Const)
 	if !ok || c.Value == nil {
-		return llssa.Expr{}, false
+		return llvmgen.Expr{}, false
 	}
-	x := b.Const(c.Value, p.type_(concrete, llssa.GoDecl))
-	retTy := p.type_(call.Signature().Results().At(0).Type(), llssa.GoDecl)
+	x := b.Const(c.Value, p.type_(concrete, llvmgen.GoDecl))
+	retTy := p.type_(call.Signature().Results().At(0).Type(), llvmgen.GoDecl)
 	return b.MakeInterface(retTy, x), true
 }
 

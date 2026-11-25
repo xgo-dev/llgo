@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -23,7 +23,7 @@ type Composite interface{ Read() Record }
 type CompositeForward struct{ Composite }
 func composite(v CompositeForward) Composite { return v }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "386"},
 		{GOOS: "darwin", GOARCH: "arm64"},
@@ -79,7 +79,7 @@ func TestInterfaceForwardWindows386TailAssembly(t *testing.T) {
 type Scalar interface{ Read() int64 }
 type Forward struct{ Scalar }
 func pointer(v *Forward) Scalar { return v }
-`, ssa.InstantiateGenerics, &llssa.Target{GOOS: "windows", GOARCH: "386"}, false)
+`, ssa.InstantiateGenerics, &llvmgen.Target{GOOS: "windows", GOARCH: "386"}, false)
 	directory := t.TempDir()
 	input, optimized := filepath.Join(directory, "input.ll"), filepath.Join(directory, "optimized.ll")
 	if err := os.WriteFile(input, []byte(ir), 0600); err != nil {

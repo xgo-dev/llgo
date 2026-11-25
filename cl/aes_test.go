@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -24,7 +24,7 @@ func kernel(dst, src, key *byte, x uint32) uint32 {
 	return subword(x)
 }
 `)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	pkg, err := NewPackage(prog, ssaPkg, files)
 	if err != nil {
@@ -62,7 +62,7 @@ func TestAESIntrinsicDiagnostics(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := "package foo\nimport \"unsafe\"\nvar _ unsafe.Pointer\n//go:linkname instr llgo." + tc.intrinsic + "\n" + tc.declaration + "\n" + tc.caller
 			ssaPkg, _, files := buildGoSSAPkg(t, src)
-			target := &llssa.Target{GOOS: "linux", GOARCH: tc.arch}
+			target := &llvmgen.Target{GOOS: "linux", GOARCH: tc.arch}
 			if tc.arch == "wasm" {
 				target.GOOS = "js"
 			}

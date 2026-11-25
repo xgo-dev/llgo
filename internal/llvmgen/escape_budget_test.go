@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	llabi "github.com/xgo-dev/llgo/internal/abi"
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 )
 
@@ -15,17 +15,17 @@ func TestDeferBudgetKeepsRegistrationOwnership(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("budget", "budget")
 	params := types.NewTuple(types.NewParam(token.NoPos, nil, "x", types.Typ[types.Int]))
-	callee := pkg.NewFunc("callee", types.NewSignatureType(nil, nil, nil, params, nil, false), ssa.GoDecl)
+	callee := pkg.NewFunc("callee", types.NewSignatureType(nil, nil, nil, params, nil, false), llvmgen.GoDecl)
 	cb := callee.MakeBody(1)
 	cb.Return()
 	cb.EndBuild()
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	node := prog.Struct(prog.VoidPtr(), prog.Uintptr(), prog.Int())
 	fn.SetEscapeStackBytes(llabi.MaxEscapeStackBytes - prog.SizeOf(prog.Defer()) - 3*prog.SizeOf(node))
 	b := fn.MakeBody(1)
 	fn.SetRecover(fn.MakeBlock())
 	for i := 0; i < 5; i++ {
-		b.Defer(ssa.DeferAlways, callee.Expr, ssa.Builder.Call, prog.Val(i))
+		b.Defer(llvmgen.DeferAlways, callee.Expr, llvmgen.Builder.Call, prog.Val(i))
 	}
 	b.RunDefers()
 	b.Return()

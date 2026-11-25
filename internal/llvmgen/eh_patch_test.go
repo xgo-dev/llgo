@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 )
 
@@ -12,7 +12,7 @@ func TestSetjmpLongjmpIRPaths(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
-	fn := pkg.NewFunc("f", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	jb := b.AllocaSigjmpBuf()
 	zero := prog.IntVal(0, prog.CInt())
@@ -37,12 +37,12 @@ func TestSigjmpUsesSetjmpOnExplicitTarget(t *testing.T) {
 	// Specify the resolved target up front instead of inheriting the host OS,
 	// which would incorrectly make this test exercise the Windows UCRT ABI on
 	// a Windows runner.
-	prog := ssatest.NewProgram(t, &ssa.Target{
+	prog := ssatest.NewProgram(t, &llvmgen.Target{
 		GOOS: "linux", GOARCH: "arm", Target: "esp32",
 	})
 	pkg := prog.NewPackage("foo", "foo")
 
-	fn := pkg.NewFunc("f", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	jb := b.AllocaSigjmpBuf()
 	zero := prog.IntVal(0, prog.CInt())
@@ -61,10 +61,10 @@ func TestSigjmpUsesSetjmpOnExplicitTarget(t *testing.T) {
 func TestWindowsSigjmpBufferAlignment(t *testing.T) {
 	for _, arch := range []string{"386", "amd64", "arm64"} {
 		t.Run(arch, func(t *testing.T) {
-			prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "windows", GOARCH: arch})
+			prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "windows", GOARCH: arch})
 			pkg := prog.NewPackage("foo", "foo")
 
-			fn := pkg.NewFunc("f", ssa.NoArgsNoRet, ssa.GoDecl)
+			fn := pkg.NewFunc("f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			b := fn.MakeBody(1)
 			_ = b.AllocaSigjmpBuf()
 			b.Return()
@@ -93,10 +93,10 @@ func TestWindowsSetjmpABI(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "windows", GOARCH: test.arch, LLVMTarget: test.llvmTarget})
+			prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "windows", GOARCH: test.arch, LLVMTarget: test.llvmTarget})
 			pkg := prog.NewPackage("foo", "foo")
 
-			fn := pkg.NewFunc("f", ssa.NoArgsNoRet, ssa.GoDecl)
+			fn := pkg.NewFunc("f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			b := fn.MakeBody(1)
 			jb := b.AllocaSigjmpBuf()
 			zero := prog.IntVal(0, prog.CInt())
@@ -143,10 +143,10 @@ func TestWindowsDirectSetjmpABI(t *testing.T) {
 		{name: "arm64", arch: "arm64", setjmp: "@llgo_setjmp", longjmp: "@llgo_longjmp"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "windows", GOARCH: test.arch, LLVMTarget: test.llvmTarget})
+			prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "windows", GOARCH: test.arch, LLVMTarget: test.llvmTarget})
 			pkg := prog.NewPackage("foo", "foo")
 
-			fn := pkg.NewFunc("f", ssa.NoArgsNoRet, ssa.GoDecl)
+			fn := pkg.NewFunc("f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			b := fn.MakeBody(1)
 			jb := b.AllocaSigjmpBuf()
 			one := prog.IntVal(1, prog.CInt())
@@ -170,11 +170,11 @@ func TestWindowsSetjmpRejectsUnsupportedArchitecture(t *testing.T) {
 	// The official Windows LLVM package does not include the Mips backend.
 	// RISC-V is present in every LLVM 22 payload used by LLGo and remains an
 	// unsupported Windows setjmp architecture, which is the contract under test.
-	prog := ssatest.NewProgram(t, &ssa.Target{
+	prog := ssatest.NewProgram(t, &llvmgen.Target{
 		GOOS: "windows", GOARCH: "riscv64", LLVMTarget: "riscv64-unknown-unknown",
 	})
 	pkg := prog.NewPackage("foo", "foo")
-	fn := pkg.NewFunc("f", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	jb := b.AllocaSigjmpBuf()
 	zero := prog.IntVal(0, prog.CInt())
@@ -192,27 +192,27 @@ func TestDeferInLoopContiguousDrainerGeneration(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("foo", "foo")
 
-	c1 := pkg.NewFunc("c1", ssa.NoArgsNoRet, ssa.GoDecl)
+	c1 := pkg.NewFunc("c1", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b1 := c1.MakeBody(1)
 	b1.Return()
 	b1.EndBuild()
 
-	c2 := pkg.NewFunc("c2", ssa.NoArgsNoRet, ssa.GoDecl)
+	c2 := pkg.NewFunc("c2", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b2 := c2.MakeBody(1)
 	b2.Return()
 	b2.EndBuild()
 
-	fn := pkg.NewFunc("main", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	fn.SetRecover(fn.MakeBlock())
 	b.Return()
-	b.SetBlockEx(fn.Block(0), ssa.BeforeLast, true)
+	b.SetBlockEx(fn.Block(0), llvmgen.BeforeLast, true)
 
 	// Two contiguous loop defers should share one drain-loop generation pass.
-	b.Defer(ssa.DeferInLoop, c1.Expr, ssa.Builder.Call)
-	b.Defer(ssa.DeferInLoop, c2.Expr, ssa.Builder.Call)
+	b.Defer(llvmgen.DeferInLoop, c1.Expr, llvmgen.Builder.Call)
+	b.Defer(llvmgen.DeferInLoop, c2.Expr, llvmgen.Builder.Call)
 	// Non-loop defer resets loop drainer state while walking deferred stmts.
-	b.Defer(ssa.DeferAlways, c1.Expr, ssa.Builder.Call)
+	b.Defer(llvmgen.DeferAlways, c1.Expr, llvmgen.Builder.Call)
 	b.EndBuild()
 
 	ir := pkg.Module().String()

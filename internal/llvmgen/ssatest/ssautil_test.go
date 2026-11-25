@@ -4,7 +4,7 @@ import (
 	"go/types"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -36,7 +36,7 @@ func (m *mockImporter) Import(path string) (*types.Package, error) {
 }
 
 func TestNewProgram(t *testing.T) {
-	target := &ssa.Target{
+	target := &llvmgen.Target{
 		GOOS:   "linux",
 		GOARCH: "amd64",
 		GOARM:  "7",
@@ -48,16 +48,16 @@ func TestNewProgram(t *testing.T) {
 	}
 
 	// Set runtime package
-	rtPkg := types.NewPackage(ssa.PkgRuntime, ssa.PkgRuntime)
+	rtPkg := types.NewPackage(llvmgen.PkgRuntime, llvmgen.PkgRuntime)
 	prog.SetRuntime(rtPkg)
 
 	// Set python package
-	pyPkg := types.NewPackage(ssa.PkgPython, ssa.PkgPython)
+	pyPkg := types.NewPackage(llvmgen.PkgPython, llvmgen.PkgPython)
 	prog.SetRuntime(pyPkg)
 }
 
 func TestNewProgramEx(t *testing.T) {
-	target := &ssa.Target{
+	target := &llvmgen.Target{
 		GOOS:   "linux",
 		GOARCH: "amd64",
 		GOARM:  "7",
@@ -70,16 +70,16 @@ func TestNewProgramEx(t *testing.T) {
 	}
 
 	// Set runtime package
-	rtPkg := types.NewPackage(ssa.PkgRuntime, ssa.PkgRuntime)
+	rtPkg := types.NewPackage(llvmgen.PkgRuntime, llvmgen.PkgRuntime)
 	prog.SetRuntime(rtPkg)
 
 	// Set python package
-	pyPkg := types.NewPackage(ssa.PkgPython, ssa.PkgPython)
+	pyPkg := types.NewPackage(llvmgen.PkgPython, llvmgen.PkgPython)
 	prog.SetRuntime(pyPkg)
 }
 
 func TestAssert(t *testing.T) {
-	target := &ssa.Target{
+	target := &llvmgen.Target{
 		GOOS:   "linux",
 		GOARCH: "amd64",
 		GOARM:  "7",
@@ -92,7 +92,7 @@ func TestAssert(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		pkg      ssa.Package
+		pkg      llvmgen.Package
 		expected string
 	}{
 		{

@@ -15,8 +15,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/flash"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	"github.com/xgo-dev/llgo/internal/targets"
-	"github.com/xgo-dev/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/target"
 	envllvm "github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
@@ -611,7 +610,7 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 	if !validWasmSelection(wasmProfile, wasmProvider) {
 		return export, fmt.Errorf("unsupported WebAssembly profile/provider %q/%q", wasmProfile, wasmProvider)
 	}
-	targetTriple := llvm.GetTargetTripleWithGOARM(goos, goarch, goarm)
+	targetTriple := target.TripleWithGOARM(goos, goarch, goarm)
 	switch wasmProfile {
 	case WasmProfileJ32:
 		targetTriple = "wasm32-unknown-emscripten"
@@ -761,7 +760,7 @@ func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, le
 
 		// If not exists in LLGoROOT, download and use cached wasiSdkRoot
 		if _, err = os.Stat(wasiSdkRoot); err != nil {
-			sdkDir := filepath.Join(cacheDir(), llvm.GetTargetTriple(goos, goarch))
+			sdkDir := filepath.Join(cacheDir(), target.Triple(goos, goarch))
 			if wasiSdkRoot, err = checkDownloadAndExtractWasiSDK(sdkDir); err != nil {
 				return
 			}
@@ -972,7 +971,7 @@ func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (expor
 func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 	buildLibrary func(compile.CompileConfig, string, compile.CompileOptions) ([]string, error),
 ) (export Export, err error) {
-	resolver := targets.NewDefaultResolver()
+	resolver := target.NewResolver(env.LLGoTargetsDir())
 
 	config, err := resolver.Resolve(targetName)
 	if err != nil {
@@ -1269,7 +1268,7 @@ func UseWithGOARMAndToolchain(goos, goarch, goarm, targetName string, forceEspCl
 	// Resolve every named target before selecting its toolchain. Inherited wasm
 	// profile/provider metadata is authoritative, so aliases and downstream
 	// target definitions do not require another name switch here.
-	resolver := targets.NewDefaultResolver()
+	resolver := target.NewResolver(env.LLGoTargetsDir())
 	config, resolveErr := resolver.Resolve(targetName)
 	if resolveErr != nil {
 		return export, fmt.Errorf("failed to resolve target %s: %w", targetName, resolveErr)

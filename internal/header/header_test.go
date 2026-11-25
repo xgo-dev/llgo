@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -25,11 +25,11 @@ func init() {
 }
 
 func TestGenCHeaderExport(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	prog.SetRuntime(func() *types.Package {
 		fset := token.NewFileSet()
 		imp := packages.NewImporter(fset)
-		pkg, _ := imp.Import(ssa.PkgRuntime)
+		pkg, _ := imp.Import(llvmgen.PkgRuntime)
 		return pkg
 	})
 
@@ -49,14 +49,14 @@ func TestGenCHeaderExport(t *testing.T) {
 	mainPkg := prog.NewPackage("main", mainPkgPath)
 
 	// Define exported functions in mainPkg
-	mainPkg.NewFunc("HelloWorld", types.NewSignatureType(nil, nil, nil, nil, nil, false), ssa.GoDecl)
+	mainPkg.NewFunc("HelloWorld", types.NewSignatureType(nil, nil, nil, nil, nil, false), llvmgen.GoDecl)
 	useFooPtrParams := types.NewTuple(types.NewVar(token.NoPos, nil, "f", types.NewPointer(fooNamed)))
 	useFooPtrResults := types.NewTuple(types.NewVar(token.NoPos, nil, "", fooNamed))
 	useFooPtrSig := types.NewSignatureType(nil, nil, nil, useFooPtrParams, useFooPtrResults, false)
-	mainPkg.NewFunc("UseFooPtr", useFooPtrSig, ssa.GoDecl)
+	mainPkg.NewFunc("UseFooPtr", useFooPtrSig, llvmgen.GoDecl)
 	useFooParams := types.NewTuple(types.NewVar(token.NoPos, nil, "f", fooNamed))
 	useFooSig := types.NewSignatureType(nil, nil, nil, useFooParams, useFooPtrResults, false)
-	mainPkg.NewFunc("UseFoo", useFooSig, ssa.GoDecl)
+	mainPkg.NewFunc("UseFoo", useFooSig, llvmgen.GoDecl)
 
 	// Set exports for main
 	mainPkg.SetExport("HelloWorld", "HelloWorld")
@@ -74,15 +74,15 @@ func TestGenCHeaderExport(t *testing.T) {
 		types.NewVar(token.NoPos, nil, "b", types.Typ[types.Int]))
 	addResults := types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int]))
 	addSig := types.NewSignatureType(nil, nil, nil, addParams, addResults, false)
-	cPkg.NewFunc(cPkgPath+".XAdd", addSig, ssa.GoDecl)
-	cPkg.NewFunc("Sub", addSig, ssa.GoDecl)
+	cPkg.NewFunc(cPkgPath+".XAdd", addSig, llvmgen.GoDecl)
+	cPkg.NewFunc("Sub", addSig, llvmgen.GoDecl)
 	cPkg.SetExport(cPkgPath+".XAdd", "Add")
 	cPkg.SetExport("XSub", "Sub")
 
 	// Generate header
 	libname := "testbuild"
 	headerPath := os.TempDir() + "/testbuild.h"
-	err := GenHeaderFile(prog, []ssa.Package{mainPkg, cPkg}, libname, headerPath, true)
+	err := GenHeaderFile(prog, []llvmgen.Package{mainPkg, cPkg}, libname, headerPath, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,12 +116,12 @@ func TestGenCHeaderExport(t *testing.T) {
 }
 
 func TestGenHeaderMissingExport(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	pkgPath := "github.com/xgo-dev/llgo/test_buildmode/missing"
 	pkg := prog.NewPackage("missing", pkgPath)
 	pkg.SetExport("Missing", "Missing")
 
-	err := genHeader(prog, []ssa.Package{pkg}, &bytes.Buffer{})
+	err := genHeader(prog, []llvmgen.Package{pkg}, &bytes.Buffer{})
 	if err == nil || err.Error() != "function Missing not found in package "+pkgPath {
 		t.Fatalf("genHeader() error = %v", err)
 	}
@@ -133,18 +133,18 @@ func TestGenHeaderGoWordLayout(t *testing.T) {
 		t.Skip("clang is required to check generated C and C++ layouts")
 	}
 	for _, tc := range []struct {
-		target                ssa.Target
+		target                llvmgen.Target
 		pointerSize, wordSize int
 	}{
-		{ssa.Target{GOOS: "linux", GOARCH: "386"}, 4, 4},
-		{ssa.Target{GOOS: "linux", GOARCH: "amd64"}, 8, 8},
-		{ssa.Target{GOOS: "windows", GOARCH: "amd64"}, 8, 8},
-		{ssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"}, 4, 8},
-		{ssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", LLVMTarget: "wasm32-unknown-emscripten"}, 4, 8},
-		{ssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", LLVMTarget: "wasm64-unknown-emscripten"}, 8, 8},
+		{llvmgen.Target{GOOS: "linux", GOARCH: "386"}, 4, 4},
+		{llvmgen.Target{GOOS: "linux", GOARCH: "amd64"}, 8, 8},
+		{llvmgen.Target{GOOS: "windows", GOARCH: "amd64"}, 8, 8},
+		{llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"}, 4, 8},
+		{llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", LLVMTarget: "wasm32-unknown-emscripten"}, 4, 8},
+		{llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", LLVMTarget: "wasm64-unknown-emscripten"}, 8, 8},
 	} {
 		t.Run(tc.target.Spec().Triple, func(t *testing.T) {
-			prog := ssa.NewProgram(&tc.target)
+			prog := llvmgen.NewProgram(&tc.target)
 			defer prog.Dispose()
 			dir := t.TempDir()
 			path := filepath.Join(dir, "goword.h")
@@ -153,10 +153,10 @@ func TestGenHeaderGoWordLayout(t *testing.T) {
 				"SignedWord": types.Int, "UnsignedWord": types.Uint, "CAddress": types.Uintptr,
 			} {
 				word := types.NewTuple(types.NewVar(token.NoPos, nil, "x", types.Typ[kind]))
-				pkg.NewFunc(name, types.NewSignatureType(nil, nil, nil, word, word, false), ssa.CDecl)
+				pkg.NewFunc(name, types.NewSignatureType(nil, nil, nil, word, word, false), llvmgen.CDecl)
 				pkg.SetExport(name, name)
 			}
-			if err := GenHeaderFile(prog, []ssa.Package{pkg}, "goword", path, false); err != nil {
+			if err := GenHeaderFile(prog, []llvmgen.Package{pkg}, "goword", path, false); err != nil {
 				t.Fatal(err)
 			}
 			signedWord, unsignedWord := "intptr_t", "uintptr_t"
@@ -213,7 +213,7 @@ uintptr_t CAddress(uintptr_t);
 }
 
 func TestCheaderWriterTypes(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	// Test complex integration scenarios only - basic types are covered by TestGoCTypeName
@@ -282,7 +282,7 @@ func TestCheaderWriterTypes(t *testing.T) {
 
 // Test for goCTypeName function to cover all basic types
 func TestGoCTypeName(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	tests := []struct {
@@ -356,7 +356,7 @@ func TestGoCTypeName(t *testing.T) {
 
 // Test typeReferencesSelf function
 func TestTypeReferencesSelf(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	pkg := types.NewPackage("test", "test")
@@ -424,7 +424,7 @@ func TestTypeReferencesSelf(t *testing.T) {
 
 // Test array struct generation functions
 func TestArrayStructGeneration(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	// Test ensureArrayStruct
@@ -458,7 +458,7 @@ func TestArrayStructGeneration(t *testing.T) {
 
 // Test generateReturnType function
 func TestGenerateReturnType(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	// Test basic type
@@ -478,7 +478,7 @@ func TestGenerateReturnType(t *testing.T) {
 
 // Test generateTypedef function
 func TestGenerateTypedef(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	pkg := types.NewPackage("test", "test")
@@ -504,7 +504,7 @@ func TestGenerateTypedef(t *testing.T) {
 
 // Test complex nested structures and dependencies
 func TestComplexNestedStructures(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	// Create a complex nested structure
@@ -550,7 +550,7 @@ func TestComplexNestedStructures(t *testing.T) {
 
 // Test processDependentTypes for error paths and edge cases
 func TestProcessDependentTypesEdgeCases(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	// Test signature type dependency (function parameters and results)
@@ -689,7 +689,7 @@ func TestProcessDependentTypesEdgeCases(t *testing.T) {
 
 // Test generateParameterDeclaration function
 func TestGenerateParameterDeclaration(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	tests := []struct {
@@ -760,7 +760,7 @@ func TestGenerateParameterDeclaration(t *testing.T) {
 
 // Test generateNamedStructTypedef with forward declaration
 func TestGenerateNamedStructTypedefWithForwardDecl(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	pkg := types.NewPackage("test", "test")
@@ -793,7 +793,7 @@ func TestGenerateNamedStructTypedefWithForwardDecl(t *testing.T) {
 
 // Test self-referential structures to ensure no infinite recursion
 func TestSelfReferentialStructure(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	pkg := types.NewPackage("test", "test")
@@ -829,7 +829,7 @@ func TestSelfReferentialStructure(t *testing.T) {
 
 // Test function signature dependencies
 func TestFunctionSignatureDependencies(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	pkg := types.NewPackage("test", "test")
@@ -899,7 +899,7 @@ func TestFunctionSignatureDependencies(t *testing.T) {
 
 // Test error conditions and edge cases
 func TestEdgeCasesAndErrorConditions(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	// Test with properly initialized but empty function - skip nil test since it causes panic
@@ -930,7 +930,7 @@ func TestEdgeCasesAndErrorConditions(t *testing.T) {
 
 // Test writeTo function
 func TestWriteTo(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	hw := newCHeaderWriter(prog)
 
 	// Add some content to both buffers
@@ -954,13 +954,13 @@ func TestWriteTo(t *testing.T) {
 
 // Test genHeader function
 func TestGenHeader(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 
 	// Create a mock package
 	pkg := prog.NewPackage("", "testpkg")
 
 	var output bytes.Buffer
-	err := genHeader(prog, []ssa.Package{pkg}, &output)
+	err := genHeader(prog, []llvmgen.Package{pkg}, &output)
 	if err != nil {
 		t.Fatalf("genHeader() error = %v", err)
 	}
@@ -973,7 +973,7 @@ func TestGenHeader(t *testing.T) {
 
 // Test GenCHeader function
 func TestGenCHeader(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 
 	// Create a mock package
 	pkg := prog.NewPackage("", "testpkg")
@@ -986,7 +986,7 @@ func TestGenCHeader(t *testing.T) {
 	defer os.Remove(tmpfile.Name())
 	defer tmpfile.Close()
 
-	err = GenHeaderFile(prog, []ssa.Package{pkg}, "testlib", tmpfile.Name(), false)
+	err = GenHeaderFile(prog, []llvmgen.Package{pkg}, "testlib", tmpfile.Name(), false)
 	if err != nil {
 		t.Fatalf("GenCHeader() error = %v", err)
 	}
@@ -1008,7 +1008,7 @@ func TestGenCHeader(t *testing.T) {
 
 // Test genHeader with init function coverage
 func TestGenHeaderWithInitFunction(t *testing.T) {
-	prog := ssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 
 	// Create a package
 	pkgPath := "github.com/xgo-dev/mypackage"
@@ -1019,11 +1019,11 @@ func TestGenHeaderWithInitFunction(t *testing.T) {
 
 	// Create the init function with the expected name format
 	initFnName := pkgPath + ".init"
-	_ = pkg.NewFunc(initFnName, initSig, ssa.GoDecl)
+	_ = pkg.NewFunc(initFnName, initSig, llvmgen.GoDecl)
 
 	// Test genHeader which should now detect the init function
 	var output bytes.Buffer
-	err := genHeader(prog, []ssa.Package{pkg}, &output)
+	err := genHeader(prog, []llvmgen.Package{pkg}, &output)
 	if err != nil {
 		t.Fatalf("genHeader() error = %v", err)
 	}

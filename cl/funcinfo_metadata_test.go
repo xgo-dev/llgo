@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 type funcInfoRecord struct {
@@ -49,7 +49,7 @@ func leaf() int { return 1 }
 
 func (T) method() {}
 `
-	ir := cltest.CompileIREx(t, src, "foo.go", false, func(prog llssa.Program) {
+	ir := cltest.CompileIREx(t, src, "foo.go", false, func(prog llvmgen.Program) {
 		prog.Target().GOOS = "linux"
 		prog.EnableFuncInfoMetadata(true)
 		prog.EnableFuncInfoSites(true)
@@ -122,10 +122,10 @@ func (T) method() {}
 		wantFlags   uint32
 	}{
 		{goos: "linux", wantVersion: 1},
-		{goos: "windows", wantVersion: 2, wantFlags: llssa.FuncInfoFlagWrapper},
+		{goos: "windows", wantVersion: 2, wantFlags: llvmgen.FuncInfoFlagWrapper},
 	} {
 		t.Run(test.goos, func(t *testing.T) {
-			ir := cltest.CompileIREx(t, src, "foo.go", false, func(prog llssa.Program) {
+			ir := cltest.CompileIREx(t, src, "foo.go", false, func(prog llvmgen.Program) {
 				prog.Target().GOOS = test.goos
 				prog.EnableFuncInfoMetadata(true)
 				prog.EnableFuncInfoSites(true)

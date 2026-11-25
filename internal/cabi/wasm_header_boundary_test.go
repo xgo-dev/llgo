@@ -7,7 +7,7 @@ import (
 	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/heap2stack"
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 )
@@ -185,7 +185,7 @@ func TestWasmBoundaryHeaderStorage(t *testing.T) {
 					continue
 				}
 				switch name := v.CalledValue().Name(); {
-				case name == ssa.PkgRuntime+".AllocU":
+				case name == llvmgen.PkgRuntime+".AllocU":
 					resultAllocs++
 				case name == tc.foreign:
 					if v.GetCallSiteEnumAttribute(1, llvm.AttributeKindID("sret")).IsNil() {
@@ -204,7 +204,7 @@ func TestWasmBoundaryHeaderStorage(t *testing.T) {
 			if resultAllocs != 1 {
 				t.Fatalf("%s allocated %d scanned buffers for one native result", tc.read, resultAllocs)
 			}
-			if result.IsACallInst().IsNil() || result.CalledValue().Name() != ssa.PkgRuntime+".AllocU" {
+			if result.IsACallInst().IsNil() || result.CalledValue().Name() != llvmgen.PkgRuntime+".AllocU" {
 				t.Fatalf("%s result is outside scanned storage:\n%s", tc.read, fn)
 			}
 		} else if result.IsAAllocaInst().IsNil() {

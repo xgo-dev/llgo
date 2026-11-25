@@ -3,7 +3,7 @@ package cl
 import (
 	"go/types"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -36,15 +36,15 @@ func collectDebugAllocObjects(variables map[*ssa.Alloc]*types.Var) map[*types.Va
 	return objects
 }
 
-func (p *context) debugAlloc(b llssa.Builder, alloc *ssa.Alloc, addr llssa.Expr) {
+func (p *context) debugAlloc(b llvmgen.Builder, alloc *ssa.Alloc, addr llvmgen.Expr) {
 	variable := p.debugAllocVars[alloc]
 	if variable == nil {
 		return
 	}
 	pos := p.goProg.Fset.Position(variable.Pos())
-	var dbgVar llssa.DIVar
+	var dbgVar llvmgen.DIVar
 	if argNo := debugParameterArgNo(p.goFn, variable); argNo != 0 {
-		dbgVar = b.DIVarParam(p.fn, pos, variable.Name(), p.type_(variable.Type(), llssa.GoDecl), argNo)
+		dbgVar = b.DIVarParam(p.fn, pos, variable.Name(), p.type_(variable.Type(), llvmgen.GoDecl), argNo)
 		p.debugDIVars[variable] = dbgVar
 	} else {
 		dbgVar = p.getLocalVariable(b, p.goFn, variable)

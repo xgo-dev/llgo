@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestFloatToIntegerConversionMode(t *testing.T) {
@@ -29,7 +29,7 @@ func U64(x float64) uint64 { return uint64(x) }
 					src += saturatingSrc
 				}
 				ssaPkg, _, files := buildGoSSAPkg(t, src)
-				prog := newLLSSAProgForTarget(t, &llssa.Target{
+				prog := newLLSSAProgForTarget(t, &llvmgen.Target{
 					GOOS: "linux", GOARCH: arch,
 					SaturatingFloatToInt: saturating,
 				})

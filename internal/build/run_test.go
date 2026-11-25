@@ -37,7 +37,7 @@ import (
 	"time"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	"github.com/xgo-dev/llgo/internal/targets"
+	"github.com/xgo-dev/llgo/target"
 )
 
 func TestRunInEmulatorValidation(t *testing.T) {
@@ -153,7 +153,7 @@ func TestWASIInheritedTargetHostContract(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "downstream.json"), []byte(`{"inherits":["wasi"]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	config, err := targets.NewLoader(dir).Load("downstream")
+	config, err := target.NewLoader(dir).Load("downstream")
 	if err != nil {
 		t.Fatal(err)
 	}

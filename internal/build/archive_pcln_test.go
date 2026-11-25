@@ -14,13 +14,13 @@ import (
 
 	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 func TestPackagePCLNArchive(t *testing.T) {
-	llssa.Initialize(llssa.InitAll)
+	llvmgen.Initialize(llvmgen.InitAll)
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +35,7 @@ func TestPackagePCLNArchive(t *testing.T) {
 	} {
 		for _, mode := range []lto.Mode{lto.Off, lto.Thin, lto.Full} {
 			t.Run(target.triple+"/"+mode.String(), func(t *testing.T) {
-				prog := llssa.NewProgram(&llssa.Target{GOOS: target.goos, GOARCH: target.goarch, LLVMTarget: target.triple})
+				prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: target.goos, GOARCH: target.goarch, LLVMTarget: target.triple})
 				defer prog.Dispose()
 				src := prog.NewPackage("p", "example.com/p")
 				src.EmitFuncInfoFlags("p.Boundary", "p.Boundary", "p.go", int(buildfuncinfo.EncodedLineMask), 0, buildfuncinfo.RecordFlagWrapper)
@@ -162,8 +162,8 @@ func TestPCLNCompilerTempIsolation(t *testing.T) {
 		}
 		return
 	}
-	llssa.Initialize(llssa.InitAll)
-	prog := llssa.NewProgram(nil)
+	llvmgen.Initialize(llvmgen.InitAll)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fail=%v", fail), func(t *testing.T) {
@@ -266,8 +266,8 @@ func TestLoadPackagePCLNRejectsCorruptPayload(t *testing.T) {
 }
 
 func TestEmitPackagePCLNFailure(t *testing.T) {
-	llssa.Initialize(llssa.InitAll)
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64", LLVMTarget: "x86_64-unknown-linux-gnu"})
+	llvmgen.Initialize(llvmgen.InitAll)
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64", LLVMTarget: "x86_64-unknown-linux-gnu"})
 	defer prog.Dispose()
 	for _, tempFailure := range []bool{false, true} {
 		t.Run(fmt.Sprintf("tempFailure=%v", tempFailure), func(t *testing.T) {
@@ -340,8 +340,8 @@ func TestPCLNArchiveRejectsIncompleteArtifacts(t *testing.T) {
 	if err := loadPackagePCLN(pkg); err == nil || !strings.Contains(err.Error(), "missing "+packagePCLNMember) || pkg.pcln != nil {
 		t.Fatalf("missing artifact retained old mappings: %v", err)
 	}
-	llssa.Initialize(llssa.InitAll)
-	prog := llssa.NewProgram(nil)
+	llvmgen.Initialize(llvmgen.InitAll)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	pkg.LPkg = prog.NewPackage("stale", "stale")
 	pkg.LPkg.EmitFuncInfo("stale.F", "stale.F", "stale.go", 1, 1)

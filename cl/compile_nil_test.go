@@ -8,32 +8,32 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
-	gossa "golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
+	"golang.org/x/tools/go/ssa"
 )
 
-func newNilCompileContext(t *testing.T) (*context, llssa.Builder) {
+func newNilCompileContext(t *testing.T) (*context, llvmgen.Builder) {
 	t.Helper()
 	prog := newLLSSAProg(t)
 	pkg := prog.NewPackage("foo", "foo")
 	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
-	fn := pkg.NewFunc("test", sig, llssa.GoDecl)
+	fn := pkg.NewFunc("test", sig, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	ctx := &context{
 		prog:  prog,
 		pkg:   pkg,
 		fn:    fn,
-		bvals: make(map[gossa.Value]llssa.Expr),
+		bvals: make(map[ssa.Value]llvmgen.Expr),
 	}
 	return ctx, b
 }
 
 func TestCompileNilBinOpAndHelpers(t *testing.T) {
 	ctx, b := newNilCompileContext(t)
-	untypedNil := gossa.NewConst(nil, types.Typ[types.UntypedNil])
-	typedNilPtr := gossa.NewConst(nil, types.NewPointer(types.Typ[types.Int]))
-	one := gossa.NewConst(constant.MakeInt64(1), types.Typ[types.Int])
-	two := gossa.NewConst(constant.MakeInt64(2), types.Typ[types.Int])
+	untypedNil := ssa.NewConst(nil, types.Typ[types.UntypedNil])
+	typedNilPtr := ssa.NewConst(nil, types.NewPointer(types.Typ[types.Int]))
+	one := ssa.NewConst(constant.MakeInt64(1), types.Typ[types.Int])
+	two := ssa.NewConst(constant.MakeInt64(2), types.Typ[types.Int])
 
 	if !isUntypedNilConst(untypedNil) {
 		t.Fatal("untyped nil const not detected")
@@ -44,7 +44,7 @@ func TestCompileNilBinOpAndHelpers(t *testing.T) {
 	if isUntypedNilConst(one) {
 		t.Fatal("non-nil const should not be treated as untyped nil")
 	}
-	if isUntypedNilConst(&gossa.Parameter{}) {
+	if isUntypedNilConst(&ssa.Parameter{}) {
 		t.Fatal("non-const value should not be treated as untyped nil")
 	}
 
@@ -70,18 +70,18 @@ func TestCompileNilBinOpAndHelpers(t *testing.T) {
 	}
 	for _, tt := range nilableTypes {
 		t.Run(tt.name, func(t *testing.T) {
-			typedNil := gossa.NewConst(nil, tt.typ)
+			typedNil := ssa.NewConst(nil, tt.typ)
 			for _, tc := range []struct {
 				name string
 				op   token.Token
-				x    gossa.Value
-				y    gossa.Value
+				x    ssa.Value
+				y    ssa.Value
 			}{
 				{"left-untyped-nil-eq", token.EQL, untypedNil, typedNil},
 				{"right-untyped-nil-eq", token.EQL, typedNil, untypedNil},
 				{"right-untyped-nil-neq", token.NEQ, typedNil, untypedNil},
 			} {
-				ret := ctx.compileInstrOrValue(b, &gossa.BinOp{
+				ret := ctx.compileInstrOrValue(b, &ssa.BinOp{
 					Op: tc.op,
 					X:  tc.x,
 					Y:  tc.y,
@@ -94,7 +94,7 @@ func TestCompileNilBinOpAndHelpers(t *testing.T) {
 	}
 
 	for _, op := range []token.Token{token.EQL, token.NEQ} {
-		ret := ctx.compileInstrOrValue(b, &gossa.BinOp{
+		ret := ctx.compileInstrOrValue(b, &ssa.BinOp{
 			Op: op,
 			X:  untypedNil,
 			Y:  untypedNil,
@@ -104,7 +104,7 @@ func TestCompileNilBinOpAndHelpers(t *testing.T) {
 		}
 	}
 
-	ret := ctx.compileInstrOrValue(b, &gossa.BinOp{
+	ret := ctx.compileInstrOrValue(b, &ssa.BinOp{
 		Op: token.ADD,
 		X:  one,
 		Y:  two,
@@ -135,21 +135,21 @@ func iface(v int) any {
 }
 `)
 	ctx, b := newNilCompileContext(t)
-	untypedNil := gossa.NewConst(nil, types.Typ[types.UntypedNil])
+	untypedNil := ssa.NewConst(nil, types.Typ[types.UntypedNil])
 
-	change := findFirstInstr[*gossa.ChangeType](t, ssaPkg.Func("change"))
+	change := findFirstInstr[*ssa.ChangeType](t, ssaPkg.Func("change"))
 	change.X = untypedNil
 	if ret := ctx.compileInstrOrValue(b, change, false); ret.IsNil() {
 		t.Fatal("ChangeType untyped nil lowered to an empty expression")
 	}
 
-	convert := findFirstInstr[*gossa.Convert](t, ssaPkg.Func("convert"))
+	convert := findFirstInstr[*ssa.Convert](t, ssaPkg.Func("convert"))
 	convert.X = untypedNil
 	if ret := ctx.compileInstrOrValue(b, convert, false); ret.IsNil() {
 		t.Fatal("Convert untyped nil lowered to an empty expression")
 	}
 
-	makeInterface := findFirstInstr[*gossa.MakeInterface](t, ssaPkg.Func("iface"))
+	makeInterface := findFirstInstr[*ssa.MakeInterface](t, ssaPkg.Func("iface"))
 	makeInterface.X = untypedNil
 	if ret := ctx.compileInstrOrValue(b, makeInterface, false); ret.IsNil() {
 		t.Fatal("MakeInterface untyped nil lowered to an empty expression")
@@ -162,7 +162,7 @@ type object struct { value int }
 func unused() { value := &object{}; _ = value }
 func escaping() *object { return &object{} }
 `
-	for _, mode := range []gossa.BuilderMode{0, gossa.GlobalDebug} {
+	for _, mode := range []ssa.BuilderMode{0, ssa.GlobalDebug} {
 		ir := compileWithRewritesMode(t, src, nil, mode)
 		for _, name := range []string{"unused", "escaping"} {
 			body := llvmFunction(t, ir, "foo."+name)
@@ -180,7 +180,7 @@ package foo
 
 func alloc() *int { return new(int) }
 `)
-	alloc := findFirstInstr[*gossa.Alloc](t, ssaPkg.Func("alloc"))
+	alloc := findFirstInstr[*ssa.Alloc](t, ssaPkg.Func("alloc"))
 	ctx, b := newNilCompileContext(t)
 
 	first := ctx.compileInstrOrValue(b, alloc, true)
@@ -198,8 +198,8 @@ func alloc() *int { return new(int) }
 }
 
 func TestFoldConstComparison(t *testing.T) {
-	a := gossa.NewConst(constant.MakeString("a"), types.Typ[types.String])
-	b := gossa.NewConst(constant.MakeString("b"), types.Typ[types.String])
+	a := ssa.NewConst(constant.MakeString("a"), types.Typ[types.String])
+	b := ssa.NewConst(constant.MakeString("b"), types.Typ[types.String])
 	for _, tt := range []struct {
 		op   token.Token
 		want bool
@@ -211,20 +211,20 @@ func TestFoldConstComparison(t *testing.T) {
 		{token.GTR, false},
 		{token.GEQ, false},
 	} {
-		if got, ok := foldConstComparison(&gossa.BinOp{Op: tt.op, X: a, Y: b}); !ok || got != tt.want {
+		if got, ok := foldConstComparison(&ssa.BinOp{Op: tt.op, X: a, Y: b}); !ok || got != tt.want {
 			t.Errorf("foldConstComparison(%s) = %v, %v; want %v, true", tt.op, got, ok, tt.want)
 		}
 	}
-	if _, ok := foldConstComparison(&gossa.BinOp{Op: token.ADD, X: a, Y: b}); ok {
+	if _, ok := foldConstComparison(&ssa.BinOp{Op: token.ADD, X: a, Y: b}); ok {
 		t.Fatal("non-comparison operation was folded")
 	}
-	if _, ok := foldConstComparison(&gossa.BinOp{Op: token.EQL, X: &gossa.Parameter{}, Y: b}); ok {
+	if _, ok := foldConstComparison(&ssa.BinOp{Op: token.EQL, X: &ssa.Parameter{}, Y: b}); ok {
 		t.Fatal("non-constant operand was folded")
 	}
-	if _, ok := foldConstComparison(&gossa.BinOp{
+	if _, ok := foldConstComparison(&ssa.BinOp{
 		Op: token.EQL,
-		X:  gossa.NewConst(nil, types.NewPointer(types.Typ[types.Int])),
-		Y:  gossa.NewConst(nil, types.NewPointer(types.Typ[types.Int])),
+		X:  ssa.NewConst(nil, types.NewPointer(types.Typ[types.Int])),
+		Y:  ssa.NewConst(nil, types.NewPointer(types.Typ[types.Int])),
 	}); ok {
 		t.Fatal("nil comparison was folded through go/constant")
 	}
@@ -248,10 +248,10 @@ func TestFoldConstComparison(t *testing.T) {
 			if tt.name == "string" {
 				typ = types.Typ[types.UntypedString]
 			}
-			if got, ok := foldConstComparison(&gossa.BinOp{
+			if got, ok := foldConstComparison(&ssa.BinOp{
 				Op: token.EQL,
-				X:  gossa.NewConst(tt.x, typ),
-				Y:  gossa.NewConst(tt.y, typ),
+				X:  ssa.NewConst(tt.x, typ),
+				Y:  ssa.NewConst(tt.y, typ),
 			}); !ok || got {
 				t.Fatalf("foldConstComparison(%s equality) = %v, %v; want false, true", tt.name, got, ok)
 			}
@@ -325,7 +325,7 @@ func f[T any]() {
 `)
 }
 
-func findFirstInstr[T gossa.Instruction](t *testing.T, fn *gossa.Function) T {
+func findFirstInstr[T ssa.Instruction](t *testing.T, fn *ssa.Function) T {
 	t.Helper()
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instrs {

@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestIndirectCVariadicArguments(t *testing.T) {
@@ -21,7 +21,7 @@ func Ordinary(function func(marker int32, values ...any) int32, marker int32, in
 }
 `
 	ssaPkg, _, files := buildGoSSAPkg(t, source)
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "darwin", GOARCH: "arm64"},
 	} {

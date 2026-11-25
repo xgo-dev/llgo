@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestCompileLargeSnapshotGCRoots(t *testing.T) {
@@ -32,7 +32,7 @@ func keep(live *int, source *[%d]byte) *int {
     return live
 }
 `, tc.size, tc.size)
-			ir := cltest.CompileIREx(t, src, "snapshot.go", false, func(prog llssa.Program) {
+			ir := cltest.CompileIREx(t, src, "snapshot.go", false, func(prog llvmgen.Program) {
 				prog.EnableGCRoots(true)
 				if tc.goarch != "" {
 					prog.Target().GOARCH = tc.goarch
@@ -69,7 +69,7 @@ func choose(cond bool, a, b *int) *int {
 	return p
 }
 `
-	ir := cltest.CompileIREx(t, src, "gcroot.go", false, func(prog llssa.Program) {
+	ir := cltest.CompileIREx(t, src, "gcroot.go", false, func(prog llvmgen.Program) {
 		prog.EnableGCRoots(true)
 	})
 	if !strings.Contains(ir, `@llvm_gc_root_chain`) {
@@ -102,7 +102,7 @@ func keep(h holder) holder {
 	return h
 }
 `
-	ir := cltest.CompileIREx(t, src, "gcroot_aggregate.go", false, func(prog llssa.Program) {
+	ir := cltest.CompileIREx(t, src, "gcroot_aggregate.go", false, func(prog llvmgen.Program) {
 		prog.EnableGCRoots(true)
 	})
 	if !strings.Contains(ir, `[7 x ptr]`) {
@@ -120,7 +120,7 @@ func keep(p *int) *int {
 	return p
 }
 `
-	ir := cltest.CompileIREx(t, src, "gcroot_tls.go", false, func(prog llssa.Program) {
+	ir := cltest.CompileIREx(t, src, "gcroot_tls.go", false, func(prog llvmgen.Program) {
 		prog.EnableGCRoots(true)
 		prog.EnableThreadLocalGCRoots(true)
 	})
@@ -154,7 +154,7 @@ func TestCompileGCRootPlanning(t *testing.T) {
 	const pure = `package main
 func keep(p *int) *int { return p }
 `
-	ir := cltest.CompileIREx(t, pure, "gcroot_pure.go", false, func(prog llssa.Program) {
+	ir := cltest.CompileIREx(t, pure, "gcroot_pure.go", false, func(prog llvmgen.Program) {
 		prog.EnableGCRoots(true)
 	})
 	if strings.Contains(ir, `llvm_gc_root_chain`) || strings.Contains(ir, `llvm.gcroot`) ||
@@ -168,7 +168,7 @@ func keep(p *int, n int) *int {
 	return p
 }
 `
-	ir = cltest.CompileIREx(t, allocating, "gcroot_allocating.go", false, func(prog llssa.Program) {
+	ir = cltest.CompileIREx(t, allocating, "gcroot_allocating.go", false, func(prog llvmgen.Program) {
 		prog.EnableGCRoots(true)
 	})
 	if !strings.Contains(ir, `[1 x ptr]`) {
@@ -181,7 +181,7 @@ func keep(p *int) func() {
 	return func() { use(p) }
 }
 `
-	ir = cltest.CompileIREx(t, closure, "gcroot_closure.go", false, func(prog llssa.Program) {
+	ir = cltest.CompileIREx(t, closure, "gcroot_closure.go", false, func(prog llvmgen.Program) {
 		prog.EnableGCRoots(true)
 	})
 	if !strings.Contains(ir, `@llvm_gc_root_chain`) {
@@ -205,7 +205,7 @@ func keep() {
 	use(address)
 }
 `
-	cltest.CompileIREx(t, src, "gcroot_funcaddr.go", false, func(prog llssa.Program) {
+	cltest.CompileIREx(t, src, "gcroot_funcaddr.go", false, func(prog llvmgen.Program) {
 		prog.EnableGCRoots(true)
 		prog.EnableCooperativeSafepoints(true)
 	})

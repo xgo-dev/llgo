@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xgo-dev/llgo/internal/directive"
+	"github.com/xgo-dev/llgo/directive"
 )
 
 // A linkname denotes one externally visible storage location. Splitting that

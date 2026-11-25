@@ -21,7 +21,7 @@ import (
 	"go/ast"
 	"go/token"
 
-	"github.com/xgo-dev/llgo/internal/directive"
+	"github.com/xgo-dev/llgo/directive"
 )
 
 const (

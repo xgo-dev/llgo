@@ -49,16 +49,16 @@ import (
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func init() {
-	llssa.Initialize(llssa.InitAll | llssa.InitNative)
+	llvmgen.Initialize(llvmgen.InitAll | llvmgen.InitNative)
 }
 
 func InitDebug() {
 	cl.SetDebug(cl.DbgFlagAll)
-	llssa.SetDebug(llssa.DbgFlagAll)
+	llvmgen.SetDebug(llvmgen.DbgFlagAll)
 }
 
 func FromDir(t *testing.T, sel, relDir string) {
@@ -888,7 +888,7 @@ func isUnrecognizedTargetFeatureWarning(line []byte) bool {
 		(line[1] == '+' || line[1] == '-') && bytes.HasSuffix(line, []byte(suffix))
 }
 
-func CompileIREx(t *testing.T, src any, fname string, dbg bool, configure func(llssa.Program)) string {
+func CompileIREx(t *testing.T, src any, fname string, dbg bool, configure func(llvmgen.Program)) string {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, fname, src, parser.ParseComments)
@@ -928,7 +928,7 @@ func CompileIREx(t *testing.T, src any, fname string, dbg bool, configure func(l
 func TestCompileEx(t *testing.T, src any, fname, expected string, dbg bool) {
 	t.Helper()
 	v := CompileIREx(t, src, fname, dbg, nil)
-	if llssa.StripModuleTarget(v) != expected {
+	if llvmgen.StripModuleTarget(v) != expected {
 		t.Fatalf("\n==> got:\n%s\n==> expected:\n%s\n", v, expected)
 	}
 }

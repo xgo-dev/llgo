@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -38,7 +38,7 @@ func caller() { two(uintptr(source()), laterArgument()) }
 	} {
 		t.Run(tc.profile, func(t *testing.T) {
 			ssaPkg, files := buildCallerFrameSSAPackage(t, "roots", src)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{
 				GOOS: tc.goos, GOARCH: "wasm", LLVMTarget: tc.triple, WasmProfile: tc.profile,
 			})
 			defer prog.Dispose()

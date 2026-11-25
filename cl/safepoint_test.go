@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestCompileCooperativeSafepoints(t *testing.T) {
@@ -28,7 +28,7 @@ func noPoll(p *int) *int {
 	return p
 }
 `
-	ir := cltest.CompileIREx(t, src, "safepoint.go", false, func(prog llssa.Program) {
+	ir := cltest.CompileIREx(t, src, "safepoint.go", false, func(prog llvmgen.Program) {
 		prog.EnableGCRoots(true)
 		prog.EnableCooperativeSafepoints(true)
 	})

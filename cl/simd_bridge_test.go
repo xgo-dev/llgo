@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -38,7 +38,7 @@ func TestSIMDFMVBridgeIdentity(t *testing.T) {
 		}
 		want := false
 		if peer := arch.Scope().Lookup(name); peer != nil {
-			_, want = llssa.SIMDVectorShape(peer.Type())
+			_, want = llvmgen.SIMDVectorShape(peer.Type())
 		}
 		if got := simdFMVVector(obj.Type()); got != want {
 			t.Errorf("%s eligibility = %t, want %t", name, got, want)
@@ -109,7 +109,7 @@ func TestSIMDPortableBridgeClosure(t *testing.T) {
 				if fn.Pkg != nil && !strings.HasPrefix(fn.Pkg.Pkg.Path(), "simd/") {
 					continue
 				}
-				if op, ok := lookupSIMD(fn, arch); ok && op.op == llssa.SIMDUnimplemented {
+				if op, ok := lookupSIMD(fn, arch); ok && op.op == llvmgen.SIMDUnimplemented {
 					t.Errorf("portable bridge reaches an unsupported intrinsic: %s", fn)
 				}
 				for _, bb := range fn.Blocks {

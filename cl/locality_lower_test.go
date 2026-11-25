@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"github.com/xgo-dev/llgo/internal/locality"
 	localitylayout "github.com/xgo-dev/llgo/internal/locality/layout"
@@ -45,9 +45,9 @@ func TestLocalityLoweringResolution(t *testing.T) {
 	if variable, ok, err := ctx.localVariableFor(llvmPkg, global, true); err != nil || ok || variable != nil {
 		t.Fatalf("ordinary localVariableFor = %+v, %v, %v", variable, ok, err)
 	}
-	name := llssa.FullName(typesPkg, global.Name())
-	prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.ThreadLocal})
-	prog.SetLocalStorage(name, llssa.LocalStorageNativeTLS)
+	name := llvmgen.FullName(typesPkg, global.Name())
+	prog.SetLocalityInfo(name, llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
+	prog.SetLocalStorage(name, llvmgen.LocalStorageNativeTLS)
 	variable, ok, err := ctx.localVariableFor(llvmPkg, global, true)
 	if err != nil || !ok || variable.planned.Storage != localitylayout.StorageNativeTLS {
 		t.Fatalf("local localVariableFor = %+v, %v, %v", variable, ok, err)
@@ -90,10 +90,10 @@ func TestLocalityLoweringResolution(t *testing.T) {
 
 func TestLocalityLoweringDeclarationOnlyState(t *testing.T) {
 	typesPkg, global := localitySSAGlobal(t, "example.com/declaration")
-	name := llssa.FullName(typesPkg, global.Name())
+	name := llvmgen.FullName(typesPkg, global.Name())
 	prog := ssatest.NewProgram(t, nil)
-	prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.ThreadLocal})
-	prog.SetLocalStorage(name, llssa.LocalStorageNativeTLS)
+	prog.SetLocalityInfo(name, llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
+	prog.SetLocalStorage(name, llvmgen.LocalStorageNativeTLS)
 	llvmPkg := prog.NewPackage(typesPkg.Name(), typesPkg.Path())
 	ctx := &context{
 		prog:   prog,
@@ -104,7 +104,7 @@ func TestLocalityLoweringDeclarationOnlyState(t *testing.T) {
 		},
 	}
 
-	addr := ctx.localVariableAddr(nil, global, llssa.VariableLocality{Info: llssa.LocalityInfo{Locality: llssa.ThreadLocal}}, name)
+	addr := ctx.localVariableAddr(nil, global, llvmgen.VariableLocality{Info: llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal}}, name)
 	if addr != ctx.locality.variables[global].owner.direct[name].Expr {
 		t.Fatal("localVariableAddr did not return declaration-only TLS storage")
 	}
@@ -118,10 +118,10 @@ func TestLocalityLoweringDeclarationOnlyState(t *testing.T) {
 
 func TestLocalityLoweringDiagnostics(t *testing.T) {
 	typesPkg, global := localitySSAGlobal(t, "example.com/diagnostic")
-	name := llssa.FullName(typesPkg, global.Name())
-	newProgram := func() llssa.Program {
+	name := llvmgen.FullName(typesPkg, global.Name())
+	newProgram := func() llvmgen.Program {
 		prog := ssatest.NewProgram(t, nil)
-		prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.ThreadLocal})
+		prog.SetLocalityInfo(name, llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
 		return prog
 	}
 
@@ -134,7 +134,7 @@ func TestLocalityLoweringDiagnostics(t *testing.T) {
 
 	t.Run("invalid plan", func(t *testing.T) {
 		prog := newProgram()
-		prog.SetLocalityInfo(name, llssa.LocalityInfo{Locality: llssa.ThreadLocal, HasInitializer: true})
+		prog.SetLocalityInfo(name, llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal, HasInitializer: true})
 		ctx := &context{prog: prog, goTyps: typesPkg}
 		if _, err := ctx.localPackageFor(typesPkg, nil, false); err == nil || !strings.Contains(err.Error(), "inconsistent initializer metadata") {
 			t.Fatalf("localPackageFor error = %v", err)
@@ -167,7 +167,7 @@ func TestLocalityLoweringDiagnostics(t *testing.T) {
 		assertLocalityPanic(t, "resolveLocality", func() { ctx.resolveLocality(typesPkg, name) })
 		assertLocalityPanic(t, "prepareLocalVariables", func() { ctx.prepareLocalVariables(nil, nil) })
 		assertLocalityPanic(t, "localVariableAddr", func() {
-			ctx.localVariableAddr(nil, global, llssa.VariableLocality{Info: llssa.LocalityInfo{Locality: llssa.ThreadLocal}}, name)
+			ctx.localVariableAddr(nil, global, llvmgen.VariableLocality{Info: llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal}}, name)
 		})
 	})
 
@@ -184,14 +184,14 @@ func TestLocalityLoweringDiagnostics(t *testing.T) {
 	t.Run("missing prepared layout", func(t *testing.T) {
 		ctx := &context{prog: newProgram()}
 		assertLocalityPanic(t, "localityGlobalStorage", func() {
-			ctx.localityGlobalStorage(nil, global, name, global.Type(), llssa.GoDecl)
+			ctx.localityGlobalStorage(nil, global, name, global.Type(), llvmgen.GoDecl)
 		})
 	})
 
 	t.Run("missing address metadata", func(t *testing.T) {
 		ctx := &context{prog: ssatest.NewProgram(t, nil)}
 		assertLocalityPanic(t, "localVariableAddr", func() {
-			ctx.localVariableAddr(nil, global, llssa.VariableLocality{Info: llssa.LocalityInfo{Locality: llssa.ThreadLocal}}, name)
+			ctx.localVariableAddr(nil, global, llvmgen.VariableLocality{Info: llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal}}, name)
 		})
 	})
 
@@ -199,11 +199,11 @@ func TestLocalityLoweringDiagnostics(t *testing.T) {
 		ctx := &context{locality: localityLowering{variables: map[*ssa.Global]*localVariable{
 			global: {
 				planned: localitylayout.Variable{Declaration: localitylayout.Declaration{Name: name}, Storage: localitylayout.StorageNativeTLS},
-				owner:   &localPackage{direct: map[string]llssa.Global{}, init: map[locality.Kind]*localInitializer{}},
+				owner:   &localPackage{direct: map[string]llvmgen.Global{}, init: map[locality.Kind]*localInitializer{}},
 			},
 		}}}
 		assertLocalityPanic(t, "localVariableAddr", func() {
-			ctx.localVariableAddr(nil, global, llssa.VariableLocality{Info: llssa.LocalityInfo{Locality: llssa.ThreadLocal}}, name)
+			ctx.localVariableAddr(nil, global, llvmgen.VariableLocality{Info: llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal}}, name)
 		})
 	})
 }

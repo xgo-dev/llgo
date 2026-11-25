@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -55,7 +55,7 @@ entry:
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "darwin", GOARCH: "arm64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "darwin", GOARCH: "arm64"})
 	defer prog.Dispose()
 	NewTransformer(prog, "aarch64-apple-darwin", "", true).TransformModule("test", mod)
 	if mod.NamedFunction("probe").IsNil() {
@@ -101,7 +101,7 @@ func TestTargetArchAndNewTransformerArchSelection(t *testing.T) {
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
 
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	tests := []struct {
 		target string
@@ -142,7 +142,7 @@ func TestTargetArchAndNewTransformerArchSelection(t *testing.T) {
 			t.Fatalf("NewTransformer(%q) selected unexpected sys implementation %T", tc.target, tr.sys)
 		}
 	}
-	windowsProg := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "amd64"})
+	windowsProg := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: "amd64"})
 	defer windowsProg.Dispose()
 	if tr := NewTransformer(windowsProg, "", "", true); tr.arch != "amd64" {
 		t.Fatalf("implicit Windows transformer arch = %q, want amd64", tr.arch)
@@ -172,7 +172,7 @@ func TestWindowsComdatPreservedByCABILowering(t *testing.T) {
 	b.SetInsertPointAtEnd(ctx.AddBasicBlock(fn, "entry"))
 	b.CreateRetVoid()
 
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: "amd64"})
 	defer prog.Dispose()
 	NewTransformer(prog, "x86_64-pc-windows-msvc", "", true).TransformModule("test", mod)
 
@@ -230,7 +230,7 @@ entry:
 	}
 	defer mod.Dispose()
 
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "arm64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: "arm64"})
 	defer prog.Dispose()
 	NewTransformer(prog, "aarch64-pc-windows-msvc", "", true).TransformModule("test", mod)
 
@@ -254,7 +254,7 @@ entry:
 func TestWindowsCABITargetDetection(t *testing.T) {
 	tests := []struct {
 		name   string
-		target *llssa.Target
+		target *llvmgen.Target
 		triple string
 		want   bool
 	}{
@@ -267,9 +267,9 @@ func TestWindowsCABITargetDetection(t *testing.T) {
 		{"cygwin short triple", nil, "x86_64-pc-cygwin", false},
 		{"msys", nil, "x86_64-pc-msys", false},
 		{"linux", nil, "x86_64-unknown-linux-gnu", false},
-		{"implicit windows", &llssa.Target{GOOS: "windows"}, "", true},
-		{"arch-only windows", &llssa.Target{GOOS: "windows"}, "x86_64", true},
-		{"implicit linux", &llssa.Target{GOOS: "linux"}, "", false},
+		{"implicit windows", &llvmgen.Target{GOOS: "windows"}, "", true},
+		{"arch-only windows", &llvmgen.Target{GOOS: "windows"}, "x86_64", true},
+		{"implicit linux", &llvmgen.Target{GOOS: "linux"}, "", false},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -377,7 +377,7 @@ func TestMSVCAggregateClassification(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: test.goarch})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: test.goarch})
 			defer prog.Dispose()
 			tr := NewTransformer(prog, test.triple, "", true)
 			ctx := llvm.NewContext()
@@ -402,7 +402,7 @@ func TestWindows386CABILowersGoAggregateToNativeLayout(t *testing.T) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "386"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: "386"})
 	defer prog.Dispose()
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
@@ -498,7 +498,7 @@ func TestWindows386HostLayoutTailReturnUsesRegisterABI(t *testing.T) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "386"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: "386"})
 	defer prog.Dispose()
 	ctx := llvm.NewContext()
 	defer ctx.Dispose()
@@ -675,7 +675,7 @@ entry:
 			}
 			defer mod.Dispose()
 
-			prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: test.goarch})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: test.goarch})
 			defer prog.Dispose()
 			tr := NewTransformer(prog, test.triple, "", true)
 			tr.TransformModule("test", mod)
@@ -774,7 +774,7 @@ entry:
 	}
 	defer mod.Dispose()
 
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "386"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: "386"})
 	defer prog.Dispose()
 	NewTransformer(prog, "i686-pc-windows-msvc", "", true).TransformModule("test", mod)
 
@@ -868,7 +868,7 @@ entry:
 	}
 	defer mod.Dispose()
 
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "windows", GOARCH: "386"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "windows", GOARCH: "386"})
 	defer prog.Dispose()
 	NewTransformer(prog, "i686-pc-windows-msvc", "", true).TransformModule("test", mod)
 
@@ -964,7 +964,7 @@ entry:
 	}
 	defer mod.Dispose()
 
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	tr := NewTransformer(prog, "amd64-unknown-linux-gnu", "", true)
 	tr.TransformModule("test", mod)
@@ -1048,7 +1048,7 @@ entry:
 					}
 					defer mod.Dispose()
 
-					prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+					prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 					defer prog.Dispose()
 					NewTransformer(prog, "amd64-unknown-linux-gnu", "", true).TransformModule("test", mod)
 
@@ -1122,7 +1122,7 @@ func TestRuntimeHeaderWrapAndTypeInfo(t *testing.T) {
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
 
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	tr := NewTransformer(prog, "", "", false)
 
@@ -1179,7 +1179,7 @@ attributes #0 = { "llgo.reflect.methodbyname"="value" }
 	}
 	defer mod.Dispose()
 
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	tr := NewTransformer(prog, "amd64-unknown-linux-gnu", "", true)
 	tr.TransformModule("test", mod)
@@ -1236,7 +1236,7 @@ entry:
 	}
 	defer mod.Dispose()
 
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	tr := NewTransformer(prog, "arm64-apple-darwin", "", true)
 	tr.TransformModule("test", mod)
@@ -1405,7 +1405,7 @@ entry:
 			}
 			defer mod.Dispose()
 
-			prog := llssa.NewProgram(&llssa.Target{GOOS: test.goos, GOARCH: test.goarch})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: test.goos, GOARCH: test.goarch})
 			defer prog.Dispose()
 			NewTransformer(prog, test.triple, "", true).TransformModule("test", mod)
 
@@ -1579,7 +1579,7 @@ entry:
 	}
 	defer mod.Dispose()
 
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	NewTransformer(prog, "x86_64-unknown-linux-gnu", "", true).TransformModule("test", mod)
 

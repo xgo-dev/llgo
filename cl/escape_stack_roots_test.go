@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -15,7 +15,7 @@ func read(p *int)int{return *p}
 func local(p *int)int {var q *int;replace(&q,p);return read(q)}
 func large(p *int)int {var a [16384]*int;a[0]=p;a[16383]=p;return *a[0]+*a[16383]}
 `
-	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}, true)
+	ir := compileInterfaceBoxIR(t, src, ssa.InstantiateGenerics, &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"}, true)
 	if body := llvmFunction(t, ir, "stackfields.local"); strings.Contains(body, "runtime.Alloc") || !strings.Contains(body, "gcroot.init") {
 		t.Fatalf("mutable field not in typed frame:\n%s", body)
 	}

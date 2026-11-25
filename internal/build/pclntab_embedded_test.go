@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
@@ -105,7 +105,7 @@ func TestRewriteEmbeddedPCLNIRRemapsAllTables(t *testing.T) {
 func embeddedPCLNFixture(t *testing.T) (string, pclnmap.Data) {
 	t.Helper()
 	t.Setenv("LLGO_PCLNPOST", "1")
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	prog.EnableFuncInfoSites(true)
 	pkg := prog.NewPackage("main", "main")

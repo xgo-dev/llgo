@@ -23,12 +23,12 @@ import (
 	"runtime"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
 func TestNewBackendSessionCreatesIndependentLLVMState(t *testing.T) {
-	coordinator := llssa.NewProgram(&llssa.Target{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
+	coordinator := llvmgen.NewProgram(&llvmgen.Target{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
 	defer coordinator.Dispose()
 	ctx := &context{
 		prog: coordinator,
@@ -51,7 +51,7 @@ func TestNewBackendSessionCreatesIndependentLLVMState(t *testing.T) {
 	}
 }
 
-func addBackendProgramPackage(ctx *context, prog llssa.Program, path string) *aPackage {
+func addBackendProgramPackage(ctx *context, prog llvmgen.Program, path string) *aPackage {
 	source := &packages.Package{ID: path, PkgPath: path}
 	pkg := &aPackage{Package: source, LPkg: prog.NewPackage("p", path)}
 	ctx.pkgs[source] = pkg
@@ -59,7 +59,7 @@ func addBackendProgramPackage(ctx *context, prog llssa.Program, path string) *aP
 }
 
 func TestBackendProgramsStayOwnedByPackagesUntilExplicitDispose(t *testing.T) {
-	coordinator := llssa.NewProgram(nil)
+	coordinator := llvmgen.NewProgram(nil)
 	defer coordinator.Dispose()
 	ctx := &context{
 		prog: coordinator,
@@ -69,7 +69,7 @@ func TestBackendProgramsStayOwnedByPackagesUntilExplicitDispose(t *testing.T) {
 	pkgs := make([]*aPackage, 2)
 	paths := []string{"example.com/p0", "example.com/p1"}
 	for i, path := range paths {
-		prog := llssa.NewProgram(nil)
+		prog := llvmgen.NewProgram(nil)
 		pkgs[i] = addBackendProgramPackage(ctx, prog, path)
 	}
 	for _, pkg := range pkgs {
@@ -91,19 +91,19 @@ func TestBackendProgramsStayOwnedByPackagesUntilExplicitDispose(t *testing.T) {
 }
 
 func TestBackendAbiTypesFollowLinkedPackageOrder(t *testing.T) {
-	runtimePkg, err := importer.For("source", nil).Import(llssa.PkgRuntime)
+	runtimePkg, err := importer.For("source", nil).Import(llvmgen.PkgRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	newBackend := func(path, name string, raw types.Type) (llssa.Program, *aPackage) {
-		prog := llssa.NewProgram(nil)
+	newBackend := func(path, name string, raw types.Type) (llvmgen.Program, *aPackage) {
+		prog := llvmgen.NewProgram(nil)
 		prog.SetRuntime(runtimePkg)
 		pkg := prog.NewPackage("p", path)
-		pkg.RegisterAbiTypes([]llssa.AbiTypeInfo{{Name: name, Raw: raw}})
+		pkg.RegisterAbiTypes([]llvmgen.AbiTypeInfo{{Name: name, Raw: raw}})
 		return prog, &aPackage{LPkg: pkg}
 	}
 
-	coordinator := llssa.NewProgram(nil)
+	coordinator := llvmgen.NewProgram(nil)
 	defer coordinator.Dispose()
 	firstProg, first := newBackend("example.com/first", "z.type", types.Typ[types.Int])
 	defer firstProg.Dispose()
@@ -120,14 +120,14 @@ func TestBackendAbiTypesFollowLinkedPackageOrder(t *testing.T) {
 }
 
 func TestBackendProgramsReleaseOnErrorAndPanic(t *testing.T) {
-	coordinator := llssa.NewProgram(nil)
+	coordinator := llvmgen.NewProgram(nil)
 	defer coordinator.Dispose()
 	ctx := &context{
 		prog: coordinator,
 		pkgs: make(map[*packages.Package]Package),
 	}
 	retain := func(path string) *aPackage {
-		prog := llssa.NewProgram(nil)
+		prog := llvmgen.NewProgram(nil)
 		return addBackendProgramPackage(ctx, prog, path)
 	}
 
@@ -176,9 +176,9 @@ func TestReleaseSingleExecutableBackendPreservesOtherConsumers(t *testing.T) {
 		{"test DAG", ModeTest, BuildModeExe, 2, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			coordinator := llssa.NewProgram(nil)
+			coordinator := llvmgen.NewProgram(nil)
 			defer coordinator.Dispose()
-			backend := llssa.NewProgram(nil)
+			backend := llvmgen.NewProgram(nil)
 			defer backend.Dispose()
 			ctx := &context{
 				prog:      coordinator,

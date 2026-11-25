@@ -8,12 +8,12 @@ import (
 	"testing"
 
 	"github.com/goplus/gogen/packages"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
-	gossa "golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
+	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
 
-func buildGlobal(t *testing.T, pkgPath, pkgName, src, name string) (*types.Package, *gossa.Global) {
+func buildGlobal(t *testing.T, pkgPath, pkgName, src, name string) (*types.Package, *ssa.Global) {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, pkgName+".go", src, 0)
@@ -23,12 +23,12 @@ func buildGlobal(t *testing.T, pkgPath, pkgName, src, name string) (*types.Packa
 	files := []*ast.File{f}
 	pkg := types.NewPackage(pkgPath, pkgName)
 	imp := packages.NewImporter(fset)
-	mode := gossa.SanityCheckFunctions | gossa.InstantiateGenerics
+	mode := ssa.SanityCheckFunctions | ssa.InstantiateGenerics
 	ssapkg, _, err := ssautil.BuildPackage(&types.Config{Importer: imp}, fset, pkg, files, mode)
 	if err != nil {
 		t.Fatalf("BuildPackage failed: %v", err)
 	}
-	g, ok := ssapkg.Members[name].(*gossa.Global)
+	g, ok := ssapkg.Members[name].(*ssa.Global)
 	if !ok {
 		t.Fatalf("missing global %q", name)
 	}
@@ -50,11 +50,11 @@ func TestExtractTrampolineCName(t *testing.T) {
 }
 
 func TestVarNameGoLinkRuntimeAndNonRuntime(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	c := &context{prog: prog}
 
 	rtPkg, rtGlobal := buildGlobal(t, "runtime", "runtime", "package runtime\nvar G int\n", "G")
-	rtKey := llssa.FullName(rtPkg, rtGlobal.Name())
+	rtKey := llvmgen.FullName(rtPkg, rtGlobal.Name())
 	prog.SetLinkname(rtKey, "go:runtime.G")
 	name, vtyp, define := c.varName(rtPkg, rtGlobal)
 	if name != "go:runtime.G" || vtyp != goVar || !define {
@@ -62,7 +62,7 @@ func TestVarNameGoLinkRuntimeAndNonRuntime(t *testing.T) {
 	}
 
 	pkg, global := buildGlobal(t, "example.com/p", "p", "package p\nvar G int\n", "G")
-	key := llssa.FullName(pkg, global.Name())
+	key := llvmgen.FullName(pkg, global.Name())
 	prog.SetLinkname(key, "go:example.com/p.G")
 	name, vtyp, define = c.varName(pkg, global)
 	if name != "go:example.com/p.G" || vtyp != goVar || define {

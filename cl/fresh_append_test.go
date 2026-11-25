@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -28,7 +28,7 @@ func reusedConstantLoop() [][]byte { s:=make([]byte,8);var out [][]byte;for i:=0
 func freshLoop(n int) [][]byte { var out [][]byte;for i:=0;i<3;i++ {out=append(out,append([]byte(nil),make([]byte,n)...))};return out }
 func freshConstantLoop() [][]byte { var out [][]byte;for i:=0;i<3;i++ {out=append(out,append([]byte(nil),make([]byte,8)...))};return out }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "darwin", GOARCH: "arm64"},
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "386"},

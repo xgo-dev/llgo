@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/build/funcinfo"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 )
 
@@ -96,7 +96,7 @@ func TestWasmPCLNPruningScope(t *testing.T) {
 		{"emscripten", false, false},
 		{"gojs", false, false},
 	} {
-		prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: tc.provider, WasmFuncInfoEntries: tc.entries})
+		prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: tc.provider, WasmFuncInfoEntries: tc.entries})
 		ctx := &context{prog: prog, buildConf: &Config{Goarch: "wasm", BuildMode: BuildModeExe, PCLNMode: PCLNEmbedded}}
 		if got := canPruneEmbeddedPCLN(ctx); got != tc.want {
 			t.Fatalf("%s entries=%v: eligible=%v, want %v", tc.provider, tc.entries, got, tc.want)

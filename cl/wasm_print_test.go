@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestWasmPrintStringScalarArguments(t *testing.T) {
@@ -13,11 +13,11 @@ func TestWasmPrintStringScalarArguments(t *testing.T) {
 			ir := compileWithRewritesTarget(t, `package main
 func literal() { println("你好\x00", "") }
 func dynamic(s string) { print(s) }
-`, nil, &llssa.Target{GOOS: "linux", GOARCH: arch})
-			if got := strings.Contains(ir, llssa.PkgRuntime+".PrintString32"); got != (arch == "wasm") {
+`, nil, &llvmgen.Target{GOOS: "linux", GOARCH: arch})
+			if got := strings.Contains(ir, llvmgen.PkgRuntime+".PrintString32"); got != (arch == "wasm") {
 				t.Fatalf("scalar print entry present = %v for %s:\n%s", got, arch, ir)
 			}
-			if !strings.Contains(ir, llssa.PkgRuntime+`.PrintString"`) {
+			if !strings.Contains(ir, llvmgen.PkgRuntime+`.PrintString"`) {
 				t.Fatalf("dynamic strings must retain the checked entry:\n%s", ir)
 			}
 		})

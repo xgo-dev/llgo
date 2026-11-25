@@ -23,7 +23,7 @@ import (
 	"reflect"
 	"slices"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
 	"github.com/xgo-dev/llvm"
@@ -216,7 +216,7 @@ func compileEmbeddedEntry(ctx *context, plan *mainLinkPlan, ir, object string) e
 	}
 	// Match initial entry emission exactly. In particular, running Clang's IR
 	// optimizer only on the second pass would change more than metadata.
-	prog := llssa.NewProgram(&plan.entryTarget)
+	prog := llvmgen.NewProgram(&plan.entryTarget)
 	defer prog.Dispose()
 	lc := llvm.NewContext()
 	defer lc.Dispose()

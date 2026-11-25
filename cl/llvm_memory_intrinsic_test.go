@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -29,7 +29,7 @@ func Move(dst, src unsafe.Pointer, n uintptr) { moveBytes(dst, src, n, false) }
 func Fill(dst unsafe.Pointer, value byte, n uintptr) { fillBytes(dst, value, n, false) }
 func FillInline(dst unsafe.Pointer, value byte) { fillInline(dst, value, 8, false) }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "linux", GOARCH: "arm64"},
 		{GOOS: "windows", GOARCH: "386"},
@@ -106,7 +106,7 @@ func TestLLVMMemoryIntrinsicLinkErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := "package invalid\nimport \"unsafe\"\nvar _ unsafe.Pointer\n//go:linkname f " + tc.target + "\n" + tc.declaration + "\n" + tc.use
 			ssapkg, _, files := buildGoSSAPkg(t, src)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			defer func() {
 				got := fmt.Sprint(recover())

@@ -4,7 +4,7 @@ import (
 	"go/token"
 	"go/types"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -48,8 +48,8 @@ func (p *context) directFinalizer(call *ssa.CallCommon) (obj, fn *ssa.MakeInterf
 	}
 	// Native callback types and direct foreign functions do not necessarily
 	// use the two-word Go closure ABI expected by the finalizer dispatcher.
-	closure, goClosure := p.type_(fn.X.Type(), llssa.GoDecl).RawType().Underlying().(*types.Struct)
-	if !goClosure || !llssa.IsClosure(closure) {
+	closure, goClosure := p.type_(fn.X.Type(), llvmgen.GoDecl).RawType().Underlying().(*types.Struct)
+	if !goClosure || !llvmgen.IsClosure(closure) {
 		return
 	}
 	if function, direct := fn.X.(*ssa.Function); direct {
@@ -89,7 +89,7 @@ func (p *context) finalizerDataOnly(value *ssa.MakeInterface) bool {
 	return true
 }
 
-func (p *context) emitDirectFinalizer(b llssa.Builder, call *ssa.CallCommon, ds *explicitDeferStack, mayRecover bool) bool {
+func (p *context) emitDirectFinalizer(b llvmgen.Builder, call *ssa.CallCommon, ds *explicitDeferStack, mayRecover bool) bool {
 	_, fn, result, ok := p.directFinalizer(call)
 	if !ok {
 		return false
@@ -102,7 +102,7 @@ func (p *context) emitDirectFinalizer(b llssa.Builder, call *ssa.CallCommon, ds 
 	}
 	var size uint64
 	if result != nil {
-		size = p.prog.SizeOf(p.type_(result, llssa.GoDecl))
+		size = p.prog.SizeOf(p.type_(result, llvmgen.GoDecl))
 	}
 	const name = "runtime.llgoSetFinalizerPointer"
 	helper := p.pkg.FuncOf(name)
@@ -112,9 +112,9 @@ func (p *context) emitDirectFinalizer(b llssa.Builder, call *ssa.CallCommon, ds 
 			types.NewVar(token.NoPos, nil, "fn", types.Typ[types.UnsafePointer]),
 			types.NewVar(token.NoPos, nil, "size", types.Typ[types.Uintptr]),
 		), nil, false)
-		helper = p.pkg.NewFuncEx(name, sig, llssa.GoDecl, false, false)
+		helper = p.pkg.NewFuncEx(name, sig, llvmgen.GoDecl, false, false)
 	}
-	p.emitDo(b, llssa.Call, call, ds, mayRecover, helper.Expr, llssa.Builder.Call,
+	p.emitDo(b, llvmgen.Call, call, ds, mayRecover, helper.Expr, llvmgen.Builder.Call,
 		objPtr, fnPtr, p.prog.IntVal(size, p.prog.Uintptr()))
 	return true
 }

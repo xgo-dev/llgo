@@ -3,7 +3,7 @@ package cl
 import (
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -24,7 +24,7 @@ func TestGoArrayAccessAlignment(t *testing.T) {
  func ReadNestedPtr(p *N) N { return *p }
  func WriteNestedPtr(p *N, v N) { *p = v }
  `
-	for _, target := range []llssa.Target{{GOOS: "windows", GOARCH: "386"}, {GOOS: "linux", GOARCH: "386"}, {GOOS: "linux", GOARCH: "amd64"}} {
+	for _, target := range []llvmgen.Target{{GOOS: "windows", GOARCH: "386"}, {GOOS: "linux", GOARCH: "386"}, {GOOS: "linux", GOARCH: "amd64"}} {
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
 			ssaPkg, _, files := buildGoSSAPkg(t, source)
 			prog := newLLSSAProgForTarget(t, &target)
@@ -36,7 +36,7 @@ func TestGoArrayAccessAlignment(t *testing.T) {
 			defer pkg.Module().Dispose()
 			want := prog.GoWordSize()
 			for _, name := range []string{"S", "T"} {
-				typ := prog.Type(ssaPkg.Pkg.Scope().Lookup(name).Type(), llssa.GoDecl)
+				typ := prog.Type(ssaPkg.Pkg.Scope().Lookup(name).Type(), llvmgen.GoDecl)
 				if offset, alignment := prog.OffsetOf(typ, 1), prog.AlignOf(typ); offset != uint64(want) || alignment != uint64(want) {
 					t.Errorf("%s field-offset/struct-alignment = %d/%d, want %d/%d", name, offset, alignment, want, want)
 				}

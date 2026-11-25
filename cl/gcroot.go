@@ -22,13 +22,13 @@ import (
 
 	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/gcrootplan"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
 func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 	p.gcRoots = nil
-	p.gcClosureRoot = llssa.Nil
+	p.gcClosureRoot = llvmgen.Nil
 	if !p.prog.GCRootsEnabled() {
 		return
 	}
@@ -50,7 +50,7 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 		if !mayContainGCRoot(value.Type()) {
 			return false
 		}
-		typ := p.type_(value.Type(), llssa.GoDecl)
+		typ := p.type_(value.Type(), llvmgen.GoDecl)
 		return p.prog.GCRootCount(typ) != 0
 	}, p.isGCSafepoint)
 	for value := range uintptrEscapesRoots(fn) {
@@ -61,7 +61,7 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 			if !mayContainGCRoot(param.Type()) {
 				continue
 			}
-			typ := p.type_(param.Type(), llssa.GoDecl)
+			typ := p.type_(param.Type(), llvmgen.GoDecl)
 			if p.prog.GCRootCount(typ) != 0 {
 				planned[param] = struct{}{}
 			}
@@ -94,7 +94,7 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 		if _, ok := planned[value]; !ok {
 			return
 		}
-		typ := p.type_(value.Type(), llssa.GoDecl)
+		typ := p.type_(value.Type(), llvmgen.GoDecl)
 		n := p.prog.GCRootCount(typ)
 		if basicKind(value.Type()) == types.Uintptr {
 			// Only pragma-designated uintptr parameters enter planned. Keep this
@@ -123,7 +123,7 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 	}
 	allSlots := p.fn.NewGCRoots(total)
 	next := 0
-	roots := make(map[ssa.Value][]llssa.Expr, len(counts))
+	roots := make(map[ssa.Value][]llvmgen.Expr, len(counts))
 	assign := func(value ssa.Value) {
 		if n := counts[value]; n != 0 {
 			roots[value] = allSlots[next : next+n]
@@ -172,11 +172,11 @@ func mayContainGCRoot(typ types.Type) bool {
 	return false
 }
 
-func (p *context) initGCRoots(b llssa.Builder, fn *ssa.Function) {
+func (p *context) initGCRoots(b llvmgen.Builder, fn *ssa.Function) {
 	if len(p.gcRoots) == 0 && p.gcClosureRoot.IsNil() {
 		return
 	}
-	b.SetBlockEx(p.fn.Block(0), llssa.AtEnd, true)
+	b.SetBlockEx(p.fn.Block(0), llvmgen.AtEnd, true)
 	for i, param := range fn.Params {
 		if _, ok := p.gcRoots[param]; ok {
 			p.publishGCRoot(b, param, b.Param(i))
@@ -216,7 +216,7 @@ func (p *context) isGCSafepoint(instr ssa.Instruction) bool {
 	if load, ok := instr.(*ssa.UnOp); ok && load.Op == token.MUL {
 		// ABI lowering may snapshot these loads with AllocU after this root
 		// plan is built. Keep the predicate in sync with abi.ShouldSnapshotAggregateLoad.
-		size := p.prog.SizeOf(p.type_(load.Type(), llssa.GoDecl))
+		size := p.prog.SizeOf(p.type_(load.Type(), llvmgen.GoDecl))
 		ptrSize := p.prog.PointerSize()
 		switch t := load.Type().Underlying().(type) {
 		case *types.Array:
@@ -290,7 +290,7 @@ func basicKind(typ types.Type) types.BasicKind {
 	return types.Invalid
 }
 
-func (p *context) publishGCRoot(b llssa.Builder, value ssa.Value, expr llssa.Expr) {
+func (p *context) publishGCRoot(b llvmgen.Builder, value ssa.Value, expr llvmgen.Expr) {
 	slots, ok := p.gcRoots[value]
 	if !ok || expr.IsNil() {
 		return

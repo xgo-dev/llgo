@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
@@ -57,7 +57,7 @@ func TestLinkedPackageClosureUsesOnlyRootAndEffectiveDependencies(t *testing.T) 
 	base := &packages.Package{ID: "base", ExportFile: "base.a"}
 	altOnly := &packages.Package{ID: "alt-only", ExportFile: "alt.a"}
 	unrelated := &packages.Package{ID: "unrelated", ExportFile: "unrelated.a"}
-	runtimePkg := &packages.Package{ID: "runtime", PkgPath: llssa.PkgRuntime, ExportFile: "runtime.a"}
+	runtimePkg := &packages.Package{ID: "runtime", PkgPath: llvmgen.PkgRuntime, ExportFile: "runtime.a"}
 	// An alternate package prepared only for another initial must not pull its
 	// imports (or their runtime requirements and link arguments) into this link.
 	unrelated.PkgPath = "github.com/xgo-dev/llgo/runtime/internal/lib/fmt"
@@ -96,7 +96,7 @@ func TestLinkedPackageClosureUsesOnlyRootAndEffectiveDependencies(t *testing.T) 
 
 func TestLinkedPackageClosureSkipsUnbuiltRuntime(t *testing.T) {
 	root := &packages.Package{ID: "root", PkgPath: "root", ExportFile: "root.a"}
-	runtimePkg := &packages.Package{ID: llssa.PkgRuntime, PkgPath: llssa.PkgRuntime, ExportFile: "go-runtime.a"}
+	runtimePkg := &packages.Package{ID: llvmgen.PkgRuntime, PkgPath: llvmgen.PkgRuntime, ExportFile: "go-runtime.a"}
 	rootBuilt := &aPackage{Package: root, ArchiveFile: "root.a"}
 	runtimeLoaded := &aPackage{Package: runtimePkg}
 	ctx := &context{pkgs: map[*packages.Package]Package{root: rootBuilt, runtimePkg: runtimeLoaded}}

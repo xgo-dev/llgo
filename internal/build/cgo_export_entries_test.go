@@ -6,7 +6,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/filecheck"
 	"github.com/xgo-dev/llgo/internal/littest"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -56,7 +56,7 @@ func testCExportEntries(t *testing.T, fixture string, names []string) {
 		for _, mode := range []BuildMode{BuildModeExe, BuildModeCShared, BuildModeCArchive} {
 			t.Run(goos+"/"+string(mode), func(t *testing.T) {
 				ctx := &context{
-					prog: llssa.NewProgram(nil),
+					prog: llvmgen.NewProgram(nil),
 					buildConf: &Config{
 						BuildMode: mode, Goos: goos, Goarch: runtime.GOARCH,
 					},
@@ -69,7 +69,7 @@ func testCExportEntries(t *testing.T, fixture string, names []string) {
 				if len(exports) != len(names) {
 					t.Fatalf("got %d C exports, want %d", len(exports), len(names))
 				}
-				entry := genMainModule(ctx, llssa.PkgRuntime, pkg.Package, &genConfig{
+				entry := genMainModule(ctx, llvmgen.PkgRuntime, pkg.Package, &genConfig{
 					rtInit: true, cExports: exports,
 				}).LPkg.Module()
 				if err := llvm.VerifyModule(entry, llvm.ReturnStatusAction); err != nil {

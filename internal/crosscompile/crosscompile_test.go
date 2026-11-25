@@ -14,7 +14,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
-	"github.com/xgo-dev/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/target"
 )
 
 const (
@@ -1261,7 +1261,7 @@ func TestOptimizationFlagPlacement(t *testing.T) {
 	if !slices.Contains(export.CCFLAGS, "-O3") {
 		t.Fatalf("host CCFLAGS = %v, want -O3", export.CCFLAGS)
 	}
-	wantTarget := llvm.GetTargetTriple(runtime.GOOS, runtime.GOARCH)
+	wantTarget := target.Triple(runtime.GOOS, runtime.GOARCH)
 	if export.Toolchain.TargetTriple != "" {
 		wantTarget = export.Toolchain.TargetTriple
 	}

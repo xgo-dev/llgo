@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl/cltest"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 func TestRecoverUsesActivationToken(t *testing.T) {
@@ -83,7 +83,7 @@ func use(typ reflect.Type) {
 	_ = call(method, typ)
 }
 `
-	ir := cltest.CompileIREx(t, src, "foo.go", false, func(prog llssa.Program) {
+	ir := cltest.CompileIREx(t, src, "foo.go", false, func(prog llvmgen.Program) {
 		prog.EnableGoGlobalDCE(true)
 	})
 	start := strings.Index(ir, `define %reflect.Method @"foo.Type.reflect.Method$thunk"`)

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/abi"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -17,7 +17,7 @@ type Converted Outer
 func Read(v *Outer) uint64 { return Converted(*v).Inner.Tag }
 `
 	pkg, _, files := buildGoSSAPkg(t, src)
-	for _, target := range []*llssa.Target{
+	for _, target := range []*llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"},
 	} {
@@ -52,7 +52,7 @@ func result() Outer
 func Read() uint64 { return result().Mid.Item.N }
 `
 	pkg, _, files := buildGoSSAPkg(t, src)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "windows", GOARCH: "386"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "windows", GOARCH: "386"})
 	defer prog.Dispose()
 	lp, err := NewPackage(prog, pkg, files)
 	if err != nil {

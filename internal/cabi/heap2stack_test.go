@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/heap2stack"
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -39,13 +39,13 @@ define i64 @byvalue(%Large %v) noinline memory(none) {
 define i64 @scalar(i64 %v) memory(none) { ret i64 %v }
 define { i64 } @registers({ i64 } %v) memory(none) { ret { i64 } %v }
 `
-	for _, target := range []ssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "darwin", GOARCH: "arm64"},
 		{GOOS: "windows", GOARCH: "amd64"},
 	} {
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
-			prog := ssa.NewProgram(&target)
+			prog := llvmgen.NewProgram(&target)
 			defer prog.Dispose()
 			ctx := llvm.NewContext()
 			defer ctx.Dispose()

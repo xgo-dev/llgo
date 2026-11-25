@@ -19,7 +19,7 @@ package cl
 import (
 	"strings"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/safepointplan"
 	"golang.org/x/tools/go/ssa"
 )
@@ -61,7 +61,7 @@ func excludeSafepointPackage(path string) bool {
 	if path == "runtime" || path == "sync/atomic" || strings.HasPrefix(path, "internal/runtime/") {
 		return true
 	}
-	runtimeModule := strings.TrimSuffix(llssa.PkgRuntime, "/internal/runtime")
+	runtimeModule := strings.TrimSuffix(llvmgen.PkgRuntime, "/internal/runtime")
 	return path == runtimeModule || strings.HasPrefix(path, runtimeModule+"/")
 }
 
@@ -70,6 +70,6 @@ func (p *context) isCooperativeSafepoint(instr ssa.Instruction) bool {
 	return ok
 }
 
-func (p *context) emitCooperativeSafepoint(b llssa.Builder) {
+func (p *context) emitCooperativeSafepoint(b llvmgen.Builder) {
 	b.Call(p.pkg.RuntimeFunc("CooperativeSafepoint"))
 }

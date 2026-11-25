@@ -14,7 +14,7 @@ import (
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa/ssautil"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -51,7 +51,7 @@ func phi(f F, other any, choose bool) F {
 }
 func separate(f F, other any) F { return mixed(f, other) }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "darwin", GOARCH: "arm64"},
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "windows", GOARCH: "386"},
@@ -102,7 +102,7 @@ func TestCompileInterfaceBoxPlacement(t *testing.T) {
 	}
 }
 
-func compileInterfaceBoxIR(t *testing.T, src string, mode ssa.BuilderMode, target *llssa.Target, roots bool) string {
+func compileInterfaceBoxIR(t *testing.T, src string, mode ssa.BuilderMode, target *llvmgen.Target, roots bool) string {
 	t.Helper()
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "ifacebox.go", src, parser.ParseComments)
@@ -132,7 +132,7 @@ func compileInterfaceBoxIR(t *testing.T, src string, mode ssa.BuilderMode, targe
 }
 
 func TestInterfaceBoxExplicitRoots(t *testing.T) {
-	ir := compileInterfaceBoxIR(t, interfaceBoxDecl+`func box(f F) F { return extract(f) }`, ssa.InstantiateGenerics, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}, true)
+	ir := compileInterfaceBoxIR(t, interfaceBoxDecl+`func box(f F) F { return extract(f) }`, ssa.InstantiateGenerics, &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"}, true)
 	body := llvmFunction(t, ir, "ifacebox.box")
 	if strings.Contains(body, "runtime.AllocU") || !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") {
 		t.Fatalf("borrowed box must use typed stack roots:\n%s", body)

@@ -11,7 +11,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -95,7 +95,7 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 		{name: "alternate assembly", arch: crosscompile.WasmProfileW32, nativeAsm: "alternate"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"})
 			defer prog.Dispose()
 			file, err := parser.ParseFile(token.NewFileSet(), "main.go",
 				"package main\n"+test.decl+"func main() {}", parser.ParseComments)
@@ -145,7 +145,7 @@ func TestWasiSizePruningEligibility(t *testing.T) {
 func TestWasiSizePruningRetainsEntryAndAssemblyRoots(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32", WasmProvider: "wasi"})
 	defer prog.Dispose()
 	installLocalContextTestRuntime(prog)
 	src := prog.NewPackage("example.com/dep", "dep")

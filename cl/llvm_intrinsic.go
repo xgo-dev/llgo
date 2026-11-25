@@ -7,7 +7,7 @@ import (
 	"go/types"
 
 	"github.com/xgo-dev/llgo/cl/ssawrap"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -18,7 +18,7 @@ func (p *context) llvmIntrinsicError(pos token.Pos, fn *ssa.Function, err error)
 	panic(fmt.Errorf("%s: %s: %w", p.fset.Position(pos), fn, err))
 }
 
-func (p *context) resolveLLVMIntrinsic(fn *ssa.Function, name string) *llssa.LLVMIntrinsic {
+func (p *context) resolveLLVMIntrinsic(fn *ssa.Function, name string) *llvmgen.LLVMIntrinsic {
 	if d := p.llvmIntrinsics[fn]; d != nil {
 		return d
 	}
@@ -34,7 +34,7 @@ func (p *context) resolveLLVMIntrinsic(fn *ssa.Function, name string) *llssa.LLV
 		p.llvmIntrinsicError(fn.Pos(), fn, err)
 	}
 	if p.llvmIntrinsics == nil {
-		p.llvmIntrinsics = make(map[*ssa.Function]*llssa.LLVMIntrinsic)
+		p.llvmIntrinsics = make(map[*ssa.Function]*llvmgen.LLVMIntrinsic)
 	}
 	p.llvmIntrinsics[fn] = d
 	return d
@@ -42,20 +42,20 @@ func (p *context) resolveLLVMIntrinsic(fn *ssa.Function, name string) *llssa.LLV
 
 func (p *context) llvmIntrinsicHasEnv(fn *ssa.Function) bool {
 	if decl, ok := fn.Syntax().(*ast.FuncDecl); ok && fn.Pkg != nil {
-		name := declarationFuncName(llssa.PathOf(fn.Pkg.Pkg), decl, fn.Object(), fn.Signature.Recv())
+		name := declarationFuncName(llvmgen.PathOf(fn.Pkg.Pkg), decl, fn.Object(), fn.Signature.Recv())
 		return p.prog.HasClosureEnvDirective(p.goProg.Fset, name, decl.Pos())
 	}
 	return false
 }
 
-func (p *context) callLLVMIntrinsic(b llssa.Builder, act llssa.DoAction, fn *ssa.Function, call *ssa.CallCommon) llssa.Expr {
-	if act != llssa.Call {
+func (p *context) callLLVMIntrinsic(b llvmgen.Builder, act llvmgen.DoAction, fn *ssa.Function, call *ssa.CallCommon) llvmgen.Expr {
+	if act != llvmgen.Call {
 		p.llvmIntrinsicError(call.Pos(), fn, fmt.Errorf("LLVM intrinsic requires a direct call; use a Go wrapper for go or defer"))
 	}
 	_, name, _ := p.funcName(fn)
 	d := p.resolveLLVMIntrinsic(fn, name)
 	kind := fnNormal
-	if llssa.HasNameValist(fn.Signature) {
+	if llvmgen.HasNameValist(fn.Signature) {
 		kind = fnHasVArg
 		// An intrinsic has no C entry to which an unknown raw ellipsis can
 		// be forwarded. Every LLVM call operand must be known at this point.

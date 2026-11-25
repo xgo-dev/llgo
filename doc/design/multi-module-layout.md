@@ -89,9 +89,9 @@ This patch strictly models standard Go types and does **not** attempt to expose
 LLGo-only extension attributes (`//llgo:cdecl`, `//llgo:stdcall`, `NativePtr`,
 `SIMDVec`, etc.), since `go/types` has no fields for those extensions. Full
 LLGo physical/ABI extensions live in `github.com/xgo-dev/llgo/types`, whose
-`Sizes.GoSizes(nil)` serves as the pure-Go reference implementation for standard
-Go layout rules (while `Sizes.GoSizes(lookup)` supplies directive-aware layout
-to the compiler frontend's `go/types.Config.Sizes`).
+`Context.GoSizes()` serves as the pure-Go reference implementation for standard
+Go layout rules (and supplies directive-aware layout to the compiler frontend's
+`go/types.Config.Sizes`).
 
 ## Incremental Cache Sidecar Contract (PR 5–6 Prerequisite)
 

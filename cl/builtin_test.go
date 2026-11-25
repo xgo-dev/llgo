@@ -25,7 +25,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
 )
@@ -96,7 +96,7 @@ func stop() {
 `)
 	call := findStaticCall(t, ssaPkg.Func("stop"), "unreachable")
 	ctx := &context{
-		prog:   llssa.NewProgram(nil),
+		prog:   llvmgen.NewProgram(nil),
 		goTyps: ssaPkg.Pkg,
 		loaded: make(map[*types.Package]*pkgInfo),
 	}
@@ -136,20 +136,20 @@ func stop() {
 }
 
 func TestIsLargeNonPointerValue(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	ctx := &context{prog: prog}
 
-	largeArray := prog.Type(types.NewArray(types.Typ[types.Byte], int64(maxDirectDerefSize)+1), llssa.GoDecl)
+	largeArray := prog.Type(types.NewArray(types.Typ[types.Byte], int64(maxDirectDerefSize)+1), llvmgen.GoDecl)
 	if !ctx.isLargeNonPointerValue(largeArray) {
 		t.Fatal("large array should require explicit nil-deref guard")
 	}
 
-	smallArray := prog.Type(types.NewArray(types.Typ[types.Byte], 16), llssa.GoDecl)
+	smallArray := prog.Type(types.NewArray(types.Typ[types.Byte], 16), llvmgen.GoDecl)
 	if ctx.isLargeNonPointerValue(smallArray) {
 		t.Fatal("small array should not require explicit nil-deref guard")
 	}
 
-	largePointer := prog.Type(types.NewPointer(types.NewArray(types.Typ[types.Byte], int64(maxDirectDerefSize)+1)), llssa.GoDecl)
+	largePointer := prog.Type(types.NewPointer(types.NewArray(types.Typ[types.Byte], int64(maxDirectDerefSize)+1)), llvmgen.GoDecl)
 	if ctx.isLargeNonPointerValue(largePointer) {
 		t.Fatal("pointer values should not be classified as large direct values")
 	}
@@ -467,10 +467,10 @@ func TestCollectMethodNilDerefChecksSkipsDynamicDeferGo(t *testing.T) {
 }
 
 func TestToCallConv(t *testing.T) {
-	for name, want := range map[string]llssa.CallConv{
-		"":        llssa.GoDecl,
-		"C":       llssa.CDecl,
-		"stdcall": llssa.Stdcall,
+	for name, want := range map[string]llvmgen.CallConv{
+		"":        llvmgen.GoDecl,
+		"C":       llvmgen.CDecl,
+		"stdcall": llvmgen.Stdcall,
 	} {
 		if got := toCallConv(name); got != want {
 			t.Fatalf("toCallConv(%q) = %v, want %v", name, got, want)
@@ -701,7 +701,7 @@ func TestErrCompileInstrOrValue(t *testing.T) {
 		}
 	}()
 	ctx := &context{
-		bvals: make(map[ssa.Value]llssa.Expr),
+		bvals: make(map[ssa.Value]llvmgen.Expr),
 	}
 	ctx.compileInstrOrValue(nil, &ssa.Call{}, true)
 }
@@ -889,7 +889,7 @@ func TestErrVarOf(t *testing.T) {
 			t.Fatal("varOf: no error?")
 		}
 	}()
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	pkg := prog.NewPackage("foo", "foo")
 	pkgTypes := types.NewPackage("foo", "foo")
 	ctx := &context{
@@ -950,7 +950,7 @@ func TestContextResolveLinkname(t *testing.T) {
 					}
 				}()
 			}
-			ctx := &context{prog: llssa.NewProgram(nil)}
+			ctx := &context{prog: llvmgen.NewProgram(nil)}
 			for k, v := range tt.link {
 				ctx.prog.SetLinkname(k, v)
 			}
@@ -1037,7 +1037,7 @@ func TestHandleExportDiffName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Setup context
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			pkg := prog.NewPackage("test", "test")
 			ctx := &context{
 				prog:    prog,
@@ -1125,7 +1125,7 @@ func TestInitLinknameByDocExportDiffNames(t *testing.T) {
 			}
 
 			// Setup context
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			pkg := prog.NewPackage("test", "test")
 			ctx := &context{
 				prog:    prog,
@@ -1183,7 +1183,7 @@ func TestInitLinkExportDiffNames(t *testing.T) {
 				}()
 			}
 
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			pkg := prog.NewPackage("test", "test")
 			ctx := &context{
 				prog:    prog,

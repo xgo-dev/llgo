@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/abi"
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
-	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -34,16 +34,16 @@ func targetArch(llvmTarget string) string {
 // MinGW uses that ABI too; its GNU environment selects a toolchain and CRT,
 // not the SysV calling convention. MSYS and Cygwin are POSIX-emulation ABIs
 // and are deliberately excluded.
-func usesWindowsCABI(target *ssa.Target, llvmTarget string) bool {
+func usesWindowsCABI(tgt *llvmgen.Target, llvmTarget string) bool {
 	if llvmTarget == "" || !strings.Contains(llvmTarget, "-") {
-		return target != nil && target.GOOS == "windows"
+		return tgt != nil && tgt.GOOS == "windows"
 	}
-	return intllvm.IsWindowsTarget(llvmTarget)
+	return target.IsWindowsTriple(llvmTarget)
 }
 
-func NewTransformer(prog ssa.Program, llvmTarget string, targetAbi string, optimize bool) *Transformer {
-	target := prog.Target()
-	arch := target.GOARCH
+func NewTransformer(prog llvmgen.Program, llvmTarget string, targetAbi string, optimize bool) *Transformer {
+	tgt := prog.Target()
+	arch := tgt.GOARCH
 	if llvmTarget != "" {
 		arch = targetArch(llvmTarget)
 	}
@@ -53,7 +53,7 @@ func NewTransformer(prog ssa.Program, llvmTarget string, targetAbi string, optim
 		arch:     arch,
 		optimize: optimize,
 	}
-	if usesWindowsCABI(target, llvmTarget) {
+	if usesWindowsCABI(tgt, llvmTarget) {
 		switch arch {
 		case "amd64":
 			tr.sys = &TypeInfoWindowsAmd64{tr}
@@ -76,9 +76,9 @@ func NewTransformer(prog ssa.Program, llvmTarget string, targetAbi string, optim
 	case "arm64":
 		triple := llvmTarget
 		if triple == "" || !strings.Contains(triple, "-") {
-			triple = intllvm.GetTargetTriple(target.GOOS, arch)
+			triple = target.Triple(tgt.GOOS, arch)
 		}
-		tr.sys = &TypeInfoArm64{Transformer: tr, hfaStackAlign: !intllvm.IsDarwinTarget(triple)}
+		tr.sys = &TypeInfoArm64{Transformer: tr, hfaStackAlign: !target.IsDarwinTriple(triple)}
 	case "arm":
 		tr.sys = &TypeInfoArm{tr}
 	case "wasm":
@@ -92,7 +92,7 @@ func NewTransformer(prog ssa.Program, llvmTarget string, targetAbi string, optim
 }
 
 type Transformer struct {
-	prog     ssa.Program
+	prog     llvmgen.Program
 	td       llvm.TargetData
 	arch     string
 	sys      TypeInfoSys

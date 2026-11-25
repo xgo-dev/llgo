@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/cabi"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -23,8 +23,8 @@ func TestHeapToStackFailureStopsABILowering(t *testing.T) {
 	llvm.InitializeAllTargets()
 	llvm.InitializeAllTargetMCs()
 	llvm.InitializeAllTargetInfos()
-	target := &llssa.Target{GOOS: "linux", GOARCH: "amd64"}
-	prog := llssa.NewProgram(target)
+	target := &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"}
+	prog := llvmgen.NewProgram(target)
 	defer prog.Dispose()
 	const pkgPath = "example.com/allocfailure"
 	lpkg := prog.NewPackage("allocfailure", pkgPath)

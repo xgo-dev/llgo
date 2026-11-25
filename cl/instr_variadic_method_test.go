@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/cabi"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
@@ -32,7 +32,7 @@ func (t *T) C(__llgo_va_list ...any) int32 { return 0 }
 		fn.Synthetic = "wrapper for " + name
 		wrappers[name] = fn
 	}
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	p := &context{prog: prog}
 	checked := make(map[*ssa.Function]error)
@@ -62,7 +62,7 @@ func TestCVariadicMethodWrapperForwarding(t *testing.T) {
 		t.Fatal(err)
 	}
 	ssaPkg, _, files := buildGoSSAPkg(t, string(source))
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "linux", GOARCH: "arm64"},
 		{GOOS: "linux", GOARCH: "386"},
@@ -119,7 +119,7 @@ type Wrapper struct { *T }
 func use(w *Wrapper) { w.Check(7, 1.5, new(int8), int32(42)) }
 `
 	ssaPkg, _, files := buildGoSSAPkg(t, source)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64", OptLevel: optlevel.O0})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64", OptLevel: optlevel.O0})
 	defer prog.Dispose()
 	pkg, err := NewPackage(prog, ssaPkg, files)
 	if err != nil {
@@ -144,7 +144,7 @@ type Wrapper struct { T }
 func use(w *Wrapper) int32 { return w.Check(int32(42)) }
 `
 	ssaPkg, _, files := buildGoSSAPkg(t, source)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	pkg, err := NewPackage(prog, ssaPkg, files)
 	if err != nil {
@@ -189,7 +189,7 @@ func TestCVariadicIncompatibleSignatureIR(t *testing.T) {
 				"//llgo:link (*T).Check C.check\n" + tc.declaration +
 				"\ntype Wrapper struct { *T }\n" + tc.use
 			ssaPkg, _, files := buildGoSSAPkg(t, source)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			pkg, err := NewPackage(prog, ssaPkg, files)
 			if err != nil {
@@ -227,7 +227,7 @@ func TestCVariadicUnrelatedInterfaces(t *testing.T) {
 		{"global", "var value Stringer = T(7)"},
 		{"generic", "func expose[V any](v V) any { return v }; func use(v T) any { return expose(v) }"},
 	} {
-		for _, target := range []llssa.Target{
+		for _, target := range []llvmgen.Target{
 			{GOOS: "linux", GOARCH: "amd64"},
 			{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"},
 		} {
@@ -295,7 +295,7 @@ func TestCVariadicUnsupportedWrapperUses(t *testing.T) {
 				source = strings.Replace(source, "//llgo:link T.Check", "//llgo:link (*T).Check", 1)
 			}
 			ssaPkg, _, files := buildGoSSAPkg(t, source)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			_, err := NewPackage(prog, ssaPkg, files)
 			if err == nil {
@@ -319,7 +319,7 @@ type Wrapper struct { *T }
 type Checker interface { Check(__llgo_va_list ...any) int32 }
 func use(w *Wrapper) Checker { return w }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"},
 		{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64"},
 		{GOOS: "linux", GOARCH: "amd64", Target: "custom_native"},
@@ -352,7 +352,7 @@ func (T) Check(__llgo_va_list ...any) int32 { return 0 }
 type Wrapper struct { T }
 func use(w *Wrapper) int32 { return w.Check(int32(100), int32(200)) }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"},
 		{GOOS: "linux", GOARCH: "amd64", Target: "custom_native"},

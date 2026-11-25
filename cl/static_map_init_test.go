@@ -5,7 +5,7 @@ import (
 	"go/types"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"golang.org/x/tools/go/ssa"
 )
@@ -214,7 +214,7 @@ func Use() int { return Keep["a"][0] + Skip["a"][0] + NotMap + NotSlice["a"] + R
 `)
 	prog := ssatest.NewProgram(t, nil)
 	prog.SetLinkname("foo.Linked", "bar.Linked")
-	prog.SetLocalityInfo(llssa.FullName(pkg.Pkg, "Keep"), llssa.LocalityInfo{Locality: llssa.ThreadLocal})
+	prog.SetLocalityInfo(llvmgen.FullName(pkg.Pkg, "Keep"), llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
 	ctx := &context{
 		prog:     prog,
 		pkg:      prog.NewPackage("foo", "foo"),
@@ -236,7 +236,7 @@ func Use() int { return Keep["a"][0] + Skip["a"][0] + NotMap + NotSlice["a"] + R
 		skips:    ctx.skips,
 		rewrites: ctx.rewrites,
 	}
-	prog.SetLocalityInfo(llssa.FullName(pkg.Pkg, "Keep"), llssa.LocalityInfo{})
+	prog.SetLocalityInfo(llvmgen.FullName(pkg.Pkg, "Keep"), llvmgen.LocalityInfo{})
 	keepOnly := withoutLocality.staticMapSliceGlobals(pkg)
 	if _, ok := keepOnly[pkg.Members["Keep"].(*ssa.Global)]; !ok || len(keepOnly) != 1 {
 		names := make([]string, 0, len(keepOnly))
@@ -478,7 +478,7 @@ var M = map[string][]int{"a": {1}}
 func Use() int { return M["a"][0] }
 `)
 	prog := ssatest.NewProgram(t, nil)
-	prog.SetLinkname(llssa.FullName(pkg.Pkg, "M"), "bar.M")
+	prog.SetLinkname(llvmgen.FullName(pkg.Pkg, "M"), "bar.M")
 	ctx := &context{prog: prog, pkg: prog.NewPackage("foo", "foo")}
 	ctx.collectStaticMapInits(pkg)
 	if ctx.staticMapSliceValues != nil {

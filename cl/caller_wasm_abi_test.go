@@ -5,19 +5,19 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
 func TestWasmCallerLocationScalarABI(t *testing.T) {
 	for _, test := range []struct {
 		name   string
-		target llssa.Target
+		target llvmgen.Target
 	}{
-		{"GJS", llssa.Target{GOOS: "js", GOARCH: "wasm"}},
-		{"GWASI", llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}},
-		{"EC64", llssa.Target{GOOS: "js", GOARCH: "wasm", Target: "emscripten-memory64", LLVMTarget: "wasm64-unknown-emscripten"}},
-		{"native", llssa.Target{GOOS: "linux", GOARCH: "amd64"}},
+		{"GJS", llvmgen.Target{GOOS: "js", GOARCH: "wasm"}},
+		{"GWASI", llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"}},
+		{"EC64", llvmgen.Target{GOOS: "js", GOARCH: "wasm", Target: "emscripten-memory64", LLVMTarget: "wasm64-unknown-emscripten"}},
+		{"native", llvmgen.Target{GOOS: "linux", GOARCH: "amd64"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			prog := newLLSSAProgForTarget(t, &test.target)
@@ -25,7 +25,7 @@ func TestWasmCallerLocationScalarABI(t *testing.T) {
 				prog.TypeSizes(types.SizesFor("gc", "amd64"))
 			}
 			pkg := prog.NewPackage("foo", "example.com/foo")
-			fn := pkg.NewFunc("example.com/foo.f", llssa.NoArgsNoRet, llssa.GoDecl)
+			fn := pkg.NewFunc("example.com/foo.f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			b := fn.MakeBody(1)
 			ctx := &context{prog: prog, pkg: pkg, fn: fn}
 			for _, name := range []string{"PushCallerLocationFrame", "RecordCallerLocation", "RecordPanicLocation"} {
@@ -38,7 +38,7 @@ func TestWasmCallerLocationScalarABI(t *testing.T) {
 			}
 			ir := pkg.Module().String()
 			for _, name := range []string{"PushCallerLocationFrame", "RecordCallerLocation", "RecordPanicLocation"} {
-				fullName := llssa.PkgRuntime + "." + name
+				fullName := llvmgen.PkgRuntime + "." + name
 				if test.target.GOARCH == "wasm" {
 					if !pkg.Module().NamedFunction(fullName).IsNil() {
 						t.Fatalf("Wasm still calls aggregate-string helper %s:\n%s", name, ir)

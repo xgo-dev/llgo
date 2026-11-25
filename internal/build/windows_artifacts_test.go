@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 )
@@ -211,7 +211,7 @@ func testMSVCConsumesWindowsDLL(t *testing.T, cl, link string) {
 int answer_from_llgo_dll(void) { return 42; }
 `)
 	dll := filepath.Join(dir, "llgo-output.dll")
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	lpkg := prog.NewPackage("example.com/msvcfixture", "example.com/msvcfixture")
 	lpkg.SetExport("example.com/msvcfixture.answer", "answer_from_llgo_dll")
@@ -302,7 +302,7 @@ int DllMainCRTStartup(void *module, unsigned reason, void *reserved) { return 1;
 #endif
 `)
 	dll := filepath.Join(dir, "native-shared.dll")
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	lpkg := prog.NewPackage("example.com/windowsfixture", "example.com/windowsfixture")
 	lpkg.SetExport("example.com/windowsfixture.answer", "answer_from_dll")

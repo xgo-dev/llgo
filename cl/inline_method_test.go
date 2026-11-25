@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/abi"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"github.com/xgo-dev/llvm"
-	gossa "golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa"
 )
 
 func TestCrossPackageInlineMethods(t *testing.T) {
@@ -33,7 +33,7 @@ func Value(b dep.Box) uint64 { return b.Value() }
 func Read(b *dep.Box) uint64 { return b.Read() }
 func Address(b *dep.Box) *uint64 { return b.Address() }
 `)
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "linux", GOARCH: "arm64"},
 		{GOOS: "darwin", GOARCH: "arm64"},
@@ -46,7 +46,7 @@ func Address(b *dep.Box) *uint64 { return b.Address() }
 				prog := newLLSSAProgForTarget(t, &target)
 				defer prog.Dispose()
 				tracking := NewCallerTracking()
-				tracking.Precompute([]*gossa.Package{dep, root})
+				tracking.Precompute([]*ssa.Package{dep, root})
 				owner, _, err := NewPackageExWithEmbed(prog, tracking, nil, nil, dep, nil, nil)
 				if err != nil {
 					t.Fatal(err)
@@ -132,7 +132,7 @@ type Outer struct { T }
 	}
 	for _, block := range pkg.Func("Use").Blocks {
 		for _, instr := range block.Instrs {
-			if call, ok := instr.(*gossa.Call); ok && facts.cost(call.Call.StaticCallee()) <= inlineBodyBudget {
+			if call, ok := instr.(*ssa.Call); ok && facts.cost(call.Call.StaticCallee()) <= inlineBodyBudget {
 				t.Fatal("generic method instance accepted")
 			}
 		}
@@ -153,10 +153,10 @@ func (T) Caller() uintptr { pc, _, _, _ := runtime.Caller(0); return pc }
 import "example.com/dep"
 func Caller(x dep.T) uintptr { return x.Caller() }
 `)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	tracking := NewCallerTracking()
-	tracking.Precompute([]*gossa.Package{dep, root})
+	tracking.Precompute([]*ssa.Package{dep, root})
 	pkg, _, err := NewPackageExWithEmbed(prog, tracking, nil, nil, root, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func Caller(x dep.T) uintptr { return x.Caller() }
 	}
 }
 
-func buildInlinePatch(t *testing.T, original, replacement, caller string) (*gossa.Package, *gossa.Package, Patch) {
+func buildInlinePatch(t *testing.T, original, replacement, caller string) (*ssa.Package, *ssa.Package, Patch) {
 	t.Helper()
 	dep, root := buildCallerFrameSSAProgram(t, "example.com/dep", original, "example.com/root", caller)
 	fset := dep.Prog.Fset
@@ -225,10 +225,10 @@ func Other() int64 { return dep.U(1).Value() }
 				// members still carry the objects registered with the program.
 				dep.Pkg, patch.Alt.Pkg = patch.Types, patch.Types
 			}
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			tracking := NewCallerTracking()
-			tracking.Precompute([]*gossa.Package{dep, patch.Alt, root})
+			tracking.Precompute([]*ssa.Package{dep, patch.Alt, root})
 			pkg, _, err := NewPackageExWithEmbed(prog, tracking, Patches{"example.com/dep": patch}, nil, root, nil, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -270,7 +270,7 @@ func Value(t dep.T) int64 { return t.Value() }
 func Pointer(t *dep.T) int64 { return t.Pointer() }
 `)
 	typepatch.Merge(patch.Types, dep.Pkg, nil, false)
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	pkg, _, err := NewPackageEx(prog, Patches{dep.Pkg.Path(): patch}, nil, root, nil)
 	if err != nil {
@@ -335,7 +335,7 @@ func TestCrossPackageInlinePatchedMethodGuards(t *testing.T) {
 				typepatch.Merge(patch.Types, dep.Pkg, nil, false)
 			}
 			patch.Alt.Pkg = patch.Types
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
 			pkg := prog.NewPackage("root", "example.com/root")
 			defer pkg.Module().Dispose()

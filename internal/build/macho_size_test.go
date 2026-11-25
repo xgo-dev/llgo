@@ -27,7 +27,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -106,7 +106,7 @@ func TestHasDarwinExportControl(t *testing.T) {
 
 func TestDarwinDWARFGlobalVisibilityPlan(t *testing.T) {
 	t.Setenv("LDFLAGS", "")
-	prog := llssa.NewProgram(&llssa.Target{GOOS: "darwin", GOARCH: "arm64"})
+	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "darwin", GOARCH: "arm64"})
 	defer prog.Dispose()
 	prog.EnableFuncInfoSites(true)
 	src := prog.NewPackage("example.com/p", "example.com/p")
@@ -185,7 +185,7 @@ func TestPlanDarwinSizeSymbolsHonorsEnvironmentExportControl(t *testing.T) {
 }
 
 func TestMainPackageHasExports(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	runtimePkg := prog.NewPackage("runtime", "runtime")
 	runtimePkg.SetExport("runtime.callback", "callback")

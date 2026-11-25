@@ -6,15 +6,15 @@ import (
 	"go/types"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
 func TestReflectTypeMethodCheckRecordsDemands(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	pkg := prog.NewPackageEx("pkg", "pkg", true)
-	fn := pkg.NewFunc("pkg.caller", types.NewSignatureType(nil, nil, nil, nil, nil, false), llssa.GoDecl)
+	fn := pkg.NewFunc("pkg.caller", types.NewSignatureType(nil, nil, nil, nil, nil, false), llvmgen.GoDecl)
 	ctx := &context{pkg: pkg, fn: fn}
 
 	reflectPkg := types.NewPackage("reflect", "reflect")
@@ -30,7 +30,7 @@ func TestReflectTypeMethodCheckRecordsDemands(t *testing.T) {
 	check := ctx.reflectTypeMethodCheck(&ssa.CallCommon{
 		Value: ssa.NewConst(constant.MakeInt64(0), types.Typ[types.Int]),
 	}, method("Method"))
-	if check != (llssa.ReflectMethodCheck{}) {
+	if check != (llvmgen.ReflectMethodCheck{}) {
 		t.Fatalf("non-reflect receiver check = %+v", check)
 	}
 
@@ -38,16 +38,16 @@ func TestReflectTypeMethodCheckRecordsDemands(t *testing.T) {
 	otherMethod := types.NewFunc(token.NoPos, otherPkg, "Method",
 		types.NewSignatureType(nil, nil, nil, nil, nil, false))
 	check = ctx.reflectTypeMethodCheck(&ssa.CallCommon{Value: recv}, otherMethod)
-	if check != (llssa.ReflectMethodCheck{}) {
+	if check != (llvmgen.ReflectMethodCheck{}) {
 		t.Fatalf("non-reflect method check = %+v", check)
 	}
 
 	check = ctx.reflectTypeMethodCheck(&ssa.CallCommon{Value: recv}, method("Method"))
-	if check != (llssa.ReflectMethodCheck{}) {
+	if check != (llvmgen.ReflectMethodCheck{}) {
 		t.Fatalf("Method without index check = %+v", check)
 	}
 	check = ctx.reflectTypeMethodCheck(&ssa.CallCommon{Value: recv}, method("MethodByName"))
-	if check != (llssa.ReflectMethodCheck{}) {
+	if check != (llvmgen.ReflectMethodCheck{}) {
 		t.Fatalf("MethodByName without name check = %+v", check)
 	}
 
@@ -55,7 +55,7 @@ func TestReflectTypeMethodCheckRecordsDemands(t *testing.T) {
 		Value: recv,
 		Args:  []ssa.Value{ssa.NewConst(constant.MakeInt64(0), types.Typ[types.Int])},
 	}, method("Method"))
-	if check.Kind != llssa.ReflectTypeMethodByIndex {
+	if check.Kind != llvmgen.ReflectTypeMethodByIndex {
 		t.Fatalf("constant Method check = %+v", check)
 	}
 
@@ -63,7 +63,7 @@ func TestReflectTypeMethodCheckRecordsDemands(t *testing.T) {
 		Value: recv,
 		Args:  []ssa.Value{&ssa.Parameter{}},
 	}, method("Method"))
-	if check.Kind != llssa.ReflectTypeMethodDynamic {
+	if check.Kind != llvmgen.ReflectTypeMethodDynamic {
 		t.Fatalf("dynamic Method check = %+v", check)
 	}
 
@@ -71,7 +71,7 @@ func TestReflectTypeMethodCheckRecordsDemands(t *testing.T) {
 		Value: recv,
 		Args:  []ssa.Value{ssa.NewConst(constant.MakeString("Keep"), types.Typ[types.String])},
 	}, method("MethodByName"))
-	if check.Kind != llssa.ReflectTypeMethodByName || check.Name != "Keep" {
+	if check.Kind != llvmgen.ReflectTypeMethodByName || check.Name != "Keep" {
 		t.Fatalf("constant MethodByName check = %+v", check)
 	}
 
@@ -79,7 +79,7 @@ func TestReflectTypeMethodCheckRecordsDemands(t *testing.T) {
 		Value: recv,
 		Args:  []ssa.Value{&ssa.Parameter{}},
 	}, method("MethodByName"))
-	if check.Kind != llssa.ReflectTypeMethodDynamic|llssa.ReflectTypeMethodByName || check.Name != "" {
+	if check.Kind != llvmgen.ReflectTypeMethodDynamic|llvmgen.ReflectTypeMethodByName || check.Name != "" {
 		t.Fatalf("dynamic MethodByName check = %+v", check)
 	}
 
@@ -121,10 +121,10 @@ func TestReflectValueMethodInvokeDemands(t *testing.T) {
 		{"no argument", "Method", value, nil, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			defer prog.Dispose()
 			pkg := prog.NewPackageEx("pkg", "pkg", true)
-			fn := pkg.NewFunc("pkg.caller", types.NewSignatureType(nil, nil, nil, nil, nil, false), llssa.GoDecl)
+			fn := pkg.NewFunc("pkg.caller", types.NewSignatureType(nil, nil, nil, nil, nil, false), llvmgen.GoDecl)
 			ctx := &context{pkg: pkg, fn: fn}
 			result := types.NewTuple(types.NewVar(token.NoPos, nil, "", tt.result))
 			method := types.NewFunc(token.NoPos, nil, tt.method, types.NewSignatureType(nil, nil, nil, nil, result, false))

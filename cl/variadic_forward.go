@@ -6,7 +6,7 @@ import (
 	"go/types"
 	"sort"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -17,7 +17,7 @@ func (p *context) cVariadicForwardingError(fn *ssa.Function, reason string) erro
 }
 
 func (p *context) cVariadicWrapperError(fn *ssa.Function, checked map[*ssa.Function]error) error {
-	if fn == nil || fn.Synthetic == "" || !llssa.HasNameValist(fn.Signature) {
+	if fn == nil || fn.Synthetic == "" || !llvmgen.HasNameValist(fn.Signature) {
 		return nil
 	}
 	if err, ok := checked[fn]; ok {
@@ -28,7 +28,7 @@ func (p *context) cVariadicWrapperError(fn *ssa.Function, checked map[*ssa.Funct
 	for len(work) > 0 {
 		current := work[len(work)-1]
 		work = work[:len(work)-1]
-		if seen[current] || current.Synthetic == "" || !llssa.HasNameValist(current.Signature) {
+		if seen[current] || current.Synthetic == "" || !llvmgen.HasNameValist(current.Signature) {
 			continue
 		}
 		if err, ok := checked[current]; ok {
@@ -78,7 +78,7 @@ func (p *context) cVariadicWrapperError(fn *ssa.Function, checked map[*ssa.Funct
 func (p *context) validateCVariadicWrapperUses() error {
 	hasWrappers := false
 	for fn := range p.funcs {
-		if fn.Synthetic != "" && llssa.HasNameValist(fn.Signature) {
+		if fn.Synthetic != "" && llvmgen.HasNameValist(fn.Signature) {
 			hasWrappers = true
 			break
 		}
@@ -117,7 +117,7 @@ func (p *context) validateCVariadicWrapperUses() error {
 					for i := 0; i < destination.NumMethods(); i++ {
 						method := destination.Method(i)
 						selection := methods.Lookup(method.Pkg(), method.Name())
-						if !llssa.HasNameValist(selection.Type().(*types.Signature)) {
+						if !llvmgen.HasNameValist(selection.Type().(*types.Signature)) {
 							continue
 						}
 						if !isPointerGoType(typ) {

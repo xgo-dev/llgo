@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/xgo-dev/llgo/internal/goembed"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -46,7 +46,7 @@ func isEmbedFSType(t types.Type) bool {
 	return obj.Pkg().Path() == "embed" && obj.Name() == "FS"
 }
 
-func (p *context) tryEmbedGlobalInit(pkg llssa.Package, gbl *ssa.Global, g llssa.Global, globalName string) bool {
+func (p *context) tryEmbedGlobalInit(pkg llvmgen.Package, gbl *ssa.Global, g llvmgen.Global, globalName string) bool {
 	if len(p.embedMap) == 0 {
 		return false
 	}
@@ -81,7 +81,7 @@ func (p *context) tryEmbedGlobalInit(pkg llssa.Package, gbl *ssa.Global, g llssa
 	}
 }
 
-func (p *context) applyEmbedInits(b llssa.Builder) {
+func (p *context) applyEmbedInits(b llvmgen.Builder) {
 	if len(p.embedInits) == 0 {
 		return
 	}
@@ -108,14 +108,14 @@ const (
 	embedFileFieldBytes = 1
 )
 
-func (p *context) applyEmbedFSInit(b llssa.Builder, g llssa.Global, entries []goembed.FileData) {
+func (p *context) applyEmbedFSInit(b llvmgen.Builder, g llvmgen.Global, entries []goembed.FileData) {
 	ptr := g.Expr.Type.RawType().(*types.Pointer)
 	fsTyp := types.Unalias(ptr.Elem())
 	fsStruct := fsTyp.Underlying().(*types.Struct)
 	filesPtr := types.Unalias(fsStruct.Field(embedFSFieldFiles).Type()).(*types.Pointer)
 	filesSlice := types.Unalias(filesPtr.Elem()).(*types.Slice)
 	fileTyp := filesSlice.Elem()
-	llFileTyp := p.type_(fileTyp, llssa.GoDecl)
+	llFileTyp := p.type_(fileTyp, llvmgen.GoDecl)
 	llFilesSliceTyp := p.prog.Slice(llFileTyp)
 
 	n := p.prog.IntVal(uint64(len(entries)), p.prog.Int())

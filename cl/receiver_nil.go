@@ -6,7 +6,7 @@ import (
 	"go/types"
 	"strings"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -94,7 +94,7 @@ func receiverNeedsAddressCheck(sel *types.Selection) bool {
 	return !isPointerGoType(typ)
 }
 
-func (p *context) checkMethodCallReceiver(b llssa.Builder, call *ssa.CallCommon) {
+func (p *context) checkMethodCallReceiver(b llvmgen.Builder, call *ssa.CallCommon) {
 	if len(call.Args) == 0 {
 		return
 	}
@@ -132,7 +132,7 @@ func isMethodReceiverWrapper(fn *ssa.Function) bool {
 	return fn != nil && (strings.HasPrefix(fn.Synthetic, "wrapper for ") || strings.HasPrefix(fn.Synthetic, "thunk for "))
 }
 
-func (p *context) checkBoundMethodReceiver(b llssa.Builder, closure *ssa.MakeClosure) {
+func (p *context) checkBoundMethodReceiver(b llvmgen.Builder, closure *ssa.MakeClosure) {
 	checks := p.options.ReceiverNilChecks
 	if checks == nil || len(closure.Bindings) == 0 {
 		return
@@ -144,7 +144,7 @@ func (p *context) checkBoundMethodReceiver(b llssa.Builder, closure *ssa.MakeClo
 	}
 }
 
-func (p *context) checkAddressedMethodReceiver(b llssa.Builder, receiver ssa.Value, check receiverNilCheck) {
+func (p *context) checkAddressedMethodReceiver(b llvmgen.Builder, receiver ssa.Value, check receiverNilCheck) {
 	if isKnownNonNilAddr(receiver) || isWrapNilCheckCall(receiver) {
 		return
 	}

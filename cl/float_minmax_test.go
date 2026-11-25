@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -19,19 +19,19 @@ func TestFloatMinMaxLowering(t *testing.T) {
  func Integer(a, b int) int { return min(a, b) }
  `
 	for _, tt := range []struct {
-		target    llssa.Target
+		target    llvmgen.Target
 		intrinsic bool
 	}{
-		{llssa.Target{GOOS: "linux", GOARCH: "arm64"}, true},
-		{llssa.Target{GOOS: "windows", GOARCH: "amd64"}, true},
-		{llssa.Target{GOOS: "windows", GOARCH: "386"}, true},
-		{llssa.Target{GOOS: "windows", GOARCH: "386", GO386: "softfloat"}, false},
-		{llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}, true},
-		{llssa.Target{GOOS: "js", GOARCH: "wasm", Target: "emscripten", LLVMTarget: "wasm32-unknown-emscripten", WasmProfile: "j32"}, true},
-		{llssa.Target{GOOS: "linux", GOARCH: "arm", GOARM: "7"}, false},
-		{llssa.Target{GOOS: "linux", GOARCH: "arm", GOARM: "5"}, false},
-		{llssa.Target{GOOS: "linux", GOARCH: "riscv64"}, false},
-		{llssa.Target{GOOS: "linux", GOARCH: "arm64", Target: "custom"}, false},
+		{llvmgen.Target{GOOS: "linux", GOARCH: "arm64"}, true},
+		{llvmgen.Target{GOOS: "windows", GOARCH: "amd64"}, true},
+		{llvmgen.Target{GOOS: "windows", GOARCH: "386"}, true},
+		{llvmgen.Target{GOOS: "windows", GOARCH: "386", GO386: "softfloat"}, false},
+		{llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm"}, true},
+		{llvmgen.Target{GOOS: "js", GOARCH: "wasm", Target: "emscripten", LLVMTarget: "wasm32-unknown-emscripten", WasmProfile: "j32"}, true},
+		{llvmgen.Target{GOOS: "linux", GOARCH: "arm", GOARM: "7"}, false},
+		{llvmgen.Target{GOOS: "linux", GOARCH: "arm", GOARM: "5"}, false},
+		{llvmgen.Target{GOOS: "linux", GOARCH: "riscv64"}, false},
+		{llvmgen.Target{GOOS: "linux", GOARCH: "arm64", Target: "custom"}, false},
 	} {
 		target := tt.target
 		name := strings.Join([]string{target.GOARCH, target.GO386, target.GOARM, target.Target}, "-")

@@ -88,6 +88,10 @@ func LLGoRuntimeDir() string {
 	return ""
 }
 
+func LLGoTargetsDir() string {
+	return filepath.Join(LLGoROOT(), "targets")
+}
+
 func LLGoROOT() string {
 	llgoRootEnv := os.Getenv("LLGO_ROOT")
 	if llgoRootEnv != "" {

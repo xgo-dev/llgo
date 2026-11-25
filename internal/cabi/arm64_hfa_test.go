@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -33,7 +33,7 @@ func TestArm64HFAParameterLayout(t *testing.T) {
 		{"darwin", "aarch64-unknown-linux-gnu", 8},
 	} {
 		t.Run(target.goos+"/"+target.triple, func(t *testing.T) {
-			prog := ssa.NewProgram(&ssa.Target{GOOS: target.goos, GOARCH: "arm64"})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: target.goos, GOARCH: "arm64"})
 			defer prog.Dispose()
 			ctx := llvm.NewContext()
 			defer ctx.Dispose()

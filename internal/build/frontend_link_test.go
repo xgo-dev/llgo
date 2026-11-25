@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/frontcache"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -21,7 +21,7 @@ func TestFrontendLinkExportRoundTripAndValidation(t *testing.T) {
 	index := frontcache.NewTypes(ids, fset)
 	index.Add(sig)
 	f := &frontendCache{ctx: &context{progSSA: ssa.NewProgram(fset, 0)}, ids: ids, packages: map[string]*types.Package{pkg.Path(): pkg}, types: index}
-	original := &packageLinkSnapshot{needAbiInit: 2, methodByIndex: map[int]none{3: {}}, methodByName: map[string]none{"Private": {}}, abiSymbols: map[string]none{"type.p": {}}, abiTypes: []llssa.AbiTypeInfo{{Name: "type.p", Raw: types.Typ[types.Int]}, {Name: "not-owned", Raw: types.Typ[types.String]}}, hasLocalExports: true, cExports: []cExport{{goName: "p.F", cName: "external", sig: sig}, {goName: "p.Raw", cName: "raw"}}}
+	original := &packageLinkSnapshot{needAbiInit: 2, methodByIndex: map[int]none{3: {}}, methodByName: map[string]none{"Private": {}}, abiSymbols: map[string]none{"type.p": {}}, abiTypes: []llvmgen.AbiTypeInfo{{Name: "type.p", Raw: types.Typ[types.Int]}, {Name: "not-owned", Raw: types.Typ[types.String]}}, hasLocalExports: true, cExports: []cExport{{goName: "p.F", cName: "external", sig: sig}, {goName: "p.Raw", cName: "raw"}}}
 	data, err := f.exportLink(original)
 	if err != nil {
 		t.Fatal(err)

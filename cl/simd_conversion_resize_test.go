@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -41,46 +41,46 @@ func TestSIMDConversionResizeDeclarations(t *testing.T) {
 				if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "simd/archsimd" || fn.Signature.Recv() == nil {
 					continue
 				}
-				if _, ok := llssa.SIMDNumericShape(fn.Signature.Recv().Type()); !ok {
+				if _, ok := llvmgen.SIMDNumericShape(fn.Signature.Recv().Type()); !ok {
 					continue
 				}
 				if fn.Signature.Results().Len() != 1 {
 					continue
 				}
-				if _, ok := llssa.SIMDNumericShape(fn.Signature.Results().At(0).Type()); !ok {
+				if _, ok := llvmgen.SIMDNumericShape(fn.Signature.Results().At(0).Type()); !ok {
 					continue
 				}
 				if simdVectorBits(fn.Signature.Recv().Type()) > 256 || simdVectorBits(fn.Signature.Results().At(0).Type()) > 256 {
 					continue // SIMD512 is a separate stage.
 				}
-				var want llssa.SIMDOp
+				var want llvmgen.SIMDOp
 				switch name := obj.Name(); {
 				case strings.HasPrefix(name, "ConvertLo"):
-					want = llssa.SIMDConvertLo
+					want = llvmgen.SIMDConvertLo
 				case strings.HasPrefix(name, "ConvertTo"):
-					want = llssa.SIMDConvert
+					want = llvmgen.SIMDConvert
 				case name == "Ceil":
-					want = llssa.SIMDCeil
+					want = llvmgen.SIMDCeil
 				case name == "Floor":
-					want = llssa.SIMDFloor
+					want = llvmgen.SIMDFloor
 				case name == "Trunc":
-					want = llssa.SIMDTrunc
+					want = llvmgen.SIMDTrunc
 				case name == "Round":
-					want = llssa.SIMDRound
+					want = llvmgen.SIMDRound
 				case strings.HasPrefix(name, "ExtendTo"):
-					want = llssa.SIMDExtend
+					want = llvmgen.SIMDExtend
 				case strings.HasPrefix(name, "TruncTo"):
-					want = llssa.SIMDTruncate
+					want = llvmgen.SIMDTruncate
 				case strings.HasPrefix(name, "ExtendLo"):
-					want = llssa.SIMDExtendLo
+					want = llvmgen.SIMDExtendLo
 				case strings.HasPrefix(name, "ExtendHi"):
-					want = llssa.SIMDExtendHi
+					want = llvmgen.SIMDExtendHi
 				case strings.HasPrefix(name, "SaturateTo"):
-					want = llssa.SIMDSaturate
+					want = llvmgen.SIMDSaturate
 					if strings.HasSuffix(name, "ConcatGrouped") {
-						want = llssa.SIMDSaturateConcatGrouped
+						want = llvmgen.SIMDSaturateConcatGrouped
 					} else if strings.HasSuffix(name, "Concat") {
-						want = llssa.SIMDSaturateConcat
+						want = llvmgen.SIMDSaturateConcat
 					}
 				default:
 					continue
@@ -116,24 +116,24 @@ func TestSIMDConversionResizeShapes(t *testing.T) {
  `
 	for _, tc := range []struct {
 		recv, method string
-		want         llssa.SIMDOp
+		want         llvmgen.SIMDOp
 	}{
-		{"Int8x16", "ExtendToInt16() Int16x16", llssa.SIMDExtend},
-		{"Int8x16", "ExtendLo8ToInt16() Int16x16", llssa.SIMDUnimplemented},
-		{"Int8x16", "ExtendToInt32() Int32x8", llssa.SIMDUnimplemented},
-		{"Int8x16", "ExtendLo4ToInt64() Int64x4", llssa.SIMDExtendLo},
-		{"Int32x8", "SaturateToInt16ConcatGrouped(Int32x8) Int16x16", llssa.SIMDSaturateConcatGrouped},
-		{"Int32x8", "SaturateToInt16Concat(Int32x8) Int16x16", llssa.SIMDUnimplemented},
-		{"Int32x8", "SaturateToInt16() Int16x16", llssa.SIMDUnimplemented},
-		{"Int32x8", "TruncToInt8() Int8x16", llssa.SIMDTruncate},
-		{"Int32x8", "TruncToUint8() Uint8x16", llssa.SIMDUnimplemented},
-		{"Uint32x8", "SaturateToInt8() Int8x16", llssa.SIMDUnimplemented},
-		{"Float32x4", "ConvertLo2ToFloat64() Float64x2", llssa.SIMDConvertLo},
-		{"Int32x4", "ConvertLo2ToFloat64() Float64x2", llssa.SIMDConvertLo},
-		{"Float32x4", "ConvertLo2ToFloat64() Float64x4", llssa.SIMDUnimplemented},
-		{"Float32x4", "ConvertToInt64() Int64x4", llssa.SIMDConvert},
-		{"Float32x4", "ConvertToFloat64() Int64x4", llssa.SIMDUnimplemented},
-		{"Int32x4", "ConvertToFloat32() Float64x4", llssa.SIMDUnimplemented},
+		{"Int8x16", "ExtendToInt16() Int16x16", llvmgen.SIMDExtend},
+		{"Int8x16", "ExtendLo8ToInt16() Int16x16", llvmgen.SIMDUnimplemented},
+		{"Int8x16", "ExtendToInt32() Int32x8", llvmgen.SIMDUnimplemented},
+		{"Int8x16", "ExtendLo4ToInt64() Int64x4", llvmgen.SIMDExtendLo},
+		{"Int32x8", "SaturateToInt16ConcatGrouped(Int32x8) Int16x16", llvmgen.SIMDSaturateConcatGrouped},
+		{"Int32x8", "SaturateToInt16Concat(Int32x8) Int16x16", llvmgen.SIMDUnimplemented},
+		{"Int32x8", "SaturateToInt16() Int16x16", llvmgen.SIMDUnimplemented},
+		{"Int32x8", "TruncToInt8() Int8x16", llvmgen.SIMDTruncate},
+		{"Int32x8", "TruncToUint8() Uint8x16", llvmgen.SIMDUnimplemented},
+		{"Uint32x8", "SaturateToInt8() Int8x16", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "ConvertLo2ToFloat64() Float64x2", llvmgen.SIMDConvertLo},
+		{"Int32x4", "ConvertLo2ToFloat64() Float64x2", llvmgen.SIMDConvertLo},
+		{"Float32x4", "ConvertLo2ToFloat64() Float64x4", llvmgen.SIMDUnimplemented},
+		{"Float32x4", "ConvertToInt64() Int64x4", llvmgen.SIMDConvert},
+		{"Float32x4", "ConvertToFloat64() Int64x4", llvmgen.SIMDUnimplemented},
+		{"Int32x4", "ConvertToFloat32() Float64x4", llvmgen.SIMDUnimplemented},
 	} {
 		t.Run(tc.recv+"."+tc.method, func(t *testing.T) {
 			fs := token.NewFileSet()
@@ -149,7 +149,7 @@ func TestSIMDConversionResizeShapes(t *testing.T) {
 			prog.CreatePackage(pkg, nil, nil, true)
 			fn := prog.FuncValue(pkg.Scope().Lookup(tc.recv).Type().(*types.Named).Method(0))
 			desc, ok := lookupSIMD(fn, "amd64")
-			if wantOK := tc.want != llssa.SIMDUnimplemented; ok != wantOK || ok && desc.op != tc.want {
+			if wantOK := tc.want != llvmgen.SIMDUnimplemented; ok != wantOK || ok && desc.op != tc.want {
 				t.Fatalf("lookup=%v (%t), want %v", desc.op, ok, tc.want)
 			}
 		})

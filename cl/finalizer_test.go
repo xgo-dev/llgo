@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -50,7 +50,7 @@ func nativeValue(p *Item, f nativeCallback) { runtime.SetFinalizer(p, f) }
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ssapkg, _, files := buildGoSSAPkg(t, src)
-			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: tc.goos, GOARCH: tc.arch})
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: tc.goos, GOARCH: tc.arch})
 			defer prog.Dispose()
 			prog.EnableDeadcodeDrop(tc.dce)
 			prog.EnableGCRoots(tc.gc)

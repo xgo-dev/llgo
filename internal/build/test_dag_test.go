@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
@@ -410,7 +410,7 @@ func TestRunNativeTestDAGPropagatesPackageFailures(t *testing.T) {
 
 	t.Run("package node", func(t *testing.T) {
 		fset, pkg := invalidEmbedPackage(t)
-		coordinator := llssa.NewProgram(&llssa.Target{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
+		coordinator := llvmgen.NewProgram(&llvmgen.Target{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH})
 		defer coordinator.Dispose()
 		conf := &Config{Mode: ModeTest, BuildMode: BuildModeExe, Goos: runtime.GOOS, Goarch: runtime.GOARCH}
 		ctx := &context{
@@ -466,7 +466,7 @@ func TestRunNativeTestDAGPropagatesPlanFailure(t *testing.T) {
 }
 
 func TestRunNativeTestDAGPropagatesEntryFailure(t *testing.T) {
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	defer prog.Dispose()
 	root := &packages.Package{
 		ID:      "example.com/entry.test",

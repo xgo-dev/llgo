@@ -32,7 +32,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/shellparse"
-	"github.com/xgo-dev/llgo/internal/targets"
+	"github.com/xgo-dev/llgo/target"
 )
 
 type backend string
@@ -74,24 +74,24 @@ func (o options) validate() error {
 	}
 }
 
-func classifyTarget(conf *build.Config, target *targets.Config) targetKind {
+func classifyTarget(conf *build.Config, cfg *target.Config) targetKind {
 	goos, goarch, llvmTarget := conf.Goos, conf.Goarch, ""
-	if target != nil {
-		if target.GOOS != "" {
-			goos = target.GOOS
+	if cfg != nil {
+		if cfg.GOOS != "" {
+			goos = cfg.GOOS
 		}
-		if target.GOARCH != "" {
-			goarch = target.GOARCH
+		if cfg.GOARCH != "" {
+			goarch = cfg.GOARCH
 		}
-		llvmTarget = target.LLVMTarget
+		llvmTarget = cfg.LLVMTarget
 	}
 	if goarch == "wasm" || strings.HasPrefix(llvmTarget, "wasm") {
-		if goos == "js" || (target != nil && (target.WasmProfile == "j32" || target.WasmProfile == "j64")) {
+		if goos == "js" || (cfg != nil && (cfg.WasmProfile == "j32" || cfg.WasmProfile == "j64")) {
 			return targetBrowser
 		}
 		return targetWASI
 	}
-	if target != nil {
+	if cfg != nil {
 		return targetEmbedded
 	}
 	return targetNative
@@ -132,7 +132,7 @@ type session struct {
 	artifact     string
 	lto          bool
 	debuggerArgs []string
-	target       *targets.Config
+	target       *target.Config
 	options      options
 }
 
@@ -234,8 +234,8 @@ type serverPlan struct {
 	openOCD bool
 }
 
-func makeServerPlan(target *targets.Config, artifact string, opts options) (*serverPlan, error) {
-	if target == nil {
+func makeServerPlan(cfg *target.Config, artifact string, opts options) (*serverPlan, error) {
+	if cfg == nil {
 		if opts.server != "" {
 			return nil, errors.New("llgo debug: -server requires -target")
 		}
@@ -256,7 +256,7 @@ func makeServerPlan(target *targets.Config, artifact string, opts options) (*ser
 
 	serverTemplate := opts.server
 	if serverTemplate == "" {
-		serverTemplate = target.DebugServer
+		serverTemplate = cfg.DebugServer
 	}
 	if serverTemplate != "" {
 		stdio := strings.Contains(serverTemplate, "{debug-stdio}")
@@ -274,18 +274,18 @@ func makeServerPlan(target *targets.Config, artifact string, opts options) (*ser
 		}
 		return &serverPlan{command: command, address: net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), load: opts.load, stdio: stdio}, nil
 	}
-	if target.OpenOCDInterface == "" && target.OpenOCDTarget == "" {
-		return nil, fmt.Errorf("llgo debug: target %s has no debug server; use -remote or -server", target.Name)
+	if cfg.OpenOCDInterface == "" && cfg.OpenOCDTarget == "" {
+		return nil, fmt.Errorf("llgo debug: target %s has no debug server; use -remote or -server", cfg.Name)
 	}
 	command := []string{"openocd", "-c", "gdb_port pipe", "-c", "tcl_port disabled", "-c", "telnet_port disabled"}
-	if target.OpenOCDInterface != "" {
-		command = append(command, "-f", "interface/"+target.OpenOCDInterface+".cfg")
+	if cfg.OpenOCDInterface != "" {
+		command = append(command, "-f", "interface/"+cfg.OpenOCDInterface+".cfg")
 	}
-	if target.OpenOCDTransport != "" {
-		command = append(command, "-c", "transport select "+target.OpenOCDTransport)
+	if cfg.OpenOCDTransport != "" {
+		command = append(command, "-c", "transport select "+cfg.OpenOCDTransport)
 	}
-	if target.OpenOCDTarget != "" {
-		command = append(command, "-f", "target/"+target.OpenOCDTarget+".cfg")
+	if cfg.OpenOCDTarget != "" {
+		command = append(command, "-f", "target/"+cfg.OpenOCDTarget+".cfg")
 	}
 	return &serverPlan{
 		command: command,

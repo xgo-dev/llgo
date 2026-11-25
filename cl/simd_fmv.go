@@ -4,7 +4,7 @@ import (
 	"go/types"
 
 	"github.com/xgo-dev/llgo/internal/llvmfmv"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -26,7 +26,7 @@ func simdCPUQuery(fn *ssa.Function) string {
 	return llvmfmv.X86Query(obj.Name())
 }
 
-func (p *context) markSIMDFMV(fn llssa.Function, source *ssa.Function) {
+func (p *context) markSIMDFMV(fn llvmgen.Function, source *ssa.Function) {
 	if fn == nil || p.prog.Target().GOARCH != "amd64" {
 		return
 	}
@@ -89,7 +89,7 @@ func (p *context) markSIMDFMV(fn llssa.Function, source *ssa.Function) {
 // Midway's hardware representations are defined bridge types, not aliases of
 // archsimd vectors. Recognize their checked storage without changing their ABI.
 func simdFMVVector(t types.Type) bool {
-	if _, ok := llssa.SIMDVectorShape(t); ok {
+	if _, ok := llvmgen.SIMDVectorShape(t); ok {
 		return true
 	}
 	named, ok := types.Unalias(t).(*types.Named)
@@ -110,6 +110,6 @@ func simdFMVVector(t types.Type) bool {
 	if !ok {
 		return false
 	}
-	_, vector := llssa.SIMDVectorShape(obj.Type())
+	_, vector := llvmgen.SIMDVectorShape(obj.Type())
 	return vector && types.Identical(named.Underlying(), obj.Type().Underlying())
 }

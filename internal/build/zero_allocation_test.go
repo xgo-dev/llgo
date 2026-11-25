@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 // Compile the real implementations: zero-value tests also pass when AllocZ
@@ -24,7 +24,7 @@ func TestNativeZeroAllocationIR(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			conf := NewDefaultConf(ModeGen)
 			conf.Tags = tags
-			pkgs, err := Build(Invocation{Args: []string{llssa.PkgRuntime}, Config: conf})
+			pkgs, err := Build(Invocation{Args: []string{llvmgen.PkgRuntime}, Config: conf})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -34,7 +34,7 @@ func TestNativeZeroAllocationIR(t *testing.T) {
 			defer pkgs[0].LPkg.Prog.Dispose()
 			mod := pkgs[0].LPkg.Module()
 			for _, name := range []string{"AllocU", "AllocZ"} {
-				fn := mod.NamedFunction(llssa.PkgRuntime + "." + name)
+				fn := mod.NamedFunction(llvmgen.PkgRuntime + "." + name)
 				if fn.IsNil() || fn.FirstBasicBlock().IsNil() {
 					t.Fatalf("missing %s definition", name)
 				}

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -29,7 +29,7 @@ func Unordered(p *uintptr, v uintptr) { storeUnordered(p, v) }
 func Deferred(p *uintptr, v uintptr) { defer storeUnordered(p, v) }
 func Asynchronous(p *uintptr, v uintptr) { go storeUnordered(p, v) }
 `
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "386"},
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "darwin", GOARCH: "arm64"},
@@ -70,7 +70,7 @@ func Asynchronous(p *uintptr, v uintptr) { go storeUnordered(p, v) }
 			// A go statement must put the atomic store in the worker instead of
 			// executing it synchronously while constructing the startup record.
 			body := mustNamedFunction(t, pkg.Module(), "atomicordering.Asynchronous").String()
-			if strings.Contains(body, "store atomic ") || !strings.Contains(body, llssa.PkgRuntime+".NewProc") {
+			if strings.Contains(body, "store atomic ") || !strings.Contains(body, llvmgen.PkgRuntime+".NewProc") {
 				t.Errorf("go statement did not defer the store to its worker:\n%s", body)
 			}
 		})
@@ -86,7 +86,7 @@ func TestAtomicStoreUnorderedInvalidArity(t *testing.T) {
 				}
 			}()
 			var ctx context
-			ctx.atomicStoreUnordered(nil, make([]llssa.Expr, count))
+			ctx.atomicStoreUnordered(nil, make([]llvmgen.Expr, count))
 		})
 	}
 }
@@ -113,7 +113,7 @@ func TestBaremetalItabPointersDoNotRequireLibatomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	ssaPkg, _, files := buildGoSSAPkg(t, string(source))
-	prog := newLLSSAProgForTarget(t, &llssa.Target{
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{
 		GOOS:       "linux",
 		GOARCH:     "arm",
 		Target:     "esp32c3-basic",

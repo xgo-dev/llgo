@@ -3,7 +3,7 @@ package cl
 import (
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
@@ -16,7 +16,7 @@ type Set[T any] struct { value T }
 func (s *Set[T]) Visit() { for range seq { defer func() { _ = s.value }() } }
 func use() { f(1); new(Set[string]).Visit() }
 `)
-	prog := llssa.NewProgram(nil)
+	prog := llvmgen.NewProgram(nil)
 	t.Cleanup(prog.Dispose)
 	pkg := prog.NewPackage("foo", "foo")
 	count := 0
@@ -24,8 +24,8 @@ func use() { f(1); new(Set[string]).Visit() }
 		if root.Parent() != nil || len(root.TypeArgs()) == 0 || len(root.AnonFuncs) == 0 {
 			continue
 		}
-		owner := pkg.NewFunc(root.String(), llssa.NoArgsNoRet, llssa.GoDecl)
-		ctx := &context{funcs: map[*ssa.Function]llssa.Function{root: owner}}
+		owner := pkg.NewFunc(root.String(), llvmgen.NoArgsNoRet, llvmgen.GoDecl)
+		ctx := &context{funcs: map[*ssa.Function]llvmgen.Function{root: owner}}
 		if got := ctx.deferStackOwner(root); got != owner {
 			t.Fatalf("%s: generic frame lost its defer ownership", root)
 		}

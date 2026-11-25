@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 	"github.com/xgo-dev/llvm"
 )
@@ -17,7 +17,7 @@ import (
 func TestPthreadStackSizeRuntimeDependencyFingerprint(t *testing.T) {
 	fingerprints := make(map[int64]string)
 	for _, size := range []int64{0, 256 << 10} {
-		dep := &aPackage{Package: &packages.Package{ID: llssa.PkgRuntime, PkgPath: llssa.PkgRuntime}}
+		dep := &aPackage{Package: &packages.Package{ID: llvmgen.PkgRuntime, PkgPath: llvmgen.PkgRuntime}}
 		pkg := &aPackage{Package: &packages.Package{ID: "example/caller", PkgPath: "example/caller", Imports: map[string]*packages.Package{dep.PkgPath: dep.Package}}}
 		ctx := &context{conf: &packages.Config{}, buildConf: &Config{PthreadStackSize: size}, pkgByID: map[string]*aPackage{dep.ID: dep, pkg.ID: pkg}, llvmVersion: "test"}
 		if err := ctx.collectFingerprint(pkg); err != nil {
@@ -44,7 +44,7 @@ func TestPthreadStackSizeRuntimeDependencyFingerprint(t *testing.T) {
 // before TransformModule can inline NewProc or eliminate its declaration.
 func checkStackCacheNewProc(t *testing.T, pkg Package) bool {
 	t.Helper()
-	fn := pkg.LPkg.Module().NamedFunction(llssa.PkgRuntime + ".NewProc")
+	fn := pkg.LPkg.Module().NamedFunction(llvmgen.PkgRuntime + ".NewProc")
 	if fn.IsNil() {
 		t.Errorf("%s did not declare NewProc", pkg.PkgPath)
 		return false
@@ -69,7 +69,7 @@ func checkStackCacheNewProc(t *testing.T, pkg Package) bool {
 func checkStackCacheRuntimeConstant(t *testing.T, pkg Package, size int64) {
 	t.Helper()
 	mod := pkg.LPkg.Module()
-	global := mod.NamedGlobal(llssa.RuntimeGoroutineStackSizeVar)
+	global := mod.NamedGlobal(llvmgen.RuntimeGoroutineStackSizeVar)
 	if global.IsNil() {
 		t.Error("runtime did not emit goroutineStackSize")
 		return
@@ -83,7 +83,7 @@ func checkStackCacheRuntimeConstant(t *testing.T, pkg Package, size int64) {
 	} else if got := init.ZExtValue(); got != uint64(size) {
 		t.Errorf("runtime goroutineStackSize = %d, want %d", got, size)
 	}
-	fn := mod.NamedFunction(llssa.PkgRuntime + ".NewProc")
+	fn := mod.NamedFunction(llvmgen.PkgRuntime + ".NewProc")
 	if fn.IsNil() || fn.IsDeclaration() {
 		t.Error("runtime did not define NewProc")
 		return
@@ -92,7 +92,7 @@ func checkStackCacheRuntimeConstant(t *testing.T, pkg Package, size int64) {
 	for block := fn.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
 		for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
 			call := inst.IsACallInst()
-			if call.IsNil() || call.CalledValue().Name() != llssa.PkgRuntime+".newprocBackend" {
+			if call.IsNil() || call.CalledValue().Name() != llvmgen.PkgRuntime+".newprocBackend" {
 				continue
 			}
 			backendCalls++
@@ -156,7 +156,7 @@ func TestPthreadStackSizePackageCache(t *testing.T) {
 				hookMu.Lock()
 				defer hookMu.Unlock()
 				switch pkg.PkgPath {
-				case llssa.PkgRuntime:
+				case llvmgen.PkgRuntime:
 					checkStackCacheNewProc(t, pkg)
 					checkStackCacheRuntimeConstant(t, pkg, normalizedSize)
 					runtimeChecked = true
@@ -170,7 +170,7 @@ func TestPthreadStackSizePackageCache(t *testing.T) {
 			}
 			found := make(map[string]bool)
 			for _, pkg := range pkgs {
-				if pkg.PkgPath == llssa.PkgRuntime {
+				if pkg.PkgPath == llvmgen.PkgRuntime {
 					found["runtime"] = true
 					wantHit := seenSize[normalizedSize] && !tc.force
 					if pkg.CacheHit != wantHit {

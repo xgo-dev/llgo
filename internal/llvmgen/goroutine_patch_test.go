@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 	"github.com/xgo-dev/llvm"
 )
@@ -19,14 +19,14 @@ func TestGoClosureStartupUsesGCManagedMemory(t *testing.T) {
 	}
 	ctxStruct := types.NewStruct(ctxFields, nil)
 	ctxParam := types.NewParam(0, nil, "$env", types.NewPointer(ctxStruct))
-	inner := pkg.NewEnvFunc("inner", ssa.NoArgsNoRet, ssa.GoDecl, ctxParam, false)
+	inner := pkg.NewEnvFunc("inner", llvmgen.NoArgsNoRet, llvmgen.GoDecl, ctxParam, false)
 	ib := inner.MakeBody(1)
 	ib.Return()
 
-	outer := pkg.NewFunc("outer", ssa.NoArgsNoRet, ssa.GoDecl)
+	outer := pkg.NewFunc("outer", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	ob := outer.MakeBody(1)
-	closure := ob.MakeClosure(inner.Expr, []ssa.Expr{prog.Val(42)})
-	ob.Go(closure, func(b ssa.Builder, fn ssa.Expr, args ...ssa.Expr) ssa.Expr {
+	closure := ob.MakeClosure(inner.Expr, []llvmgen.Expr{prog.Val(42)})
+	ob.Go(closure, func(b llvmgen.Builder, fn llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 		return b.Call(fn, args...)
 	})
 	ob.Return()
@@ -56,13 +56,13 @@ func TestGoClosureStartupUsesGCManagedMemory(t *testing.T) {
 
 func TestGoInstallsContextForContextBackedLocals(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
-	prog.SetLocalityInfo("example.com/state.Value", ssa.LocalityInfo{Locality: ssa.GoroutineLocal})
-	prog.SetLocalStorage("example.com/state.Value", ssa.LocalStoragePackage)
+	prog.SetLocalityInfo("example.com/state.Value", llvmgen.LocalityInfo{Locality: llvmgen.GoroutineLocal})
+	prog.SetLocalStorage("example.com/state.Value", llvmgen.LocalStoragePackage)
 	pkg := prog.NewPackage("bar", "foo/bar")
-	outer := pkg.NewFunc("outer", ssa.NoArgsNoRet, ssa.GoDecl)
+	outer := pkg.NewFunc("outer", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := outer.MakeBody(1)
-	b.Go(ssa.Nil, func(b ssa.Builder, _ ssa.Expr, args ...ssa.Expr) ssa.Expr {
-		return ssa.Expr{}
+	b.Go(llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
+		return llvmgen.Expr{}
 	})
 	b.Return()
 
@@ -75,12 +75,12 @@ func TestGoInstallsContextForContextBackedLocals(t *testing.T) {
 }
 
 func TestWASIGoInstallsContextWithoutUserLocality(t *testing.T) {
-	prog := ssatest.NewProgram(t, &ssa.Target{GOOS: "wasip1", GOARCH: "wasm", Target: "wasi"})
+	prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", Target: "wasi"})
 	pkg := prog.NewPackage("bar", "foo/bar")
-	outer := pkg.NewFunc("outer", ssa.NoArgsNoRet, ssa.GoDecl)
+	outer := pkg.NewFunc("outer", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	b := outer.MakeBody(1)
-	b.Go(ssa.Nil, func(b ssa.Builder, _ ssa.Expr, args ...ssa.Expr) ssa.Expr {
-		return ssa.Expr{}
+	b.Go(llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
+		return llvmgen.Expr{}
 	})
 	b.Return()
 
@@ -96,11 +96,11 @@ func TestGoPanicRoutineDoesNotReturnAfterUnreachable(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("bar", "foo/bar")
 
-	outer := pkg.NewFunc("outer", ssa.NoArgsNoRet, ssa.GoDecl)
+	outer := pkg.NewFunc("outer", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	ob := outer.MakeBody(1)
-	ob.Go(ssa.Nil, func(b ssa.Builder, _ ssa.Expr, args ...ssa.Expr) ssa.Expr {
+	ob.Go(llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 		b.Panic(args[0])
-		return ssa.Expr{}
+		return llvmgen.Expr{}
 	}, prog.Zero(prog.Any()))
 	ob.Return()
 
@@ -122,10 +122,10 @@ func TestGoDoesNotPassConfiguredStackSizeToRuntime(t *testing.T) {
 	prog.SetPthreadStackSize(32 << 20)
 	pkg := prog.NewPackage("bar", "foo/bar")
 
-	outer := pkg.NewFunc("outer", ssa.NoArgsNoRet, ssa.GoDecl)
+	outer := pkg.NewFunc("outer", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	ob := outer.MakeBody(1)
-	ob.Go(ssa.Nil, func(b ssa.Builder, _ ssa.Expr, args ...ssa.Expr) ssa.Expr {
-		return ssa.Expr{}
+	ob.Go(llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
+		return llvmgen.Expr{}
 	})
 	ob.Return()
 
@@ -136,7 +136,7 @@ func TestGoDoesNotPassConfiguredStackSizeToRuntime(t *testing.T) {
 	if strings.Contains(ir, "33554432") {
 		t.Fatalf("goroutine caller must not embed the configured stack size:\n%s", ir)
 	}
-	if fn := pkg.Module().NamedFunction(ssa.PkgRuntime + ".NewProc"); fn.ParamsCount() != 2 {
+	if fn := pkg.Module().NamedFunction(llvmgen.PkgRuntime + ".NewProc"); fn.ParamsCount() != 2 {
 		t.Fatalf("NewProc takes %d parameters, want two", fn.ParamsCount())
 	}
 	if strings.Contains(ir, "pthread") {
@@ -148,10 +148,10 @@ func TestGoUsesTwoArgumentRuntimeEntryByDefault(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	pkg := prog.NewPackage("bar", "foo/bar")
 
-	outer := pkg.NewFunc("outer", ssa.NoArgsNoRet, ssa.GoDecl)
+	outer := pkg.NewFunc("outer", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	ob := outer.MakeBody(1)
-	ob.Go(ssa.Nil, func(b ssa.Builder, _ ssa.Expr, args ...ssa.Expr) ssa.Expr {
-		return ssa.Expr{}
+	ob.Go(llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
+		return llvmgen.Expr{}
 	})
 	ob.Return()
 
@@ -162,13 +162,13 @@ func TestGoUsesTwoArgumentRuntimeEntryByDefault(t *testing.T) {
 	if strings.Contains(ir, "pthread") {
 		t.Fatalf("compiler IR should not depend on the pthread backend:\n%s", ir)
 	}
-	if fn := pkg.Module().NamedFunction(ssa.PkgRuntime + ".NewProc"); fn.ParamsCount() != 2 {
+	if fn := pkg.Module().NamedFunction(llvmgen.PkgRuntime + ".NewProc"); fn.ParamsCount() != 2 {
 		t.Fatalf("NewProc takes %d parameters, want two", fn.ParamsCount())
 	}
 }
 
 func TestRuntimePthreadStackSizeConstant(t *testing.T) {
-	for _, target := range []*ssa.Target{
+	for _, target := range []*llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "wasip1", GOARCH: "wasm"},
 		{GOOS: "js", GOARCH: "wasm", LLVMTarget: "wasm64-unknown-emscripten"},
@@ -176,8 +176,8 @@ func TestRuntimePthreadStackSizeConstant(t *testing.T) {
 		for _, size := range []uint64{0, 32 << 20} {
 			prog := ssatest.NewProgram(t, target)
 			prog.SetPthreadStackSize(size)
-			pkg := prog.NewPackage("runtime", ssa.PkgRuntime)
-			name := ssa.RuntimeGoroutineStackSizeVar
+			pkg := prog.NewPackage("runtime", llvmgen.PkgRuntime)
+			name := llvmgen.RuntimeGoroutineStackSizeVar
 			g := pkg.NewVarEx(name, prog.Pointer(prog.Uintptr()))
 			prog.InitPthreadStackSize(g)
 			global := pkg.Module().NamedGlobal(name)

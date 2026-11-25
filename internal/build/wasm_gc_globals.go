@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"strings"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
 // This section holds storage that cannot contain heap pointers, including
 // writable pointer-free Go globals classified by SSA. Its C identifier gives
 // wasm-ld synthesized __start_/__stop_ boundaries.
-const wasmGCNoScanSection = ssa.WasmGCNoScanSection
+const wasmGCNoScanSection = llvmgen.WasmGCNoScanSection
 
 func prepareWasmGCGlobals(mod llvm.Module, roots bool, namespace string, typeTests bool) {
 	if !roots || !strings.HasPrefix(mod.Target(), "wasm") {

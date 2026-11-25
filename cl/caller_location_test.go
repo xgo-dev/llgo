@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -14,7 +14,7 @@ func TestRuntimeLocationRecordDeduplication(t *testing.T) {
 import "runtime"
 func f() { runtime.Caller(0) }
 `)
-	for _, target := range []llssa.Target{
+	for _, target := range []llvmgen.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
 		{GOOS: "linux", GOARCH: "arm64"},
 		{GOOS: "darwin", GOARCH: "arm64"},
@@ -31,7 +31,7 @@ func f() { runtime.Caller(0) }
 				prog.TypeSizes(types.SizesFor("gc", "amd64"))
 			}
 			pkg := prog.NewPackage("foo", "example.com/foo")
-			fn := pkg.NewFunc("example.com/foo.f", llssa.NoArgsNoRet, llssa.GoDecl)
+			fn := pkg.NewFunc("example.com/foo.f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 			b := fn.MakeBody(1)
 			ctx := &context{
 				prog: prog, pkg: pkg, fn: fn, goFn: ssapkg.Func("f"), fset: ssapkg.Prog.Fset,
@@ -45,7 +45,7 @@ func f() { runtime.Caller(0) }
 			ctx.recordCallerLocation(b, pos)
 			// A lowering-generated call must break reuse even though it did not
 			// pass through the frontend's ordinary Go-call instrumentation.
-			b.Call(pkg.NewFunc("helper", llssa.NoArgsNoRet, llssa.GoDecl).Expr)
+			b.Call(pkg.NewFunc("helper", llvmgen.NoArgsNoRet, llvmgen.GoDecl).Expr)
 			ctx.recordCallerLocation(b, pos)
 			b.Return()
 			b.EndBuild()
@@ -61,7 +61,7 @@ func f() { runtime.Caller(0) }
 				}
 			}
 			for name, want := range map[string]int{"RecordPanicLocation": 1, "RecordCallerLocation": 2} {
-				if got := counts[llssa.PkgRuntime+"."+name]; got != want {
+				if got := counts[llvmgen.PkgRuntime+"."+name]; got != want {
 					t.Fatalf("%s calls = %d, want %d:\n%s", name, got, want, pkg.Module().String())
 				}
 			}

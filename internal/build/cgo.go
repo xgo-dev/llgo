@@ -33,7 +33,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/buildtags"
 	llclang "github.com/xgo-dev/llgo/internal/clang"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
 	"github.com/xgo-dev/llgo/xtool/safesplit"
 )
@@ -223,7 +223,7 @@ func genExternDeclsByClang(compiler *llclang.Cmd, pkg *aPackage, src string, cfl
 			if gofn != nil {
 				pkg.LPkg.ReplaceVarWith(cgoName, gofn.Expr)
 			} else {
-				cfn := pkg.LPkg.NewFunc(cfuncName, types.NewSignatureType(nil, nil, nil, nil, nil, false), llssa.CDecl)
+				cfn := pkg.LPkg.NewFunc(cfuncName, types.NewSignatureType(nil, nil, nil, nil, nil, false), llvmgen.CDecl)
 				pkg.LPkg.ReplaceVarWith(cgoName, cfn.Expr)
 			}
 		} else {

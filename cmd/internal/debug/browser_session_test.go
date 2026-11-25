@@ -13,8 +13,8 @@ import (
 
 	"github.com/xgo-dev/llgo/cmd/internal/browser"
 	"github.com/xgo-dev/llgo/internal/debugabi"
-	"github.com/xgo-dev/llgo/internal/targets"
 	"github.com/xgo-dev/llgo/internal/wasmdebug"
+	"github.com/xgo-dev/llgo/target"
 )
 
 func TestBrowserSessionUsesChromeAndOwnsProfile(t *testing.T) {
@@ -62,7 +62,7 @@ printf '%s\n' "$@" > "$LLGO_DEBUG_CHROME_CAPTURE"
 	var stdout, stderr bytes.Buffer
 	if err := runSession(session{
 		backend: backendBrowser, artifact: artifact,
-		target:       &targets.Config{Name: "emscripten"}, // No native debug server is needed.
+		target:       &target.Config{Name: "emscripten"}, // No native debug server is needed.
 		debuggerArgs: []string{"--window-size=900,700"},
 		options:      options{browser: browser.Options{Chrome: chrome, DisableTools: true}},
 	}, strings.NewReader(""), &stdout, &stderr); err != nil {

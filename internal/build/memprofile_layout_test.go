@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
 func TestMemProfileCounterAlignment(t *testing.T) {
-	llssa.Initialize(llssa.InitAll)
+	llvmgen.Initialize(llvmgen.InitAll)
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +23,7 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			conf := NewDefaultConf(ModeGen)
 			conf.Goos, conf.Goarch, _ = strings.Cut(target, "/")
-			targetInfo := &llssa.Target{GOOS: conf.Goos, GOARCH: conf.Goarch}
+			targetInfo := &llvmgen.Target{GOOS: conf.Goos, GOARCH: conf.Goarch}
 			if _, err := llvm.GetTargetFromTriple(targetInfo.Spec().Triple); err != nil {
 				// The official Windows LLVM SDK omits the MIPS backend.
 				// Keep the core 386/ARM targets mandatory on every host.
@@ -32,7 +32,7 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 				}
 				t.Fatal(err)
 			}
-			pkgs, err := Build(Invocation{Args: []string{llssa.PkgRuntime}, Config: conf})
+			pkgs, err := Build(Invocation{Args: []string{llvmgen.PkgRuntime}, Config: conf})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -41,7 +41,7 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 			}
 			defer pkgs[0].LPkg.Prog.Dispose()
 			mod := pkgs[0].LPkg.Module()
-			buckets := mod.NamedGlobal(llssa.PkgRuntime + ".memProfileBuckets")
+			buckets := mod.NamedGlobal(llvmgen.PkgRuntime + ".memProfileBuckets")
 			if buckets.IsNil() {
 				t.Fatal("missing memory profile buckets")
 			}
@@ -59,7 +59,7 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 			}
 			// Allocator accounting must remain an intrinsic at O0 too: an
 			// instrumented stdlib method can allocate and re-enter profiling.
-			add := mod.NamedFunction(llssa.PkgRuntime + ".memProfileAddObject")
+			add := mod.NamedFunction(llvmgen.PkgRuntime + ".memProfileAddObject")
 			if add.IsNil() || !strings.Contains(add.String(), "atomicrmw add") {
 				t.Fatal("memory profile updates must use the allocation-free runtime intrinsic")
 			}

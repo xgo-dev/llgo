@@ -21,14 +21,14 @@ import (
 
 	"golang.org/x/tools/go/ssa"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
 
 type graphCase struct {
 	name          string
 	edges         [][]int
 	wantOrder     []int
-	wantKinds     []llssa.DoAction
+	wantKinds     []llvmgen.DoAction
 	findLoopFrom  int
 	checkFindLoop bool
 }
@@ -39,32 +39,32 @@ func TestInfos(t *testing.T) {
 			name:      "single-exit diamond",
 			edges:     [][]int{{1, 2}, {3}, {3}, nil},
 			wantOrder: []int{0, 1, 2, 3},
-			wantKinds: []llssa.DoAction{
-				llssa.DeferAlways,
-				llssa.DeferInCond,
-				llssa.DeferInCond,
-				llssa.DeferAlways,
+			wantKinds: []llvmgen.DoAction{
+				llvmgen.DeferAlways,
+				llvmgen.DeferInCond,
+				llvmgen.DeferInCond,
+				llvmgen.DeferAlways,
 			},
 		},
 		{
 			name:      "multiple exits",
 			edges:     [][]int{{1, 2}, nil, nil},
 			wantOrder: []int{0, 1, 2},
-			wantKinds: []llssa.DoAction{
-				llssa.DeferAlways,
-				llssa.DeferInCond,
-				llssa.DeferInCond,
+			wantKinds: []llvmgen.DoAction{
+				llvmgen.DeferAlways,
+				llvmgen.DeferInCond,
+				llvmgen.DeferInCond,
 			},
 		},
 		{
 			name:      "natural loop",
 			edges:     [][]int{{1}, {2, 3}, {1}, nil},
 			wantOrder: []int{0, 1, 2, 3},
-			wantKinds: []llssa.DoAction{
-				llssa.DeferAlways,
-				llssa.DeferInLoop,
-				llssa.DeferInLoop,
-				llssa.DeferAlways,
+			wantKinds: []llvmgen.DoAction{
+				llvmgen.DeferAlways,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferAlways,
 			},
 		},
 		{
@@ -73,32 +73,32 @@ func TestInfos(t *testing.T) {
 			name:      "multi-node SCC with conditional exit",
 			edges:     [][]int{{1}, {2, 3}, {1}, {1, 4}, nil},
 			wantOrder: []int{0, 1, 2, 3, 4},
-			wantKinds: []llssa.DoAction{
-				llssa.DeferAlways,
-				llssa.DeferInLoop,
-				llssa.DeferInLoop,
-				llssa.DeferInLoop,
-				llssa.DeferAlways,
+			wantKinds: []llvmgen.DoAction{
+				llvmgen.DeferAlways,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferAlways,
 			},
 		},
 		{
 			name:      "entry self-loop",
 			edges:     [][]int{{0}},
 			wantOrder: []int{0},
-			wantKinds: []llssa.DoAction{llssa.DeferInLoop},
+			wantKinds: []llvmgen.DoAction{llvmgen.DeferInLoop},
 		},
 		{
 			name:      "nested body before outer exit",
 			edges:     [][]int{{1}, {2, 3}, {4}, nil, {5, 6}, {4}, {1}},
 			wantOrder: []int{0, 1, 2, 4, 6, 5, 3},
-			wantKinds: []llssa.DoAction{
-				llssa.DeferAlways,
-				llssa.DeferInLoop,
-				llssa.DeferInLoop,
-				llssa.DeferAlways,
-				llssa.DeferInLoop,
-				llssa.DeferInLoop,
-				llssa.DeferInLoop,
+			wantKinds: []llvmgen.DoAction{
+				llvmgen.DeferAlways,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferAlways,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferInLoop,
 			},
 		},
 		{
@@ -108,15 +108,15 @@ func TestInfos(t *testing.T) {
 			name:      "multiple nested bodies before outer exit",
 			edges:     [][]int{{1}, {2, 3}, {4}, nil, {7, 6}, {4}, {1}, {5}},
 			wantOrder: []int{0, 1, 2, 4, 6, 5, 7, 3},
-			wantKinds: []llssa.DoAction{
-				llssa.DeferAlways,
-				llssa.DeferInLoop,
-				llssa.DeferInLoop,
-				llssa.DeferAlways,
-				llssa.DeferInLoop,
-				llssa.DeferInLoop,
-				llssa.DeferInLoop,
-				llssa.DeferInLoop,
+			wantKinds: []llvmgen.DoAction{
+				llvmgen.DeferAlways,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferAlways,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferInLoop,
+				llvmgen.DeferInLoop,
 			},
 		},
 		disconnectedSharedSubgraph(),
@@ -164,11 +164,11 @@ func disconnectedSharedSubgraph() graphCase {
 	for i := recoverBlock + 1; i < n; i++ {
 		wantOrder = append(wantOrder, i)
 	}
-	wantKinds := make([]llssa.DoAction, n)
+	wantKinds := make([]llvmgen.DoAction, n)
 	for i := range wantKinds {
-		wantKinds[i] = llssa.DeferInCond
+		wantKinds[i] = llvmgen.DeferInCond
 	}
-	wantKinds[0] = llssa.DeferAlways
+	wantKinds[0] = llvmgen.DeferAlways
 
 	return graphCase{
 		name:          "disconnected recover and shared subgraph",
@@ -206,7 +206,7 @@ func statesForGraph(edges [][]int) []*blockState {
 	return states
 }
 
-func checkInfos(t *testing.T, got []Info, wantOrder []int, wantKinds []llssa.DoAction) {
+func checkInfos(t *testing.T, got []Info, wantOrder []int, wantKinds []llvmgen.DoAction) {
 	t.Helper()
 	if len(got) != len(wantKinds) || len(got) != len(wantOrder) {
 		t.Fatalf("got %d infos; want %d kinds and %d ordered blocks", len(got), len(wantKinds), len(wantOrder))

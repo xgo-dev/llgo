@@ -21,7 +21,7 @@ import (
 	"sort"
 
 	"github.com/xgo-dev/llgo/cl"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
@@ -114,7 +114,7 @@ func linkedPackageInitNames(root *packages.Package, linked []Package) ([]string,
 		if kind, _ := cl.PkgKindOf(pkg.Types); cl.PkgSkipsInit(kind) {
 			continue
 		}
-		names = append(names, llssa.FullName(pkg.Types, "init"))
+		names = append(names, llvmgen.FullName(pkg.Types, "init"))
 	}
 	return names, nil
 }

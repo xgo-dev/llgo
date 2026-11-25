@@ -8,7 +8,7 @@ import (
 	"go/types"
 	"strings"
 
-	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -81,19 +81,19 @@ const (
 	nativeIntegerRV64Ext
 )
 
-func nativeIntegerExtensionForTarget(target *Target) nativeIntegerExtension {
+func nativeIntegerExtensionForTarget(tgt *Target) nativeIntegerExtension {
 	// Named embedded targets may use GOARCH only for package selection (for
 	// example, RISC-V profiles use arm). Their ABI follows the physical triple,
 	// even when Spec retains a compatibility target for the host LLVM library.
-	triple := target.LLVMTarget
+	triple := tgt.LLVMTarget
 	if triple == "" {
-		triple = target.Spec().Triple
+		triple = tgt.Spec().Triple
 	}
 	triple = strings.ToLower(triple)
 	arch, _, _ := strings.Cut(triple, "-")
 	switch {
 	case arch == "arm64", arch == "arm64_32", arch == "aarch64", arch == "aarch64_be":
-		if intllvm.IsDarwinTarget(triple) {
+		if target.IsDarwinTriple(triple) {
 			return nativeIntegerNarrowExt
 		}
 	case arch == "x86_64", arch == "amd64":

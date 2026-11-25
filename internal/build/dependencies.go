@@ -19,7 +19,7 @@ package build
 import (
 	"sort"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
 
@@ -84,7 +84,7 @@ func linkedPackageClosure(ctx *context, root *packages.Package, built []*aPackag
 	for _, pkg := range built {
 		// Runtime packages are preloaded even for C-only entry points. They
 		// have a Go export file but no built archive or backend in that case.
-		if pkg.PkgPath == llssa.PkgRuntime && pkg.ArchiveFile != "" {
+		if pkg.PkgPath == llvmgen.PkgRuntime && pkg.ArchiveFile != "" {
 			visit(pkg.Package)
 		}
 	}

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -38,7 +38,7 @@ var Again = operation
 `
 				ssapkg, _, files := buildGoSSAPkg(t, src)
 				originalName := funcName(ssapkg.Pkg, ssapkg.Func("operation"), false)
-				for _, target := range []llssa.Target{
+				for _, target := range []llvmgen.Target{
 					{GOOS: "linux", GOARCH: "amd64"},
 					{GOOS: "linux", GOARCH: "arm64"},
 					{GOOS: "windows", GOARCH: "386"},
@@ -112,7 +112,7 @@ func Direct(a,b uint64)(uint64,bool){return dep.Multiply(a,b)}
 			files := []*ast.File{{Name: ast.NewIdent("dep"), Decls: []ast.Decl{dep.Func("Multiply").Syntax().(*ast.FuncDecl)}}}
 			rootFiles := []*ast.File{{Name: ast.NewIdent("root"), Decls: []ast.Decl{root.Func("Alias").Syntax().(*ast.FuncDecl)}}}
 			originalName := funcName(dep.Pkg, dep.Func("Multiply"), false)
-			for _, target := range []llssa.Target{{GOOS: "linux", GOARCH: "amd64"}, {GOOS: "windows", GOARCH: "386"}} {
+			for _, target := range []llvmgen.Target{{GOOS: "linux", GOARCH: "amd64"}, {GOOS: "windows", GOARCH: "386"}} {
 				t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
 					prog := newLLSSAProgForTarget(t, &target)
 					defer prog.Dispose()
@@ -124,7 +124,7 @@ func Direct(a,b uint64)(uint64,bool){return dep.Multiply(a,b)}
 					if err != nil {
 						t.Fatal(err)
 					}
-					for _, pkg := range []llssa.Package{owner, consumer} {
+					for _, pkg := range []llvmgen.Package{owner, consumer} {
 						entry := mustNamedFunction(t, pkg.Module(), originalName)
 						if entry.IsDeclaration() || entry.Linkage() != llvm.LinkOnceAnyLinkage {
 							t.Fatalf("cross-package entry does not keep its original name/linkage:\n%s", entry.String())

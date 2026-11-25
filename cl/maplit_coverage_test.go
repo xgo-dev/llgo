@@ -6,7 +6,7 @@ import (
 	"go/types"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -108,8 +108,8 @@ func TestMapLitConvertedValueRejectsInvalidChain(t *testing.T) {
 		}
 	}()
 	p := &context{}
-	var b llssa.Builder
-	p.mapLitConvertedValue(b, &ssa.Const{}, nil, llssa.Expr{})
+	var b llvmgen.Builder
+	p.mapLitConvertedValue(b, &ssa.Const{}, nil, llvmgen.Expr{})
 }
 
 func TestMapLitClassifyAndComplitGuardsFromRealSSA(t *testing.T) {
@@ -218,10 +218,10 @@ func TestMapLitCompileCoversUpdateAndComplitFallbacks(t *testing.T) {
 	defer prog.Dispose()
 	pkg := prog.NewPackage("fallback", "fallback")
 	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(types.NewVar(0, nil, "n", types.Typ[types.Int])), nil, false)
-	fn := pkg.NewFunc("test", sig, llssa.GoDecl)
+	fn := pkg.NewFunc("test", sig, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
-	p := &context{prog: prog, pkg: pkg, bvals: map[ssa.Value]llssa.Expr{}}
-	mapTy := p.prog.Type(types.NewMap(types.Typ[types.Int], types.Typ[types.Int]), llssa.GoDecl)
+	p := &context{prog: prog, pkg: pkg, bvals: map[ssa.Value]llvmgen.Expr{}}
+	mapTy := p.prog.Type(types.NewMap(types.Typ[types.Int], types.Typ[types.Int]), llvmgen.GoDecl)
 	m := b.MakeMap(mapTy, p.prog.Val(1))
 	c := ssa.NewConst(constant.MakeInt64(1), types.Typ[types.Int])
 
@@ -240,7 +240,7 @@ func F() map[int]int { m := make(map[int]int); m[1] = 1; return m }`)
 	if !p.compileMapLitUpdate(b, first) {
 		t.Fatal("non-last planned update was not skipped")
 	}
-	p.staticMapSliceValues = map[*ssa.MapUpdate]llssa.Expr{last: p.compileMapLitConst(b, c)}
+	p.staticMapSliceValues = map[*ssa.MapUpdate]llvmgen.Expr{last: p.compileMapLitConst(b, c)}
 	if !p.compileMapLitUpdate(b, last) {
 		t.Fatal("static map slice value was not compiled")
 	}
@@ -327,7 +327,7 @@ func TestMapLitConvertedValueReplaysWrappers(t *testing.T) {
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
 	pkg := prog.NewPackage("wrapper", "wrapper")
-	fn := pkg.NewFunc("test", types.NewSignatureType(nil, nil, nil, nil, nil, false), llssa.GoDecl)
+	fn := pkg.NewFunc("test", types.NewSignatureType(nil, nil, nil, nil, nil, false), llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	p := &context{prog: prog, pkg: pkg}
 

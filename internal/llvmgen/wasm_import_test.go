@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	ssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/llvmgen/ssatest"
 )
 
@@ -12,7 +12,7 @@ func TestWasmImportAttributes(t *testing.T) {
 	prog := ssatest.NewProgram(t, nil)
 	t.Cleanup(prog.Dispose)
 	pkg := prog.NewPackage("foo", "foo")
-	fn := pkg.NewFunc("fdRead", ssa.NoArgsNoRet, ssa.GoDecl)
+	fn := pkg.NewFunc("fdRead", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
 	fn.SetWasmImport("wasi_snapshot_preview1", "fd_read")
 
 	ir := pkg.Module().String()

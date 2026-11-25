@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -199,7 +199,7 @@ func TestMapLitCompileFallbacks(t *testing.T) {
 	defer prog.Dispose()
 	pkg := prog.NewPackage("fallback", "fallback")
 	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
-	fn := pkg.NewFunc("test", sig, llssa.GoDecl)
+	fn := pkg.NewFunc("test", sig, llvmgen.GoDecl)
 	b := fn.MakeBody(1)
 	p := &context{prog: prog, pkg: pkg, inCFunc: true}
 	c := ssa.NewConst(constant.MakeInt64(7), types.Typ[types.Int])

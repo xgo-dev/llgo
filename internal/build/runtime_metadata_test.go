@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/packages"
 )
@@ -30,17 +30,17 @@ func TestPlanMainLinkRuntimeMetadata(t *testing.T) {
 		{name: "leaf C export", cExport: true, wantRuntime: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			prog := llssa.NewProgram(nil)
+			prog := llvmgen.NewProgram(nil)
 			defer prog.Dispose()
 			if test.local {
-				prog.SetLocalityInfo("example.com/p.value", llssa.LocalityInfo{Locality: llssa.GoroutineLocal})
+				prog.SetLocalityInfo("example.com/p.value", llvmgen.LocalityInfo{Locality: llvmgen.GoroutineLocal})
 			}
 			app := snapshotPkg("example.com/main", "main.main")
-			rt := snapshotPkg(llssa.PkgRuntime, llssa.PkgRuntime+".unusedHelper")
+			rt := snapshotPkg(llvmgen.PkgRuntime, llvmgen.PkgRuntime+".unusedHelper")
 			app.NeedRt, app.NeedPyInit = test.runtime, test.python
 			if test.cExport {
 				app.linkSnapshot.cExports = []cExport{{
-					goName: "example.com/main.Callback", cName: "callback", sig: llssa.NoArgsNoRet,
+					goName: "example.com/main.Callback", cName: "callback", sig: llvmgen.NoArgsNoRet,
 				}}
 			}
 			for _, pkg := range []Package{app, rt} {
@@ -95,7 +95,7 @@ func TestRuntimeFreeNativeMetadata(t *testing.T) {
 			conf.OutFile = filepath.Join(t.TempDir(), "cprintf"+conf.AppExt)
 			var runtimeInfo []funcInfoRecord
 			conf.ModuleHook = func(pkg Package) {
-				if pkg.PkgPath == llssa.PkgRuntime {
+				if pkg.PkgPath == llvmgen.PkgRuntime {
 					runtimeInfo = readFuncInfo(pkg.LPkg.Module())
 				}
 			}
@@ -116,7 +116,7 @@ func TestRuntimeFreeNativeMetadata(t *testing.T) {
 			// of these unused helpers' symbol IDs reached the final executable.
 			checked := 0
 			for _, rec := range runtimeInfo {
-				if rec.symbol != llssa.PkgRuntime+".Alloc" && rec.symbol != llssa.PkgRuntime+".NewProc" {
+				if rec.symbol != llvmgen.PkgRuntime+".Alloc" && rec.symbol != llvmgen.PkgRuntime+".NewProc" {
 					continue
 				}
 				checked++

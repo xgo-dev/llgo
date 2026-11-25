@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/xgo-dev/llgo/internal/directive"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/directive"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/locality"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
@@ -188,7 +188,7 @@ func ResolveInlineTarget(fn *ssa.Function, patches Patches) *ssa.Function {
 	if fn == nil || fn.Pkg == nil || inlineProhibited(fn) {
 		return nil
 	}
-	patch, ok := patches[llssa.PathOf(fn.Pkg.Pkg)]
+	patch, ok := patches[llvmgen.PathOf(fn.Pkg.Pkg)]
 	if !ok {
 		return fn
 	}
@@ -234,7 +234,7 @@ func (p *context) importInlineBody(original *ssa.Function) {
 		p.prog.Target().OptLevel == optlevel.O0 || p.inlineFacts == nil ||
 		p.options.DebuggerFrames || p.options.ShadowStack ||
 		p.inlineCost >= inlineModuleBudget || original.Pkg == nil || original.Pkg == p.goPkg ||
-		llssa.PathOf(original.Pkg.Pkg) == p.pkg.Path() {
+		llvmgen.PathOf(original.Pkg.Pkg) == p.pkg.Path() {
 		return
 	}
 	if p.inlineChecked[original] {
@@ -265,7 +265,7 @@ func (p *context) importInlineBody(original *ssa.Function) {
 		if global.Pkg == nil || global.Pkg.Pkg == nil {
 			return
 		}
-		if info, ok := p.resolveLocality(global.Pkg.Pkg, llssa.FullName(global.Pkg.Pkg, global.Name())); ok && info.Locality != locality.None {
+		if info, ok := p.resolveLocality(global.Pkg.Pkg, llvmgen.FullName(global.Pkg.Pkg, global.Name())); ok && info.Locality != locality.None {
 			return
 		}
 	}

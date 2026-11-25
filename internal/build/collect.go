@@ -29,7 +29,7 @@ import (
 
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/goescape"
-	llssa "github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/packages"
 	gopackages "golang.org/x/tools/go/packages"
@@ -254,7 +254,7 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 		m.pkg.DeadInits = append(m.pkg.DeadInits, c.frontendOptions.UnusedGlobalInits.CacheKeys(c.progSSA.Package(pkg.AltPkg.Types))...)
 		slices.Sort(m.pkg.DeadInits)
 	}
-	if p.PkgPath == llssa.PkgRuntime {
+	if p.PkgPath == llvmgen.PkgRuntime {
 		// Only the runtime embeds this setting; goroutine callers have a
 		// configuration-independent ABI. Match SetPthreadStackSize in Build.
 		m.pkg.PthreadStackSize = max(0, c.buildConf.PthreadStackSize)
