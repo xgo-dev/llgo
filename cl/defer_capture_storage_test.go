@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
@@ -120,8 +121,12 @@ func largeAggregate(callback func()) {
 					t.Errorf("%s lost recover-visible accesses:\n%s", name, body)
 				}
 			}
+			ptrSize := 8
+			if target.GOARCH == "386" || target.GOARCH == "wasm" {
+				ptrSize = 4
+			}
 			aggregate := llvmFunction(t, ir, "recoverstorage.aggregate")
-			if target.GOARCH == "arm64" || target.GOARCH == "amd64" {
+			if uint64(5*ptrSize) <= llabi.MaxRecoverStackValueSize(target.GOARCH, ptrSize) {
 				if strings.Contains(aggregate, "runtime.Alloc") || !strings.Contains(aggregate, "store volatile") {
 					t.Errorf("bounded aggregate lost recover-visible stack placement:\n%s", aggregate)
 				}
