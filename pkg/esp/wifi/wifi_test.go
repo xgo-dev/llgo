@@ -430,8 +430,53 @@ func TestGlueABIContract(t *testing.T) {
 	if !errors.Is(ErrGlueABI, &esperr.Error{Code: 0x7F01}) {
 		t.Fatal("errors.Is does not match ErrGlueABI by code")
 	}
-	if ErrGlueABI.Error() != "LLGO_ERR_GLUE_ABI (32513)" {
-		t.Fatalf("ErrGlueABI.Error() = %q", ErrGlueABI.Error())
+	if got, want := ErrGlueABI.Error(), "esp/wifi: glue ABI mismatch (code 32513)"; got != want {
+		t.Fatalf("ErrGlueABI.Error() = %q, want %q", got, want)
+	}
+}
+
+// TestTimeoutSentinel pins the wait-timeout sentinel end to end: the value
+// Subscription.Next reports on a missed bound matches by identity and by its
+// ESP_ERR_TIMEOUT (0x107) code annotation, the annotation stays reachable
+// through esperr.Code and errors.As through the Wrap, and the rendering names
+// the operation first (the "wifi: wait event" op prefix) with the human text
+// and code annotation after.
+func TestTimeoutSentinel(t *testing.T) {
+	s := &Subscription{kinds: []EventKind{EvStaStart}, ch: make(chan Event, subQueueLen)}
+	ev, err := s.Next(0) // non-positive bound: one non-blocking check, empty mailbox
+	if err == nil {
+		t.Fatal("Next(0) on an empty subscription reported success")
+	}
+	if ev != (Event{}) {
+		t.Fatalf("Next(0) event = %+v, want the zero Event", ev)
+	}
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("Next(0) = %v, want the ErrTimeout sentinel", err)
+	}
+	if !errors.Is(err, &esperr.Error{Code: 0x107}) {
+		t.Fatal("the timeout error did not match a raw 0x107 Error (code path broken)")
+	}
+	if got := esperr.Code(err); got != 0x107 {
+		t.Fatalf("esperr.Code = %#x, want 0x107", got)
+	}
+	var e *esperr.Error
+	if !errors.As(err, &e) || e.Code != 0x107 || e.Name != "ESP_ERR_TIMEOUT" {
+		t.Fatal("errors.As did not surface the *esperr.Error with the 0x107 annotation")
+	}
+	if got, want := err.Error(), "wifi: wait event: esp/wifi: timeout (code 263)"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+	if got, want := ErrTimeout.Error(), "esp/wifi: timeout (code 263)"; got != want {
+		t.Fatalf("ErrTimeout.Error() = %q, want %q", got, want)
+	}
+	if esperr.Code(ErrTimeout) != 0x107 {
+		t.Fatalf("esperr.Code(ErrTimeout) = %#x, want 0x107", esperr.Code(ErrTimeout))
+	}
+	// The scan wait reports the same sentinel under its own op; the site is
+	// unreachable on a host (the stub scan refuses to start first), so the
+	// assertion here is the sentinel identity the site wraps.
+	if !errors.Is(esperr.Wrap("wifi: scan", ErrTimeout), ErrTimeout) {
+		t.Fatal("Wrap does not carry the ErrTimeout identity")
 	}
 }
 

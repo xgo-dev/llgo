@@ -48,8 +48,9 @@
 // plus the generic codes - so code stays comparable and inspectable. The
 // binding's own conditions - the two static staging buffers' capacity,
 // refused instead of silently truncating - live in the 0x75xx segment,
-// this package's own (see the segment plan below). The stub tag sits above
-// everything:
+// this package's own (see the segment plan below) as text-first sentinels
+// (match with errors.Is) that carry their segment code as the annotation.
+// The stub tag sits above everything:
 //
 //	esp domain     raw esp_err from the glue (NVS_* 0x11xx family, the
 //	               generic ESP_ERR_* codes)
@@ -93,35 +94,70 @@ const (
 	MaxKeys = 32
 )
 
-// ErrInvalidArg is the code errOf wraps for Go-side misuse (a nil or
-// closed Namespace, an empty / over-long / NUL-bearing key or namespace),
-// refused before anything crosses into C; it stays a plain constant so the
-// value remains comparable.
-const ErrInvalidArg = 0x102
+// The Go-side misuse code: ESP_ERR_INVALID_ARG (0x102), the code the guards
+// mirror when they refuse a nil or closed Namespace, an empty / over-long /
+// NUL-bearing key or namespace, before anything crosses into C. It stays an
+// internal constant so the value remains comparable inside the package (the
+// ErrName table switches on it).
+const errInvalidArg = 0x102
 
 // The binding's own codes, the 0x75xx segment: capacity conditions of the
 // glue's static staging buffers, which refuse (errors.Is-able) where
 // truncating would lie.
+const (
+	errTooLong     = 0x7501
+	errTooManyKeys = 0x7502
+)
+
+// ErrInvalidArg reports Go-side misuse - a nil or closed Namespace, an
+// empty / over-long / NUL-bearing key or namespace - caught before anything
+// crosses into C. It is the package's semantic sentinel - match it with
+// errors.Is - and it keeps the ESP_ERR_INVALID_ARG value (0x102) on Error.Code
+// and Error.Name as the diagnostic annotation, so code-style checks against
+// 0x102 keep working. The guard call sites wrap it with esperr.Wrap to name
+// the operation that hit it.
+var ErrInvalidArg = newSentinel("esp/nvs: invalid argument", errInvalidArg, "ESP_ERR_INVALID_ARG")
+
+// The binding's own sentinels, the 0x75xx segment.
 var (
 	// ErrTooLong reports a stored string or blob whose length the glue's
 	// value buffer cannot carry (see MaxValue). The value stays intact in
 	// NVS; store it under a shape the binding reads (SplitBlob-like
 	// chunking is the caller's choice).
-	ErrTooLong = &esperr.Error{Code: 0x7501, Name: "NVS_ERR_TOO_LONG"}
+	ErrTooLong = newSentinel("esp/nvs: value too long", errTooLong, "NVS_ERR_TOO_LONG")
 	// ErrTooManyKeys reports a namespace with more keys than the glue's
 	// key table holds (see MaxKeys). Keys() refuses instead of returning a
 	// silent prefix.
-	ErrTooManyKeys = &esperr.Error{Code: 0x7502, Name: "NVS_ERR_TOO_MANY_KEYS"}
+	ErrTooManyKeys = newSentinel("esp/nvs: too many keys", errTooManyKeys, "NVS_ERR_TOO_MANY_KEYS")
 )
 
-// errOf wraps a raw esp_err code as the error value this package returns
-// (nil for ESP_OK), named through ErrName so a printed error reads like
-// the wifi package's.
+// newSentinel declares a semantic sentinel that keeps its historical
+// pipeline code and ErrName name on Error.Code/Error.Name as the annotation
+// (esperr.New is text-only; the glue still reports the code, the README
+// segment table pins it, and the demo's codeOf helper reads the fields off
+// the bare value).
+func newSentinel(text string, code int32, name string) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	e.Name = name
+	return e
+}
+
+// errOf turns one glue result into the error this package returns (nil for
+// ESP_OK): the binding's own 0x75xx refusals become their sentinels, every
+// other code forwards as a bare esperr.Coded value named through ErrName -
+// the esp_err is the diagnostic.
 func errOf(code int32) error {
 	if code == 0 {
 		return nil
 	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	if code == errTooLong {
+		return ErrTooLong
+	}
+	if code == errTooManyKeys {
+		return ErrTooManyKeys
+	}
+	return esperr.Coded(code, ErrName(code))
 }
 
 // ErrName maps the esp_err codes this pipeline can hit to their IDF names.
@@ -133,7 +169,7 @@ func ErrName(code int32) string {
 		return "ESP_FAIL"
 	case 0x101:
 		return "ESP_ERR_NO_MEM"
-	case ErrInvalidArg:
+	case errInvalidArg:
 		return "ESP_ERR_INVALID_ARG"
 	case 0x103:
 		return "ESP_ERR_INVALID_STATE"
@@ -218,7 +254,7 @@ type Namespace struct {
 // carries the esp_err code.
 func Open(namespace string) (*Namespace, error) {
 	if !validName(namespace) {
-		return nil, errOf(ErrInvalidArg)
+		return nil, esperr.Wrap("nvs: open namespace", ErrInvalidArg)
 	}
 	var ns Namespace
 	ns.name = namespace
@@ -236,7 +272,7 @@ func Open(namespace string) (*Namespace, error) {
 // reports ErrClosed (esperr.ErrClosed).
 func (ns *Namespace) Close() error {
 	if ns == nil || ns.handle == 0 {
-		return esperr.ErrClosed
+		return esperr.Wrap("nvs: close namespace", esperr.ErrClosed)
 	}
 	closeNs(ns.handle)
 	ns.handle = 0
@@ -261,10 +297,11 @@ func validName(s string) bool {
 // keyArgs validates a key and returns its boundary form (pointer into the
 // string's bytes, length): the glue NUL-terminates into a 16-byte local
 // before every nvs call. A nil pointer never crosses: validName has
-// already refused the empty cases.
-func keyArgs(key string) (*byte, int32, error) {
+// already refused the empty cases. op is the calling operation's
+// esperr.Wrap prefix ("nvs: get u8"), naming the refusal.
+func keyArgs(op, key string) (*byte, int32, error) {
 	if !validName(key) {
-		return nil, 0, errOf(ErrInvalidArg)
+		return nil, 0, esperr.Wrap(op, ErrInvalidArg)
 	}
 	return unsafe.StringData(key), int32(len(key)), nil
 }
@@ -276,12 +313,12 @@ func keyArgs(key string) (*byte, int32, error) {
 // ESP_ERR_NVS_NOT_FOUND before the type check could report
 // ESP_ERR_NVS_TYPE_MISMATCH (measured, IDF v6.3).
 func (ns *Namespace) GetU8(key string) (uint8, error) {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: get u8", key)
 	if e != nil {
 		return 0, e
 	}
 	if ns == nil || ns.handle == 0 {
-		return 0, errOf(ErrInvalidArg)
+		return 0, esperr.Wrap("nvs: get u8", ErrInvalidArg)
 	}
 	var v uint8
 	if e := getU8(ns.handle, kp, kl, &v); e != 0 {
@@ -293,12 +330,12 @@ func (ns *Namespace) GetU8(key string) (uint8, error) {
 // GetI32 reads a 32-bit signed value (nvs_get_i32). See GetU8 for the
 // error shapes.
 func (ns *Namespace) GetI32(key string) (int32, error) {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: get i32", key)
 	if e != nil {
 		return 0, e
 	}
 	if ns == nil || ns.handle == 0 {
-		return 0, errOf(ErrInvalidArg)
+		return 0, esperr.Wrap("nvs: get i32", ErrInvalidArg)
 	}
 	var v int32
 	if e := getI32(ns.handle, kp, kl, &v); e != 0 {
@@ -310,12 +347,12 @@ func (ns *Namespace) GetI32(key string) (int32, error) {
 // GetU64 reads a 64-bit unsigned value (nvs_get_u64). See GetU8 for the
 // error shapes.
 func (ns *Namespace) GetU64(key string) (uint64, error) {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: get u64", key)
 	if e != nil {
 		return 0, e
 	}
 	if ns == nil || ns.handle == 0 {
-		return 0, errOf(ErrInvalidArg)
+		return 0, esperr.Wrap("nvs: get u64", ErrInvalidArg)
 	}
 	var v uint64
 	if e := getU64(ns.handle, kp, kl, &v); e != 0 {
@@ -331,12 +368,12 @@ func (ns *Namespace) GetU64(key string) (uint64, error) {
 // string including IDF's terminator; a stored string longer than MaxValue
 // bytes reports ErrTooLong with the value left intact.
 func (ns *Namespace) GetString(key string) (string, error) {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: get string", key)
 	if e != nil {
 		return "", e
 	}
 	if ns == nil || ns.handle == 0 {
-		return "", errOf(ErrInvalidArg)
+		return "", esperr.Wrap("nvs: get string", ErrInvalidArg)
 	}
 	var n int32
 	var buf *byte
@@ -353,12 +390,12 @@ func (ns *Namespace) GetString(key string) (string, error) {
 // read path is GetString's (one glue call, static buffer, immediate copy);
 // the length is the blob's exact stored length. Same ErrTooLong bound.
 func (ns *Namespace) GetBlob(key string) ([]byte, error) {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: get blob", key)
 	if e != nil {
 		return nil, e
 	}
 	if ns == nil || ns.handle == 0 {
-		return nil, errOf(ErrInvalidArg)
+		return nil, esperr.Wrap("nvs: get blob", ErrInvalidArg)
 	}
 	var n int32
 	var buf *byte
@@ -373,36 +410,36 @@ func (ns *Namespace) GetBlob(key string) ([]byte, error) {
 // SetU8 stages an 8-bit unsigned value (nvs_set_u8) in the namespace's
 // NVS cache; Commit makes it durable.
 func (ns *Namespace) SetU8(key string, v uint8) error {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: set u8", key)
 	if e != nil {
 		return e
 	}
 	if ns == nil || ns.handle == 0 {
-		return errOf(ErrInvalidArg)
+		return esperr.Wrap("nvs: set u8", ErrInvalidArg)
 	}
 	return errOf(setU8(ns.handle, kp, kl, v))
 }
 
 // SetI32 stages a 32-bit signed value (nvs_set_i32).
 func (ns *Namespace) SetI32(key string, v int32) error {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: set i32", key)
 	if e != nil {
 		return e
 	}
 	if ns == nil || ns.handle == 0 {
-		return errOf(ErrInvalidArg)
+		return esperr.Wrap("nvs: set i32", ErrInvalidArg)
 	}
 	return errOf(setI32(ns.handle, kp, kl, v))
 }
 
 // SetU64 stages a 64-bit unsigned value (nvs_set_u64).
 func (ns *Namespace) SetU64(key string, v uint64) error {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: set u64", key)
 	if e != nil {
 		return e
 	}
 	if ns == nil || ns.handle == 0 {
-		return errOf(ErrInvalidArg)
+		return esperr.Wrap("nvs: set u64", ErrInvalidArg)
 	}
 	return errOf(setU64(ns.handle, kp, kl, v))
 }
@@ -413,16 +450,16 @@ func (ns *Namespace) SetU64(key string, v uint64) error {
 // ESP_ERR_INVALID_ARG instead. No binding-side length cap (see the error
 // model above).
 func (ns *Namespace) SetString(key string, v string) error {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: set string", key)
 	if e != nil {
 		return e
 	}
 	if ns == nil || ns.handle == 0 {
-		return errOf(ErrInvalidArg)
+		return esperr.Wrap("nvs: set string", ErrInvalidArg)
 	}
 	for i := 0; i < len(v); i++ {
 		if v[i] == 0 {
-			return errOf(ErrInvalidArg)
+			return esperr.Wrap("nvs: set string", ErrInvalidArg)
 		}
 	}
 	buf := make([]byte, len(v)+1) // the terminator IDF reads to
@@ -433,12 +470,12 @@ func (ns *Namespace) SetString(key string, v string) error {
 // SetBlob stages a binary value (nvs_set_blob) - the (pointer, length)
 // shape, NUL bytes welcome. No binding-side length cap.
 func (ns *Namespace) SetBlob(key string, v []byte) error {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: set blob", key)
 	if e != nil {
 		return e
 	}
 	if ns == nil || ns.handle == 0 {
-		return errOf(ErrInvalidArg)
+		return esperr.Wrap("nvs: set blob", ErrInvalidArg)
 	}
 	var vp *byte
 	if len(v) > 0 {
@@ -451,12 +488,12 @@ func (ns *Namespace) SetBlob(key string, v []byte) error {
 // makes the erasure durable. An absent key reports
 // ESP_ERR_NVS_NOT_FOUND.
 func (ns *Namespace) Delete(key string) error {
-	kp, kl, e := keyArgs(key)
+	kp, kl, e := keyArgs("nvs: delete key", key)
 	if e != nil {
 		return e
 	}
 	if ns == nil || ns.handle == 0 {
-		return errOf(ErrInvalidArg)
+		return esperr.Wrap("nvs: delete key", ErrInvalidArg)
 	}
 	return errOf(eraseKey(ns.handle, kp, kl))
 }
@@ -467,7 +504,7 @@ func (ns *Namespace) Delete(key string) error {
 // exposes IDF's boundary instead of hiding it behind an auto-commit.
 func (ns *Namespace) Commit() error {
 	if ns == nil || ns.handle == 0 {
-		return errOf(ErrInvalidArg)
+		return esperr.Wrap("nvs: commit", ErrInvalidArg)
 	}
 	return errOf(commit(ns.handle))
 }
@@ -480,10 +517,10 @@ func (ns *Namespace) Commit() error {
 // no entries: the iterator comes back ESP_ERR_NVS_NOT_FOUND.
 func (ns *Namespace) Keys() ([]string, error) {
 	if ns == nil || ns.handle == 0 {
-		return nil, errOf(ErrInvalidArg)
+		return nil, esperr.Wrap("nvs: list keys", ErrInvalidArg)
 	}
 	if !validName(ns.name) {
-		return nil, errOf(ErrInvalidArg)
+		return nil, esperr.Wrap("nvs: list keys", ErrInvalidArg)
 	}
 	var n int32
 	var tbl *byte

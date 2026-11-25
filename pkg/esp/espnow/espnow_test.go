@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/pkg/esp/esperr"
+	"github.com/xgo-dev/llgo/pkg/esp/wifi"
 )
 
 // peer is an arbitrary unicast MAC the queue tests key on.
@@ -240,6 +241,93 @@ func TestErrOfPinsErrorContract(t *testing.T) {
 	}
 	if !errors.Is(ErrTimeout, &esperr.Error{Code: 0x107}) {
 		t.Fatal("ErrTimeout does not satisfy errors.Is against ESP_ERR_TIMEOUT")
+	}
+}
+
+// TestSentinels pins the package's two sentinels in the new shape: text
+// first in the rendering with the historical code annotation after, the
+// annotation reachable through errors.As and esperr.Code, matching both by
+// identity and by code, and isolation from unrelated sentinels.
+func TestSentinels(t *testing.T) {
+	if got, want := ErrGlueABI.Error(), "esp/espnow: glue ABI mismatch (code 29697)"; got != want {
+		t.Fatalf("ErrGlueABI.Error() = %q, want %q", got, want)
+	}
+	if got, want := ErrTimeout.Error(), "esp/espnow: timeout (code 263)"; got != want {
+		t.Fatalf("ErrTimeout.Error() = %q, want %q", got, want)
+	}
+	if esperr.Code(ErrGlueABI) != 0x7401 || esperr.Code(ErrTimeout) != 0x107 {
+		t.Fatalf("sentinel codes drifted: %v %v", esperr.Code(ErrGlueABI), esperr.Code(ErrTimeout))
+	}
+	for _, s := range []error{ErrGlueABI, ErrTimeout} {
+		var e *esperr.Error
+		if !errors.As(s, &e) || e.Name == "" {
+			t.Fatalf("%v lost its ErrName annotation", s)
+		}
+	}
+	if !errors.Is(ErrTimeout, wifi.ErrTimeout) || !errors.Is(wifi.ErrTimeout, ErrTimeout) {
+		t.Fatal("the 0x107 sentinels no longer match each other across packages")
+	}
+	if errors.Is(ErrTimeout, esperr.ErrTimeout) {
+		t.Fatal("espnow.ErrTimeout matched the lwip ETIMEDOUT sentinel")
+	}
+}
+
+// TestWaitTimeoutShape pins the SendResult.Wait give-up end to end: the
+// error wraps the ErrTimeout sentinel under the "espnow: wait confirm" op,
+// so the rendering names the operation first while errors.Is (identity and
+// by the 0x107 code), errors.As and esperr.Code all see through the wrap.
+func TestWaitTimeoutShape(t *testing.T) {
+	r := &SendResult{Peer: peer, ch: make(chan SendStatus, 1)}
+	_, err := r.Wait(0)
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("Wait(0) = %v, want the ErrTimeout sentinel", err)
+	}
+	if !errors.Is(err, &esperr.Error{Code: 0x107}) {
+		t.Fatal("the wait error did not match a raw 0x107 Error (code path broken)")
+	}
+	if got := esperr.Code(err); got != 0x107 {
+		t.Fatalf("esperr.Code = %#x, want 0x107", got)
+	}
+	var e *esperr.Error
+	if !errors.As(err, &e) || e.Code != 0x107 || e.Name != "ESP_ERR_TIMEOUT" {
+		t.Fatal("errors.As did not surface the *esperr.Error with the 0x107 annotation")
+	}
+	if got, want := err.Error(), "espnow: wait confirm: esp/espnow: timeout (code 263)"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+	// The nil-result guard (a result that never entered flight) reports the
+	// same wrapped sentinel.
+	_, err = (*SendResult)(nil).Wait(0)
+	if !errors.Is(err, ErrTimeout) || !gotPrefix(err.Error(), "espnow: wait confirm") {
+		t.Fatalf("nil-result Wait = %v, want the wrapped ErrTimeout", err)
+	}
+}
+
+// gotPrefix reports whether s starts with prefix.
+func gotPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
+}
+
+// TestGuardErrorsStayBare pins the contract the espnow probe depends on: the
+// client-side refusals (payload bounds, encryption without a key) come back
+// as bare *esperr.Error values named through ErrName - the probe's want and
+// espCode helpers type-assert *esperr.Error to print "ok: ESP_ERR_ESPNOW_ARG"
+// lines and read codes, so a wrapped guard error would flip a correct probe
+// run into FAIL lines. Unlike nvs, this package's demo reads the error value
+// itself, not just its code.
+func TestGuardErrorsStayBare(t *testing.T) {
+	err := AddPeer(PeerConfig{MAC: peer, Encrypt: true})
+	e, ok := err.(*esperr.Error)
+	if !ok || e.Code != 0x3066 || e.Name != "ESP_ERR_ESPNOW_ARG" {
+		t.Fatalf("AddPeer guard = %v (%T), want a bare *esperr.Error named ESP_ERR_ESPNOW_ARG", err, err)
+	}
+	_, err = Send(peer, nil)
+	e, ok = err.(*esperr.Error)
+	if !ok || e.Code != 0x102 || e.Name != "ESP_ERR_INVALID_ARG" {
+		t.Fatalf("Send guard = %v (%T), want a bare *esperr.Error named ESP_ERR_INVALID_ARG", err, err)
+	}
+	if got := err.Error(); got != "ESP_ERR_INVALID_ARG (258)" {
+		t.Fatalf("Send guard renders %q, want the code-era form", got)
 	}
 }
 

@@ -155,14 +155,14 @@ package espnow
 
 import "github.com/xgo-dev/llgo/pkg/esp/esperr"
 
-// errOf wraps a raw esp_err code as the error value this package returns
-// (nil for ESP_OK), named through ErrName so a printed error reads like the
-// driver's own name for the code.
+// errOf turns one glue result into the error this package returns (nil for
+// ESP_OK): every code forwards as a bare esperr.Coded value, named through
+// ErrName so a printed error reads like the driver's own name for the code.
 func errOf(code int32) error {
 	if code == 0 {
 		return nil
 	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	return esperr.Coded(code, ErrName(code))
 }
 
 // errUnsupported is what every host stub below returns: it lies between the
@@ -176,13 +176,29 @@ const errUnsupported = 0x7F00
 // the link - it would silently answer with zeros or drop records. Init
 // compares the glue's version with glueABIVersion and refuses to run on a
 // mismatch, so the failure arrives as one named error instead of as wrong
-// behavior.
-var ErrGlueABI = &esperr.Error{Code: 0x7401, Name: ErrName(0x7401)}
+// behavior. It is the package's semantic sentinel - match it with
+// errors.Is - and it keeps the 0x7401 segment code on Error.Code as the
+// diagnostic annotation.
+var ErrGlueABI = newSentinel("esp/espnow: glue ABI mismatch", 0x7401, "LLGO_ERR_GLUE_ABI")
 
-// ErrTimeout reports a bounded wait that found nothing: ESP_ERR_TIMEOUT
-// (0x107), the esp_err family's own code for the condition (the same value
-// wifi.ErrTimeout carries; errors.Is matches them both).
-var ErrTimeout = &esperr.Error{Code: 0x107, Name: ErrName(0x107)}
+// ErrTimeout reports a bounded wait that found nothing - a SendResult.Wait
+// whose bound passed with no send confirmation: ESP_ERR_TIMEOUT (0x107),
+// the esp_err family's own code for the condition (the same value
+// wifi.ErrTimeout carries; errors.Is matches them both). It is the
+// package's semantic sentinel - match it with errors.Is - and it keeps the
+// esp_err value on Error.Code and Error.Name as the diagnostic annotation.
+var ErrTimeout = newSentinel("esp/espnow: timeout", 0x107, "ESP_ERR_TIMEOUT")
+
+// newSentinel declares a semantic sentinel that keeps its historical
+// pipeline code and ErrName name on Error.Code/Error.Name as the annotation
+// (esperr.New is text-only; the driver still reports the code, and the
+// demo's errText helper reads the fields off the bare value).
+func newSentinel(text string, code int32, name string) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	e.Name = name
+	return e
+}
 
 // Package-level bounds, straight from esp_now.h. They are pinned by the
 // host tests: a driver constant that drifts must not silently change what
@@ -276,7 +292,7 @@ type SendResult struct {
 // quantum is a no-op and the loop is just a bounded spin.
 func (r *SendResult) Wait(timeoutMs int32) (SendStatus, error) {
 	if r == nil || r.ch == nil {
-		return SendFail, ErrTimeout
+		return SendFail, esperr.Wrap("espnow: wait confirm", ErrTimeout)
 	}
 	for ms := int32(0); ms < timeoutMs; ms += pollQuantumMs {
 		select {
@@ -291,7 +307,7 @@ func (r *SendResult) Wait(timeoutMs int32) (SendStatus, error) {
 	case s := <-r.ch:
 		return s, nil
 	default:
-		return SendFail, ErrTimeout
+		return SendFail, esperr.Wrap("espnow: wait confirm", ErrTimeout)
 	}
 }
 
@@ -361,7 +377,7 @@ func SetRecvHandler(fn func(from [6]uint8, data []byte)) {
 // driver never started).
 func Init() error {
 	if v := glueABI(); v != glueABIVersion {
-		return ErrGlueABI
+		return esperr.Wrap("espnow: init", ErrGlueABI)
 	}
 	err := errOf(initNow())
 	if err != nil {

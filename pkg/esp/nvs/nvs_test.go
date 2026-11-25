@@ -41,12 +41,60 @@ func TestErrorSegments(t *testing.T) {
 	if got := esperr.Code(errOf(0x1102)); got != 0x1102 {
 		t.Errorf("esperr.Code(errOf(NVS_NOT_FOUND)) = %#x, want 0x1102", got)
 	}
-	if got := esperr.Code(errOf(ErrInvalidArg)); got != ErrInvalidArg {
-		t.Errorf("esperr.Code(errOf(INVALID_ARG)) = %#x, want %#x", got, ErrInvalidArg)
+	if got := esperr.Code(errOf(errInvalidArg)); got != errInvalidArg {
+		t.Errorf("esperr.Code(errOf(INVALID_ARG)) = %#x, want %#x", got, errInvalidArg)
 	}
 	// The family sentinels keep their meaning across the family.
 	if !errors.Is(errOf(9), esperr.ErrClosed) {
 		t.Error("errors.Is(errOf(9), esperr.ErrClosed) = false, want true")
+	}
+}
+
+// TestSentinels pins the package's own sentinels in the new shape: each
+// matches by identity (the value errOf returns for its glue-reported code,
+// or the guard Wrap returns), by its historical segment code annotation
+// (against a code-era literal), keeps the annotation reachable through
+// esperr.Code and errors.As, and renders text first with the code after.
+func TestSentinels(t *testing.T) {
+	tests := []struct {
+		sentinel *esperr.Error
+		code     int32
+		text     string
+	}{
+		{ErrTooLong, errTooLong, "esp/nvs: value too long (code 29953)"},
+		{ErrTooManyKeys, errTooManyKeys, "esp/nvs: too many keys (code 29954)"},
+		{ErrInvalidArg, errInvalidArg, "esp/nvs: invalid argument (code 258)"},
+	}
+	for _, tc := range tests {
+		if esperr.Code(tc.sentinel) != tc.code {
+			t.Errorf("esperr.Code(%v) = %#x, want %#x", tc.sentinel, esperr.Code(tc.sentinel), tc.code)
+		}
+		if got, want := tc.sentinel.Error(), tc.text; got != want {
+			t.Errorf("Error() = %q, want %q", got, want)
+		}
+		if !errors.Is(tc.sentinel, &esperr.Error{Code: tc.code}) {
+			t.Errorf("%v does not match a raw %#x Error (code path broken)", tc.sentinel, tc.code)
+		}
+	}
+	// The glue-reported 0x75xx codes come back as the sentinels themselves
+	// (pointer identity through errOf), never as re-wrapped copies.
+	if !errors.Is(errOf(errTooLong), ErrTooLong) {
+		t.Error("errOf(0x7501) is not the ErrTooLong sentinel")
+	}
+	if !errors.Is(errOf(errTooManyKeys), ErrTooManyKeys) {
+		t.Error("errOf(0x7502) is not the ErrTooManyKeys sentinel")
+	}
+	var e *esperr.Error
+	if !errors.As(errOf(errTooLong), &e) || e.Code != errTooLong || e.Name != "NVS_ERR_TOO_LONG" {
+		t.Error("errors.As did not surface ErrTooLong with its annotation")
+	}
+	// The ErrName table keeps the code-era names the demo's codeOf prints.
+	if ErrName(errTooLong) != "NVS_ERR_TOO_LONG" || ErrName(errTooManyKeys) != "NVS_ERR_TOO_MANY_KEYS" {
+		t.Error("ErrName lost the 0x75xx segment names")
+	}
+	// The transport sentinel stays isolated from the package sentinels.
+	if errors.Is(ErrTooLong, esperr.ErrClosed) || errors.Is(ErrInvalidArg, esperr.ErrTimeout) {
+		t.Error("a package sentinel matched an unrelated transport sentinel")
 	}
 }
 
@@ -100,16 +148,16 @@ func TestStubHonesty(t *testing.T) {
 // ErrClosed and stays idempotent.
 func TestHandleGuards(t *testing.T) {
 	var zero *Namespace
-	if e := zero.SetU8("k", 1); esperr.Code(e) != ErrInvalidArg {
-		t.Errorf("nil SetU8 = %v, want ESP_ERR_INVALID_ARG", e)
+	if e := zero.SetU8("k", 1); !errors.Is(e, ErrInvalidArg) || esperr.Code(e) != errInvalidArg {
+		t.Errorf("nil SetU8 = %v, want the ErrInvalidArg sentinel under 0x102", e)
 	}
-	if e := zero.Commit(); esperr.Code(e) != ErrInvalidArg {
+	if e := zero.Commit(); esperr.Code(e) != errInvalidArg {
 		t.Errorf("nil Commit = %v, want ESP_ERR_INVALID_ARG", e)
 	}
-	if _, e := zero.GetU8("k"); esperr.Code(e) != ErrInvalidArg {
+	if _, e := zero.GetU8("k"); esperr.Code(e) != errInvalidArg {
 		t.Errorf("nil GetU8 = %v, want ESP_ERR_INVALID_ARG", e)
 	}
-	if _, e := zero.Keys(); esperr.Code(e) != ErrInvalidArg {
+	if _, e := zero.Keys(); esperr.Code(e) != errInvalidArg {
 		t.Errorf("nil Keys = %v, want ESP_ERR_INVALID_ARG", e)
 	}
 	if e := zero.Close(); !errors.Is(e, esperr.ErrClosed) {
@@ -125,8 +173,67 @@ func TestHandleGuards(t *testing.T) {
 	if e := ns.Close(); !errors.Is(e, esperr.ErrClosed) {
 		t.Errorf("second Close = %v, want esperr.ErrClosed", e)
 	}
-	if e := ns.SetU8("k", 1); esperr.Code(e) != ErrInvalidArg {
+	if e := ns.SetU8("k", 1); esperr.Code(e) != errInvalidArg {
 		t.Errorf("closed SetU8 = %v, want ESP_ERR_INVALID_ARG", e)
+	}
+}
+
+// TestInvalidArgGuard pins the guard rendering end to end: every refusal
+// wraps the ErrInvalidArg sentinel under the operation's op prefix, so the
+// string reads "nvs: <op>: esp/nvs: invalid argument (code 258)" while
+// errors.Is / errors.As / esperr.Code still see the sentinel and its 0x102
+// annotation - and the idempotent-Close path names its own operation over
+// the family's ErrClosed transport sentinel.
+func TestInvalidArgGuard(t *testing.T) {
+	var zero *Namespace
+	_, err := zero.GetString("k")
+	if !errors.Is(err, ErrInvalidArg) {
+		t.Fatalf("nil GetString = %v, want the ErrInvalidArg sentinel", err)
+	}
+	if got := esperr.Code(err); got != errInvalidArg {
+		t.Fatalf("esperr.Code = %#x, want 0x102", got)
+	}
+	var e *esperr.Error
+	if !errors.As(err, &e) || e.Code != errInvalidArg || e.Name != "ESP_ERR_INVALID_ARG" {
+		t.Fatal("errors.As did not surface the *esperr.Error with the 0x102 annotation")
+	}
+	if got, want := err.Error(), "nvs: get string: esp/nvs: invalid argument (code 258)"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+
+	// Every guard names its own operation.
+	cases := []struct {
+		name string
+		err  error
+		op   string
+	}{
+		{"long key SetU8", (func() error { ns := &Namespace{handle: 1, name: "wifi"}; return ns.SetU8("sixteen-char-key", 1) })(), "nvs: set u8"},
+		{"empty key SetU8", (func() error { ns := &Namespace{handle: 1, name: "wifi"}; return ns.SetU8("", 1) })(), "nvs: set u8"},
+		{"NUL value SetString", (func() error { ns := &Namespace{handle: 1, name: "wifi"}; return ns.SetString("bad", "a\x00b") })(), "nvs: set string"},
+		{"long namespace Open", (func() error { _, e := Open("sixteen-char-key"); return e })(), "nvs: open namespace"},
+		{"zero handle Commit", (func() error { ns := &Namespace{}; return ns.Commit() })(), "nvs: commit"},
+		{"nil handle Keys", (func() error { _, e := zero.Keys(); return e })(), "nvs: list keys"},
+		{"nil handle Delete", (func() error { ns := (*Namespace)(nil); return ns.Delete("k") })(), "nvs: delete key"},
+	}
+	for _, c := range cases {
+		if !errors.Is(c.err, ErrInvalidArg) {
+			t.Errorf("%s = %v, want the ErrInvalidArg sentinel", c.name, c.err)
+		}
+		if got := c.err.Error(); len(got) < len(c.op) || got[:len(c.op)] != c.op {
+			t.Errorf("%s Error() = %q, want the %q op prefix", c.name, got, c.op)
+		}
+	}
+
+	// The idempotent-Close guard wraps the family's transport sentinel.
+	cerr := zero.Close()
+	if !errors.Is(cerr, esperr.ErrClosed) {
+		t.Fatalf("nil Close = %v, want esperr.ErrClosed", cerr)
+	}
+	if got, want := cerr.Error(), "nvs: close namespace: closed (code 9)"; got != want {
+		t.Fatalf("Close Error() = %q, want %q", got, want)
+	}
+	if esperr.Code(cerr) != 9 {
+		t.Fatalf("esperr.Code(Close) = %d, want the EBADF 9 annotation", esperr.Code(cerr))
 	}
 }
 
@@ -141,19 +248,19 @@ func TestNameValidation(t *testing.T) {
 		}
 	}
 	ns := &Namespace{handle: 1, name: "wifi"}
-	if _, e := ns.GetU8("sixteen-char-key"); esperr.Code(e) != ErrInvalidArg {
+	if _, e := ns.GetU8("sixteen-char-key"); esperr.Code(e) != errInvalidArg {
 		t.Errorf("long key GetU8 = %v, want ESP_ERR_INVALID_ARG", e)
 	}
-	if _, e := ns.GetU8(""); esperr.Code(e) != ErrInvalidArg {
+	if _, e := ns.GetU8(""); esperr.Code(e) != errInvalidArg {
 		t.Errorf("empty key GetU8 = %v, want ESP_ERR_INVALID_ARG", e)
 	}
-	if e := ns.SetString("k", "va\x00lue"); esperr.Code(e) != ErrInvalidArg {
+	if e := ns.SetString("k", "va\x00lue"); esperr.Code(e) != errInvalidArg {
 		t.Errorf("NUL value SetString = %v, want ESP_ERR_INVALID_ARG", e)
 	}
-	if _, e := Open("sixteen-char-key"); esperr.Code(e) != ErrInvalidArg {
+	if _, e := Open("sixteen-char-key"); esperr.Code(e) != errInvalidArg {
 		t.Errorf("long namespace Open = %v, want ESP_ERR_INVALID_ARG", e)
 	}
-	if _, e := Open(""); esperr.Code(e) != ErrInvalidArg {
+	if _, e := Open(""); esperr.Code(e) != errInvalidArg {
 		t.Errorf("empty namespace Open = %v, want ESP_ERR_INVALID_ARG", e)
 	}
 }
