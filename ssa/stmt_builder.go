@@ -190,7 +190,7 @@ func notInit(instr llvm.Value) bool {
 // HasTerminator reports whether the builder's current basic block already ends
 // with a terminator instruction.
 func (b Builder) HasTerminator() bool {
-	if b.impl.IsNil() {
+	if b == nil || b.impl.IsNil() {
 		return false
 	}
 	blk := b.impl.GetInsertBlock()

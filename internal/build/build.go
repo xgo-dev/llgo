@@ -3420,9 +3420,6 @@ func (c *context) archiver() string {
 	}
 	if c.crossCompile.Toolchain.ObjectFormat == crosscompile.ObjectFormatCOFF ||
 		c.buildConf.ltoEnabled() || c.buildConf.Goarch == "wasm" || strings.Contains(c.crossCompile.LLVMTarget, "wasm") {
-		if llvmAr := llvmBinTool("llvm-ar"); llvmAr != "" {
-			return llvmAr
-		}
 		if llvmAr, err := c.commands.lookPath("llvm-ar"); err == nil {
 			return llvmAr
 		}
@@ -3443,28 +3440,10 @@ func (c *context) archiveMerger() (string, error) {
 	if llvmAr := siblingTool(c.crossCompile.CC, "llvm-ar"); llvmAr != "" {
 		return llvmAr, nil
 	}
-	if llvmAr := llvmBinTool("llvm-ar"); llvmAr != "" {
-		return llvmAr, nil
-	}
 	if llvmAr, err := c.commands.lookPath("llvm-ar"); err == nil {
 		return llvmAr, nil
 	}
 	return "", errors.New("llvm-ar is required to create a flat c-archive")
-}
-
-func llvmBinTool(name string) string {
-	binDir := xllvm.New("").BinDir()
-	if binDir == "" {
-		return ""
-	}
-	candidate := filepath.Join(binDir, name)
-	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(candidate), ".exe") {
-		candidate += ".exe"
-	}
-	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-		return candidate
-	}
-	return ""
 }
 
 // Both GoJS and the named Emscripten targets build C/C++ through emcc. That

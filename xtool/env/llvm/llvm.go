@@ -140,9 +140,11 @@ func queryBinDir(llvmConfigBin string) (string, error) {
 // means LLVM executables are assumed to be in PATH.
 func (e *Env) BinDir() string { return e.binDir }
 
-// SetupPath makes the selected LLVM installation part of the process
-// environment. Command entry points call it before starting builds; build
-// requests and workers then inherit LLVM through the ordinary PATH snapshot.
+// SetupPath prepends the selected LLVM bin directory to the process PATH if
+// it is not already present. CLI entry points and standalone tools (such as
+// lldb and chore utilities) call it so external lookups find LLVM tools;
+// internal/build also ensures the LLVM bin directory is present in each
+// build's per-invocation environment snapshot without mutating process PATH.
 func SetupPath() {
 	binDir := New("").BinDir()
 	if binDir == "" {

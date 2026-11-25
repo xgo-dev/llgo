@@ -13,9 +13,10 @@ import (
 )
 
 // Invocation contains the explicit inputs used by one build. An empty Dir
-// uses the working directory captured when Build starts. Build inherits one
-// snapshot of the process environment; per-invocation overrides are not
-// supported.
+// uses the working directory captured when Build starts. Build snapshots the
+// process environment and ensures the selected LLVM bin directory is present
+// on the build's copy of PATH without mutating the process environment;
+// arbitrary per-invocation environment overrides are not supported.
 type Invocation struct {
 	Args   []string
 	Config *Config
@@ -142,10 +143,10 @@ func withResolvedGoToolchain(environ []string, goversion string) []string {
 	return withEnv(environ, "GOTOOLCHAIN="+goversion)
 }
 
-// withLLVMPath returns a copy of environ whose PATH begins with binDir,
-// moving any later duplicate to the front so the LLVM installation selected
-// for this invocation takes precedence over ambient PATH entries. It never
-// mutates the process environment.
+// withLLVMPath returns a copy of environ whose PATH includes binDir,
+// prepending binDir only when it is not already present in PATH (matching
+// llvm.SetupPath so caller-configured wrapper directories ahead of binDir
+// retain precedence). It never mutates the process environment.
 func withLLVMPath(environ []string, binDir string) []string {
 	if binDir == "" {
 		return environ
@@ -173,19 +174,15 @@ func withLLVMPath(environ []string, binDir string) []string {
 			break
 		}
 	}
-	dirs := filepath.SplitList(pathVal)
-	if len(dirs) > 0 && sameDir(dirs[0], binDir) {
-		return environ
-	}
-	filtered := make([]string, 0, len(dirs)+1)
-	filtered = append(filtered, binDir)
-	for _, dir := range dirs {
+	for _, dir := range filepath.SplitList(pathVal) {
 		if dir != "" && sameDir(dir, binDir) {
-			continue
+			return environ
 		}
-		filtered = append(filtered, dir)
 	}
-	newPath := strings.Join(filtered, string(os.PathListSeparator))
+	newPath := binDir
+	if pathVal != "" {
+		newPath += string(os.PathListSeparator) + pathVal
+	}
 	ret := make([]string, 0, len(environ)+1)
 	for _, entry := range environ {
 		k, _, ok := strings.Cut(entry, "=")

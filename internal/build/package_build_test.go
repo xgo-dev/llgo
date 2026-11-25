@@ -507,6 +507,9 @@ func main() {
 	}
 
 	outBin := filepath.Join(t.TempDir(), "parpatch")
+	if runtime.GOOS == "windows" {
+		outBin += ".exe"
+	}
 	tracePath := filepath.Join(t.TempDir(), "trace.json")
 	conf := NewDefaultConf(ModeBuild)
 	conf.ForceRebuild = true

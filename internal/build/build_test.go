@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"debug/macho"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	gobuild "go/build"
@@ -480,19 +481,27 @@ func TestWithLLVMPathPrependsWithoutMutatingProcessEnv(t *testing.T) {
 	if got := (commandEnv{environ: updated}).lookup("PATH"); got != want {
 		t.Fatalf("withLLVMPath PATH = %q, want %q", got, want)
 	}
-	// Original slice is untouched and duplicate binDir is a no-op.
+	// Original slice is untouched, empty binDir and duplicate binDir are no-ops.
 	if got := (commandEnv{environ: orig}).lookup("PATH"); got != baseDir {
 		t.Fatalf("original environ mutated: %q", got)
+	}
+	if got := (commandEnv{environ: withLLVMPath(orig, "")}).lookup("PATH"); got != baseDir {
+		t.Fatalf("empty binDir mutated PATH = %q, want %q", got, baseDir)
+	}
+	if got := (commandEnv{environ: withLLVMPath([]string{"FOO=bar"}, llvmDir)}).lookup("PATH"); got != llvmDir {
+		t.Fatalf("missing PATH withLLVMPath = %q, want %q", got, llvmDir)
 	}
 	dedup := withLLVMPath(updated, llvmDir)
 	if got := (commandEnv{environ: dedup}).lookup("PATH"); got != want {
 		t.Fatalf("duplicate withLLVMPath PATH = %q, want %q", got, want)
 	}
-	// If llvmDir already exists later in PATH, withLLVMPath promotes it to front.
-	later := []string{"PATH=" + baseDir + string(os.PathListSeparator) + llvmDir}
-	promoted := withLLVMPath(later, llvmDir)
-	if got := (commandEnv{environ: promoted}).lookup("PATH"); got != want {
-		t.Fatalf("promoted withLLVMPath PATH = %q, want %q", got, want)
+	// If llvmDir already exists later in PATH, withLLVMPath must preserve PATH
+	// order (matching llvm.SetupPath) so earlier wrapper directories retain precedence.
+	laterPath := baseDir + string(os.PathListSeparator) + llvmDir
+	later := []string{"PATH=" + laterPath}
+	preserved := withLLVMPath(later, llvmDir)
+	if got := (commandEnv{environ: preserved}).lookup("PATH"); got != laterPath {
+		t.Fatalf("preserved withLLVMPath PATH = %q, want %q", got, laterPath)
 	}
 
 	if runtime.GOOS != "windows" {
@@ -505,17 +514,26 @@ func TestWithLLVMPathPrependsWithoutMutatingProcessEnv(t *testing.T) {
 		if err := os.WriteFile(toolPath, []byte("#!/bin/sh\necho rel-tool-ok\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
+		t.Setenv("GODEBUG", "")
 		env := commandEnv{dir: workDir, environ: []string{"PATH=tool-bin"}}
-		resolved, err := env.lookPath("rel-build-tool")
+		if got, err := env.lookPath("rel-build-tool"); !errors.Is(err, exec.ErrDot) {
+			t.Fatalf("commandEnv.lookPath(relative PATH) = (%q, %v), want exec.ErrDot", got, err)
+		}
+		if _, err := env.configure(exec.Command("rel-build-tool")).CombinedOutput(); !errors.Is(err, exec.ErrDot) {
+			t.Fatalf("commandEnv.configure(relative PATH) err = %v, want exec.ErrDot", err)
+		}
+
+		envAllow := commandEnv{dir: workDir, environ: []string{"PATH=tool-bin", "GODEBUG=execerrdot=0"}}
+		resolved, err := envAllow.lookPath("rel-build-tool")
 		if err != nil {
-			t.Fatalf("commandEnv.lookPath(relative PATH) failed: %v", err)
+			t.Fatalf("commandEnv.lookPath(relative PATH, execerrdot=0) failed: %v", err)
 		}
 		if !filepath.IsAbs(resolved) || filepath.Clean(resolved) != toolPath {
 			t.Fatalf("commandEnv.lookPath = %q, want %q", resolved, toolPath)
 		}
-		out, err := env.configure(exec.Command("rel-build-tool")).CombinedOutput()
+		out, err := envAllow.configure(exec.Command("rel-build-tool")).CombinedOutput()
 		if err != nil {
-			t.Fatalf("commandEnv.configure(relative PATH) failed: %v\n%s", err, out)
+			t.Fatalf("commandEnv.configure(relative PATH, execerrdot=0) failed: %v\n%s", err, out)
 		}
 		if got := strings.TrimSpace(string(out)); got != "rel-tool-ok" {
 			t.Fatalf("output = %q, want %q", got, "rel-tool-ok")
