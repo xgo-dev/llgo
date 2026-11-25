@@ -202,6 +202,9 @@ func tophash(hash uintptr) uint8 {
 	return top
 }
 
+// Ensure bmap.tophash stays at offset 0 for evacuated's direct read below.
+var _ [1 - unsafe.Offsetof(bmap{}.tophash)]struct{} = [1]struct{}{}
+
 func evacuated(b *bmap) bool {
 	// Read tophash[0] directly at offset 0 of bmap. Using b.tophash[0] emits a
 	// pointer-to-array AssertNilDeref check that prevents LLVM from treating
