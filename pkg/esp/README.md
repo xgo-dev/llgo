@@ -21,6 +21,7 @@ usable from Go with hours-scale effort instead of a porting project:
 | `pkg/esp/lpcore` | `ulp_lp_core.h` + `lp_core_mailbox.h` (ulp component) | LP (low-power) coprocessor: load an LP program into LP RAM (32 KiB ceiling + the project's own reservation), run/stop with any of the six wakeup sources, single-word mailbox send/receive; the LP core keeps running through HP deep sleep (deep-sleep entry stays in the app's own glue) |
 | `pkg/esp/opus` | `opus.h` (managed component `78/esp-opus`, vanilla upstream Opus compiled fixed-point `-DFIXED_POINT=1 -DDISABLE_FLOAT_API`) | S16 PCM ↔ Opus packets: encoder (application, bitrate, complexity, frame-duration ctls; lookahead query) and decoder (duration read off the packet, packet-loss concealment on a nil frame); synchronous C-glue calls behind a generation-tagged handle table - no mailbox, no task; negative OPUS_* errors pass through named, binding-side refusals live in the 0x79xx segment |
 | `pkg/esp/wakenet` | ESP-SR WakeNet (`model_path.h`, `esp_wn_iface.h`, `esp_wn_models.h`) | Wake-word detection: model-partition enumeration, one engine instance (wn9_hilexin by default), the audio path (I2S RX or a test source) and the 3–6.4 ms/frame detect loop kept entirely on the glue's own FreeRTOS task, detections and task errors as a bounded event ring Go polls, sticky `Detected()`, per-call timing stats |
+| `pkg/esp/nvs` | `nvs.h` + `nvs_flash.h` | non-volatile key-value store: namespaces as read-write handles, typed values (u8/i32/u64/string/blob), Delete/Commit, `Keys()` over the entry iterator, partition-wide `ReadStats()`; explicit-commit durability boundary, static-buffer capacity contract (0x75xx segment) |
 
 ## Package template
 
@@ -783,3 +784,61 @@ decoded byte count exactly - 3,525,120 bytes = 44.1 kHz × 2 ch × 2 B ×
 20 s) - the radio-level audio qualities (listening quality, clock-drift
 glitches over long playbacks, AVRCP volume round-trips) stay physical-board
 items.
+
+## pkg/esp/nvs — non-volatile key-value storage over the IDF NVS layer
+
+`pkg/esp/nvs` exposes ESP-IDF's NVS store: `Init` (nvs_flash_init on the
+default partition, idempotent, with the driver's erase-and-retry recovery
+for a partition it cannot mount - an erase that wipes every namespace and
+only runs when nothing was readable), `Deinit`, and per-namespace handles:
+`Open(name)` returns a read-write `*Namespace` whose `GetU8`/`GetI32`/
+`GetU64`/`GetString`/`GetBlob`/`SetU8`/`SetI32`/`SetU64`/`SetString`/
+`SetBlob`/`Delete`/`Commit`/`Keys` cover the store's surface, plus a
+partition-wide `ReadStats()` ledger (used/free/available/total entries,
+namespace count). Handles follow the i2c idiom: a method on a nil, zero or
+Closed `Namespace` reports ESP_ERR_INVALID_ARG, `Close` is idempotent and
+reports the family's `esperr.ErrClosed` afterwards. Every call is a
+synchronous NVS access (a cache hit or one flash read) - no mailbox, and
+the default goroutine stacks hold.
+
+**Commit is explicit.** IDF stages every write in RAM and writes flash on
+nvs_commit; the API keeps that boundary honest instead of hiding it behind
+an auto-commit. The alternative was weighed and rejected: auto-committing
+per Set multiplies page writes for what is logically one durable batch
+(flash wear), and the convenience is one line of caller code (`Set`;
+`Commit`). Callers batch, then Commit once.
+
+**Capacity is a binding contract, not an IDF limit.** GetString/GetBlob
+read through the glue's static value buffer (512 B) and Keys through a
+static key table (32 names) - the glue allocates nothing (no malloc/free
+across the llgo link). Longer values and larger namespaces are REFUSED
+with the package's own 0x75xx-segment codes (`ErrTooLong`, `ErrTooManyKeys`)
+rather than truncated or misreported: raw esp_err passes through otherwise
+(the ESP_ERR_NVS_* family 0x1101..0x1110, named by `nvs.ErrName`), and
+these two conditions have no honest IDF equivalent. Writes have no
+binding-side cap; IDF's own ESP_ERR_NVS_VALUE_TOO_LONG applies past what a
+page holds.
+
+**One measured deviation from the IDF docs, pinned by the demo probe:**
+reading a key back under a different primitive shape (an i32 read of a
+u8-stored key) reports ESP_ERR_NVS_NOT_FOUND, not the documented
+ESP_ERR_NVS_TYPE_MISMATCH - `nvs_page.cpp`'s hash-list indexes items by
+(namespace, type, key), so a mismatched read misses the hash and
+short-circuits before the page scan that would classify it (IDF v6.3-dev;
+the nvs.go docs say so, and `_demo/esp-idf-nvs` pins the code).
+
+**Emulator fidelity (esp-emu 1.2.0, measured through the binding by
+`_demo/esp-idf-nvs`).** NVS is modeled faithfully for the whole surface:
+init/format on fresh flash, the typed round-trips, the entry iterator, the
+stats ledger - and, the point of the demo, flash persists across
+`esp_restart` (the probe walks write → verify → re-verify across two soft
+restarts and gates the run on PASS) and across emulator processes via
+`--save-state` (the whole 4 MiB flash image round-trips through the
+firmware file; the committed entries are visible in the file at the NVS
+partition offset). Not modeled and not claimed: flash wear (erase cycling,
+page-failure recovery under power loss), NVS encryption, multi-partition
+setups, concurrent access from a second task.
+
+**Integration.** The main component needs `REQUIRES nvs_flash`; copy
+`glue/nvs_glue.c` into the project's main component (WHOLE_ARCHIVE), the
+same two recipes as every package here.

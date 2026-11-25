@@ -1,0 +1,68 @@
+# Golden for the NVS acceptance probe ([go] nvs ...) of _demo/esp-idf-nvs,
+# captured from an esp-emu run (esp32s31, 16 MiB PSRAM, console uart0,
+# esp-emu v1.2.0, IDF v6.3-dev). The firmware gates itself: the PASS/FAIL
+# verdicts and every error-path code below are exact, the flash ledger
+# numbers float.
+#
+# Scope: every [go] nvs line the probe prints, one run covering three
+# boots: stage 0 (fresh write phase), stage 1 (verify after soft restart
+# #1), stage 2 (re-verify after restart #2). The restarts are the point:
+# each verify phase only runs if the previous boot's Commits survived the
+# esp_restart inside the emulator's flash model.
+#
+# Floater rule. The `*` values are the nvs_get_stats ledger (used / free /
+# avail / total / ns entries): the counts are deterministic for a given
+# write sequence in principle, but they are exactly the numbers an IDF
+# component upgrade (page sizing, reserved-entry rules) may legitimately
+# move, so they float. Everything else is exact on purpose:
+#
+#   stage0-fresh / wrong-type / missing-key / deleted-key /
+#   delete-absent / namespace-void = 0x1102   ESP_ERR_NVS_NOT_FOUND: the
+#                            fresh-flash shape, and (measured) what a
+#                            primitive type mismatch reads as - IDF's page
+#                            hash-list indexes by (namespace, type, key),
+#                            so the mismatch misses the hash before the
+#                            type check could report TYPE_MISMATCH
+#   key-too-long / key-empty / value-nul = 0x0102   the Go-side guards
+#                            (ESP_ERR_INVALID_ARG), refused before the call
+#   read-cap ... 0x7501       the binding's own ErrTooLong: a 600-byte
+#                            string read over the 512-byte value buffer
+#   keys app n = 6 ...        the sorted key lists - sorted by the probe,
+#                            so the golden never depends on NVS slot order
+#   verify ok boots = 1 / 2   the persistence verdicts, one per survived
+#                            restart
+#   PASS / done               the firmware's own verdicts
+#
+# Regression check (the console is a UART stream; strip CR before comparing):
+#   grep -E '^\[go\] nvs' <emu log> | tr -d '\r' \
+#     | sed -E 's/used = [0-9]+ free = [0-9]+ avail = [0-9]+ total = [0-9]+ ns = [0-9]+/used = * free = * avail = * total = * ns = */' \
+#     | diff - <(grep -v '^#' golden/emu-nvs-probe.txt)
+# A diff means the binding or the NVS layer changed behavior: the golden
+# only grows by appending a phase, never by editing an existing line.
+[go] nvs stage0-fresh err = 0x1102 ESP_ERR_NVS_NOT_FOUND
+[go] nvs wifi ok ssid pass committed
+[go] nvs roundtrip ok u8 i32 u64 str blob64
+[go] nvs wrong-type err = 0x1102 ESP_ERR_NVS_NOT_FOUND
+[go] nvs missing-key err = 0x1102 ESP_ERR_NVS_NOT_FOUND
+[go] nvs key-too-long err = 0x0102 ESP_ERR_INVALID_ARG
+[go] nvs key-empty err = 0x0102 ESP_ERR_INVALID_ARG
+[go] nvs value-nul err = 0x0102 ESP_ERR_INVALID_ARG
+[go] nvs read-cap ok 600-in 512-max err = 0x7501 NVS_ERR_TOO_LONG
+[go] nvs deleted-key err = 0x1102 ESP_ERR_NVS_NOT_FOUND
+[go] nvs delete-absent err = 0x1102 ESP_ERR_NVS_NOT_FOUND
+[go] nvs namespace-void err = 0x1102 ESP_ERR_NVS_NOT_FOUND
+[go] nvs keys app n = 6 blob i32 str t8 u64 u8
+[go] nvs keys wifi n = 2 pass ssid
+[go] nvs stats used = * free = * avail = * total = * ns = *
+[go] nvs stage0 done
+[go] nvs gone-still-gone err = 0x1102 ESP_ERR_NVS_NOT_FOUND
+[go] nvs keys app n = 6 blob i32 str t8 u64 u8
+[go] nvs stats used = * free = * avail = * total = * ns = *
+[go] nvs verify ok boots = 1
+[go] nvs stage1 done
+[go] nvs gone-still-gone err = 0x1102 ESP_ERR_NVS_NOT_FOUND
+[go] nvs keys app n = 6 blob i32 str t8 u64 u8
+[go] nvs stats used = * free = * avail = * total = * ns = *
+[go] nvs verify ok boots = 2
+[go] nvs PASS
+[go] nvs done
