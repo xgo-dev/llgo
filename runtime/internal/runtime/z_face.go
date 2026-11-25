@@ -207,6 +207,8 @@ func addItab(i *Itab) *Itab {
 }
 
 // NewItab returns a cached or newly constructed itab for (inter, typ).
+// If typ does not implement inter, the returned itab has fun[0] == 0 and that
+// negative entry is cached in itabTable; callers must check fun[0].
 func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	if typ == nil {
 		return nil
@@ -242,9 +244,26 @@ func newItabSlow(inter *InterfaceType, typ *Type) *Itab {
 	// On J32 C pointer arrays have four-byte elements while itab function
 	// slots follow Go's eight-byte word model.
 	data := c.Advance(ptr, int(itabHdrSize))
+	// Both inter.Methods and u.Methods() are sorted by method name, so one
+	// linear scan matches all interface methods in O(n+m) time.
 	mthds := u.Methods()
+	j := 0
 	for i, m := range inter.Methods {
-		fn, matched := findMethod(mthds, m)
+		imName := m.Name_
+		var fn abi.Text
+		matched := false
+		for ; j < len(mthds); j++ {
+			mName := mthds[j].Name_
+			if mName > imName {
+				break
+			}
+			if mName == imName && mthds[j].Mtyp_ == m.Typ_ {
+				fn = mthds[j].Ifn_
+				matched = true
+				j++
+				break
+			}
+		}
 		if !matched {
 			ret.fun[0] = 0
 			break
@@ -259,24 +278,6 @@ func newItabSlow(inter *InterfaceType, typ *Type) *Itab {
 		*(*uintptr)(slot) = uintptr(fn)
 	}
 	return addItab(ret)
-}
-
-// findMethod searches for an interface method in the type's method set.
-// Returns (fn, matched) where:
-//   - fn: the function pointer (may be nil even when matched=true for promoted unexported methods)
-//   - matched: true if a method with matching name and type signature exists
-func findMethod(mthds []abi.Method, im abi.Imethod) (abi.Text, bool) {
-	imName := im.Name_
-	for _, m := range mthds {
-		mName := m.Name_
-		if mName >= imName {
-			if mName == imName && m.Mtyp_ == im.Typ_ {
-				return m.Ifn_, true
-			}
-			break
-		}
-	}
-	return nil, false
 }
 
 // unreachableMethod matches Go's runtime.unreachableMethod: method entries
