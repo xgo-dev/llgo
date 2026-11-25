@@ -1263,3 +1263,27 @@ func UseAsync() Future[T] { return Async[T]() }
 		t.Fatalf("non-deterministic Scope child ordering: Scope1=%d Scope2=%d", idx1, idx2)
 	}
 }
+
+func TestConstructorsPreserveBoundTypeName(t *testing.T) {
+	pkg := types.NewPackage("example.com/p", "p")
+	tnNamed := types.NewTypeName(0, pkg, "N", nil)
+	origNamed := types.NewNamed(tnNamed, types.Typ[types.String], nil)
+	altNamed := types.NewNamed(tnNamed, types.Typ[types.Int], nil)
+	if tnNamed.Type() != origNamed || altNamed.Obj() != tnNamed {
+		t.Fatalf("NewNamed overwrote bound TypeName: got %v, want %v", tnNamed.Type(), origNamed)
+	}
+
+	tnAlias := types.NewTypeName(0, pkg, "A", nil)
+	origAlias := types.NewAlias(tnAlias, types.Typ[types.String])
+	altAlias := types.NewAlias(tnAlias, types.Typ[types.Int])
+	if tnAlias.Type() != origAlias || altAlias.Obj() != tnAlias {
+		t.Fatalf("NewAlias overwrote bound TypeName: got %v, want %v", tnAlias.Type(), origAlias)
+	}
+
+	tnParam := types.NewTypeName(0, pkg, "T", nil)
+	origParam := types.NewTypeParam(tnParam, types.Universe.Lookup("any").Type())
+	altParam := types.NewTypeParam(tnParam, types.Universe.Lookup("comparable").Type())
+	if tnParam.Type() != origParam || altParam.Obj() != tnParam {
+		t.Fatalf("NewTypeParam overwrote bound TypeName: got %v, want %v", tnParam.Type(), origParam)
+	}
+}

@@ -134,7 +134,7 @@ run_llgo_timer_samples '^BenchmarkTimer(RearmStopped|ResetActive|ResetHeap1024)$
 
 (
   cd "$source_root"
-  GOMAXPROCS=1 LLGO_ROOT="$source_root" "$llgo_output" test \
+  GOMAXPROCS=1 GOWORK="$source_gowork" LLGO_ROOT="$source_root" "$llgo_output" test \
     -run '^$' \
     -bench '^(BenchmarkRuntimeGetG|BenchmarkGlobal(Read|Write)|Benchmark(DirectCall|InterfaceCall|Defer|ChannelBuffered|ChannelHandoff))$' \
     -benchtime=250ms \
@@ -147,7 +147,7 @@ run_llgo_timer_samples '^BenchmarkTimer(RearmStopped|ResetActive|ResetHeap1024)$
 # instead of letting testing auto-calibrate to millions of host threads.
 (
   cd "$source_root"
-  GOMAXPROCS=1 LLGO_ROOT="$source_root" "$llgo_output" test \
+  GOMAXPROCS=1 GOWORK="$source_gowork" LLGO_ROOT="$source_root" "$llgo_output" test \
     -run '^$' \
     -bench '^BenchmarkGoroutine$' \
     -benchtime=100x \

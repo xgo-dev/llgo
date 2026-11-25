@@ -50,6 +50,7 @@ func TestHasPointers(t *testing.T) {
 				{"namedPointer", named("Pointer", pointer), true},
 				{"aliasScalar", types.NewAlias(types.NewTypeName(0, nil, "ScalarAlias", nil), integer), false},
 				{"aliasPointer", types.NewAlias(types.NewTypeName(0, nil, "PointerAlias", nil), pointer), true},
+				{"nativeFuncAlias", types.NewAlias(types.NewTypeName(0, nil, "CallbackAlias", nil), types.NewSignatureWithCallConv(nil, nil, nil, false, types.CDecl)), true},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					if got := b.HasPointers(tc.typ); got != tc.want {

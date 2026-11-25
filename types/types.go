@@ -1382,7 +1382,7 @@ func NewNamed(obj *TypeName, underlying Type, methods []*Func) *Named {
 		n.hostLayout = underlying.HasHostLayout()
 	}
 	classifyNamedSIMD(n)
-	if obj != nil {
+	if obj != nil && obj.typ == nil {
 		obj.typ = n
 	}
 	return n
@@ -1596,7 +1596,7 @@ type Alias struct {
 // NewAlias constructs a type alias (matching go/types.NewAlias).
 func NewAlias(obj *TypeName, rhs Type) *Alias {
 	a := &Alias{obj: obj, rhs: rhs}
-	if obj != nil {
+	if obj != nil && obj.typ == nil {
 		obj.typ = a
 		obj.isAlias = true
 	}
@@ -1698,7 +1698,7 @@ type TypeParam struct {
 // NewTypeParam constructs a generic type parameter (matching go/types.NewTypeParam).
 func NewTypeParam(obj *TypeName, constraint Type) *TypeParam {
 	tp := &TypeParam{obj: obj, constraint: constraint}
-	if obj != nil {
+	if obj != nil && obj.typ == nil {
 		obj.typ = tp
 	}
 	return tp

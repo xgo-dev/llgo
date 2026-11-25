@@ -307,15 +307,75 @@ func (b *Builder) FieldAlign(t types.Type) uintptr {
 // HasPointers is equivalent to PtrBytes(t) != 0, without computing field offsets
 // or array sizes. Allocation selection only needs pointer presence.
 func (b *Builder) HasPointers(t types.Type) bool {
-	if _, ok := types.Unalias(t).(*types.Tuple); ok {
-		panic("unsupported pointer layout: " + t.String())
+	switch t := types.Unalias(t).(type) {
+	case *types.Basic:
+		return t.Kind() == types.String || t.Kind() == types.UnsafePointer
+	case *types.Pointer, *types.Slice, *types.Signature, *types.Interface, *types.Map, *types.Chan:
+		return true
+	case *types.Struct:
+		for i := 0; i < t.NumFields(); i++ {
+			if b.HasPointers(t.Field(i).Type()) {
+				return true
+			}
+		}
+		return false
+	case *types.Array:
+		return t.Len() != 0 && b.HasPointers(t.Elem())
+	case *types.Named:
+		return b.HasPointers(t.Underlying())
 	}
-	return t.HasPtrData()
+	panic("unsupported pointer layout: " + t.String())
 }
 
 func (b *Builder) PtrBytes(t types.Type) uintptr {
-	ctx := b.context()
-	return uintptr(ctx.Layout(t).PtrBytes)
+	switch t := types.Unalias(t).(type) {
+	case *types.Basic:
+		switch t.Kind() {
+		case types.String, types.UnsafePointer:
+			return b.PtrSize
+		}
+		return 0
+	case *types.Pointer:
+		return b.PtrSize
+	case *types.Slice:
+		return b.PtrSize
+	case *types.Signature:
+		return b.PtrSize
+	case *types.Interface:
+		return 2 * b.PtrSize
+	case *types.Struct:
+		var field int = -1
+		var bytes uintptr
+		n := t.NumFields()
+		fields := make([]*types.Var, n)
+		for i := 0; i < n; i++ {
+			f := t.Field(i)
+			fields[i] = f
+			if ptrBytes := b.PtrBytes(f.Type()); ptrBytes != 0 {
+				field = i
+				bytes = ptrBytes
+			}
+		}
+		if field == -1 {
+			return 0
+		}
+		return uintptr(b.Sizes.Offsetsof(fields)[field]) + bytes
+	case *types.Map:
+		return b.PtrSize
+	case *types.Array:
+		if t.Len() != 0 {
+			elem := t.Elem()
+			if bytes := b.PtrBytes(elem); bytes != 0 {
+				return b.Size(t) - b.Size(elem) + bytes
+			}
+		}
+		return 0
+	case *types.Chan:
+		return b.PtrSize
+	case *types.Named:
+		return b.PtrBytes(t.Underlying())
+	}
+	panic("unsupported ptrbytes: " + t.String())
 }
 
 func (b *Builder) Size(t types.Type) uintptr {
