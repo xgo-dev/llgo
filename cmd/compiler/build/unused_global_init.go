@@ -18,23 +18,23 @@ package build
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
-	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/cl"
-	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/cmd/compiler/env"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	llplan9asm "github.com/xgo-dev/llgo/cmd/compiler/plan9asm"
 	"github.com/xgo-dev/llgo/cmd/xtool/safesplit"
+	"github.com/xgo-dev/llgo/directive"
+	"github.com/xgo-dev/llgo/ssa"
 	gllvm "github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
 )
 
 func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {

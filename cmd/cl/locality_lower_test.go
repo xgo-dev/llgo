@@ -1,10 +1,10 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
@@ -12,7 +12,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/ssatest"
 	"github.com/xgo-dev/llgo/cmd/compiler/locality"
 	localitylayout "github.com/xgo-dev/llgo/cmd/compiler/locality/layout"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func localitySSAGlobal(t *testing.T, path string) (*types.Package, *ssa.Global) {

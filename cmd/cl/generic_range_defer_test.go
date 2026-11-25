@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func TestGenericRangeDeferStackOwner(t *testing.T) {

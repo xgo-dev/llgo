@@ -1,11 +1,11 @@
 package goescape
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strconv"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func testStackLayout(_ ssa.Instruction, typ types.Type) (uint64, uint64) {

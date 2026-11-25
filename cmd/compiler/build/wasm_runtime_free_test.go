@@ -1,11 +1,11 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +13,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestWasmRuntimeFreeFunctions(t *testing.T) {

@@ -2,10 +2,10 @@ package goescape
 
 import (
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strconv"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // Use the same object inventory for solving and cache validation. A missing

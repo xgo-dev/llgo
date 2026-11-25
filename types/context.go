@@ -103,15 +103,17 @@ type Context struct {
 	simds  map[simdInternKey]*SIMDVec
 
 	// Memoized go/types -> llgo/types lowering tables.
-	goCtx           *gotypes.Context
-	goPkgs          map[*gotypes.Package]*Package
-	goScopes        map[*gotypes.Scope]*Scope
+	goCtx             *gotypes.Context
+	goPkgs            map[*gotypes.Package]*Package
+	llToGoPkgs        map[*Package]*gotypes.Package
+	goScopes          map[*gotypes.Scope]*Scope
 	goObjs          map[gotypes.Object]Object
 	goTypes         map[goTypeCacheKey]Type
 	goNamed         map[*gotypes.Named]*Named
-	goAliases       map[gotypes.Type]*Alias
-	goTParams       map[*gotypes.TypeParam]*TypeParam
-	incompleteNamed []*Named
+	goAliases         map[gotypes.Type]*Alias
+	goTParams         map[*gotypes.TypeParam]*TypeParam
+	incompleteNamed   []*Named
+	incompleteLLNamed map[*Named]Type
 
 	// Memoized physical layout cache.
 	layouts map[Type]*Layout
@@ -294,19 +296,40 @@ func (c *Context) resetGoCachesLocked() {
 	c.goNamed = make(map[*gotypes.Named]*Named)
 	c.goAliases = make(map[gotypes.Type]*Alias)
 	c.incompleteNamed = nil
+	c.incompleteLLNamed = nil
 	c.layouts = make(map[Type]*Layout)
 }
 
 func (c *Context) checkIncompleteNamedLocked() {
-	if len(c.incompleteNamed) == 0 {
-		return
-	}
-	for _, n := range c.incompleteNamed {
-		if n.resolved && n.goNamed != nil && n.goNamed.Underlying() != n.goUnderlying {
-			c.resetGoCachesLocked()
-			return
+	if len(c.incompleteNamed) > 0 {
+		for _, n := range c.incompleteNamed {
+			if n.resolved && n.goNamed != nil && n.goNamed.Underlying() != n.goUnderlying {
+				c.resetGoCachesLocked()
+				return
+			}
 		}
 	}
+	if len(c.incompleteLLNamed) > 0 {
+		for n, prev := range c.incompleteLLNamed {
+			if n.underlying != prev {
+				c.incompleteLLNamed = nil
+				c.layouts = make(map[Type]*Layout)
+				return
+			}
+		}
+	}
+}
+
+func (c *Context) trackIncompleteLLNamed(n *Named) {
+	if n == nil || n.goNamed != nil {
+		return
+	}
+	c.mu.Lock()
+	if c.incompleteLLNamed == nil {
+		c.incompleteLLNamed = make(map[*Named]Type)
+	}
+	c.incompleteLLNamed[n] = n.underlying
+	c.mu.Unlock()
 }
 
 // --- Canonical Type Interning (Internal) ---
@@ -1521,17 +1544,26 @@ func (c *Context) prescanTypeDirectives(pkgPath string, files []*ast.File) {
 					if pkgPath != "" {
 						key = pkgPath + "." + key
 					}
-					c.typeCallConvs[key] = cc
-					if cc.IsNative() {
-						c.hasNativeMetadata.Store(true)
+					if prev, exists := c.typeCallConvs[key]; !exists || prev != cc {
+						c.typeCallConvs[key] = cc
+						if cc.IsNative() {
+							c.hasNativeMetadata.Store(true)
+						}
+						changed = true
 					}
-					changed = true
 				}
 			}
 		}
 	}
-	if changed {
-		c.resetGoCachesLocked()
+	if changed && len(c.goTypes) > 0 {
+		for k := range c.goTypes {
+			if n, ok := k.typ.(*gotypes.Named); ok && n.Obj() != nil {
+				if _, hit := c.typeCallConvs[goTypeNameKey(n.Obj())]; hit {
+					delete(c.goTypes, k)
+					delete(c.goNamed, n)
+				}
+			}
+		}
 	}
 	c.mu.Unlock()
 }

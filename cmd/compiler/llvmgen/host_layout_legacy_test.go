@@ -1,11 +1,11 @@
 package llvmgen
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"testing"
 )
 
@@ -58,7 +58,7 @@ const AliasSize = unsafe.Sizeof(Alias{})
 				prog.SetNativeStructFields(positions)
 				return true
 			})
-			pkg, err := (&types.Config{Importer: importer.Default(), Sizes: sizes}).Check("legacy", fs, []*ast.File{file}, nil)
+			pkg, err := (&types.Config{Importer: llpkgs.DefaultImporter(), Sizes: sizes}).Check("legacy", fs, []*ast.File{file}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

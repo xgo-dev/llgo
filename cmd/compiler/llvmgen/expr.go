@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"go/constant"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"log"
 	"math"
 
@@ -133,6 +133,7 @@ func (v Expr) Name() string {
 // -----------------------------------------------------------------------------
 
 type builtinTy struct {
+	types.Type
 	name string
 }
 
@@ -146,13 +147,14 @@ func (p builtinTy) String() string {
 
 // Builtin returns a builtin function expression.
 func Builtin(name string) Expr {
-	tbi := &aType{raw: rawType{&builtinTy{name}}, kind: vkBuiltin}
+	tbi := &aType{raw: rawType{&builtinTy{name: name}}, kind: vkBuiltin}
 	return Expr{Type: tbi}
 }
 
 // -----------------------------------------------------------------------------
 
 type pyVarTy struct {
+	types.Type
 	mod  Expr
 	name string
 }
@@ -166,7 +168,7 @@ func (p pyVarTy) String() string {
 }
 
 func pyVarExpr(mod Expr, name string) Expr {
-	tvar := &aType{raw: rawType{&pyVarTy{mod, name}}, kind: vkPyVarRef}
+	tvar := &aType{raw: rawType{&pyVarTy{mod: mod, name: name}}, kind: vkPyVarRef}
 	return Expr{Type: tvar}
 }
 

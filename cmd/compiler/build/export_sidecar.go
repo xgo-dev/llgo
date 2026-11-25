@@ -22,11 +22,10 @@ import (
 	"go/token"
 	"os"
 
-	"github.com/xgo-dev/llgo/cmd/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
 	"github.com/xgo-dev/llgo/exportdata"
 	"github.com/xgo-dev/llgo/target"
-	lltypes "github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 const (
@@ -73,11 +72,7 @@ func (c *context) writeExportMetaSidecar(path string, pkg *aPackage) error {
 				importedEsc[depPkg.PkgPath] = &depPkg.exportMeta.Escape
 			}
 		}
-		llPkg, err := cl.LowerPackage(c.progSSA, pkg.SSA, c.targetSpec(), nil)
-		if err != nil {
-			return err
-		}
-		meta = cl.BuildPackageMeta(llPkg, importedEsc, pkgmeta.DefaultBudget)
+		meta = pkgmeta.BuildPackageMeta(pkg.SSA, nil, importedEsc, pkgmeta.DefaultBudget)
 		pkg.exportMeta = meta
 	}
 	if meta == nil {
@@ -105,20 +100,18 @@ func (c *context) writePackageTypesSidecar(path string, pkg *aPackage) error {
 	if pkg == nil || pkg.Package == nil || pkg.Types == nil {
 		return fmt.Errorf("missing types for package export sidecar")
 	}
-	tctx := lltypes.NewContextWithConfig(lltypes.ContextConfig{Spec: c.targetSpec()})
-	llPkg := cl.LowerGoPackageTypes(pkg.Types, tctx)
 	var fset *token.FileSet
 	if c.progSSA != nil {
 		fset = c.progSSA.Fset
 	}
 	var buf bytes.Buffer
-	if err := exportdata.Write(&buf, fset, llPkg); err != nil {
+	if err := exportdata.Write(&buf, fset, pkg.Types); err != nil {
 		return err
 	}
 	return writeFileAtomicBytes(path, buf.Bytes())
 }
 
-func (c *context) readPackageTypesSidecar(path, pkgPath string, imports map[string]*lltypes.Package) (*lltypes.Package, error) {
+func (c *context) readPackageTypesSidecar(path, pkgPath string, imports map[string]*types.Package) (*types.Package, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

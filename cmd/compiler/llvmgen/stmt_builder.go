@@ -20,7 +20,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"log"
 	"strings"
 

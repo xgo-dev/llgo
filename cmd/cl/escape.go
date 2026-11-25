@@ -17,13 +17,13 @@
 package cl
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 
 	llabi "github.com/xgo-dev/llgo/cmd/compiler/abi"
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 // PrepareEscapeAnalysis runs after all source metadata and SSA bodies are ready,

@@ -20,11 +20,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"log"
 	"os"
 	"os/exec"
@@ -38,12 +38,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 
 	"github.com/xgo-dev/llgo/cmd/cl"
 	llabi "github.com/xgo-dev/llgo/cmd/compiler/abi"
-	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
 	"github.com/xgo-dev/llgo/cmd/compiler/buildenv"
 	"github.com/xgo-dev/llgo/cmd/compiler/cabi"
 	"github.com/xgo-dev/llgo/cmd/compiler/clang"
@@ -67,11 +66,12 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/pclnmap"
 	"github.com/xgo-dev/llgo/cmd/compiler/pclnpost"
+	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
 	"github.com/xgo-dev/llgo/cmd/compiler/quoted"
 	"github.com/xgo-dev/llgo/cmd/compiler/typepatch"
 	"github.com/xgo-dev/llgo/cmd/compiler/wasmworkers"
-	"github.com/xgo-dev/llgo/target"
 	xenv "github.com/xgo-dev/llgo/cmd/xtool/env"
+	"github.com/xgo-dev/llgo/target"
 	gllvm "github.com/xgo-dev/llvm"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
@@ -4231,7 +4231,6 @@ type ssaBuildEntry struct {
 	id         string
 	pkg        *ssa.Package
 	syntax     []*ast.File
-	fixOrder   bool
 	complexity int64
 }
 
@@ -4294,10 +4293,10 @@ type aPackage struct {
 	pcln *packagePCLN // source mappings read from ArchiveFile before linking
 
 	// Cache related fields
-	Fingerprint    string                  // fingerprint digest
-	Manifest       string                  // manifest text content
-	CacheHit       bool                    // whether cache was hit
-	frontendOpaque *frontendExport         // validated body-independent archive contract
+	Fingerprint    string               // fingerprint digest
+	Manifest       string               // manifest text content
+	CacheHit       bool                 // whether cache was hit
+	frontendOpaque *frontendExport      // validated body-independent archive contract
 	exportMeta     *pkgmeta.PackageMeta // binary compiler summary sidecar
 }
 
@@ -4330,7 +4329,7 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 			var altPkg *packages.Cached
 			ssaPkg, created := createSSAPkg(ctx, prog, p, verbose)
 			if created {
-				entries = append(entries, ssaBuildEntry{id: p.ID, pkg: ssaPkg, syntax: p.Syntax, fixOrder: true})
+				entries = append(entries, ssaBuildEntry{id: p.ID, pkg: ssaPkg, syntax: p.Syntax})
 			}
 			if ctx.hasAltPkg(pkgPath) {
 				if altPkg = ctx.dedup.Check(altPkgPathPrefix + pkgPath); altPkg == nil {
@@ -4380,8 +4379,9 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 	return all, entries, nil
 }
 
-// buildSSAPkgs builds registered packages with the requested bound, then
-// performs ordering repair serially because it mutates instruction slices.
+// buildSSAPkgs builds registered packages with the requested bound.
+// Return-value load ordering is repaired natively inside llgo/ssa during
+// each package's parallel Build().
 func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
 	if len(entries) == 0 {
 		return
@@ -4395,8 +4395,7 @@ func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
 		if entry.pkg == nil {
 			continue
 		}
-		if i, ok := index[entry.pkg]; ok {
-			unique[i].fixOrder = unique[i].fixOrder || entry.fixOrder
+		if _, ok := index[entry.pkg]; ok {
 			continue
 		}
 		index[entry.pkg] = len(unique)
@@ -4439,13 +4438,6 @@ func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
 	}
 	close(jobs)
 	wg.Wait()
-	repairSpan := ctx.buildTrace.startCoordinator("repair SSA order", nil)
-	for _, entry := range unique {
-		if entry.fixOrder {
-			fixSSAOrder(entry.pkg)
-		}
-	}
-	repairSpan.done()
 }
 
 func syntaxNodeCount(files []*ast.File) (nodes int64) {

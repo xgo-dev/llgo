@@ -2,7 +2,7 @@ package cl
 
 import (
 	"errors"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"os"
 	"strings"
 	"testing"
@@ -10,8 +10,8 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/cabi"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
 )
 
 func TestCVariadicWrapperCycles(t *testing.T) {

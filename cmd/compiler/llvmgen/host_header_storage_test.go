@@ -1,9 +1,9 @@
 package llvmgen
 
 import (
-	"go/importer"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
@@ -12,7 +12,7 @@ import (
 )
 
 func TestWasmHostLayoutHeaderLoads(t *testing.T) {
-	markers, err := importer.Default().Import("structs")
+	markers, err := llpkgs.DefaultImporter().Import("structs")
 	if err != nil {
 		t.Fatal(err)
 	}

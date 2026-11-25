@@ -18,10 +18,10 @@ package build
 
 import (
 	"errors"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,7 +35,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/env"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestPackageBuildTask(t *testing.T) {
@@ -269,7 +269,7 @@ func TestFinalizePackageBuildPreservesCachedRuntimeNeeds(t *testing.T) {
 func TestBuildSSAPkgsEmptyAndNilEntries(t *testing.T) {
 	ctx := &context{buildConf: &Config{}}
 	buildSSAPkgs(ctx, nil)
-	buildSSAPkgs(ctx, []ssaBuildEntry{{}, {fixOrder: true}})
+	buildSSAPkgs(ctx, []ssaBuildEntry{{}, {}})
 
 	prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
 	pkg := prog.CreatePackage(types.NewPackage("example.com/ssa", "ssa"), nil, nil, true)
@@ -358,7 +358,7 @@ func TestCanUseIsolatedBackend(t *testing.T) {
 	}
 }
 
-func TestPreparePackageBuildsKeepsPatchesIsolatedAndSerial(t *testing.T) {
+func TestPreparePackageBuildsAllowsParallelPatches(t *testing.T) {
 	t.Setenv(llgoBuildCache, "off")
 	patched := &aPackage{Package: &packages.Package{
 		ID:      "example.com/patched",
@@ -379,8 +379,8 @@ func TestPreparePackageBuildsKeepsPatchesIsolatedAndSerial(t *testing.T) {
 	if err := preparePackageBuilds(ctx, []*packageBuildTask{patchedTask, normalTask}, false); err != nil {
 		t.Fatal(err)
 	}
-	if !patchedTask.isolated || patchedTask.parallel {
-		t.Fatalf("patched execution = isolated %v, parallel %v; want true, false", patchedTask.isolated, patchedTask.parallel)
+	if !patchedTask.isolated || !patchedTask.parallel {
+		t.Fatalf("patched execution = isolated %v, parallel %v; want true, true", patchedTask.isolated, patchedTask.parallel)
 	}
 	if !normalTask.isolated || !normalTask.parallel {
 		t.Fatalf("normal execution = isolated %v, parallel %v; want true, true", normalTask.isolated, normalTask.parallel)

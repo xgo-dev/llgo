@@ -20,7 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"hash"
 	"log"
 	"strconv"
@@ -93,8 +93,6 @@ const (
 	BitCast           // store other value (need bitcast) directly in the interface value
 )
 
-var defaultDataKindCtx = lltypes.NewContext()
-
 func DataKindOf(raw types.Type, lvl int, is32Bits bool) (DataKind, types.Type, int) {
 	switch raw.Underlying().(type) {
 	case *types.Basic, *types.Pointer, *types.Signature, *types.Map, *types.Chan,
@@ -102,17 +100,8 @@ func DataKindOf(raw types.Type, lvl int, is32Bits bool) (DataKind, types.Type, i
 	default:
 		panic("unknown type")
 	}
-	dk, _, depth := lltypes.DataKindOf(defaultDataKindCtx.FromGo(raw), is32Bits)
-	goInner := raw
-	for i := 0; i < depth; i++ {
-		switch u := goInner.Underlying().(type) {
-		case *types.Struct:
-			goInner = u.Field(0).Type()
-		case *types.Array:
-			goInner = u.Elem()
-		}
-	}
-	return DataKind(dk), goInner, lvl + depth
+	dk, inner, depth := types.DataKindOf(raw, is32Bits)
+	return DataKind(dk), inner, lvl + depth
 }
 
 // -----------------------------------------------------------------------------

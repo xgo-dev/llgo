@@ -18,16 +18,16 @@ package cl
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
 )
 
 func TestConstBool(t *testing.T) {

@@ -18,18 +18,16 @@ package build
 
 import (
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	gotypes "go/types"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
-	lltypes "github.com/xgo-dev/llgo/types"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/types"
 )
 
 func TestExportSidecarMetaAndStdlibTypesRoundTrip(t *testing.T) {
@@ -50,16 +48,16 @@ func Unused() int { return 42 }
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	info := &gotypes.Info{
-		Types:      make(map[ast.Expr]gotypes.TypeAndValue),
-		Defs:       make(map[*ast.Ident]gotypes.Object),
-		Uses:       make(map[*ast.Ident]gotypes.Object),
-		Implicits:  make(map[ast.Node]gotypes.Object),
-		Selections: make(map[*ast.SelectorExpr]*gotypes.Selection),
-		Scopes:     make(map[ast.Node]*gotypes.Scope),
-		Instances:  make(map[*ast.Ident]gotypes.Instance),
+	info := &types.Info{
+		Types:      make(map[ast.Expr]types.TypeAndValue),
+		Defs:       make(map[*ast.Ident]types.Object),
+		Uses:       make(map[*ast.Ident]types.Object),
+		Implicits:  make(map[ast.Node]types.Object),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+		Scopes:     make(map[ast.Node]*types.Scope),
+		Instances:  make(map[*ast.Ident]types.Instance),
 	}
-	conf := gotypes.Config{Importer: importer.Default()}
+	conf := types.Config{Importer: packages.DefaultImporter()}
 	goPkg, err := conf.Check("stdsim", fset, []*ast.File{f}, info)
 	if err != nil {
 		t.Fatalf("typecheck: %v", err)
@@ -105,7 +103,7 @@ func Unused() int { return 42 }
 	if err := ctx.writePackageTypesSidecar(typesPath, pkg); err != nil {
 		t.Fatalf("writePackageTypesSidecar: %v", err)
 	}
-	decodedPkg, err := ctx.readPackageTypesSidecar(typesPath, "stdsim", make(map[string]*lltypes.Package))
+	decodedPkg, err := ctx.readPackageTypesSidecar(typesPath, "stdsim", make(map[string]*types.Package))
 	if err != nil {
 		t.Fatalf("readPackageTypesSidecar: %v", err)
 	}

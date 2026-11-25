@@ -448,7 +448,11 @@ func matchObj(obj Object, pkg *Package, name string) bool {
 	if token.IsExported(name) {
 		return true
 	}
-	return obj.Pkg() == pkg
+	opkg := obj.Pkg()
+	if opkg == pkg {
+		return true
+	}
+	return opkg != nil && pkg != nil && opkg.goPkg != nil && opkg.goPkg == pkg.goPkg
 }
 
 func hasPointerRecv(m *Func) bool {
@@ -778,6 +782,25 @@ func AssertableTo(V *Interface, T Type) bool {
 }
 
 // syntheticMethodSet collects direct and promoted methods on T sorted by Id().
+func methodValType(recv Type, fn *Func) Type {
+	if fn == nil {
+		return nil
+	}
+	sig, ok := fn.typ.(*Signature)
+	if !ok || sig == nil {
+		return fn.typ
+	}
+	cp := *sig
+	if sig.recv != nil {
+		r := *sig.recv
+		r.typ = recv
+		cp.recv = &r
+	} else {
+		cp.recv = NewVar(fn.pos, fn.pkg, "", recv)
+	}
+	return &cp
+}
+
 func syntheticMethodSet(T Type) *MethodSet {
 	if T == nil {
 		return &MethodSet{}
@@ -791,7 +814,7 @@ func syntheticMethodSet(T Type) *MethodSet {
 				kind:  MethodVal,
 				recv:  T,
 				obj:   m,
-				typ:   m.typ,
+				typ:   methodValType(T, m),
 				index: []int{i},
 			}
 		}
@@ -801,6 +824,9 @@ func syntheticMethodSet(T Type) *MethodSet {
 	typ, isPtr := derefType(T)
 	if isPtr {
 		if _, ok := Unalias(typ).(*Pointer); ok {
+			return &MethodSet{}
+		}
+		if _, ok := typ.Underlying().(*Interface); ok {
 			return &MethodSet{}
 		}
 	}
@@ -845,7 +871,7 @@ func syntheticMethodSet(T Type) *MethodSet {
 						kind:     MethodVal,
 						recv:     T,
 						obj:      m,
-						typ:      m.typ,
+						typ:      methodValType(T, m),
 						index:    concatIndex(e.index, i),
 						indirect: e.indirect,
 					}, e.multiples)
@@ -860,7 +886,7 @@ func syntheticMethodSet(T Type) *MethodSet {
 						kind:     MethodVal,
 						recv:     T,
 						obj:      m,
-						typ:      m.typ,
+						typ:      methodValType(T, m),
 						index:    concatIndex(e.index, i),
 						indirect: true,
 					}, e.multiples)

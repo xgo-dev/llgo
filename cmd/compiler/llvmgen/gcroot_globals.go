@@ -1,7 +1,7 @@
 package llvmgen
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 // WasmGCNoScanSection holds static storage that cannot contain Go heap roots.

@@ -18,7 +18,7 @@ package llvmgen
 
 import (
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 
 	"github.com/xgo-dev/llvm"
 )
@@ -127,7 +127,7 @@ func (prog Program) wrapStructConstant(t Type, index int, value llvm.Value) llvm
 }
 
 func (prog Program) wrapStructConstantAs(t Type, structType llvm.Type, index int, value llvm.Value) llvm.Value {
-	if prog.typeCtx.FromGo(t.RawType()).SIMDTagIndex() >= 0 {
+	if t.RawType().SIMDTagIndex() >= 0 {
 		return llvm.ConstNull(structType.StructElementTypes()[index])
 	}
 	if t.kind != vkTuple || structType.StructElementTypes()[index] != prog.Field(t, index).ll {

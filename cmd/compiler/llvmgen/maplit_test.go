@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"go/importer"
-	"go/types"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"runtime"
 	"strings"
 	"testing"
@@ -18,7 +18,7 @@ func TestMapLitLoopArrays(t *testing.T) {
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	defer prog.Dispose()
 	prog.SetRuntime(func() *types.Package {
-		p, e := importer.For("source", nil).Import(PkgRuntime)
+		p, e := llpkgs.SourceImporter().Import(PkgRuntime)
 		if e != nil {
 			t.Fatal(e)
 		}

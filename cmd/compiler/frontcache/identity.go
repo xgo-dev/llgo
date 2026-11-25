@@ -5,8 +5,8 @@ package frontcache
 
 import (
 	"fmt"
-	"go/types"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func Owner(fn *ssa.Function) *types.Package {

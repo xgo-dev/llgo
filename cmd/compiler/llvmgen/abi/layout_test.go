@@ -2,7 +2,7 @@ package abi
 
 import (
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"testing"
 )
 

@@ -21,7 +21,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 
 	llabi "github.com/xgo-dev/llgo/cmd/compiler/abi"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/abi"

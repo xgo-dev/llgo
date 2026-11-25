@@ -2,7 +2,7 @@ package plan9asm
 
 import (
 	"fmt"
-	"go/types"
+	gotypes "go/types"
 	"os"
 	"regexp"
 	"strings"
@@ -102,10 +102,12 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		return fs, ok
 	}
 
-	imports := make(map[string]*types.Package, len(pkg.Imports))
+	bridge := newLLToGoBridge()
+	goPkgTypes := bridge.pkg(pkg.Types)
+	imports := make(map[string]*gotypes.Package, len(pkg.Imports))
 	for path, imp := range pkg.Imports {
 		if imp != nil && imp.Types != nil {
-			imports[path] = imp.Types
+			imports[path] = bridge.pkg(imp.Types)
 		}
 	}
 	if goarch == "amd64" {
@@ -120,15 +122,15 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 
 	tr, err := extplan9asm.TranslateGoModule(extplan9asm.GoPackage{
 		Path:    symbolPkgPath,
-		Types:   pkg.Types,
+		Types:   goPkgTypes,
 		Imports: imports,
 		Syntax:  pkg.Syntax,
 	}, src, extplan9asm.GoModuleOptions{
 		FileName:       sfile,
 		GOOS:           goos,
 		GOARCH:         goarch,
-		Sizes:          pkg.TypesSizes,
-		FrameSizes:     types.SizesFor("gc", goarch),
+		Sizes:          toGoSizes(pkg.TypesSizes, goarch),
+		FrameSizes:     gotypes.SizesFor("gc", goarch),
 		TargetTriple:   target.TripleWithGOARM(goos, goarch, opt.GOARM),
 		X87Mode:        opt.X87Mode,
 		AnnotateSource: opt.AnnotateSource,

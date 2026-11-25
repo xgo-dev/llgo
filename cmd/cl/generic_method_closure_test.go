@@ -1,10 +1,10 @@
 package cl
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"testing"
 
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 // Regression for golang/go#81135, encountered while compiling TypeScript's SyncSet.Keys.

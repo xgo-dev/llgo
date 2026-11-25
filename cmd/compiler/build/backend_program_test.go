@@ -18,8 +18,7 @@ package build
 
 import (
 	"errors"
-	"go/importer"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"runtime"
 	"testing"
 
@@ -91,7 +90,7 @@ func TestBackendProgramsStayOwnedByPackagesUntilExplicitDispose(t *testing.T) {
 }
 
 func TestBackendAbiTypesFollowLinkedPackageOrder(t *testing.T) {
-	runtimePkg, err := importer.For("source", nil).Import(llvmgen.PkgRuntime)
+	runtimePkg, err := packages.SourceImporter().Import(llvmgen.PkgRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}

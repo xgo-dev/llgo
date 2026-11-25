@@ -2,14 +2,14 @@ package cl
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestMapLitStoredValueChains(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"go/constant"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"math/big"
 	"strconv"
 )

@@ -127,6 +127,10 @@ type Checker struct {
 	goVersion string
 }
 
+type llgoContextProvider interface {
+	LLGoContext() *Context
+}
+
 // NewChecker returns a new Checker instance for a given package
 // (mirroring go/types.NewChecker).
 func NewChecker(conf *Config, fset *token.FileSet, pkg *Package, info *Info) *Checker {
@@ -135,6 +139,14 @@ func NewChecker(conf *Config, fset *token.FileSet, pkg *Package, info *Info) *Ch
 		cfg = *conf
 	}
 	ctx := cfg.Context
+	if ctx == nil && cfg.Sizes != nil {
+		switch s := cfg.Sizes.(type) {
+		case *Context:
+			ctx = s
+		case llgoContextProvider:
+			ctx = s.LLGoContext()
+		}
+	}
 	if ctx == nil {
 		ctx = NewContext()
 	}
@@ -160,7 +172,7 @@ func NewChecker(conf *Config, fset *token.FileSet, pkg *Package, info *Info) *Ch
 		}
 	}
 	if cfg.Importer != nil {
-		goConf.Importer = &goImporterAdapter{imp: cfg.Importer}
+		goConf.Importer = &goImporterAdapter{ctx: ctx, imp: cfg.Importer}
 	}
 	goConf.Sizes = bridgeToGoSizes(ctx, cfg.Sizes)
 
@@ -227,6 +239,11 @@ func bridgeToGoSizes(ctx *Context, s Sizes) gotypes.Sizes {
 	switch v := s.(type) {
 	case *Context:
 		return v.GoSizes()
+	case llgoContextProvider:
+		if c := v.LLGoContext(); c != nil {
+			return c.GoSizes()
+		}
+		return &goSizesBridge{ctx: ctx, sizes: s}
 	case *StdSizes:
 		return &gotypes.StdSizes{WordSize: v.WordSize, MaxAlign: v.MaxAlign}
 	default:
@@ -258,6 +275,7 @@ func (b *goSizesBridge) Offsetsof(fields []*gotypes.Var) []int64 {
 }
 
 type goImporterAdapter struct {
+	ctx *Context
 	imp Importer
 }
 
@@ -280,6 +298,9 @@ func (a *goImporterAdapter) ImportFrom(path, dir string, mode gotypes.ImportMode
 	}
 	if pkg == Unsafe {
 		return gotypes.Unsafe, err
+	}
+	if a.ctx != nil {
+		return a.ctx.toGoPackage(pkg), err
 	}
 	if pkg.goPkg != nil {
 		return pkg.goPkg, err
@@ -350,6 +371,15 @@ func Instantiate(ctxt *Context, orig Type, targs []Type, validate bool) (Type, e
 	}
 
 	// Fast path: delegate directly to go/types.Instantiate when backed by go/types.
+	var ownerCtx *Context
+	switch o := orig.(type) {
+	case *Named:
+		ownerCtx = o.ctx
+	case *Alias:
+		if o.obj != nil && o.obj.pkg != nil {
+			ownerCtx = o.obj.pkg.ctx
+		}
+	}
 	switch orig.(type) {
 	case *Named, *Alias, *Signature:
 		if goOrig := orig.goTypeRef(); goOrig != nil {
@@ -363,15 +393,22 @@ func Instantiate(ctxt *Context, orig Type, targs []Type, validate bool) (Type, e
 				goArgs[i] = a.goTypeRef()
 			}
 			if allGo {
-				ctx := ctxt
-				if ctx == nil {
-					ctx = NewContext()
+				instCtx := ctxt
+				if instCtx == nil {
+					instCtx = ownerCtx
 				}
-				res, err := gotypes.Instantiate(ctx.ensureGoContext(), goOrig, goArgs, validate)
+				if instCtx == nil {
+					instCtx = NewContext()
+				}
+				res, err := gotypes.Instantiate(instCtx.ensureGoContext(), goOrig, goArgs, validate)
 				if err != nil {
 					return nil, wrapGoError(err)
 				}
-				return ctx.FromGo(res), nil
+				lowerCtx := ownerCtx
+				if lowerCtx == nil {
+					lowerCtx = instCtx
+				}
+				return lowerCtx.FromGo(res), nil
 			}
 		}
 	}
@@ -428,8 +465,8 @@ func instantiateSynthetic(orig Type, targs []Type, validate bool) (Type, error) 
 	switch t := orig.(type) {
 	case *Named:
 		inst := &Named{
-			resolved:        true,
-			methodsResolved: true,
+			synthInstOrigin: t,
+			synthInstSubst:  subst,
 			obj:             t.obj,
 			origin:          t.Origin(),
 			typeArgs:        newTypeList(targs),
@@ -439,18 +476,6 @@ func instantiateSynthetic(orig Type, targs []Type, validate bool) (Type, error) 
 			nativeLayout:    t.nativeLayout,
 			simdTagIndex:    t.simdTagIndex,
 			simdVec:         t.simdVec,
-		}
-		seen := map[Type]Type{t: inst}
-		inst.underlying = substType(t.Underlying(), subst, seen)
-		if nm := t.NumMethods(); nm > 0 {
-			inst.methods = make([]*Func, nm)
-			for i := 0; i < nm; i++ {
-				m := t.Method(i)
-				msig, _ := substType(m.typ, subst, seen).(*Signature)
-				nmFn := NewFunc(m.pos, m.pkg, m.name, msig)
-				nmFn.origin = m.Origin()
-				inst.methods[i] = nmFn
-			}
 		}
 		return inst, nil
 
@@ -551,19 +576,27 @@ func substType(t Type, subst map[*TypeParam]Type, seen map[Type]Type) Type {
 		}
 	case *Interface:
 		u.resolve()
+		out := &Interface{resolved: true, methodSet: true}
+		seen[u] = out
 		methods := make([]*Func, len(u.explicitMethods))
 		changed := false
 		for i, m := range u.explicitMethods {
-			mt := substType(m.typ, subst, seen)
-			if mt != m.typ {
-				changed = true
-				msig, _ := mt.(*Signature)
-				nm := NewFunc(m.pos, m.pkg, m.name, msig)
-				nm.origin = m.Origin()
-				methods[i] = nm
-			} else {
-				methods[i] = m
+			if sig, ok := m.typ.(*Signature); ok && sig != nil {
+				params := substTuple(sig.params, subst, seen)
+				results := substTuple(sig.results, subst, seen)
+				if params != sig.params || results != sig.results {
+					changed = true
+					cp := *sig
+					cp.params = params
+					cp.results = results
+					cp.recv = NewVar(m.pos, m.pkg, "", out)
+					nm := NewFunc(m.pos, m.pkg, m.name, &cp)
+					nm.origin = m.Origin()
+					methods[i] = nm
+					continue
+				}
 			}
+			methods[i] = m
 		}
 		embs := make([]Type, len(u.embeddeds))
 		for i, e := range u.embeddeds {
@@ -574,9 +607,92 @@ func substType(t Type, subst map[*TypeParam]Type, seen map[Type]Type) Type {
 			embs[i] = ne
 		}
 		if !changed {
+			seen[u] = u
 			return u
 		}
-		return NewInterfaceType(methods, embs).Complete()
+		out.explicitMethods = methods
+		out.embeddeds = embs
+		return out.Complete()
+	case *Named:
+		if u.TypeArgs().Len() > 0 {
+			args := make([]Type, u.TypeArgs().Len())
+			changed := false
+			for i := 0; i < u.TypeArgs().Len(); i++ {
+				a := u.TypeArgs().At(i)
+				na := substType(a, subst, seen)
+				if na != a {
+					changed = true
+				}
+				args[i] = na
+			}
+			if changed {
+				if existing, ok := seen[u.Origin()]; ok {
+					if en, ok := existing.(*Named); ok && typeListMatches(en.TypeArgs(), args) {
+						return en
+					}
+				}
+				if inst, err := Instantiate(nil, u.Origin(), args, false); err == nil {
+					return inst
+				}
+			}
+		} else if u.TypeParams().Len() > 0 {
+			args := make([]Type, u.TypeParams().Len())
+			changed := false
+			for i := 0; i < u.TypeParams().Len(); i++ {
+				tp := u.TypeParams().At(i)
+				na := substType(tp, subst, seen)
+				if na != tp {
+					changed = true
+				}
+				args[i] = na
+			}
+			if changed {
+				if existing, ok := seen[u.Origin()]; ok {
+					if en, ok := existing.(*Named); ok && typeListMatches(en.TypeArgs(), args) {
+						return en
+					}
+				}
+				if inst, err := Instantiate(nil, u.Origin(), args, false); err == nil {
+					return inst
+				}
+			}
+		}
+		return u
+	case *Alias:
+		if u.TypeArgs().Len() > 0 {
+			args := make([]Type, u.TypeArgs().Len())
+			changed := false
+			for i := 0; i < u.TypeArgs().Len(); i++ {
+				a := u.TypeArgs().At(i)
+				na := substType(a, subst, seen)
+				if na != a {
+					changed = true
+				}
+				args[i] = na
+			}
+			if changed {
+				if inst, err := Instantiate(nil, u.Origin(), args, false); err == nil {
+					return inst
+				}
+			}
+		} else if u.TypeParams().Len() > 0 {
+			args := make([]Type, u.TypeParams().Len())
+			changed := false
+			for i := 0; i < u.TypeParams().Len(); i++ {
+				tp := u.TypeParams().At(i)
+				na := substType(tp, subst, seen)
+				if na != tp {
+					changed = true
+				}
+				args[i] = na
+			}
+			if changed {
+				if inst, err := Instantiate(nil, u.Origin(), args, false); err == nil {
+					return inst
+				}
+			}
+		}
+		return u
 	case *Union:
 		terms := make([]*Term, len(u.terms))
 		changed := false
@@ -595,6 +711,18 @@ func substType(t Type, subst map[*TypeParam]Type, seen map[Type]Type) Type {
 		return NewUnion(terms)
 	}
 	return t
+}
+
+func typeListMatches(tl *TypeList, args []Type) bool {
+	if tl.Len() != len(args) {
+		return false
+	}
+	for i, a := range args {
+		if !Identical(tl.At(i), a) {
+			return false
+		}
+	}
+	return true
 }
 
 func substTuple(t *Tuple, subst map[*TypeParam]Type, seen map[Type]Type) *Tuple {

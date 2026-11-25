@@ -19,7 +19,7 @@ package blocks
 import (
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 )

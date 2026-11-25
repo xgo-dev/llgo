@@ -498,11 +498,22 @@ func initUniverse() *Scope {
 		b := Typ[k]
 		u.Insert(NewTypeName(token.NoPos, nil, b.name, b))
 	}
-	// Predeclared aliases: byte = uint8, rune = int32, any = interface{}.
-	u.Insert(NewAlias(NewTypeName(token.NoPos, nil, "byte", nil), Typ[Uint8]).Obj())
-	u.Insert(NewAlias(NewTypeName(token.NoPos, nil, "rune", nil), Typ[Int32]).Obj())
+	// Predeclared aliases: byte = uint8 (Basic), rune = int32 (Basic), any = interface{} (Alias).
+	byteObj := NewTypeName(token.NoPos, nil, "byte", Typ[Byte])
+	byteObj.isAlias = true
+	u.Insert(byteObj)
+	runeObj := NewTypeName(token.NoPos, nil, "rune", Typ[Rune])
+	runeObj.isAlias = true
+	u.Insert(runeObj)
 	anyIface := &Interface{resolved: true, completed: true, comparable: false, methodSet: true}
-	u.Insert(NewAlias(NewTypeName(token.NoPos, nil, "any", nil), anyIface).Obj())
+	var goAnyType gotypes.Type
+	if uo := gotypes.Universe.Lookup("any"); uo != nil {
+		goAnyType = uo.Type()
+		anyIface.goType = uo.Type().Underlying()
+	}
+	anyAlias := NewAlias(NewTypeName(token.NoPos, nil, "any", nil), anyIface)
+	anyAlias.goType = goAnyType
+	u.Insert(anyAlias.Obj())
 	// Predeclared error interface.
 	errSig := NewSignature(nil, nil, NewTuple(NewParam(token.NoPos, nil, "", Typ[String])), false)
 	errMethod := NewFunc(token.NoPos, nil, "Error", errSig)
@@ -515,11 +526,20 @@ func initUniverse() *Scope {
 		methods:         []*Func{errMethod},
 	}
 	errNamed := NewNamed(NewTypeName(token.NoPos, nil, "error", nil), errIface, nil)
+	if uo := gotypes.Universe.Lookup("error"); uo != nil {
+		errNamed.goType = uo.Type()
+		errIface.goType = uo.Type().Underlying()
+	}
 	errSig.recv = NewParam(token.NoPos, nil, "", errNamed)
 	u.Insert(errNamed.Obj())
 	// Predeclared comparable interface.
 	compIface := &Interface{resolved: true, completed: true, comparable: true, methodSet: false}
-	u.Insert(NewNamed(NewTypeName(token.NoPos, nil, "comparable", nil), compIface, nil).Obj())
+	compNamed := NewNamed(NewTypeName(token.NoPos, nil, "comparable", nil), compIface, nil)
+	if uo := gotypes.Universe.Lookup("comparable"); uo != nil {
+		compNamed.goType = uo.Type()
+		compIface.goType = uo.Type().Underlying()
+	}
+	u.Insert(compNamed.Obj())
 	// Predeclared constants & nil.
 	u.Insert(NewConst(token.NoPos, nil, "true", Typ[UntypedBool], constant.MakeBool(true)))
 	u.Insert(NewConst(token.NoPos, nil, "false", Typ[UntypedBool], constant.MakeBool(false)))

@@ -2,19 +2,18 @@ package cl
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func parseCallerFrameFile(t *testing.T, src string) *ast.File {
@@ -141,7 +140,7 @@ func newLLSSAProgForTarget(t *testing.T, target *llvmgen.Target) llvmgen.Program
 	t.Helper()
 	prog := llvmgen.NewProgram(target)
 	prog.SetRuntime(func() *types.Package {
-		rt, err := importer.For("source", nil).Import(llvmgen.PkgRuntime)
+		rt, err := packages.SourceImporter().Import(llvmgen.PkgRuntime)
 		if err != nil {
 			t.Fatal("load runtime failed:", err)
 		}

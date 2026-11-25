@@ -3,7 +3,7 @@ package llvmgen
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strconv"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/abi"

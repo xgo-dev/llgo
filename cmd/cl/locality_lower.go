@@ -18,14 +18,14 @@ package cl
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/locality"
 	localitylayout "github.com/xgo-dev/llgo/cmd/compiler/locality/layout"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // localInitReady is part of the compiler/runtime ABI. Keep it in sync with

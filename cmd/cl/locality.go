@@ -18,9 +18,9 @@ package cl
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"go/types"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"

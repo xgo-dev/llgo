@@ -21,7 +21,7 @@ import (
 	"encoding/binary"
 	"go/ast"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"sort"
 	"strconv"
 

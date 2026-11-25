@@ -2,14 +2,14 @@ package goescape
 
 import (
 	"go/ast"
-	"go/importer"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"go/parser"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func sourceFunction(t *testing.T, source string) *ssa.Function {
@@ -19,7 +19,7 @@ func sourceFunction(t *testing.T, source string) *ssa.Function {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pkg, _, err := ssautil.BuildPackage(&types.Config{Importer: importer.Default()}, fset, types.NewPackage("test", "test"), []*ast.File{file}, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
+	pkg, _, err := ssautil.BuildPackage(&types.Config{Importer: llpkgs.DefaultImporter()}, fset, types.NewPackage("test", "test"), []*ast.File{file}, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
 	if err != nil {
 		t.Fatal(err)
 	}

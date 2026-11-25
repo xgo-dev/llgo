@@ -1,18 +1,18 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func TestSIMDConversionResizeDeclarations(t *testing.T) {
@@ -29,7 +29,7 @@ func TestSIMDConversionResizeDeclarations(t *testing.T) {
 			if packages.PrintErrors(pkgs) != 0 || len(pkgs) != 1 {
 				t.Fatal("could not load archsimd")
 			}
-			prog, _ := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
+			prog, _ := packages.AllPackages(pkgs, ssa.InstantiateGenerics)
 			prog.Build()
 			count := 0
 			for fn := range ssautil.AllFunctions(prog) {

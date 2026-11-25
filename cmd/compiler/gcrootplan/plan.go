@@ -18,7 +18,7 @@
 // tracing collector while a function is stopped at a safepoint.
 package gcrootplan
 
-import "golang.org/x/tools/go/ssa"
+import "github.com/xgo-dev/llgo/ssa"
 
 // Plan returns values accepted by needsRoot that are live immediately before
 // an instruction accepted by isSafepoint.

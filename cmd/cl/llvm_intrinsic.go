@@ -2,13 +2,13 @@ package cl
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"go/types"
 
 	"github.com/xgo-dev/llgo/cmd/cl/ssawrap"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func (p *context) llvmIntrinsicError(pos token.Pos, fn *ssa.Function, err error) {

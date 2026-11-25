@@ -21,7 +21,7 @@ package layout
 
 import (
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"sort"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/locality"

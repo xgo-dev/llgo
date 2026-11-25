@@ -3,7 +3,7 @@ package midway
 import (
 	"go/ast"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strings"
 	"testing"
 )

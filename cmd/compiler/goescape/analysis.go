@@ -17,10 +17,10 @@
 package goescape
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"sort"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // Version participates in package fingerprints, including compiler API users

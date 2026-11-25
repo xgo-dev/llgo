@@ -1,10 +1,10 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,7 +14,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestUnusedGlobalInitCache(t *testing.T) {

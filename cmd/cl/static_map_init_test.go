@@ -1,13 +1,13 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
-	"go/types"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/ssatest"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func newMapInitContext(t *testing.T) *context {

@@ -21,10 +21,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	goversion "go/version"
 	"io"
 	"os"
@@ -37,7 +37,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/goplus/gogen/packages"
 	"github.com/qiniu/x/test"
 	"github.com/xgo-dev/llgo/cmd/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/build"
@@ -46,8 +45,9 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/llgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/ssatest"
 	"github.com/xgo-dev/llgo/cmd/compiler/mockable"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 )

@@ -17,12 +17,12 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestArrayCompareReusesImmutableLocalStorage(t *testing.T) {

@@ -20,7 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"math"
 	"strconv"
 	"strings"

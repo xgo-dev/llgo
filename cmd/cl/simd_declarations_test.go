@@ -1,15 +1,14 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/types"
 	"os"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // Check every intrinsic declaration on the listed targets, including methods that upstream tests
@@ -24,7 +23,7 @@ func TestSIMDCompleteDeclarations(t *testing.T) {
 			if len(pkgs) != 1 || packages.PrintErrors(pkgs) != 0 {
 				t.Fatal("could not load archsimd")
 			}
-			prog, _ := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
+			prog, _ := packages.AllPackages(pkgs, ssa.InstantiateGenerics)
 			prog.Build()
 			count := 0
 			for _, file := range pkgs[0].Syntax {

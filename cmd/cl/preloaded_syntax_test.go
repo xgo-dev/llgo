@@ -17,17 +17,17 @@
 package cl
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/goembed"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/ssatest"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestPreloadedSyntaxFeedsBackendWithoutLateDiscovery(t *testing.T) {
@@ -49,7 +49,7 @@ func Plain() {}
 			}
 			files := []*ast.File{file}
 			info := newLocalityTypeInfo()
-			imp := importer.Default()
+			imp := llpkgs.DefaultImporter()
 			pkg, err := (&types.Config{Importer: imp}).Check("example.com/"+pkgName, fset, files, info)
 			if err != nil {
 				t.Fatal(err)

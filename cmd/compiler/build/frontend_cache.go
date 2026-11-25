@@ -8,7 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,7 +16,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 const frontendExportVersion = 3

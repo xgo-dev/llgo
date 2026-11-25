@@ -182,6 +182,99 @@ func goSIMDVectorShape(typ gotypes.Type) (*gotypes.Array, bool) {
 	return lanes, true
 }
 
+func llSIMDTagIndex(t Type) (int, bool) {
+	if t == nil {
+		return 0, false
+	}
+	n, ok := Unalias(t).(*Named)
+	if !ok || n.obj == nil || n.obj.pkg == nil || n.obj.pkg.path != "simd/archsimd" {
+		return 0, false
+	}
+	index := -1
+	switch n.obj.name {
+	case "v128":
+		index = 0
+	case "v256":
+		index = 1
+	case "v512":
+		index = 2
+	}
+	if index < 0 {
+		return 0, false
+	}
+	st, ok := n.underlying.(*Struct)
+	if !ok || len(st.fields) != 1 || st.fields[0] == nil {
+		return 0, false
+	}
+	a, ok := st.fields[0].typ.(*Array)
+	return index, ok && a.length == 0
+}
+
+func llSIMDVectorShape(n *Named) (*Array, bool) {
+	if n == nil || n.obj == nil || n.obj.pkg == nil || n.obj.pkg.path != "simd/archsimd" {
+		return nil, false
+	}
+	st, ok := n.underlying.(*Struct)
+	if !ok || len(st.fields) != 2 || st.fields[0] == nil || st.fields[1] == nil {
+		return nil, false
+	}
+	lanes, ok := st.fields[1].typ.(*Array)
+	if !ok {
+		return nil, false
+	}
+	elem, ok := lanes.elem.(*Basic)
+	if !ok {
+		return nil, false
+	}
+	bits := int64(basicBits(elem))
+	if bits == 0 {
+		return nil, false
+	}
+	name := elem.name
+	expected := fmt.Sprintf("%s%sx%d", strings.ToUpper(name[:1]), name[1:], lanes.length)
+	if strings.HasPrefix(n.obj.name, "Mask") && elem.info&IsInteger != 0 && elem.info&IsUnsigned == 0 {
+		expected = fmt.Sprintf("Mask%dx%d", bits, lanes.length)
+	}
+	if n.obj.name != expected {
+		return nil, false
+	}
+	var wantTag int
+	switch bits * lanes.length {
+	case 128:
+		wantTag = 0
+	case 256:
+		wantTag = 1
+	case 512:
+		wantTag = 2
+	default:
+		return nil, false
+	}
+	tag, ok := llSIMDTagIndex(st.fields[0].typ)
+	if !ok || tag != wantTag {
+		return nil, false
+	}
+	return lanes, true
+}
+
+func classifyNamedSIMD(n *Named) {
+	if n == nil {
+		return
+	}
+	if idx, ok := llSIMDTagIndex(n); ok {
+		n.simdTagIndex = idx
+	} else {
+		n.simdTagIndex = -1
+	}
+	if lanes, ok := llSIMDVectorShape(n); ok {
+		if elem, ok := lanes.elem.(*Basic); ok {
+			isMask := strings.HasPrefix(n.obj.name, "Mask")
+			n.simdVec = newSIMDVec(elem, int(lanes.length), isMask)
+			return
+		}
+	}
+	n.simdVec = nil
+}
+
 // defaultSIMDAlignments returns target-accurate vector alignments for
 // v128, v256, and v512 without requiring LLVM TargetData.
 func defaultSIMDAlignments(spec target.Spec) [3]int64 {

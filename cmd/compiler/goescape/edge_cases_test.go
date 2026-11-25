@@ -2,11 +2,11 @@ package goescape
 
 import (
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strings"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestStorageThroughAliasesAndContainers(t *testing.T) {

@@ -1,19 +1,18 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
-	"golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func TestFixSSAOrderSingleCaseSelectRecvAssign(t *testing.T) {
@@ -172,95 +171,47 @@ func TestFixSSAOrderCryptoX509ParseOID(t *testing.T) {
 		t.Fatal("failed to load crypto/x509")
 	}
 	mode := ssa.SanityCheckFunctions | ssa.InstantiateGenerics | ssa.GlobalDebug
-	prog, ssaPackages := ssautil.Packages(loaded, mode)
+	prog, ssaPackages := packages.Packages(loaded, mode)
 	prog.Build()
 	pkg := ssaPackages[0]
-	fixSSAOrder(pkg)
 	checkReturnLoadAfterMutation(t, pkg.Func("ParseOID"), "unmarshalOIDText")
 }
 
-func TestDebugRefMoveHelpers(t *testing.T) {
-	movedValue := &ssa.BinOp{}
-	instrs := []ssa.Instruction{
-		movedValue,
-		&ssa.DebugRef{X: movedValue},
-		&ssa.Return{Results: []ssa.Value{movedValue}},
+func indexOfInstr(instrs []ssa.Instruction, target ssa.Instruction) int {
+	for i, ins := range instrs {
+		if ins == target {
+			return i
+		}
 	}
-
-	moved := movedValuesForIndices(instrs, map[int]struct{}{
-		-1:          {},
-		0:           {},
-		2:           {},
-		len(instrs): {},
-	})
-	if len(moved) != 1 {
-		t.Fatalf("moved values = %d, want 1", len(moved))
-	}
-	if _, ok := moved[movedValue]; !ok {
-		t.Fatal("moved values do not contain the selected SSA value")
-	}
-
-	move := map[int]struct{}{0: {}}
-	includeDebugRefsForMovedValues(instrs, move, moved, -1, len(instrs)+1)
-	if _, ok := move[1]; !ok {
-		t.Fatal("DebugRef for the moved value was not included")
-	}
+	return -1
 }
 
-func TestMoveInstrsAfter(t *testing.T) {
-	const src = `package p
-func f() {
-	println(1)
-	println(2)
-	println(3)
-}`
-	fn := buildSSAOrderTestPackage(t, src)
-	instrs := fn.Blocks[0].Instrs
-	if len(instrs) < 4 {
-		t.Fatalf("instructions = %d, want at least 4", len(instrs))
+func instrUsesValue(ins ssa.Instruction, v ssa.Value) bool {
+	if ins == nil || v == nil {
+		return false
 	}
-
-	assertOrder := func(t *testing.T, got, want []ssa.Instruction) {
-		t.Helper()
-		if len(got) != len(want) {
-			t.Fatalf("instruction count = %d, want %d", len(got), len(want))
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Fatalf("instruction %d = %v, want %v", i, got[i], want[i])
-			}
+	for _, op := range ins.Operands(nil) {
+		if op != nil && *op == v {
+			return true
 		}
 	}
+	return false
+}
 
-	t.Run("empty", func(t *testing.T) {
-		assertOrder(t, moveInstrsAfter(instrs, nil, instrs[1]), instrs)
-	})
-	t.Run("nil-anchor", func(t *testing.T) {
-		moving := map[ssa.Instruction]struct{}{instrs[0]: {}}
-		assertOrder(t, moveInstrsAfter(instrs, moving, nil), instrs)
-	})
-	t.Run("missing-anchor", func(t *testing.T) {
-		moving := map[ssa.Instruction]struct{}{instrs[0]: {}}
-		assertOrder(t, moveInstrsAfter(instrs, moving, &ssa.Return{}), instrs)
-	})
-	t.Run("anchor-in-moving", func(t *testing.T) {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("moveInstrsAfter did not reject an anchor in the moving set")
-			}
-		}()
-		moving := map[ssa.Instruction]struct{}{instrs[1]: {}}
-		moveInstrsAfter(instrs, moving, instrs[1])
-	})
-	t.Run("stable", func(t *testing.T) {
-		moving := map[ssa.Instruction]struct{}{
-			instrs[0]: {},
-			instrs[2]: {},
+func callUsesValue(ci ssa.CallInstruction, v ssa.Value) bool {
+	if ci == nil || v == nil {
+		return false
+	}
+	c := ci.Common()
+	if c == nil {
+		return false
+	}
+	for _, op := range c.Operands(nil) {
+		if op != nil && *op == v {
+			return true
 		}
-		want := []ssa.Instruction{instrs[1], instrs[0], instrs[2]}
-		want = append(want, instrs[3:]...)
-		assertOrder(t, moveInstrsAfter(instrs, moving, instrs[1]), want)
-	})
+	}
+	return false
 }
 
 func checkReturnLoadAfterMutation(t *testing.T, fn *ssa.Function, mutation string) {
@@ -337,7 +288,7 @@ func buildSSAOrderTestPackageMode(t *testing.T, src string, mode ssa.BuilderMode
 	files := []*ast.File{file}
 	pkg := types.NewPackage("p", "p")
 	ssapkg, _, err := ssautil.BuildPackage(
-		&types.Config{Importer: importer.Default()},
+		&types.Config{Importer: packages.DefaultImporter()},
 		fset,
 		pkg,
 		files,
@@ -346,7 +297,6 @@ func buildSSAOrderTestPackageMode(t *testing.T, src string, mode ssa.BuilderMode
 	if err != nil {
 		t.Fatalf("BuildPackage: %v", err)
 	}
-	fixSSAOrder(ssapkg)
 	fn, ok := ssapkg.Members["f"].(*ssa.Function)
 	if !ok {
 		t.Fatalf("missing function f")

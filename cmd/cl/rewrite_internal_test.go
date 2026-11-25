@@ -2,21 +2,21 @@ package cl
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"runtime"
 	"strings"
 	"testing"
 
-	gpackages "github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/ssatest"
+	gpackages "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 func init() {
@@ -1766,7 +1766,7 @@ var VarAlias T = "original_value"
 	}
 }
 
-func buildSSAPackageWithFiles(t *testing.T, src string) (*ssa.Package, []*ast.File, *gpackages.Importer) {
+func buildSSAPackageWithFiles(t *testing.T, src string) (*ssa.Package, []*ast.File, types.Importer) {
 	t.Helper()
 
 	fset := token.NewFileSet()

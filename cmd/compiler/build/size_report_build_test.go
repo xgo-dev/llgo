@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/sizereport"
-	"golang.org/x/tools/go/packages"
 )
 
 // A valid empty function is enough to exercise build-output plumbing; binary

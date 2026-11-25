@@ -1,12 +1,12 @@
 package llvmgen
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
-	"github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llvm"
 )
 

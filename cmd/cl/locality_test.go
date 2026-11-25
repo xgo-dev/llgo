@@ -2,11 +2,11 @@ package cl
 
 import (
 	"fmt"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"runtime"
 	"strings"
 	"testing"
@@ -14,7 +14,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/abi"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/ssatest"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func compileLocalitySource(t *testing.T, src string) (llvmgen.Program, string) {
@@ -39,7 +39,7 @@ func compileLocalitySourceMode(t *testing.T, src string, options Options, logica
 	}
 	files := []*ast.File{file}
 	info := newLocalityTypeInfo()
-	imp := importer.Default()
+	imp := llpkgs.DefaultImporter()
 	pkg, err := (&types.Config{Importer: imp}).Check("example.com/locality", fset, files, info)
 	if err != nil {
 		t.Fatal(err)

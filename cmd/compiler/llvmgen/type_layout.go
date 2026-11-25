@@ -18,9 +18,8 @@ package llvmgen
 
 import (
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 
-	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -28,30 +27,30 @@ type structLayout struct {
 	wrapped []bool
 }
 
-func toLLCallConv(cc CallConv) (lltypes.CallConv, bool) {
+func toLLCallConv(cc CallConv) (types.CallConv, bool) {
 	switch cc {
 	case GoDecl:
-		return lltypes.Go, false
+		return types.Go, false
 	case CDecl:
-		return lltypes.CDecl, true
+		return types.CDecl, true
 	case PyDecl:
-		return lltypes.Py, true
+		return types.Py, true
 	case Stdcall:
-		return lltypes.Stdcall, true
+		return types.Stdcall, true
 	default:
-		return lltypes.Go, false
+		return types.Go, false
 	}
 }
 
-func fromLLCallConv(cc lltypes.CallConv) CallConv {
+func fromLLCallConv(cc types.CallConv) CallConv {
 	switch cc {
-	case lltypes.CDecl:
+	case types.CDecl:
 		return CDecl
-	case lltypes.Py:
+	case types.Py:
 		return PyDecl
-	case lltypes.Stdcall:
+	case types.Stdcall:
 		return Stdcall
-	case lltypes.Go:
+	case types.Go:
 		return GoDecl
 	default:
 		return ccUnknown
@@ -82,14 +81,14 @@ func (p Program) nativeTypeDirective(t types.Type) CallConv {
 	if !p.typeCtx.HasNativeMetadata() {
 		return ccUnknown
 	}
-	if cc, ok := p.typeCtx.NativeTypeCallConv(p.typeCtx.FromGo(t)); ok {
+	if cc, ok := p.typeCtx.NativeTypeCallConv(t); ok {
 		return fromLLCallConv(cc)
 	}
 	return ccUnknown
 }
 
 func (p Program) hasNativeStructLayout(raw *types.Named) bool {
-	return p.typeCtx.FromGo(raw).HasHostLayout() || p.hasLegacyNativeTypeLayout(raw)
+	return raw.HasHostLayout() || p.hasLegacyNativeTypeLayout(raw)
 }
 
 // Legacy C type directives also select native storage views for surrounding
@@ -132,8 +131,7 @@ func (p Program) structLayout(typ Type) (structLayout, bool) {
 // removing zero-sized tail protection. When the desired layout differs from
 // LLVM's natural layout, wrap only affected fields and preserve Go field indices.
 func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, *structLayout) {
-	llRaw := p.typeCtx.FromGo(raw)
-	host := llRaw.HasHostLayout()
+	host := raw.HasHostLayout()
 	fields := p.toLLVMFields(raw, native)
 	goarch := p.target.effectiveGOARCH()
 	if native || len(fields) == 0 {
@@ -141,7 +139,7 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 	}
 	// Only presence is needed here. Computing the source layout would query
 	// sizes before the standalone SSA API's fallback below is initialized.
-	if !host && goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !llRaw.ContainsSIMDStorage() && !(llRaw.ContainsHostLayout() && !p.typeCtx.HostUsesNativeGoLayout()) {
+	if !host && goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !raw.ContainsSIMDStorage() && !(raw.ContainsHostLayout() && !p.typeCtx.HostUsesNativeGoLayout()) {
 		return fields, nil
 	}
 
@@ -157,7 +155,7 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 	for i, field := range fields {
 		fieldAlign := (*goProgram)(p).Alignof(raw.Field(i).Type())
 		if host {
-			fieldAlign = p.typeCtx.HostFieldLayout(p.typeCtx.FromGo(raw.Field(i).Type())).Align
+			fieldAlign = p.typeCtx.HostFieldLayout(raw.Field(i).Type()).Align
 		} else if p.hasNativeTypeLayout(raw.Field(i).Type()) {
 			fieldAlign = int64(p.td.ABITypeAlignment(field))
 		}
@@ -244,7 +242,7 @@ func (p Program) hasNativeTypeLayout(raw types.Type) bool {
 	case *types.Named:
 		return p.hasNativeStructLayout(t)
 	case *types.Struct:
-		return p.typeCtx.FromGo(t).HasHostLayout()
+		return t.HasHostLayout()
 	case *types.Array:
 		return p.hasNativeTypeLayout(t.Elem())
 	}

@@ -18,3 +18,7 @@ func aliasObjAndRhs(t gotypes.Type) (*gotypes.TypeName, gotypes.Type, bool) {
 func aliasGenericInfo(t gotypes.Type) (origin gotypes.Type, tparams *gotypes.TypeParamList, targs *gotypes.TypeList) {
 	return nil, nil, nil
 }
+
+func newGoAlias(obj *gotypes.TypeName, rhs gotypes.Type, _ []*gotypes.TypeParam) gotypes.Type {
+	return gotypes.NewAlias(obj, rhs)
+}

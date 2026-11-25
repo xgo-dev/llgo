@@ -1,11 +1,11 @@
 package llvmgen
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"reflect"
 	"strconv"
 	"testing"
@@ -62,7 +62,7 @@ const Offset = unsafe.Offsetof(Record{}.U)
 			}
 			prog.SetTypeCallConv("host.NativeCallback", CDecl)
 			prog.SetTypeCallConv("host.AliasCallback", CDecl)
-			conf := types.Config{Importer: importer.Default(), Sizes: sizes}
+			conf := types.Config{Importer: llpkgs.DefaultImporter(), Sizes: sizes}
 			pkg, err := conf.Check("host", fset, []*ast.File{file}, nil)
 			if err != nil {
 				t.Fatal(err)

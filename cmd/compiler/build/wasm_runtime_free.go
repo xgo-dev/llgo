@@ -2,19 +2,19 @@ package build
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/cmd/compiler/env"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/directive"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // A closed program with no Go allocation, panic, callbacks or scheduler use

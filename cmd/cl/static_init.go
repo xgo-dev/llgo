@@ -17,15 +17,15 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // Static folding is an optimization. Keep sparse large non-byte arrays in the

@@ -3,7 +3,7 @@ package build
 import (
 	"bytes"
 	"encoding/json"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"os"
 	"path/filepath"
 	"runtime"

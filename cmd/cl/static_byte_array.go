@@ -17,15 +17,15 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"go/types"
 	"strconv"
 	"strings"
 
-	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/cmd/compiler/locality"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/directive"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // minStripStaticByteArray is the number of composite-literal elements at which

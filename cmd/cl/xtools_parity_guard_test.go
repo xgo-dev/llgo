@@ -32,7 +32,7 @@ import (
 
 type pkgAPISurface struct {
 	types      map[string]bool
-	funcs      map[string]string            // funcName -> normalized signature
+	funcs      map[string]string // funcName -> normalized signature
 	vars       map[string]bool
 	consts     map[string]bool
 	methods    map[string]map[string]string // typeName -> methodName -> normalized signature

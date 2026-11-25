@@ -1,7 +1,7 @@
 package llvmgen
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 
 	llabi "github.com/xgo-dev/llgo/cmd/compiler/abi"
 	"github.com/xgo-dev/llvm"

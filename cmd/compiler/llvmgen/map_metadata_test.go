@@ -1,9 +1,9 @@
 package llvmgen
 
 import (
-	"go/importer"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
@@ -19,7 +19,7 @@ func mapMetadataPointer(v llvm.Value) llvm.Value {
 }
 
 func TestWasmMapMetadata(t *testing.T) {
-	runtimePkg, err := importer.For("source", nil).Import(PkgRuntime)
+	runtimePkg, err := llpkgs.SourceImporter().Import(PkgRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}

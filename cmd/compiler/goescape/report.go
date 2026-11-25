@@ -18,12 +18,12 @@ package goescape
 
 import (
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"io"
 	"sort"
 	"strings"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // WriteReport prints deterministic frontend storage decisions. level selects

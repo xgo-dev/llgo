@@ -5,9 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 
-	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -32,7 +31,7 @@ const nativeCallbackABIError = "C callback with a different ABI must be a direct
 // pointer can currently refer to an unadapted Go entry.
 func (p Program) nativeIntegerAttrs(sig *types.Signature, ft llvm.Type, add func(int, llvm.Attribute)) {
 	extension := p.nativeIntegerExt
-	if extension == lltypes.NativeIntNoExt {
+	if extension == types.NativeIntNoExt {
 		return
 	}
 	// This runs during SSA codegen, before cabi.TransformModule can reorder or
@@ -52,10 +51,10 @@ func (p Program) nativeIntegerAttrs(sig *types.Signature, ft llvm.Type, add func
 			return
 		}
 		width := physical.IntTypeWidth()
-		if width > 32 || width == 32 && extension != lltypes.NativeIntRV64Ext {
+		if width > 32 || width == 32 && extension != types.NativeIntRV64Ext {
 			return
 		}
-		if extension == lltypes.NativeIntBoolExt && basic.Info()&types.IsBoolean == 0 {
+		if extension == types.NativeIntBoolExt && basic.Info()&types.IsBoolean == 0 {
 			return
 		}
 		kind := nativeSignExtKind
@@ -73,7 +72,7 @@ func (p Program) nativeIntegerAttrs(sig *types.Signature, ft llvm.Type, add func
 
 func (b Builder) setNativeIntegerCallAttrs(call llvm.Value, fn Expr, sig *types.Signature, params []llvm.Value) {
 	extension := b.Prog.nativeIntegerExt
-	if extension == lltypes.NativeIntNoExt {
+	if extension == types.NativeIntNoExt {
 		return
 	}
 	ft := call.CalledFunctionType()
@@ -96,7 +95,7 @@ func (b Builder) setNativeIntegerCallAttrs(call llvm.Value, fn Expr, sig *types.
 			copyInteger(i+1, physical)
 		}
 	}
-	if extension == lltypes.NativeIntRV64Ext && ft.IsFunctionVarArg() {
+	if extension == types.NativeIntRV64Ext && ft.IsFunctionVarArg() {
 		// C's promoted int/unsigned int ellipsis arguments also use RV64's
 		// sign-extended 32-bit representation. They have no declaration slots.
 		for i := len(ft.ParamTypes()); i < len(params); i++ {
@@ -120,7 +119,7 @@ func (b Builder) needsNativeFuncval(fn Expr) bool {
 		return false
 	}
 	wasmNative := prog.isWasm32NativeCall(fn)
-	if !wasmNative && prog.nativeIntegerExt == lltypes.NativeIntNoExt {
+	if !wasmNative && prog.nativeIntegerExt == types.NativeIntNoExt {
 		return false
 	}
 	sig, native := prog.callSignature(fn)

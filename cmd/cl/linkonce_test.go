@@ -1,15 +1,15 @@
 package cl
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func buildLinkOnceSSAPackage(t *testing.T, src string) *ssa.Package {
@@ -21,7 +21,7 @@ func buildLinkOnceSSAPackage(t *testing.T, src string) *ssa.Package {
 	}
 	pkg := types.NewPackage("p", "p")
 	mode := ssa.SanityCheckFunctions | ssa.InstantiateGenerics
-	ssapkg, _, err := ssautil.BuildPackage(&types.Config{Importer: importer.Default()}, fset, pkg, []*ast.File{f}, mode)
+	ssapkg, _, err := ssautil.BuildPackage(&types.Config{Importer: llpkgs.DefaultImporter()}, fset, pkg, []*ast.File{f}, mode)
 	if err != nil {
 		t.Fatal(err)
 	}

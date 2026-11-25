@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestStaticByteArrayGlobalRoundTrip(t *testing.T) {

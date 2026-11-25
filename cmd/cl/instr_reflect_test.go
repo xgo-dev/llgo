@@ -1,13 +1,13 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestReflectTypeMethodCheckRecordsDemands(t *testing.T) {

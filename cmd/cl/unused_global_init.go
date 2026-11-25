@@ -19,14 +19,14 @@ package cl
 import (
 	"crypto/sha256"
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"maps"
 	"slices"
 
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 // UnusedGlobalInits describes package initializations whose destination is never

@@ -15,3 +15,8 @@ func aliasObjAndRhs(t gotypes.Type) (*gotypes.TypeName, gotypes.Type, bool) {
 func aliasGenericInfo(t gotypes.Type) (origin gotypes.Type, tparams *gotypes.TypeParamList, targs *gotypes.TypeList) {
 	return nil, nil, nil
 }
+
+func newGoAlias(obj *gotypes.TypeName, rhs gotypes.Type, _ []*gotypes.TypeParam) gotypes.Type {
+	// Pre-Go 1.22 has no gotypes.Alias; represent via TypeName with rhs.
+	return rhs
+}

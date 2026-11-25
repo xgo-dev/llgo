@@ -19,7 +19,7 @@ package header
 import (
 	"bytes"
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"io"
 	"os"
 	"sort"

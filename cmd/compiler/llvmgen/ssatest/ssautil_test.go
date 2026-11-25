@@ -1,7 +1,7 @@
 package ssatest
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"

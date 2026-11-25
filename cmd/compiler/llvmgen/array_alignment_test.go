@@ -3,9 +3,9 @@
 package llvmgen
 
 import (
-	"go/importer"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"testing"
 
 	"github.com/xgo-dev/llvm"
@@ -13,7 +13,7 @@ import (
 
 func TestGoArrayAccessAlignment(t *testing.T) {
 	Initialize(InitAll)
-	markerPkg, err := importer.Default().Import("structs")
+	markerPkg, err := llpkgs.DefaultImporter().Import("structs")
 	if err != nil {
 		t.Fatal(err)
 	}

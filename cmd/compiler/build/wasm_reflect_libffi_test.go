@@ -1,7 +1,7 @@
 package build
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"path/filepath"
 	"slices"
 	"strings"

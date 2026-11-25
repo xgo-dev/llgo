@@ -24,3 +24,11 @@ func aliasGenericInfo(t gotypes.Type) (origin gotypes.Type, tparams *gotypes.Typ
 	}
 	return nil, nil, nil
 }
+
+func newGoAlias(obj *gotypes.TypeName, rhs gotypes.Type, tps []*gotypes.TypeParam) gotypes.Type {
+	a := gotypes.NewAlias(obj, rhs)
+	if len(tps) > 0 {
+		a.SetTypeParams(tps)
+	}
+	return a
+}

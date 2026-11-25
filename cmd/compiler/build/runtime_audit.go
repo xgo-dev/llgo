@@ -21,9 +21,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/plan9asm"
+	"github.com/xgo-dev/llgo/directive"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 )
 

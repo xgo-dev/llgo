@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"path/filepath"
 	"slices"
 	"strconv"

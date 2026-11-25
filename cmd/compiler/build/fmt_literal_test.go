@@ -1,16 +1,16 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestLiteralFormat(t *testing.T) {

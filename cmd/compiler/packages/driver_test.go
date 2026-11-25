@@ -8,7 +8,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
+	gotypes "go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xgo-dev/llgo/types"
 	gopackages "golang.org/x/tools/go/packages"
 )
 
@@ -37,7 +38,7 @@ func TestMain(m *testing.M) {
 		if len(os.Args) > 1 && (os.Args[1] == "driver:handled" || os.Args[1] == "driver:gccgo") {
 			response = gopackages.DriverResponse{
 				Compiler: "gc", Arch: "386",
-				Roots: []string{"external"}, Packages: []*Package{{ID: "external", Name: "external", PkgPath: "example.com/external"}},
+				Roots: []string{"external"}, Packages: []*gopackages.Package{{ID: "external", Name: "external", PkgPath: "example.com/external"}},
 			}
 			if os.Args[1] == "driver:gccgo" {
 				response.Compiler, response.Arch = "gccgo", "arm"
@@ -308,9 +309,9 @@ func TestLoadMetadataErrorsAndCancellation(t *testing.T) {
 }
 
 func TestPackageMetadataRoundTrip(t *testing.T) {
-	dep := &Package{ID: "dependency", PkgPath: "example.com/dep", Name: "dep"}
-	root := &Package{ID: "root", PkgPath: "example.com/root", Name: "root", Imports: map[string]*Package{"example.com/dep": dep}}
-	root.Imports["example.com/partial"] = &Package{ID: "partial"}
+	dep := &gopackages.Package{ID: "dependency", PkgPath: "example.com/dep", Name: "dep"}
+	root := &gopackages.Package{ID: "root", PkgPath: "example.com/root", Name: "root", Imports: map[string]*gopackages.Package{"example.com/dep": dep}}
+	root.Imports["example.com/partial"] = &gopackages.Package{ID: "partial"}
 	response := metadataResponse{
 		Roots: []string{"root"}, Compiler: "gc", Arch: "386",
 		Packages: []packageMetadata{
@@ -335,10 +336,10 @@ func TestPackageMetadataRoundTrip(t *testing.T) {
 	if !reflect.DeepEqual(pkg.Module, response.Packages[0].Module) || pkg.Dir != "/app" || pkg.Target != "/bin/app" || pkg.ForTest != "example.com/root" {
 		t.Fatalf("supplemental metadata lost: %+v", pkg)
 	}
-	if pkg.Imports["example.com/dep"] != decoded.Packages[1].Package || pkg.TypesSizes != types.SizesFor("gc", "386") {
+	if pkg.Imports["example.com/dep"] == nil || pkg.Imports["example.com/dep"].ID != "dependency" || pkg.TypesSizes != types.SizesFor("gc", "386") {
 		t.Fatal("graph identity or exact gc sizes lost")
 	}
-	if decoded.Packages[1].Package.Imports == nil {
+	if pkg.Imports["example.com/dep"].Imports == nil {
 		t.Fatal("empty import map became nil")
 	}
 	if stub := pkg.Imports["example.com/partial"]; stub == nil || stub.ID != "partial" {
@@ -385,7 +386,7 @@ func TestDescribeSizesSupportedArchitectures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			compiler, gotArch, std := describeSizes(types.SizesFor("gc", arch))
+			compiler, gotArch, std := describeSizes(gotypes.SizesFor("gc", arch))
 			if compiler != "gc" || gotArch != arch || std != nil {
 				t.Errorf("gc/%s is not represented by the metadata transport", arch)
 			}

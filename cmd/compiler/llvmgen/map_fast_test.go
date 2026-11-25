@@ -1,9 +1,9 @@
 package llvmgen
 
 import (
-	"go/importer"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"runtime"
 	"strings"
 	"testing"
@@ -180,7 +180,7 @@ func TestLargeMapLookupUsesFatAccessAndPackageZero(t *testing.T) {
 	defer prog.Dispose()
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := llpkgs.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -19,7 +19,7 @@ package goescape
 import (
 	"sort"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // scopes derives iteration lifetimes from the CFG, including backwards gotos.

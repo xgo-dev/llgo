@@ -2,14 +2,14 @@ package build
 
 import (
 	"encoding/json"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"reflect"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestFrontendLinkExportRoundTripAndValidation(t *testing.T) {

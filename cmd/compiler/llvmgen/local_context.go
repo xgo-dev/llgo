@@ -18,7 +18,7 @@ package llvmgen
 
 import (
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 const runtimeLocalContext = "LocalContext"

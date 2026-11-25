@@ -1,9 +1,9 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"runtime"
 	"slices"
 	"strings"
@@ -14,7 +14,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func init() {

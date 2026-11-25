@@ -27,12 +27,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/callgraph/rta"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
+	"github.com/xgo-dev/llgo/types/typeutil"
 	"golang.org/x/tools/go/ast/astutil"
-	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
-	"golang.org/x/tools/go/types/typeutil"
 )
 
 // Compile-time assertions on the exact golang.org/x/tools surfaces depended on
@@ -101,10 +102,10 @@ var (
 		packages.NeedTypesInfo | packages.NeedTypesSizes | packages.NeedModule
 	_ func(*packages.Config, ...string) ([]*packages.Package, error) = packages.Load
 
-	// golang.org/x/tools/go/ssa/ssautil surface relied on by cl/ & internal/build.
-	_ func(*ssa.Program) map[*ssa.Function]bool                 = ssautil.AllFunctions
-	_ func([]*ssa.Package) []*ssa.Package                       = ssautil.MainPackages
-	_ func([]*packages.Package, ssa.BuilderMode) (*ssa.Program, []*ssa.Package) = ssautil.Packages
+	// llgo/ssa/ssautil & cmd/compiler/packages surface relied on by cl/ & cmd/compiler/build.
+	_ func(*ssa.Program) map[*ssa.Function]bool                               = ssautil.AllFunctions
+	_ func([]*ssa.Package) []*ssa.Package                                     = ssautil.MainPackages
+	_ func([]*llpkgs.Package, ssa.BuilderMode) (*ssa.Program, []*ssa.Package) = llpkgs.Packages
 
 	// golang.org/x/tools/go/types/typeutil surface relied on by internal/llvmgen & internal/build.
 	_ *typeutil.Map            = (*typeutil.Map)(nil)

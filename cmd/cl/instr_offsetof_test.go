@@ -17,21 +17,21 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 func TestOffsetOfBuiltinArgPromotedFieldChain(t *testing.T) {

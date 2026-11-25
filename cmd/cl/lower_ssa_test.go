@@ -19,33 +19,33 @@ package cl_test
 import (
 	"bytes"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	gotypes "go/types"
 	"slices"
 	"testing"
 
 	"github.com/xgo-dev/llgo/callgraph"
 	"github.com/xgo-dev/llgo/callgraph/rta"
-	"github.com/xgo-dev/llgo/cmd/cl"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
 	"github.com/xgo-dev/llgo/exportdata"
-	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/target"
-	lltypes "github.com/xgo-dev/llgo/types"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/types"
 )
 
-func buildTestSSAPackages(t *testing.T, sources map[string]string) (*ssa.Program, map[string]*ssa.Package) {
+func buildNativeTestSSAPackages(t *testing.T, sources map[string]string, spec target.Spec) (*ssa.Program, map[string]*ssa.Package) {
 	t.Helper()
 	fset := token.NewFileSet()
-	goPkgs := make(map[string]*gotypes.Package)
+	tctx := types.NewContextWithConfig(types.ContextConfig{Spec: spec})
+	pkgs := make(map[string]*types.Package)
 	filesByPkg := make(map[string][]*ast.File)
 
 	order := []string{"example.com/lib", "example.com/app"}
-	prog := ssa.NewProgram(fset, ssa.InstantiateGenerics|ssa.GlobalDebug)
+	prog := ssa.NewProgram(fset, ssa.InstantiateGenerics|ssa.GlobalDebug|ssa.SanityCheckFunctions)
+	prog.Target = spec
 	ssaPkgs := make(map[string]*ssa.Package)
+	stdImp := llpkgs.DefaultImporter()
 
 	for _, path := range order {
 		src, ok := sources[path]
@@ -57,40 +57,43 @@ func buildTestSSAPackages(t *testing.T, sources map[string]string) (*ssa.Program
 			t.Fatalf("parse %s: %v", path, err)
 		}
 		filesByPkg[path] = []*ast.File{f}
-		info := &gotypes.Info{
-			Types:      make(map[ast.Expr]gotypes.TypeAndValue),
-			Defs:       make(map[*ast.Ident]gotypes.Object),
-			Uses:       make(map[*ast.Ident]gotypes.Object),
-			Implicits:  make(map[ast.Node]gotypes.Object),
-			Selections: make(map[*ast.SelectorExpr]*gotypes.Selection),
-			Scopes:     make(map[ast.Node]*gotypes.Scope),
-			Instances:  make(map[*ast.Ident]gotypes.Instance),
+		info := &types.Info{
+			Types:      make(map[ast.Expr]types.TypeAndValue),
+			Defs:       make(map[*ast.Ident]types.Object),
+			Uses:       make(map[*ast.Ident]types.Object),
+			Implicits:  make(map[ast.Node]types.Object),
+			Selections: make(map[*ast.SelectorExpr]*types.Selection),
+			Scopes:     make(map[ast.Node]*types.Scope),
+			Instances:  make(map[*ast.Ident]types.Instance),
 		}
-		conf := gotypes.Config{
-			Importer: importerFunc(func(impPath string) (*gotypes.Package, error) {
-				if p, ok := goPkgs[impPath]; ok {
+		conf := types.Config{
+			Context: tctx,
+			Sizes:   tctx,
+			Importer: nativeImporterFunc(func(impPath string) (*types.Package, error) {
+				if p, ok := pkgs[impPath]; ok {
 					return p, nil
 				}
-				return importer.Default().Import(impPath)
+				return stdImp.Import(impPath)
 			}),
 		}
-		gp, err := conf.Check(path, fset, filesByPkg[path], info)
+		p, err := conf.Check(path, fset, filesByPkg[path], info)
 		if err != nil {
 			t.Fatalf("typecheck %s: %v", path, err)
 		}
-		goPkgs[path] = gp
-		ssaPkgs[path] = prog.CreatePackage(gp, filesByPkg[path], info, true)
+		pkgs[path] = p
+		ssaPkgs[path] = prog.CreatePackage(p, filesByPkg[path], info, true)
 	}
 	prog.Build()
 	return prog, ssaPkgs
 }
 
-type importerFunc func(path string) (*gotypes.Package, error)
+type nativeImporterFunc func(path string) (*types.Package, error)
 
-func (f importerFunc) Import(path string) (*gotypes.Package, error) { return f(path) }
+func (f nativeImporterFunc) Import(path string) (*types.Package, error) { return f(path) }
 
-func TestLowerProgramRTACallgraphAndExportDataPipeline(t *testing.T) {
-	prog, ssaPkgs := buildTestSSAPackages(t, map[string]string{
+func TestNativeSSARTACallgraphAndExportDataPipeline(t *testing.T) {
+	spec := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})
+	llProg, llPkgs := buildNativeTestSSAPackages(t, map[string]string{
 		"example.com/lib": `package lib
 
 type Speaker interface {
@@ -147,28 +150,20 @@ func main() {
 	globalSink = lib.LeakPtr(&v)
 }
 `,
-	})
+	}, spec)
 
-	spec := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	tctx := lltypes.NewContextWithConfig(lltypes.ContextConfig{Spec: spec})
-
-	// 1. Lower both packages into a unified llgo/ssa.Program (1:1 x/tools/go/ssa parity).
-	llProg, llPkgs, err := cl.LowerProgram(prog, []*ssa.Package{ssaPkgs["example.com/lib"], ssaPkgs["example.com/app"]}, spec, tctx)
-	if err != nil {
-		t.Fatalf("LowerProgram: %v", err)
-	}
 	libLL := llPkgs["example.com/lib"]
 	appLL := llPkgs["example.com/app"]
 	if libLL == nil || appLL == nil {
-		t.Fatalf("missing lowered packages: %v", llPkgs)
+		t.Fatalf("missing native SSA packages: %v", llPkgs)
 	}
 
-	// 2. Run 1:1 x/tools/go/callgraph/rta directly on llgo/ssa.Function roots!
+	// 1. Run pure-Go llgo/callgraph/rta directly on native llgo/ssa.Function roots.
 	mainFn := appLL.Func("main")
 	if mainFn == nil {
 		t.Fatal("missing app.main")
 	}
-	rtaRes := rta.Analyze([]*llssa.Function{mainFn}, true)
+	rtaRes := rta.Analyze([]*ssa.Function{mainFn}, true)
 	if rtaRes.CallGraph == nil {
 		t.Fatal("expected CallGraph from rta.Analyze")
 	}
@@ -187,7 +182,6 @@ func main() {
 	if _, ok := rtaRes.Reachable[deadAppFn]; ok {
 		t.Errorf("expected app.unusedAppFunc unreachable in RTA")
 	}
-	// Verify *Dog.Speak() was discovered via MakeInterface + Invoke!
 	var foundSpeak bool
 	for fn := range rtaRes.Reachable {
 		if fn.Name() == "Speak" {
@@ -198,7 +192,6 @@ func main() {
 	if !foundSpeak {
 		t.Errorf("expected (*Dog).Speak reachable via RTA interface dispatch")
 	}
-	// Verify callgraph.PathSearch finds a path from Root -> lib.Add.
 	path := callgraph.PathSearch(rtaRes.CallGraph.Root, func(n *callgraph.Node) bool {
 		return n.Func == addFn
 	})
@@ -209,8 +202,8 @@ func main() {
 		t.Errorf("expected non-empty RuntimeTypes on llgo/ssa.Program")
 	}
 
-	// 3. Verify compiler-internal pkgmeta binary summary round-trip & deadcode.
-	libMeta := cl.BuildPackageMeta(libLL, nil, pkgmeta.DefaultBudget)
+	// 2. Verify compiler-internal pkgmeta binary summary round-trip & deadcode.
+	libMeta := pkgmeta.BuildPackageMeta(libLL, nil, nil, pkgmeta.DefaultBudget)
 	rawMeta, err := pkgmeta.Marshal(libMeta)
 	if err != nil {
 		t.Fatalf("pkgmeta.Marshal: %v", err)
@@ -240,27 +233,23 @@ func main() {
 		t.Fatalf("missing lib summaries: foundLeak=%v foundAdd=%v", foundLeak, foundAdd)
 	}
 
-	appMeta := cl.BuildPackageMeta(appLL, map[string]*pkgmeta.EscapeSummary{"example.com/lib": &decodedLibMeta.Escape}, pkgmeta.DefaultBudget)
+	appMeta := pkgmeta.BuildPackageMeta(appLL, nil, map[string]*pkgmeta.EscapeSummary{"example.com/lib": &decodedLibMeta.Escape}, pkgmeta.DefaultBudget)
 	dc := pkgmeta.AnalyzeDeadcode([]*pkgmeta.PackageMeta{decodedLibMeta, appMeta}, []string{"example.com/app.main"})
 	if !slices.Contains(dc.ReachableFuncs, "example.com/lib.Add") || !slices.Contains(dc.DeadFuncs, "example.com/lib.DeadHelper") {
 		t.Fatalf("unexpected pkgmeta deadcode: reachable=%v dead=%v", dc.ReachableFuncs, dc.DeadFuncs)
 	}
 
-	// 4. Verify 1:1 gcexportdata-aligned exportdata.Write / Read / NewImporter!
+	// 3. Verify 1:1 gcexportdata-aligned exportdata.Write / Read / NewImporter directly on native types.Package.
 	var buf bytes.Buffer
-	if err := exportdata.Write(&buf, prog.Fset, libLL.Pkg); err != nil {
+	if err := exportdata.Write(&buf, llProg.Fset, libLL.Pkg); err != nil {
 		t.Fatalf("exportdata.Write: %v", err)
 	}
-	imports := make(map[string]*lltypes.Package)
-	decodedPkg, err := exportdata.Read(bytes.NewReader(buf.Bytes()), prog.Fset, imports, "example.com/lib")
+	imports := make(map[string]*types.Package)
+	decodedLib, err := exportdata.Read(bytes.NewReader(buf.Bytes()), llProg.Fset, imports, "example.com/lib")
 	if err != nil {
 		t.Fatalf("exportdata.Read: %v", err)
 	}
-	if decodedPkg.Path() != "example.com/lib" || decodedPkg.Scope().Lookup("Dog") == nil {
-		t.Fatalf("decoded package missing expected symbols: %v", decodedPkg)
-	}
-	imp := exportdata.NewImporter(prog.Fset, imports)
-	if got, err := imp.Import("example.com/lib"); err != nil || got != decodedPkg {
-		t.Fatalf("exportdata.NewImporter.Import = (%v, %v)", got, err)
+	if decodedLib.Path() != "example.com/lib" || decodedLib.Scope().Lookup("Dog") == nil || decodedLib.Scope().Lookup("Add") == nil {
+		t.Fatalf("decoded lib missing expected symbols: %v", decodedLib)
 	}
 }

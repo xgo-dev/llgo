@@ -6,11 +6,11 @@ import (
 	"debug/elf"
 	"debug/macho"
 	"debug/pe"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -20,9 +20,9 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/debugabi"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 func TestWasmDebuggerMemoryLocation(t *testing.T) {
@@ -121,7 +121,7 @@ func capture(seed int) func() int {
 		t.Fatal(err)
 	}
 	ssaPkg, _, err := ssautil.BuildPackage(
-		&types.Config{Importer: importer.Default()},
+		&types.Config{Importer: llpkgs.DefaultImporter()},
 		fset,
 		types.NewPackage("debugcompile", "debugcompile"),
 		[]*ast.File{file},
@@ -208,7 +208,7 @@ func capture(seed int) func() int {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ssaPkg, _, err := ssautil.BuildPackage(&types.Config{Importer: importer.Default()}, fset,
+		ssaPkg, _, err := ssautil.BuildPackage(&types.Config{Importer: llpkgs.DefaultImporter()}, fset,
 			types.NewPackage("main", "main"), []*ast.File{file},
 			ssa.SanityCheckFunctions|ssa.InstantiateGenerics|ssa.GlobalDebug)
 		if err != nil {

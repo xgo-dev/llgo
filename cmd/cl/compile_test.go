@@ -18,8 +18,8 @@ package cl_test
 
 import (
 	"context"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"

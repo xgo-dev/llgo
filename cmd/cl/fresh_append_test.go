@@ -1,13 +1,13 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
-	"go/types"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestFreshNilAppendStorage(t *testing.T) {

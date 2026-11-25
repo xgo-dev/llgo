@@ -19,21 +19,21 @@ package cl
 import (
 	"bytes"
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"os"
 	"strings"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 
 	"github.com/xgo-dev/llgo/cmd/cl/ssawrap"
-	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/cmd/compiler/env"
 	"github.com/xgo-dev/llgo/cmd/compiler/genmethod"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/locality"
+	"github.com/xgo-dev/llgo/directive"
 )
 
 // -----------------------------------------------------------------------------
@@ -806,7 +806,13 @@ func (p *context) funcName(fn *ssa.Function) (*types.Package, string, int) {
 	var pkg *types.Package
 	var orgName string
 	if origin := fn.Origin(); origin != nil {
-		pkg = origin.Pkg.Pkg
+		if origin.Pkg != nil {
+			pkg = origin.Pkg.Pkg
+		} else if obj := origin.Object(); obj != nil && obj.Pkg() != nil {
+			pkg = obj.Pkg()
+		} else {
+			pkg = p.goTyps
+		}
 		p.ensureLoaded(pkg)
 		orgName = funcName(pkg, origin, true)
 	} else {

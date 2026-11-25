@@ -18,10 +18,10 @@ package ssatest
 
 import (
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"testing"
 
-	"github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 )
 

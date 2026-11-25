@@ -1,17 +1,17 @@
 package llvmgen
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/goplus/gogen/packages"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func TestFieldOutOfRangePanicsWithTypeString(t *testing.T) {

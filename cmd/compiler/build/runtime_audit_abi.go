@@ -6,15 +6,17 @@ package build
 import (
 	"fmt"
 	"go/ast"
-	"go/importer"
+	goimporter "go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
+	gotypes "go/types"
 	"go/version"
 	"path/filepath"
 	"slices"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 )
 
 // Layouts are measured from the selected sources, using gc's target sizes for
@@ -56,7 +58,7 @@ func auditRuntimeABI(runtimeDir, goroot, goVersion string, target *llvmgen.Targe
 	if version.Compare(goVersion, "go1.21") < 0 {
 		path, typeName = filepath.Join(goroot, "src/runtime/type.go"), "_type"
 	}
-	gc, err := runtimeMetadataType(path, typeName)
+	gc, err := goRuntimeMetadataType(path, typeName)
 	if err != nil {
 		return nil, err
 	}
@@ -64,8 +66,8 @@ func auditRuntimeABI(runtimeDir, goroot, goVersion string, target *llvmgen.Targe
 	if err != nil {
 		return nil, err
 	}
-	sizes := types.SizesFor("gc", target.GOARCH)
-	if sizes == nil {
+	gcSizes := gotypes.SizesFor("gc", target.GOARCH)
+	if gcSizes == nil {
 		return nil, fmt.Errorf("runtime ABI audit: no Go sizes for %s", target.GOARCH)
 	}
 	llssaInitOnce.Do(func() { llvmgen.Initialize(llvmgen.InitAll) })
@@ -78,23 +80,24 @@ func auditRuntimeABI(runtimeDir, goroot, goVersion string, target *llvmgen.Targe
 	prog.SetRuntime(stringABI)
 	lltyp := prog.Type(llgo, llvmgen.GoDecl)
 	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)
+	goSig := gotypes.NewSignatureType(nil, nil, nil, gotypes.NewTuple(), gotypes.NewTuple(), false)
 	report := &RuntimeABI{
 		LLGoTarget:         target.Spec().Triple,
 		WasmProfile:        target.WasmProfile,
 		GoWordBytes:        uint64(prog.GoWordSize()),
 		NativePointerBytes: uint64(prog.PointerSize()),
-		GoType:             RuntimeTypeLayout{Size: uint64(sizes.Sizeof(gc)), Align: uint64(sizes.Alignof(gc))},
+		GoType:             RuntimeTypeLayout{Size: uint64(gcSizes.Sizeof(gc)), Align: uint64(gcSizes.Alignof(gc))},
 		LLGoType:           RuntimeTypeLayout{Size: prog.SizeOf(lltyp), Align: prog.AlignOf(lltyp)},
-		GoFuncValueBytes:   uint64(sizes.Sizeof(sig)), LLGoFuncValueBytes: prog.SizeOf(prog.Type(sig, llvmgen.GoDecl)),
+		GoFuncValueBytes:   uint64(gcSizes.Sizeof(goSig)), LLGoFuncValueBytes: prog.SizeOf(prog.Type(sig, llvmgen.GoDecl)),
 		ClosureTransport: target.ClosureEnvBuildTag(),
 	}
-	var fields []*types.Var
+	var fields []*gotypes.Var
 	for i := 0; i < gc.NumFields(); i++ {
 		fields = append(fields, gc.Field(i))
 	}
-	for i, offset := range sizes.Offsetsof(fields) {
+	for i, offset := range gcSizes.Offsetsof(fields) {
 		field := fields[i]
-		report.GoType.Fields = append(report.GoType.Fields, RuntimeFieldLayout{field.Name(), field.Type().String(), uint64(offset), uint64(sizes.Sizeof(field.Type()))})
+		report.GoType.Fields = append(report.GoType.Fields, RuntimeFieldLayout{field.Name(), field.Type().String(), uint64(offset), uint64(gcSizes.Sizeof(field.Type()))})
 	}
 	for i := 0; i < llgo.NumFields(); i++ {
 		field := llgo.Field(i)
@@ -127,6 +130,44 @@ func runtimeABIBlockers(abi *RuntimeABI) []string {
 
 // Keep only the descriptor and its boundary scalar types. This intentionally
 // fails if an upgrade adds a new dependency that needs a compatibility review.
+func goRuntimeMetadataType(path, name string) (*gotypes.Struct, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		return nil, err
+	}
+	names := []string{name, "Kind", "TFlag", "NameOff", "TypeOff", "tflag", "nameOff", "typeOff"}
+	decls := []ast.Decl{&ast.GenDecl{Tok: token.IMPORT, Specs: []ast.Spec{&ast.ImportSpec{Path: &ast.BasicLit{Kind: token.STRING, Value: `"unsafe"`}}}}}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			typ := spec.(*ast.TypeSpec)
+			if slices.Contains(names, typ.Name.Name) {
+				decls = append(decls, &ast.GenDecl{TokPos: gen.TokPos, Tok: token.TYPE, Specs: []ast.Spec{typ}})
+			}
+		}
+	}
+	file.Decls = decls
+	file.Imports = nil
+	config := gotypes.Config{Importer: goimporter.Default()}
+	pkg, err := config.Check("runtimeabi", fset, []*ast.File{file}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("runtime metadata boundary %s: %w", path, err)
+	}
+	obj := pkg.Scope().Lookup(name)
+	if obj == nil {
+		return nil, fmt.Errorf("runtime metadata boundary %s: missing %s", path, name)
+	}
+	st, ok := obj.Type().Underlying().(*gotypes.Struct)
+	if !ok {
+		return nil, fmt.Errorf("runtime metadata boundary %s: %s is not a struct", path, name)
+	}
+	return st, nil
+}
+
 func runtimeMetadataType(path, name string) (*types.Struct, error) {
 	pkg, err := runtimeBoundaryPackage(path, name, "Kind", "TFlag", "NameOff", "TypeOff", "tflag", "nameOff", "typeOff")
 	if err != nil {
@@ -164,7 +205,7 @@ func runtimeBoundaryPackage(path string, names ...string) (*types.Package, error
 	}
 	file.Decls = decls
 	file.Imports = nil
-	config := types.Config{Importer: importer.Default()}
+	config := types.Config{Importer: packages.DefaultImporter()}
 	pkg, err := config.Check("runtimeabi", fset, []*ast.File{file}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("runtime metadata boundary %s: %w", path, err)

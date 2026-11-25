@@ -18,6 +18,7 @@ package build
 
 import (
 	"fmt"
+	"go/ast"
 	"os"
 	"slices"
 	"sync"
@@ -119,11 +120,24 @@ func preparePackageBuilds(ctx *context, tasks []*packageBuildTask, verbose bool)
 			return err
 		}
 		task.isolated = !coordinator
-		_, patched := ctx.patches[task.pkg.PkgPath]
-		// typepatch.Merge still updates the shared patch.Types scope while a
-		// package is lowered. Keep patched packages isolated from the coordinator
-		// Program, but do not execute two such merges concurrently.
-		task.parallel = task.isolated && !patched
+		if patch, patched := ctx.patches[task.pkg.PkgPath]; patched && patch.Types != nil {
+			var altFiles []*ast.File
+			if task.pkg.AltPkg != nil {
+				altFiles = task.pkg.AltPkg.Syntax
+			}
+			var oldTypes = task.pkg.Types
+			if task.pkg.SSA != nil && task.pkg.SSA.Pkg != nil {
+				oldTypes = task.pkg.SSA.Pkg
+			}
+			cl.PreparePatch(patch, oldTypes, altFiles)
+			if task.pkg.SSA != nil {
+				task.pkg.SSA.Pkg = patch.Types
+			}
+		}
+		// Patched type scopes are finalized serially above before any worker
+		// starts, so patched packages can lower in parallel alongside ordinary
+		// isolated packages without mutating shared scopes.
+		task.parallel = task.isolated
 	}
 	return nil
 }

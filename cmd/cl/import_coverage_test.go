@@ -1,19 +1,19 @@
 package cl
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/cmd/compiler/env"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/directive"
 )
 
 func TestLinknameParsersAgree(t *testing.T) {
@@ -546,7 +546,7 @@ type F struct{ Pair[int, string] }
 		t.Fatal(err)
 	}
 	info := &types.Info{Defs: make(map[*ast.Ident]types.Object)}
-	conf := &types.Config{Importer: importer.Default()}
+	conf := &types.Config{Importer: llpkgs.DefaultImporter()}
 	if err := types.NewChecker(conf, fset, pkg, info).Files([]*ast.File{file}); err != nil {
 		t.Fatal(err)
 	}

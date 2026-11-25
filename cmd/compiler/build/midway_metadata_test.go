@@ -3,10 +3,10 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 

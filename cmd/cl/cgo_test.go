@@ -1,21 +1,20 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"runtime"
 	"strings"
 	"testing"
 
-	"github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 func init() {
@@ -45,7 +44,7 @@ func newLLSSAProg(t *testing.T) llvmgen.Program {
 	t.Helper()
 	prog := llvmgen.NewProgram(nil)
 	prog.SetRuntime(func() *types.Package {
-		rt, err := importer.For("source", nil).Import(llvmgen.PkgRuntime)
+		rt, err := packages.SourceImporter().Import(llvmgen.PkgRuntime)
 		if err != nil {
 			t.Fatal("load runtime failed:", err)
 		}

@@ -18,9 +18,9 @@ package cl
 
 import (
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // foldConstantMakeValue inlines a trivial "box a parameter as an interface"

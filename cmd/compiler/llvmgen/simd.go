@@ -1,10 +1,9 @@
 package llvmgen
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strings"
 
-	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -169,13 +168,11 @@ const (
 	SIMDGaloisFieldAffineTransformInverse
 )
 
-var simdShapeCtx = lltypes.NewContext()
-
-func simdVectorLanes(typ types.Type) (*types.Array, *lltypes.SIMDVec, bool) {
+func simdVectorLanes(typ types.Type) (*types.Array, *types.SIMDVec, bool) {
 	if typ == nil {
 		return nil, nil, false
 	}
-	vec := simdShapeCtx.FromGo(typ).SIMDVec()
+	vec := typ.SIMDVec()
 	if vec == nil {
 		return nil, nil, false
 	}

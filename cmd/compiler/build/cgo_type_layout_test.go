@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	gobuild "go/build"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -185,7 +185,7 @@ func cgoLayoutTypes(t *testing.T, target cLayoutTarget, cc string, flags ...stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	conf := types.Config{Importer: importer.Default(), Sizes: types.SizesFor("gc", target.arch)}
+	conf := types.Config{Importer: llpkgs.DefaultImporter(), Sizes: types.SizesFor("gc", target.arch)}
 	pkg, err := conf.Check("layout", fset, []*ast.File{file}, nil)
 	if err != nil {
 		t.Fatalf("cgo Go declarations: %v\n%s", err, output)
@@ -360,7 +360,7 @@ func TestRuntimeCTypeLLVMLayout(t *testing.T) {
 				}
 				files = append(files, f)
 			}
-			conf := types.Config{Importer: importer.Default(), IgnoreFuncBodies: true, Sizes: types.SizesFor("gc", target.arch)}
+			conf := types.Config{Importer: llpkgs.DefaultImporter(), IgnoreFuncBodies: true, Sizes: types.SizesFor("gc", target.arch)}
 			pkg, err := conf.Check("layout", fset, files, nil)
 			if err != nil {
 				t.Fatal(err)

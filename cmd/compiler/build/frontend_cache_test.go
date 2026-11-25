@@ -62,13 +62,14 @@ func TestFrontendExportsMethodsCallerRecoverAndGenericBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("LLGO_ROOT", root)
+	t.Setenv("GOWORK", "off")
 	t.Setenv(llgoBuildCache, "1")
 	t.Setenv(llgoEscapeCache, "1")
 	cache := t.TempDir()
 	old := cacheRootFunc
 	cacheRootFunc = func() string { return cache }
 	t.Cleanup(func() { cacheRootFunc = old })
-	fixture := filepath.Join(root, "internal/build/testdata/frontendcache")
+	fixture := filepath.Join(root, "cmd/compiler/build/testdata/frontendcache")
 	baseline := exec.Command("go", "run", ".")
 	baseline.Dir = fixture
 	if out, err := baseline.CombinedOutput(); err != nil || !strings.Contains(string(out), "frontend-ok") {

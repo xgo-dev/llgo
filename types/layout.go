@@ -19,9 +19,12 @@ package types
 import (
 	gotypes "go/types"
 	"math"
+	"sync"
 
 	"github.com/xgo-dev/llgo/target"
 )
+
+var cachedSizes sync.Map // map[string]Sizes
 
 // Sizes specifies the sizing functions for LLGo Types (mirroring go/types.Sizes).
 type Sizes interface {
@@ -33,14 +36,46 @@ type Sizes interface {
 // SizesFor returns a Sizes implementation (backed by *Context) for the given
 // compiler ("llgo" or "gc") and GOARCH (mirroring go/types.SizesFor).
 func SizesFor(compiler, arch string) Sizes {
+	if compiler == "gccgo" {
+		if gs := gotypes.SizesFor(compiler, arch); gs != nil {
+			key := compiler + ":" + arch
+			if v, ok := cachedSizes.Load(key); ok {
+				return v.(Sizes)
+			}
+			var s Sizes
+			if std, ok := gs.(*gotypes.StdSizes); ok {
+				s = &StdSizes{WordSize: std.WordSize, MaxAlign: std.MaxAlign}
+			} else {
+				s = &StdSizes{
+					WordSize: gs.Sizeof(gotypes.Typ[gotypes.Int]),
+					MaxAlign: gs.Alignof(gotypes.Typ[gotypes.Complex128]),
+				}
+			}
+			actual, _ := cachedSizes.LoadOrStore(key, s)
+			return actual.(Sizes)
+		}
+		return nil
+	}
 	if compiler != "llgo" && compiler != "gc" {
 		return nil
+	}
+	key := compiler + ":" + arch
+	if v, ok := cachedSizes.Load(key); ok {
+		return v.(Sizes)
 	}
 	spec := target.ResolveSpec(target.Spec{GOARCH: arch})
 	if spec.WordSize == 0 {
 		return nil
 	}
-	return NewContextWithConfig(ContextConfig{Spec: spec})
+	if compiler == "gc" {
+		if gs := gotypes.SizesFor("gc", arch); gs != nil {
+			spec.WordSize = int(gs.Sizeof(gotypes.Typ[gotypes.Int]))
+			spec.MaxAlign = int(gs.Alignof(gotypes.Typ[gotypes.Complex128]))
+		}
+	}
+	s := NewContextWithConfig(ContextConfig{Spec: spec})
+	actual, _ := cachedSizes.LoadOrStore(key, s)
+	return actual.(Sizes)
 }
 
 // StdSizes is a convenience type for creating commonly used Sizes
@@ -340,7 +375,7 @@ func (c *Context) Layout(t Type) *Layout {
 		return &Layout{Align: 1, IsRegularMemory: true}
 	}
 	c.mu.RLock()
-	needCheck := len(c.incompleteNamed) > 0
+	needCheck := len(c.incompleteNamed) > 0 || len(c.incompleteLLNamed) > 0
 	if !needCheck {
 		if l, ok := c.layouts[t]; ok {
 			c.mu.RUnlock()
@@ -418,7 +453,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 
 	switch u := t.(type) {
 	case *Alias:
-		if u.hasCallConv && u.callConv.IsNative() {
+		if (u.hasCallConv && u.callConv.IsNative()) || c.isNativeType(u) {
 			if _, ok := u.Underlying().(*Signature); ok {
 				sz := word
 				if mode == modeWasmNative {
@@ -438,6 +473,13 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 
 	case *Named:
 		u.resolve()
+		if u.goNamed == nil {
+			if u.underlying == nil {
+				c.trackIncompleteLLNamed(u)
+			} else if st, ok := u.underlying.(*Struct); ok && len(st.fields) == 0 {
+				c.trackIncompleteLLNamed(u)
+			}
+		}
 		if u.simdTagIndex >= 0 {
 			return &Layout{
 				Size:            0,
@@ -446,7 +488,11 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 				HasSIMDStorage:  true,
 			}
 		}
-		if u.hasCallConv && u.callConv.IsNative() {
+		nativeNamed := u.hasCallConv && u.callConv.IsNative()
+		if !nativeNamed && c.hasNativeMetadata.Load() {
+			nativeNamed = c.isNativeType(u)
+		}
+		if nativeNamed {
 			if _, ok := u.Underlying().(*Signature); ok {
 				sz := word
 				if mode == modeWasmNative {
@@ -459,8 +505,14 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 				}
 			}
 		}
-		if u.nativeLayout && c.spec.UsesWideGoStorage() {
-			return c.layoutInMode(u.underlying, modeWasmNative)
+		isNativeLayout := u.nativeLayout || nativeNamed
+		if isNativeLayout {
+			if st, ok := u.underlying.(*Struct); ok {
+				return c.computeStructLayoutWithNative(st, mode, true)
+			}
+			if arr, ok := u.underlying.(*Array); ok && c.spec.UsesWideGoStorage() {
+				return c.layoutInMode(arr, modeWasmNative)
+			}
 		}
 		if u.underlying == nil || u.underlying == u {
 			return &Layout{Align: 1, IsRegularMemory: true}
@@ -685,7 +737,19 @@ func (c *Context) alignForMode(a int64, mode layoutMode) int64 {
 	return c.clampAlign(a)
 }
 
+func (c *Context) isNativeType(t Type) bool {
+	if !c.hasNativeMetadata.Load() {
+		return false
+	}
+	cc, ok := c.NativeTypeCallConv(t)
+	return ok && cc.IsNative()
+}
+
 func (c *Context) computeStructLayout(st *Struct, mode layoutMode) *Layout {
+	return c.computeStructLayoutWithNative(st, mode, false)
+}
+
+func (c *Context) computeStructLayoutWithNative(st *Struct, mode layoutMode, forceNative bool) *Layout {
 	if st.simdTagIndex >= 0 {
 		return &Layout{
 			Size:            0,
@@ -717,33 +781,35 @@ func (c *Context) computeStructLayout(st *Struct, mode layoutMode) *Layout {
 		}
 	}
 
+	native := forceNative || st.nativeLayout || c.hasNativeLLFields(st.fields)
+
 	// Determine effective field layout mode and tail zero-sized field padding.
 	effectiveMode := mode
 	hasHost := st.hostLayout
 	padTail := true
 
 	switch {
-	case st.nativeLayout && c.spec.UsesWideGoStorage():
+	case native && c.spec.UsesWideGoStorage():
 		effectiveMode = modeWasmNative
 		padTail = false
 	case mode == modeWasmNative:
-		if !st.nativeLayout {
+		if !native {
 			effectiveMode = modeGo
 			padTail = true
 		} else {
 			padTail = false
 		}
-	case st.hostLayout && !st.nativeLayout:
+	case st.hostLayout && !native:
 		effectiveMode = modeHostField
 		padTail = true
 	case mode == modeHostNative:
 		effectiveMode = modeHostNative
 		padTail = false
-	case !st.nativeLayout && c.HostUsesNativeGoLayout() && st.ContainsHostLayout():
+	case !native && c.HostUsesNativeGoLayout() && st.ContainsHostLayout():
 		effectiveMode = modeHostNative
 		padTail = false
 	default:
-		if st.nativeLayout && st.ContainsSIMDStorage() {
+		if native && st.ContainsSIMDStorage() {
 			padTail = false
 		}
 	}
@@ -754,6 +820,11 @@ func (c *Context) computeStructLayout(st *Struct, mode layoutMode) *Layout {
 	hasSIMD := false
 	for i := 0; i < n; i++ {
 		ft := st.fields[i].typ
+		if native {
+			if sig, ok := Unalias(ft).(*Signature); ok && sig.callConv == Go {
+				ft = sig.WithCallConv(CDecl)
+			}
+		}
 		var fl *Layout
 		switch effectiveMode {
 		case modeHostField:
@@ -780,7 +851,7 @@ func (c *Context) computeStructLayout(st *Struct, mode layoutMode) *Layout {
 		}
 	}
 
-	if st.nativeLayout && hasSIMD {
+	if native && hasSIMD {
 		padTail = false
 	}
 
@@ -791,10 +862,15 @@ func (c *Context) layoutHostField(t Type) *Layout {
 	if t == nil {
 		return &Layout{Align: 1, IsRegularMemory: true}
 	}
+	if c.isNativeType(t) {
+		if _, isSig := t.Underlying().(*Signature); isSig {
+			return c.layoutInMode(t, modeHostField)
+		}
+	}
 	switch u := Unalias(t).(type) {
 	case *Named:
 		u.resolve()
-		if u.simdTagIndex >= 0 || u.hasCallConv && u.callConv.IsNative() {
+		if u.simdTagIndex >= 0 || (u.hasCallConv && u.callConv.IsNative()) || c.isNativeType(u) {
 			if _, isArr := u.Underlying().(*Array); isArr {
 				return c.layoutHostField(u.underlying)
 			}

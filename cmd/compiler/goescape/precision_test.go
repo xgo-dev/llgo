@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestContextBudgetIndependentOfProgramRoots(t *testing.T) {

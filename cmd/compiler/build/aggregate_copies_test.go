@@ -10,8 +10,8 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/abi"
 	"github.com/xgo-dev/llgo/cmd/compiler/cabi"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/packages"
 )
 
 func aggregateCopyConfig(bits int, roots, wasm bool) abi.AggregateLoweringConfig {

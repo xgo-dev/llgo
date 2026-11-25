@@ -5,7 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"os"
 	"path/filepath"
 	"strconv"

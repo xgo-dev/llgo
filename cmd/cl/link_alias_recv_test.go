@@ -2,11 +2,11 @@ package cl
 
 import (
 	"fmt"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,7 +154,7 @@ func TestLinkedAliasReceiverImport(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		pkg, err := (&types.Config{Importer: importer.Default()}).Check("p", fset, []*ast.File{file}, nil)
+		pkg, err := (&types.Config{Importer: llpkgs.DefaultImporter()}).Check("p", fset, []*ast.File{file}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

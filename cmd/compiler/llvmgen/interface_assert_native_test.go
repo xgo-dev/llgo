@@ -1,9 +1,9 @@
 package llvmgen
 
 import (
-	"go/importer"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"testing"
 
 	"github.com/xgo-dev/llvm"
@@ -23,7 +23,7 @@ func TestNativeFunctionCommaOKAssertion(t *testing.T) {
 			defer prog.Dispose()
 			prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
 			prog.SetRuntime(func() *types.Package {
-				runtime, err := importer.For("source", nil).Import(PkgRuntime)
+				runtime, err := llpkgs.SourceImporter().Import(PkgRuntime)
 				if err != nil {
 					t.Fatal(err)
 				}

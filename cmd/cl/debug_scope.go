@@ -1,10 +1,10 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func debugFunctionScope(fn *ssa.Function) *types.Scope {

@@ -2,12 +2,12 @@ package cl
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"sort"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func (p *context) cVariadicForwardingError(fn *ssa.Function, reason string) error {

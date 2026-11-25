@@ -2,14 +2,14 @@ package safepointplan
 
 import (
 	"go/ast"
-	"go/importer"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"go/parser"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func TestBackedges(t *testing.T) {
@@ -88,7 +88,7 @@ func buildFunction(t *testing.T, src string) *ssa.Function {
 		t.Fatal(err)
 	}
 	pkg, _, err := ssautil.BuildPackage(
-		&types.Config{Importer: importer.Default()},
+		&types.Config{Importer: llpkgs.DefaultImporter()},
 		fset,
 		types.NewPackage("p", "p"),
 		[]*ast.File{file},

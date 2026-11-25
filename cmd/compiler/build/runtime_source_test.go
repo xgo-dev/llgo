@@ -2,11 +2,11 @@ package build
 
 import (
 	"fmt"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -303,7 +303,7 @@ func TestRuntimeSourceToolchains(t *testing.T) {
 				}
 				files = append(files, file)
 			}
-			config := types.Config{Importer: importer.Default()}
+			config := types.Config{Importer: llpkgs.DefaultImporter()}
 			if _, err := config.Check("runtime", fset, files, nil); err != nil {
 				t.Fatal(err)
 			}

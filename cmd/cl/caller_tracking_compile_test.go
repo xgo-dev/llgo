@@ -1,18 +1,18 @@
 package cl_test
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"runtime"
 	"testing"
 
-	"github.com/goplus/gogen/packages"
 	"github.com/xgo-dev/llgo/cmd/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/ssatest"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 // TestNewPackageExWithEmbedSharedTracking compiles with a caller-provided

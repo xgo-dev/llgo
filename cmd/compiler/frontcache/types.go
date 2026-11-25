@@ -8,7 +8,7 @@ package frontcache
 import (
 	"fmt"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strings"
 )
 

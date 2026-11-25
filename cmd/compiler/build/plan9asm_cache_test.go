@@ -1,8 +1,8 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"path/filepath"
 	"runtime"
 	"sync"

@@ -2,8 +2,8 @@ package llvmgen
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"runtime"

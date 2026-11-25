@@ -4,14 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llvm"
 )

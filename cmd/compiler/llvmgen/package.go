@@ -20,20 +20,18 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"log"
 	"runtime"
 	"strconv"
-	"unsafe"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/env"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/abi"
 	"github.com/xgo-dev/llgo/cmd/compiler/meta"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 	"github.com/xgo-dev/llgo/target"
-	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/types/typeutil"
+	"github.com/xgo-dev/llgo/types/typeutil"
 )
 
 const (
@@ -149,10 +147,10 @@ type aProgram struct {
 	// Canonical types and their native slot-width views map to the same view.
 	nativeStorage map[Type]Type
 	goWordSize    int
-	typeCtx       *lltypes.Context
+	typeCtx       *types.Context
 	typeSizes     types.Sizes
 	// Resolve the physical C ABI once, outside declaration/call lowering.
-	nativeIntegerExt lltypes.NativeIntExt
+	nativeIntegerExt types.NativeIntExt
 
 	intType   llvm.Type
 	int1Type  llvm.Type
@@ -307,7 +305,7 @@ func NewProgram(tgt *Target) Program {
 	return newProgram(tgt, nil)
 }
 
-func newProgram(tgt *Target, sharedTypeCtx *lltypes.Context) Program {
+func newProgram(tgt *Target, sharedTypeCtx *types.Context) Program {
 	if tgt == nil {
 		tgt = &Target{
 			GOOS:   runtime.GOOS,
@@ -345,7 +343,7 @@ func newProgram(tgt *Target, sharedTypeCtx *lltypes.Context) Program {
 		packageSyntax: packageSyntax, localities: newLocalityInfos(),
 		abiSymbol:          make(map[string]*AbiSymbol),
 		debugInfoOptimized: tgt.effectiveOptLevel() != optlevel.O0,
-		nativeIntegerExt:   lltypes.NativeIntExtForSpec(spec),
+		nativeIntegerExt:   types.NativeIntExtForSpec(spec),
 	}
 	if prog.usesWideGoStorage() {
 		prog.nativeStorage = make(map[Type]Type)
@@ -363,25 +361,25 @@ func newProgram(tgt *Target, sharedTypeCtx *lltypes.Context) Program {
 			}
 		}
 		// Freeze scalar host layouts before concurrent source type checking.
-		var hostBasicLayouts [types.UnsafePointer + 1]lltypes.LayoutPair
+		var hostBasicLayouts [types.UnsafePointer + 1]types.LayoutPair
 		for kind := types.Bool; kind <= types.UnsafePointer; kind++ {
 			if kind == types.String {
 				continue
 			}
 			raw := types.Typ[kind]
 			ll := prog.nativeStorageLLVMType(raw, prog.toType(raw).ll)
-			hostBasicLayouts[kind] = lltypes.LayoutPair{Size: int64(td.TypeAllocSize(ll)), Align: int64(td.ABITypeAlignment(ll))}
+			hostBasicLayouts[kind] = types.LayoutPair{Size: int64(td.TypeAllocSize(ll)), Align: int64(td.ABITypeAlignment(ll))}
 		}
-		prog.typeCtx = lltypes.NewContextWithConfig(lltypes.ContextConfig{
+		prog.typeCtx = types.NewContextWithConfig(types.ContextConfig{
 			Spec:             spec,
 			HostBasicLayouts: hostBasicLayouts,
 			SIMDAlignments:   simdAlignments,
 		})
 	}
 	prog.gocvt = newGoTypes(prog.typeCtx)
-	prog.typeSizes = prog.typeCtx.GoSizes()
+	prog.typeSizes = prog.typeCtx
 	prog.is32Bits = prog.GoWordSize() == 4
-	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
+	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(prog))
 	prog.abi.NativeFuncAliasABI = prog.nativeFuncAliasABI
 	return prog
 }
@@ -544,9 +542,7 @@ func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*typ
 	llCC, _ := toLLCallConv(cc)
 	p.typeCtx.SetTypeCallConv(typFullName, llCC)
 	if isNativeCallConv(cc) && len(fields) != 0 {
-		if v, ok := p.typeCtx.FromGoObject(fields[0]).(*lltypes.Var); ok {
-			p.typeCtx.MarkNativeField(v)
-		}
+		p.typeCtx.MarkNativeField(fields[0])
 	}
 }
 

@@ -49,7 +49,7 @@ type metadataRequest struct {
 // The go/packages JSON protocol omits Module, Dir, Target, ForTest and sizes.
 // Keep them alongside the standard flattened package/import representation.
 type packageMetadata struct {
-	Package *Package
+	Package *packages.Package
 	Module  *packages.Module
 	Dir     string
 	Target  string
@@ -74,7 +74,11 @@ type metadataResponse struct {
 // This loader is for metadata only; LoadEx supplies LLGo's parser and typechecker.
 func LoadMetadata(cfg *Config, patterns ...string) ([]*Package, error) {
 	if cfg == nil || environmentValue(cfg.Env, "GOROOT") == "" {
-		return packages.Load(cfg, patterns...)
+		raw, err := packages.Load(cfg, patterns...)
+		if err != nil {
+			return nil, err
+		}
+		return convertGoPackages(raw), nil
 	}
 	if cfg.Mode&(NeedTypes|NeedTypesInfo|NeedSyntax) != 0 {
 		return nil, fmt.Errorf("package driver requires a metadata-only load mode")
@@ -206,7 +210,7 @@ func loadDriverMetadata(cfg *Config, patterns []string) metadataResponse {
 	for _, pkg := range initial {
 		response.Roots = append(response.Roots, pkg.ID)
 	}
-	Visit(initial, func(pkg *Package) bool {
+	packages.Visit(initial, func(pkg *packages.Package) bool {
 		response.Packages = append(response.Packages, packageMetadata{
 			Package: pkg, Module: pkg.Module, Dir: pkg.Dir, Target: pkg.Target,
 			ForTest: pkg.ForTest, Sizes: pkg.TypesSizes != nil, Imports: pkg.Imports != nil,
@@ -244,12 +248,12 @@ func (response metadataResponse) packages() ([]*Package, error) {
 	if response.Error != "" {
 		return nil, errors.New(response.Error)
 	}
-	byID := make(map[string]*Package, len(response.Packages))
+	byID := make(map[string]*packages.Package, len(response.Packages))
 	for _, metadata := range response.Packages {
 		pkg := metadata.Package
 		pkg.Module, pkg.Dir, pkg.Target, pkg.ForTest = metadata.Module, metadata.Dir, metadata.Target, metadata.ForTest
 		if metadata.Imports && pkg.Imports == nil {
-			pkg.Imports = make(map[string]*Package)
+			pkg.Imports = make(map[string]*packages.Package)
 		}
 		if metadata.Sizes {
 			pkg.TypesSizes = types.SizesFor(response.Compiler, response.Arch)
@@ -266,11 +270,11 @@ func (response metadataResponse) packages() ([]*Package, error) {
 			}
 		}
 	}
-	initial := make([]*Package, 0, len(response.Roots))
+	initial := make([]*packages.Package, 0, len(response.Roots))
 	for _, id := range response.Roots {
 		initial = append(initial, byID[id])
 	}
-	return initial, nil
+	return convertGoPackages(initial), nil
 }
 
 func environmentKeyEqual(a, b string) bool {

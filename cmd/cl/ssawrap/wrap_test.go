@@ -3,15 +3,15 @@ package ssawrap
 import (
 	"bytes"
 	"go/ast"
-	"go/importer"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"go/parser"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strings"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 // Test source code: contains simple functions for wrapping
@@ -53,7 +53,7 @@ func buildTestProgram(t *testing.T) (*ssa.Program, *ssa.Package) {
 
 	pkg := types.NewPackage("demo", "")
 	ssapkg, _, err := ssautil.BuildPackage(
-		&types.Config{Importer: importer.Default()},
+		&types.Config{Importer: llpkgs.DefaultImporter()},
 		fset, pkg, files, ssa.SanityCheckFunctions,
 	)
 	if err != nil {

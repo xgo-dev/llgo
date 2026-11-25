@@ -17,12 +17,12 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
 	"go/token"
-	"go/types"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // maxUnrolledMapUpdates matches cmd/compile's maplit: more than 25 static

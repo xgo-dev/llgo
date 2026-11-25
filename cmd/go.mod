@@ -16,19 +16,16 @@ require (
 	go.bug.st/serial v1.6.4
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/mod v0.43.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	golang.org/x/tools v0.52.0
 )
 
 require (
 	github.com/creack/goselect v0.1.2 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 )
 
 replace github.com/xgo-dev/llgo => ..
 
 replace github.com/xgo-dev/llgo/runtime => ../runtime
-
-// v0.51.0 plus the generic-method wrapper fix; remove when upstream includes it.
-replace golang.org/x/tools => github.com/xgo-dev/tools v0.51.1

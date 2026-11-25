@@ -7,10 +7,10 @@ import (
 
 	"github.com/xgo-dev/llgo/cmd/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	llpackages "github.com/xgo-dev/llgo/cmd/compiler/packages"
-	"golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func TestFrontendInlineReplacementBodies(t *testing.T) {
@@ -46,7 +46,7 @@ func TestFrontendInlineReplacementBodies(t *testing.T) {
 			if err != nil || packages.PrintErrors(loaded) != 0 {
 				t.Fatalf("load fixture: %v", err)
 			}
-			cold, _ := ssautil.Packages(loaded, ssa.SanityCheckFunctions)
+			cold, _ := packages.Packages(loaded, ssa.SanityCheckFunctions)
 			cold.Build()
 			tracking := cl.NewCallerTracking()
 			tracking.Precompute(cold.AllPackages())
@@ -72,7 +72,7 @@ func TestFrontendInlineReplacementBodies(t *testing.T) {
 
 			// Register fresh dependency SSA without bodies, as on a frontend
 			// cache hit. Only the caller is built before inline preloading.
-			warm, pkgs := ssautil.Packages(loaded, ssa.SanityCheckFunctions)
+			warm, pkgs := packages.Packages(loaded, ssa.SanityCheckFunctions)
 			ctx := &context{progSSA: warm, buildConf: NewDefaultConf(ModeBuild),
 				callerTracking: cl.NewCallerTracking(), pkgByID: make(map[string]*aPackage)}
 			ctx.frontendOptions.DisableInlineBodyImports = test.disableImports

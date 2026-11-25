@@ -1,14 +1,12 @@
 package llvmgen
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"testing"
-
-	lltypes "github.com/xgo-dev/llgo/types"
 )
 
 func TestHostLayoutAddressableStorage(t *testing.T) {
@@ -46,7 +44,7 @@ type Wire struct { _ structs.HostLayout; Addr uint32; Len uint32 }
 			}
 			prog.SetTypeCallConv("storage.Callback", CDecl)
 			prog.SetTypeCallConv("storage.CallbackAlias", CDecl)
-			pkg, err := (&types.Config{Importer: importer.Default(), Sizes: sizes}).Check("storage", fs, []*ast.File{file}, nil)
+			pkg, err := (&types.Config{Importer: llpkgs.DefaultImporter(), Sizes: sizes}).Check("storage", fs, []*ast.File{file}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -91,7 +89,7 @@ func TestHostLayoutZeroSizedTail(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
 			sizes := prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
-			markerPkg, err := importer.Default().Import("structs")
+			markerPkg, err := llpkgs.DefaultImporter().Import("structs")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,7 +98,7 @@ func TestHostLayoutZeroSizedTail(t *testing.T) {
 			field := func(name string, typ types.Type) *types.Var {
 				return types.NewField(token.NoPos, nil, name, typ, false)
 			}
-			alignment := prog.typeCtx.HostBasicLayout(lltypes.Uint64).Align
+			alignment := prog.typeCtx.HostBasicLayout(types.Uint64).Align
 			for _, tail := range []struct {
 				name string
 				typ  types.Type

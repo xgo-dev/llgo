@@ -17,15 +17,15 @@
 package build
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"slices"
 	"strings"
 
+	"github.com/xgo-dev/llgo/callgraph/rta"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/callgraph/rta"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
-	"golang.org/x/tools/go/types/typeutil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
+	"github.com/xgo-dev/llgo/types/typeutil"
 )
 
 const reflectPackagePath = "reflect"

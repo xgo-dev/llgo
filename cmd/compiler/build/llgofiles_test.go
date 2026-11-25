@@ -17,9 +17,9 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"reflect"

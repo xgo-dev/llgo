@@ -3,10 +3,9 @@ package plan9asm
 import (
 	"fmt"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,7 +63,7 @@ func mustTestPackage(t *testing.T, pkgPath, src string) *llpackages.Package {
 		Defs: map[*ast.Ident]types.Object{},
 		Uses: map[*ast.Ident]types.Object{},
 	}
-	conf := types.Config{Importer: importer.Default()}
+	conf := types.Config{Importer: llpackages.DefaultImporter()}
 	tpkg, err := conf.Check(pkgPath, fset, []*ast.File{f}, info)
 	if err != nil {
 		t.Fatalf("type-check package: %v", err)

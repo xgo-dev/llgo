@@ -17,13 +17,13 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 
 	llabi "github.com/xgo-dev/llgo/cmd/compiler/abi"
 	"github.com/xgo-dev/llgo/cmd/compiler/gcrootplan"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {

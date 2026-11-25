@@ -17,7 +17,7 @@
 package llvmgen
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strings"
 	"testing"
 

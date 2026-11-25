@@ -1,7 +1,7 @@
 package abi
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strconv"
 	"strings"
 
@@ -267,7 +267,7 @@ func (b *Builder) TFlag(t types.Type) (flag abi.TFlag) {
 
 func (b *Builder) IsRegularMemory(t types.Type) bool {
 	ctx := b.context()
-	return ctx.Layout(ctx.FromGo(t)).IsRegularMemory
+	return ctx.Layout(t).IsRegularMemory
 }
 
 func (b *Builder) Kind(t types.Type) abi.Kind {
@@ -310,13 +310,12 @@ func (b *Builder) HasPointers(t types.Type) bool {
 	if _, ok := types.Unalias(t).(*types.Tuple); ok {
 		panic("unsupported pointer layout: " + t.String())
 	}
-	ctx := b.context()
-	return ctx.FromGo(t).HasPtrData()
+	return t.HasPtrData()
 }
 
 func (b *Builder) PtrBytes(t types.Type) uintptr {
 	ctx := b.context()
-	return uintptr(ctx.Layout(ctx.FromGo(t)).PtrBytes)
+	return uintptr(ctx.Layout(t).PtrBytes)
 }
 
 func (b *Builder) Size(t types.Type) uintptr {
@@ -396,5 +395,5 @@ func (b *Builder) RuntimeName(t types.Type) string {
 
 func (b *Builder) EqualName(t types.Type) string {
 	ctx := b.context()
-	return ctx.EqualName(ctx.FromGo(t))
+	return ctx.EqualName(t)
 }

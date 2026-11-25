@@ -2,12 +2,12 @@ package cl
 
 import (
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"sort"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/goembed"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 const (

@@ -17,9 +17,9 @@
 package llvmgen
 
 import (
-	"go/importer"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
@@ -632,7 +632,7 @@ func TestWasm32NativeStructAndGCRootStorage(t *testing.T) {
 func TestWasm32DirectInterfaceUnwrapsPointerStorage(t *testing.T) {
 	prog := newJ32Program(t)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := llpkgs.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}

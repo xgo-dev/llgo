@@ -1,6 +1,6 @@
 package cl
 
-import "golang.org/x/tools/go/ssa"
+import "github.com/xgo-dev/llgo/ssa"
 
 // KeepAlive observes only liveness. Avoid retaining static type descriptors
 // and their method tables when all executable uses are direct KeepAlive calls.

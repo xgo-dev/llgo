@@ -2,9 +2,9 @@ package build
 
 import (
 	"encoding/json"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
-	"go/types"
 	"os"
 	"reflect"
 	"testing"
@@ -13,7 +13,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func frontendProgramFixture(t *testing.T) *frontendCache {

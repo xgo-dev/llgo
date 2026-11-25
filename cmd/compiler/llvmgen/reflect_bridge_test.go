@@ -1,10 +1,10 @@
 package llvmgen
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/build"
-	"go/importer"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
@@ -232,7 +232,7 @@ func TestWasmReflectTypeDescriptorsCarryBridges(t *testing.T) {
 	build.Default.BuildTags = []string{"llgo", "llgo.wasi_threads"}
 	t.Cleanup(func() { build.Default = buildContext })
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := llpkgs.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}

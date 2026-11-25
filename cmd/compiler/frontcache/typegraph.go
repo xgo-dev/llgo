@@ -6,7 +6,7 @@ package frontcache
 import (
 	"fmt"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 // Object preserves package identity for private fields/methods as well as names.
@@ -323,6 +323,12 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 			obj := types.NewTypeName(pos(n.Object), owner(n.Object), n.Object.Name, nil)
 			named := types.NewNamed(obj, nil, nil)
 			p.values[id] = named
+			// Once the named shell is published in p.values, recursive
+			// references through it are valid named cycles rather than
+			// anonymous cycles (even when pointer types are interned).
+			savedActive := p.active
+			p.active = make(map[int]bool)
+			defer func() { p.active = savedActive }()
 			named.SetTypeParams(parameters(n.TypeParams))
 			named.SetUnderlying(get(n.Elem))
 			for _, m := range n.Methods {

@@ -1,18 +1,18 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"go/types"
 	"strings"
 	"sync"
 
-	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/locality"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
+	"github.com/xgo-dev/llgo/directive"
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
 )
 
 // These are frontend import costs, not LLVM instruction counts. LLVM makes
@@ -218,7 +218,8 @@ func ResolveInlineTarget(fn *ssa.Function, patches Patches) *ssa.Function {
 	if !ok {
 		return nil
 	}
-	for method := range replacement.Methods() {
+	for i := 0; i < replacement.NumMethods(); i++ {
+		method := replacement.Method(i)
 		if method.Name() == fn.Name() {
 			return patch.Alt.Prog.FuncValue(method)
 		}

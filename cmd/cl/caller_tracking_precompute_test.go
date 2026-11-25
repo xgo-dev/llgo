@@ -21,7 +21,7 @@ import (
 	"sync"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestCallerTrackingPrecomputeSupportsConcurrentReads(t *testing.T) {

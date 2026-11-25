@@ -2,7 +2,7 @@ package cl
 
 import (
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,8 +11,8 @@ import (
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
 )
 
 func TestCrossPackageInlineBodies(t *testing.T) {

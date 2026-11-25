@@ -17,10 +17,10 @@
 package cl
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strings"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // uintptrEscapesRoots preserves the pointer semantics of //go:uintptrescapes

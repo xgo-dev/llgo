@@ -1,11 +1,11 @@
 package llvmgen
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"math"
 	"reflect"
 	"testing"
@@ -66,7 +66,7 @@ const Offset = unsafe.Offsetof(HostOuter{}.Tail)
 				}
 				return true
 			})
-			pkg, err := (&types.Config{Importer: importer.Default(), Sizes: sizes}).Check("native", fs, []*ast.File{file}, nil)
+			pkg, err := (&types.Config{Importer: llpkgs.DefaultImporter(), Sizes: sizes}).Check("native", fs, []*ast.File{file}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -140,7 +140,7 @@ func TestHostLayoutOverflow(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: "linux", GOARCH: arch})
 			defer prog.Dispose()
 			sizes := prog.TypeSizes(types.SizesFor("gc", arch))
-			pkg, err := importer.Default().Import("structs")
+			pkg, err := llpkgs.DefaultImporter().Import("structs")
 			if err != nil {
 				t.Fatal(err)
 			}

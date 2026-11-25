@@ -1,8 +1,8 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/types"
 
 	"github.com/xgo-dev/llgo/cmd/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"

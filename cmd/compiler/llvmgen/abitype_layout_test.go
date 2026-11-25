@@ -1,8 +1,8 @@
 package llvmgen
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"reflect"
 	"strings"
 	"testing"

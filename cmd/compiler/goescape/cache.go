@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"hash"
 	"io"
 	"sort"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 // Cache is optional local build-cache storage. I/O errors and invalid records

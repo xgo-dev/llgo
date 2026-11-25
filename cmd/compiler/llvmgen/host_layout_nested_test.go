@@ -1,11 +1,11 @@
 package llvmgen
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"testing"
 )
 
@@ -28,7 +28,7 @@ type HostFuncFirst struct { _ structs.HostLayout; X FuncFirst; B byte }
 	if err != nil {
 		t.Fatal(err)
 	}
-	pkg, err := (&types.Config{Importer: importer.Default(), Sizes: sizes}).Check("probe", fset, []*ast.File{file}, nil)
+	pkg, err := (&types.Config{Importer: llpkgs.DefaultImporter(), Sizes: sizes}).Check("probe", fset, []*ast.File{file}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

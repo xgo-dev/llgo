@@ -1,10 +1,10 @@
 package cl
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func collectDebugAllocVariables(fn *ssa.Function) map[*ssa.Alloc]*types.Var {

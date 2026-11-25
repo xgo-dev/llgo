@@ -1,11 +1,11 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/build"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"reflect"

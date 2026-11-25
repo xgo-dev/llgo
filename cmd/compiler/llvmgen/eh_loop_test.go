@@ -17,9 +17,9 @@
 package llvmgen_test
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 

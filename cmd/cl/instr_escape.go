@@ -17,7 +17,7 @@
 package cl
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
 )

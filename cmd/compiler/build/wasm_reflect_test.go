@@ -17,17 +17,16 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
-	"golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func TestConfigureWasmReflectBridges(t *testing.T) {
@@ -343,7 +342,7 @@ func buildWasmReflectTestProgram(t *testing.T, src string) *ssa.Package {
 	}
 	checked := types.NewPackage("example.com/"+file.Name.Name, file.Name.Name)
 	pkg, _, err := ssautil.BuildPackage(
-		&types.Config{Importer: importer.Default()}, fset,
+		&types.Config{Importer: packages.DefaultImporter()}, fset,
 		checked, []*ast.File{file},
 		ssa.SanityCheckFunctions|ssa.InstantiateGenerics,
 	)

@@ -18,10 +18,9 @@ package llvmgen
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/constant"
-	"go/importer"
 	"go/token"
-	"go/types"
 	"math"
 	"os"
 	"reflect"
@@ -31,7 +30,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	rtabi "github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -697,7 +696,7 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 	prog.EnableGoGlobalDCE(true)
 	prog.EnableLTOPluginMarkers(true)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -806,7 +805,7 @@ func TestDeadcodeDropT2IUsesNewItab(t *testing.T) {
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.EnableDeadcodeDrop(true)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -850,7 +849,7 @@ func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -908,7 +907,7 @@ func TestStaticIfaceBoxFingerprintsDistinguishSameLengthStrings(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -980,7 +979,7 @@ func TestStaticIfaceBoxReusesLLVMValue(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1121,7 +1120,7 @@ func TestStaticIfaceBoxReusesByName(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1160,7 +1159,7 @@ func TestStaticIfaceBoxSkipsZeroSizedTypes(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1508,7 +1507,7 @@ func TestAbiTypeLazyPtrToThis(t *testing.T) {
 	defer prog.Dispose()
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1543,7 +1542,7 @@ func TestRecordMethodSlots(t *testing.T) {
 	defer prog.Dispose()
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1691,7 +1690,7 @@ func TestRecordUseIface(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1767,7 +1766,7 @@ func TestDevLTOGlobalDCEAbiTypeFakeUsesRecordedDuringAbiTypeBuild(t *testing.T) 
 	prog := NewProgram(nil)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1805,7 +1804,7 @@ func TestMapKeyPtrCoverage(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2340,7 +2339,7 @@ func TestMakeInterfaceKinds(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2391,7 +2390,7 @@ func TestCheckExprAssignmentConversions(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2430,7 +2429,7 @@ func TestMakeInterfaceFromPtrKinds(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2469,7 +2468,7 @@ func TestZeroSizedLoadEmitsNilDerefGuard(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2496,7 +2495,7 @@ func TestTypeAssertSingleElemArrayUsesInsertValue(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3065,7 +3064,7 @@ func TestArrayEqualLowering(t *testing.T) {
 	defer prog.Dispose()
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3172,7 +3171,7 @@ func TestStructEqualLowering(t *testing.T) {
 	defer prog.Dispose()
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3644,7 +3643,7 @@ func TestAbiTables(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3703,7 +3702,7 @@ func TestInitAbiTypesForSubset(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -3758,7 +3757,7 @@ func TestInitAbiTypesForSubset(t *testing.T) {
 }
 
 func TestRegisterAbiTypesAcrossPrograms(t *testing.T) {
-	runtimePkg, err := importer.For("source", nil).Import(PkgRuntime)
+	runtimePkg, err := packages.SourceImporter().Import(PkgRuntime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3930,7 +3929,7 @@ func TestStaticIfaceBoxRejectsLocalFunctions(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -4008,7 +4007,7 @@ func TestStaticIfaceBoxRejectsAnonymousWritableBacking(t *testing.T) {
 	prog := NewProgram(nil)
 	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
-		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}

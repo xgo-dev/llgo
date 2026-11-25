@@ -1,16 +1,16 @@
 package cl
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/typepatch"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func TestDebugVariablePackageScope(t *testing.T) {
@@ -47,13 +47,15 @@ func f(param int) (result int) {
 		}
 	}
 	check()
-	// Merge copies the package scope without changing each object's Parent.
+	// Clone + Merge copies the package scope without changing each object's Parent.
 	// Globals must remain globals after that scope identity changes.
 	before := pkg.Scope()
-	typepatch.Merge(pkg, types.NewPackage("original", "original"), nil, false)
-	if pkg.Scope() == before {
-		t.Fatal("Merge did not swap the package scope")
+	cloned := typepatch.Clone(pkg)
+	typepatch.Merge(cloned, types.NewPackage("original", "original"), nil, false)
+	if cloned.Scope() == before {
+		t.Fatal("Clone did not create a fresh package scope")
 	}
+	pkg = cloned
 	check()
 	global := pkg.Scope().Lookup("global").(*types.Var)
 	if allocs := testing.AllocsPerRun(100, func() {
@@ -96,7 +98,7 @@ var anonymous = func() int {
 		t.Fatal(err)
 	}
 	pkg, _, err := ssautil.BuildPackage(
-		&types.Config{Importer: importer.Default()},
+		&types.Config{Importer: llpkgs.DefaultImporter()},
 		fset,
 		types.NewPackage("scope", "scope"),
 		[]*ast.File{file},

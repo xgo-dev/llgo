@@ -1,6 +1,6 @@
 package cl
 
-import "golang.org/x/tools/go/ssa"
+import "github.com/xgo-dev/llgo/ssa"
 
 // nonDebugReferrers returns the executable users of v. DebugRef is an SSA
 // pseudo-instruction and must not change lowering decisions based on use count.

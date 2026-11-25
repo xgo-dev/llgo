@@ -2,11 +2,11 @@ package llvmgen
 
 import (
 	"bytes"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"runtime"
 	"strings"
 	"testing"

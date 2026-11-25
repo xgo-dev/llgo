@@ -17,11 +17,11 @@
 package cl
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"strings"
 	"sync"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func (p *context) canTailRecoverAlias(call *ssa.CallCommon) bool {

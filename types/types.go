@@ -841,6 +841,18 @@ func NewInterfaceType(methods []*Func, embeddeds []Type) *Interface {
 		embeddeds:       embs,
 		methodSet:       true,
 	}
+	// Mirror go/types.NewInterfaceType: bind a receiver variable to every
+	// explicit interface method that does not already have one.
+	for _, m := range exp {
+		if m == nil {
+			continue
+		}
+		if sig, ok := m.typ.(*Signature); ok && sig != nil && sig.recv == nil {
+			cp := *sig
+			cp.recv = NewVar(m.pos, m.pkg, "", t)
+			m.typ = &cp
+		}
+	}
 	return t
 }
 
@@ -1117,11 +1129,26 @@ func NewStruct(fields []*Var, tags []string) *Struct {
 		}
 	}
 	return &Struct{
-		fields:       cp,
-		tags:         tagCopy,
-		hostLayout:   host,
-		simdTagIndex: -1,
+		fields:          cp,
+		tags:            tagCopy,
+		hostLayout:      host,
+		isClosureStruct: isLLClosureFields(cp),
+		simdTagIndex:    -1,
 	}
+}
+
+func isLLClosureFields(fields []*Var) bool {
+	if len(fields) != 2 || fields[0] == nil || fields[1] == nil {
+		return false
+	}
+	if fields[0].name != "$f" || fields[1].name != "$data" {
+		return false
+	}
+	if _, ok := fields[0].typ.Underlying().(*Signature); !ok {
+		return false
+	}
+	b, ok := fields[1].typ.Underlying().(*Basic)
+	return ok && b.kind == UnsafePointer
 }
 
 func (s *Struct) NumFields() int   { return len(s.fields) }
@@ -1286,6 +1313,8 @@ func (v *SIMDVec) String() string {
 type Named struct {
 	ctx             *Context
 	goNamed         *gotypes.Named
+	synthInstOrigin *Named
+	synthInstSubst  map[*TypeParam]Type
 	overrideCC      CallConv
 	hasOverrideCC   bool
 	resolved        bool
@@ -1317,6 +1346,10 @@ func NewNamed(obj *TypeName, underlying Type, methods []*Func) *Named {
 		methods:         methods,
 		simdTagIndex:    -1,
 	}
+	if underlying != nil {
+		n.hostLayout = underlying.HasHostLayout()
+	}
+	classifyNamedSIMD(n)
 	if obj != nil {
 		obj.typ = n
 	}
@@ -1324,6 +1357,17 @@ func NewNamed(obj *TypeName, underlying Type, methods []*Func) *Named {
 }
 
 func (n *Named) resolve() {
+	if n.synthInstOrigin != nil && !n.resolved {
+		n.resolved = true
+		orig := n.synthInstOrigin
+		seen := map[Type]Type{orig: n, orig.Origin(): n}
+		n.underlying = substType(orig.Underlying(), n.synthInstSubst, seen)
+		if n.underlying != nil {
+			n.hostLayout = n.underlying.HasHostLayout()
+		}
+		classifyNamedSIMD(n)
+		return
+	}
 	if n.ctx == nil || n.goNamed == nil {
 		return
 	}
@@ -1331,6 +1375,37 @@ func (n *Named) resolve() {
 }
 
 func (n *Named) resolveMethods() {
+	if n.synthInstOrigin != nil && !n.methodsResolved {
+		n.methodsResolved = true
+		orig := n.synthInstOrigin
+		seen := map[Type]Type{orig: n, orig.Origin(): n}
+		if nm := orig.NumMethods(); nm > 0 {
+			n.methods = make([]*Func, nm)
+			for i := 0; i < nm; i++ {
+				m := orig.Method(i)
+				msubst := n.synthInstSubst
+				if sig, ok := m.typ.(*Signature); ok && sig.recvTypeParams != nil && sig.recvTypeParams.Len() > 0 && n.typeArgs != nil {
+					msubst = make(map[*TypeParam]Type, len(n.synthInstSubst)+sig.recvTypeParams.Len())
+					for k, v := range n.synthInstSubst {
+						msubst[k] = v
+					}
+					for j := 0; j < sig.recvTypeParams.Len() && j < n.typeArgs.Len(); j++ {
+						msubst[sig.recvTypeParams.At(j)] = n.typeArgs.At(j)
+					}
+				}
+				msig, _ := substType(m.typ, msubst, seen).(*Signature)
+				if msig != nil {
+					cp := *msig
+					cp.recvTypeParams = nil
+					msig = &cp
+				}
+				nmFn := NewFunc(m.pos, m.pkg, m.name, msig)
+				nmFn.origin = m.Origin()
+				n.methods[i] = nmFn
+			}
+		}
+		return
+	}
 	if n.ctx == nil || n.goNamed == nil {
 		return
 	}
@@ -1444,6 +1519,12 @@ func (n *Named) llTypeMarker()           {}
 func (n *Named) SetUnderlying(u Type) {
 	n.underlying = u
 	n.resolved = true
+	if u != nil {
+		n.hostLayout = u.HasHostLayout()
+	} else {
+		n.hostLayout = false
+	}
+	classifyNamedSIMD(n)
 }
 
 func (n *Named) Underlying() Type {

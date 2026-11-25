@@ -3,7 +3,7 @@ package goescape
 import (
 	"go/token"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func (f *functionAnalysis) borrowableConversion(v *ssa.Convert) bool {

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -160,7 +160,7 @@ func TestDefaultGODEBUGBuildMetadataError(t *testing.T) {
 	// toolchain cannot resolve. Propagate that metadata error through Build.
 	const id = "example.com/driver-only"
 	response, err := json.Marshal(gopackages.DriverResponse{Compiler: "gc", Arch: runtime.GOARCH, GoVersion: 27,
-		Roots: []string{id}, Packages: []*packages.Package{{ID: id, PkgPath: id, Name: "main",
+		Roots: []string{id}, Packages: []*gopackages.Package{{ID: id, PkgPath: id, Name: "main",
 			GoFiles: []string{source}, CompiledGoFiles: []string{source}}}})
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestDefaultGODEBUGGOPATHLocalPackages(t *testing.T) {
 		for _, pattern := range []string{".", "./..."} {
 			t.Run(fmt.Sprintf("tests=%t/%s", tests, pattern), func(t *testing.T) {
 				cfg := &packages.Config{Dir: dir, Env: environ, Tests: tests, Mode: packages.NeedName}
-				roots, err := gopackages.Load(cfg, pattern)
+				roots, err := packages.LoadMetadata(cfg, pattern)
 				if err != nil {
 					t.Fatal(err)
 				}

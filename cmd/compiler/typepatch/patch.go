@@ -17,93 +17,62 @@
 package typepatch
 
 import (
-	"go/token"
-	"go/types"
-	"unsafe"
+	"sync"
+
+	"github.com/xgo-dev/llgo/types"
 )
 
-type typesPackage struct {
-	path      string
-	name      string
-	scope     *types.Scope
-	imports   []*types.Package
-	complete  bool
-	fake      bool   // scope lookup errors are silently dropped if package is fake (internal use only)
-	cgo       bool   // uses of this package will be rewritten into uses of declarations from _cgo_gotypes.go
-	goVersion string // minimum Go version required for package (by Config.GoVersion, typically from go.mod)
-}
-
-type typesScope struct {
-	parent   *types.Scope
-	children []*types.Scope
-	number   int
-	elems    map[string]types.Object // TODO(xsw): ensure offset of elems
-	pos, end token.Pos
-	comment  string
-	isFunc   bool
-}
-
-const (
-	tagPatched = 0x17
-)
+var patchedPkgs sync.Map // map[*types.Package]struct{}
 
 func IsPatched(pkg *types.Package) bool {
 	if pkg == nil {
 		return false
 	}
-	p := (*typesPackage)(unsafe.Pointer(pkg))
-	return *(*uint8)(unsafe.Pointer(&p.complete)) == tagPatched
-}
-
-func setPatched(pkg *types.Package) {
-	p := (*typesPackage)(unsafe.Pointer(pkg))
-	*(*uint8)(unsafe.Pointer(&p.complete)) = tagPatched
-}
-
-func setScope(pkg *types.Package, scope *types.Scope) {
-	p := (*typesPackage)(unsafe.Pointer(pkg))
-	p.scope = scope
-}
-
-func getElems(scope *types.Scope) map[string]types.Object {
-	s := (*typesScope)(unsafe.Pointer(scope))
-	return s.elems
-}
-
-func setElems(scope *types.Scope, elems map[string]types.Object) {
-	s := (*typesScope)(unsafe.Pointer(scope))
-	s.elems = elems
+	_, ok := patchedPkgs.Load(pkg)
+	return ok
 }
 
 func Clone(alt *types.Package) *types.Package {
-	ret := *alt
-	return &ret
+	if alt == nil {
+		return nil
+	}
+	cp := types.NewPackage(alt.Path(), alt.Name())
+	cp.SetImports(alt.Imports())
+	if alt.Complete() {
+		cp.MarkComplete()
+	}
+	if src := alt.Scope(); src != nil {
+		dst := cp.Scope()
+		for _, name := range src.Names() {
+			if obj := src.Lookup(name); obj != nil {
+				dst.Insert(obj)
+			}
+		}
+	}
+	return cp
 }
 
 func Merge(alt, pkg *types.Package, skips map[string]struct{}, skipall bool) {
-	setPatched(pkg)
-	if skipall {
+	if pkg != nil {
+		patchedPkgs.Store(pkg, struct{}{})
+	}
+	if skipall || alt == nil || pkg == nil {
 		return
 	}
-
-	scope := *alt.Scope()
-	old := getElems(&scope)
-	elems := make(map[string]types.Object, len(old))
-
-	for name, o := range old {
-		elems[name] = o
+	dst := alt.Scope()
+	src := pkg.Scope()
+	if dst == nil || src == nil {
+		return
 	}
-
-	setElems(&scope, elems)
-	setScope(alt, &scope)
-
-	for name, o := range getElems(pkg.Scope()) {
-		if _, ok := elems[name]; ok {
+	for _, name := range src.Names() {
+		if dst.Lookup(name) != nil {
 			continue
 		}
-		if _, ok := skips[name]; ok {
+		if _, skip := skips[name]; skip {
 			continue
 		}
-		elems[name] = o
+		if obj := src.Lookup(name); obj != nil {
+			dst.Insert(obj)
+		}
 	}
 }

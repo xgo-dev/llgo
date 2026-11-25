@@ -3,7 +3,7 @@ package cl
 import (
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestImportedFrontendPreservesCallerAndRecoverContracts(t *testing.T) {

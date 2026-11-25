@@ -1,15 +1,15 @@
 package cl
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func TestCollectDebugAllocVariables(t *testing.T) {
@@ -30,7 +30,7 @@ var anonymous = func(values [2]int) {
 		t.Fatal(err)
 	}
 	pkg, _, err := ssautil.BuildPackage(
-		&types.Config{Importer: importer.Default()},
+		&types.Config{Importer: llpkgs.DefaultImporter()},
 		fset,
 		types.NewPackage("debugalloc", "debugalloc"),
 		[]*ast.File{file},

@@ -4,7 +4,7 @@ import (
 	"debug/dwarf"
 	"fmt"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/debugabi"
 	"github.com/xgo-dev/llgo/cmd/compiler/debuginfo"

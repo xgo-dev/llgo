@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func TestForwardedImmutableCapture(t *testing.T) {

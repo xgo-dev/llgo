@@ -2,10 +2,10 @@ package midway
 
 import (
 	"go/ast"
-	"go/importer"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"go/parser"
 	"go/token"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"testing"
 )
 
@@ -15,7 +15,7 @@ func (i testImporter) Import(path string) (*types.Package, error) {
 	if p := i[path]; p != nil {
 		return p, nil
 	}
-	return importer.Default().Import(path)
+	return llpkgs.DefaultImporter().Import(path)
 }
 
 func testInfo() *types.Info {

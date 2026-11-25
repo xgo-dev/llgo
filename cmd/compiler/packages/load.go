@@ -22,7 +22,6 @@ import (
 	"go/parser"
 	"go/scanner"
 	"go/token"
-	"go/types"
 	"go/version"
 	"log"
 	"os"
@@ -33,6 +32,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/xgo-dev/llgo/types"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -76,11 +76,8 @@ const (
 type Config = packages.Config
 type Error = packages.Error
 
-// A Package describes a loaded Go package.
-type Package = packages.Package
-
 type Cached struct {
-	*packages.Package
+	*Package
 	Types     *types.Package
 	TypesInfo *types.Info
 	Syntax    []*ast.File
@@ -90,18 +87,19 @@ type aDeduper struct {
 	cache       sync.Map
 	checked     sync.Map
 	setpath     func(path string, name string) string
-	preload     func(pkg *packages.Package)
+	preload     func(pkg *Package)
 	prepare     func([]*Package, *Config) error
 	rewrite     func(*Package) (bool, error)
 	llgoFiles   map[string][]string
 	importTypes func(*Package, *token.FileSet) bool
 	exported    sync.Map
+	typeCtx     *types.Context
 }
 
 type Deduper = *aDeduper
 
 func NewDeduper() Deduper {
-	return &aDeduper{}
+	return &aDeduper{typeCtx: types.NewContext()}
 }
 
 // SetImportTypes installs a validated dependency type-export reader. Syntax is
@@ -115,7 +113,7 @@ func (p Deduper) IsExported(id string) bool {
 	return ok
 }
 
-func (p Deduper) SetPreload(fn func(pkg *packages.Package)) {
+func (p Deduper) SetPreload(fn func(pkg *Package)) {
 	p.preload = fn
 }
 
@@ -153,16 +151,6 @@ func (p Deduper) set(id string, cp *Cached) {
 		log.Println("==> Import", id)
 	}
 	p.cache.Store(id, cp)
-}
-
-// Visit visits all the packages in the import graph whose roots are
-// pkgs, calling the optional pre function the first time each package
-// is encountered (preorder), and the optional post function after a
-// package's dependencies have been visited (postorder).
-// The boolean result of pre(pkg) determines whether
-// the imports of package pkg are visited.
-func Visit(pkgs []*Package, pre func(*Package) bool, post func(*Package)) {
-	packages.Visit(pkgs, pre, post)
 }
 
 // An importFunc is an implementation of the single-method
@@ -252,6 +240,13 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	}
 
 	if origMode&(NeedTypes|NeedTypesInfo|NeedTypesSizes|NeedSyntax) != 0 {
+		typeCtx := types.NewContext()
+		if dedup != nil {
+			if dedup.typeCtx == nil {
+				dedup.typeCtx = types.NewContext()
+			}
+			typeCtx = dedup.typeCtx
+		}
 		tc := &typecheckContext{
 			dedup:         dedup,
 			sizesFn:       sizes,
@@ -260,10 +255,11 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 			goVersion:     goVersion,
 			origMode:      origMode,
 			sourceOverlay: sourceOverlay,
+			typeCtx:       typeCtx,
 		}
 
 		// Perform bottom-up typechecking in dependency post-order
-		packages.Visit(initial, nil, func(pkg *Package) {
+		Visit(initial, nil, func(pkg *Package) {
 			tc.typecheckPackage(pkg)
 		})
 	}
@@ -304,7 +300,7 @@ func loadLLGoFileImports(initial []*Package, cfg *Config, files map[string][]str
 	dependencyConfig.Tests = false // imports refer to ordinary packages, not test roots
 	byID := make(map[string]*Package)
 	byPath := make(map[string]*Package)
-	packages.Visit(initial, nil, func(p *Package) {
+	Visit(initial, nil, func(p *Package) {
 		byID[p.ID] = p
 		if p.ID == p.PkgPath {
 			byPath[p.PkgPath] = p
@@ -388,6 +384,7 @@ type typecheckContext struct {
 	goVersion     string
 	origMode      LoadMode
 	sourceOverlay map[string][]byte
+	typeCtx       *types.Context
 }
 
 func (tc *typecheckContext) targetGoVersion(pkg *Package) string {
@@ -640,6 +637,7 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 	}
 
 	typeConf := &types.Config{
+		Context:   tc.typeCtx,
 		Importer:  importer,
 		Sizes:     pkg.TypesSizes,
 		Error:     appendError,

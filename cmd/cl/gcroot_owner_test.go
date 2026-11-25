@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
 )
 
 func TestGCRootOwner(t *testing.T) {

@@ -5,11 +5,11 @@ package build
 
 import (
 	"fmt"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -94,7 +94,7 @@ func runtimeFloatingPointSources(read func(string) ([]byte, error), goroot strin
 	if len(want) != 0 {
 		return nil, fmt.Errorf("reuse GOROOT runtime floating-point helpers: missing helpers %v", want)
 	}
-	config := types.Config{Importer: importer.Default(), Sizes: types.SizesFor("gc", "386")}
+	config := types.Config{Importer: llpkgs.DefaultImporter(), Sizes: types.SizesFor("gc", "386")}
 	if _, err := config.Check("runtime", fset, files, nil); err != nil {
 		return nil, fmt.Errorf("reuse GOROOT runtime floating-point helpers: %w", err)
 	}

@@ -1,7 +1,7 @@
 package midway
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"testing"
 )
 

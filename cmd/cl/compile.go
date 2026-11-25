@@ -18,10 +18,10 @@ package cl
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"io"
 	"log"
 	"os"
@@ -32,12 +32,12 @@ import (
 
 	"github.com/xgo-dev/llgo/cmd/cl/blocks"
 	"github.com/xgo-dev/llgo/cmd/cl/ssawrap"
-	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/cmd/compiler/genmethod"
 	"github.com/xgo-dev/llgo/cmd/compiler/goembed"
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
 	"github.com/xgo-dev/llgo/cmd/compiler/typepatch"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/directive"
+	"github.com/xgo-dev/llgo/ssa"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 )
@@ -3122,6 +3122,27 @@ func NewPackageExWithEmbedMetaOptions(prog llvmgen.Program, ct *CallerTracking, 
 	return newPackageEx(prog, ct, patches, rewrites, pkg, files, &embedMap, metaCollect, options)
 }
 
+// PreparePatch merges oldTypes into patch.Types and binds patch.Alt.Pkg once
+// on the coordinator before isolated parallel package workers begin lowering.
+// After PreparePatch completes, patch.Types is read-only for all workers.
+func PreparePatch(patch Patch, oldTypes *types.Package, altFiles []*ast.File) {
+	if patch.Types == nil || oldTypes == nil || oldTypes == patch.Types {
+		return
+	}
+	skipMap, skipall := patchSkipNames(altFiles)
+	var skips map[string]none
+	if len(skipMap) > 0 {
+		skips = make(map[string]none, len(skipMap))
+		for name := range skipMap {
+			skips[name] = none{}
+		}
+	}
+	typepatch.Merge(patch.Types, oldTypes, skips, skipall)
+	if patch.Alt != nil {
+		patch.Alt.Pkg = patch.Types
+	}
+}
+
 func newPackageEx(prog llvmgen.Program, ct *CallerTracking, patches Patches, rewrites map[string]string, pkg *ssa.Package, files []*ast.File, embedMap *goembed.VarMap, metaCollect bool, options Options) (ret llvmgen.Package, externs []string, err error) {
 	pkgProg := pkg.Prog
 	pkgTypes := pkg.Pkg
@@ -3137,8 +3158,12 @@ func newPackageEx(prog llvmgen.Program, ct *CallerTracking, patches Patches, rew
 	patch, hasPatch := patches[pkgPath]
 	if hasPatch {
 		pkgTypes = patch.Types
-		pkg.Pkg = pkgTypes
-		patch.Alt.Pkg = pkgTypes
+		if pkg.Pkg != pkgTypes {
+			pkg.Pkg = pkgTypes
+		}
+		if patch.Alt.Pkg != pkgTypes {
+			patch.Alt.Pkg = pkgTypes
+		}
 	}
 	if !options.PreloadedSyntax {
 		if err = ParsePkgSyntaxWithOptions(prog, pkgProg.Fset, pkgTypes, files, options); err != nil {
@@ -3213,7 +3238,9 @@ func newPackageEx(prog llvmgen.Program, ct *CallerTracking, patches Patches, rew
 
 	if hasPatch {
 		skips := ctx.skips
-		typepatch.Merge(pkgTypes, oldTypes, skips, ctx.skipall)
+		if oldTypes != pkgTypes {
+			typepatch.Merge(pkgTypes, oldTypes, skips, ctx.skipall)
+		}
 		ctx.skips = nil
 		ctx.state = pkgInPatch
 		if _, ok := skips["init"]; ok || ctx.skipall {

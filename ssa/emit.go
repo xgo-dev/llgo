@@ -190,7 +190,7 @@ func isValuePreserving(ut_src, ut_dst types.Type) bool {
 		return true
 	}
 
-	switch ut_dst.(type) {
+	switch dst := ut_dst.(type) {
 	case *types.Chan:
 		// Conversion between channel types?
 		_, ok := ut_src.(*types.Chan)
@@ -200,8 +200,79 @@ func isValuePreserving(ut_src, ut_dst types.Type) bool {
 		// Conversion between pointers with identical base types?
 		_, ok := ut_src.(*types.Pointer)
 		return ok
+
+	case *types.Signature:
+		// LLGo calling-convention conversion (e.g. func() -> //llgo:cdecl type).
+		_, ok := ut_src.(*types.Signature)
+		return ok
+
+	case *types.Struct, *types.Array, *types.Slice, *types.Map:
+		return identicalIgnoreTagsAndCallConv(dst, ut_src)
 	}
 	return false
+}
+
+// identicalIgnoreTagsAndCallConv reports whether x and y have identical Go
+// types ignoring struct field tags and LLGo calling conventions (e.g. when a
+// //llgo:cdecl struct or callback type is converted from/to its Go counterpart).
+func identicalIgnoreTagsAndCallConv(x, y types.Type) bool {
+	if types.IdenticalIgnoreTags(x, y) {
+		return true
+	}
+	x = types.Unalias(x)
+	y = types.Unalias(y)
+	switch a := x.(type) {
+	case *types.Signature:
+		b, ok := y.(*types.Signature)
+		if !ok || a.Variadic() != b.Variadic() {
+			return false
+		}
+		return identicalTuplesIgnoreCallConv(a.Params(), b.Params()) &&
+			identicalTuplesIgnoreCallConv(a.Results(), b.Results())
+	case *types.Pointer:
+		b, ok := y.(*types.Pointer)
+		return ok && identicalIgnoreTagsAndCallConv(a.Elem(), b.Elem())
+	case *types.Slice:
+		b, ok := y.(*types.Slice)
+		return ok && identicalIgnoreTagsAndCallConv(a.Elem(), b.Elem())
+	case *types.Array:
+		b, ok := y.(*types.Array)
+		return ok && a.Len() == b.Len() && identicalIgnoreTagsAndCallConv(a.Elem(), b.Elem())
+	case *types.Map:
+		b, ok := y.(*types.Map)
+		return ok && identicalIgnoreTagsAndCallConv(a.Key(), b.Key()) && identicalIgnoreTagsAndCallConv(a.Elem(), b.Elem())
+	case *types.Chan:
+		b, ok := y.(*types.Chan)
+		return ok && a.Dir() == b.Dir() && identicalIgnoreTagsAndCallConv(a.Elem(), b.Elem())
+	case *types.Struct:
+		b, ok := y.(*types.Struct)
+		if !ok || a.NumFields() != b.NumFields() {
+			return false
+		}
+		for i := 0; i < a.NumFields(); i++ {
+			fa, fb := a.Field(i), b.Field(i)
+			if fa.Embedded() != fb.Embedded() || fa.Name() != fb.Name() {
+				return false
+			}
+			if !identicalIgnoreTagsAndCallConv(fa.Type(), fb.Type()) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func identicalTuplesIgnoreCallConv(a, b *types.Tuple) bool {
+	if a.Len() != b.Len() {
+		return false
+	}
+	for i := 0; i < a.Len(); i++ {
+		if !identicalIgnoreTagsAndCallConv(a.At(i).Type(), b.At(i).Type()) {
+			return false
+		}
+	}
+	return true
 }
 
 // emitConv emits to f code to convert Value val to exactly type typ,

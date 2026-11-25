@@ -1,11 +1,11 @@
 package llvmgen
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"testing"
 )
 
@@ -40,7 +40,7 @@ type Pointers [2]*byte
 					prog.SetNativeStructFields(positions)
 				}
 			}
-			pkg, err := (&types.Config{Sizes: sizes, Importer: importer.Default()}).Check("native", fset, []*ast.File{file}, nil)
+			pkg, err := (&types.Config{Sizes: sizes, Importer: llpkgs.DefaultImporter()}).Check("native", fset, []*ast.File{file}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

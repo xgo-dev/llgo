@@ -1,9 +1,9 @@
 package cl
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
-	"go/types"
 	"strings"
 	"testing"
 
@@ -11,8 +11,8 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/abi"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 	"github.com/xgo-dev/llgo/cmd/compiler/typepatch"
+	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
 )
 
 func TestCrossPackageInlineMethods(t *testing.T) {
@@ -123,7 +123,8 @@ type Outer struct { T }
 	facts := newInlineFacts()
 	for _, typeName := range []string{"T", "Generic"} {
 		named := pkg.Type(typeName).Type().(*types.Named)
-		for method := range named.Methods() {
+		for i := 0; i < named.NumMethods(); i++ {
+			method := named.Method(i)
 			fn := pkg.Prog.FuncValue(method)
 			if got, want := facts.cost(fn) <= inlineBodyBudget, fn.Name() == "Small"; got != want {
 				t.Errorf("%s eligible = %v, want %v", fn, got, want)

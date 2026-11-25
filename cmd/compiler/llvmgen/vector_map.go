@@ -2,7 +2,7 @@ package llvmgen
 
 import (
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 // ValidateVectorMaps rejects map storage requiring native vector alignment.
@@ -83,5 +83,5 @@ func (p Program) containsVectorStorage(t types.Type) bool {
 	if t == nil {
 		return false
 	}
-	return p.typeCtx.FromGo(t).ContainsSIMDStorage()
+	return t.ContainsSIMDStorage()
 }

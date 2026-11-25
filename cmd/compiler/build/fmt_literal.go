@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 func canSpecializeLiteralFormats(ctx *context) bool {

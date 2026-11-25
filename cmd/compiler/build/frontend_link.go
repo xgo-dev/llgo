@@ -5,8 +5,8 @@ package build
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"sort"
 	"strconv"
 	"strings"

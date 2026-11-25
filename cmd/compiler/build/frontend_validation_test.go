@@ -2,10 +2,10 @@ package build
 
 import (
 	"encoding/json"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,8 +13,8 @@ import (
 	"github.com/xgo-dev/llgo/cmd/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/ssa"
 	gopackages "golang.org/x/tools/go/packages"
-	"golang.org/x/tools/go/ssa"
 )
 
 func TestFrontendExportValidation(t *testing.T) {

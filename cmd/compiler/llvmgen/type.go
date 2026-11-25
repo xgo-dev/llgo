@@ -19,11 +19,9 @@ package llvmgen
 import (
 	"fmt"
 	"go/token"
-	"go/types"
-	"unsafe"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/abi"
-	lltypes "github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -90,8 +88,8 @@ retry:
 
 type goProgram aProgram
 
-// LLGoContext exposes the underlying canonical *lltypes.Context to abi.Builder.
-func (p *goProgram) LLGoContext() *lltypes.Context {
+// LLGoContext exposes the underlying canonical *types.Context to abi.Builder.
+func (p *goProgram) LLGoContext() *types.Context {
 	return Program(p).typeCtx
 }
 
@@ -145,7 +143,7 @@ func (p Program) TypeSizes(sizes types.Sizes) types.Sizes {
 	if sizes != nil && p.typeCtx != nil {
 		p.syncTypeCtxSizes(sizes)
 	}
-	return (*goProgram)(unsafe.Pointer(p))
+	return (*goProgram)(p)
 }
 
 func (p Program) syncTypeCtxSizes(sizes types.Sizes) {
@@ -645,7 +643,7 @@ func isPkgScope(parent, pkgScope *types.Scope) bool {
 }
 
 func (p Program) toNamed(raw *types.Named) Type {
-	if cc, ok := p.typeCtx.TypeCallConv(namedLinkname(raw)); ok && cc == lltypes.Stdcall {
+	if cc, ok := p.typeCtx.TypeCallConv(namedLinkname(raw)); ok && cc == types.Stdcall {
 		p.validateStdcallType(raw)
 	}
 	name := p.llvmNameOf(raw)
@@ -668,7 +666,7 @@ func (p Program) toNamed(raw *types.Named) Type {
 			break
 		}
 	}
-	if index := p.typeCtx.FromGo(raw).SIMDTagIndex(); index >= 0 {
+	if index := raw.SIMDTagIndex(); index >= 0 {
 		// Preserve the one-field, zero-size shape while making LLVM carry the
 		// target vector alignment into all aggregate storage.
 		ll := p.ctx.StructCreateNamed(name)

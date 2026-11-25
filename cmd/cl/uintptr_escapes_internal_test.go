@@ -1,18 +1,18 @@
 package cl
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 	"github.com/xgo-dev/llvm"
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 func TestUintptrEscapesRootsWasmStorage(t *testing.T) {
@@ -83,7 +83,7 @@ func uintptrEscapesPackage(t *testing.T, src string) *ssa.Package {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pkg, _, err := ssautil.BuildPackage(&types.Config{Importer: importer.Default()}, fset,
+	pkg, _, err := ssautil.BuildPackage(&types.Config{Importer: llpkgs.DefaultImporter()}, fset,
 		types.NewPackage("uintptr_escapes", "p"), []*ast.File{file}, ssa.InstantiateGenerics|ssa.SanityCheckFunctions)
 	if err != nil {
 		t.Fatal(err)

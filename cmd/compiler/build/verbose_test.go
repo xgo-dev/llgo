@@ -17,7 +17,7 @@
 package build
 
 import (
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"os"
 	"testing"
 

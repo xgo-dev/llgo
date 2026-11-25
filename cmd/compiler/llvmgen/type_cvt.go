@@ -19,10 +19,8 @@ package llvmgen
 import (
 	"fmt"
 	"go/token"
-	"go/types"
-	"unsafe"
 
-	lltypes "github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 // -----------------------------------------------------------------------------
@@ -31,18 +29,18 @@ type goTypes struct {
 	// typs and cvtneed are owned by the single lowering goroutine for one
 	// Program. typeCtx is prepared before backend lowering and shared
 	// across Programs with independent LLVM contexts.
-	typs    map[unsafe.Pointer]unsafe.Pointer
+	typs    map[types.Type]types.Type
 	cvtneed map[*types.Named]conversionRequirement
-	typeCtx *lltypes.Context
+	typeCtx *types.Context
 }
 
-func newGoTypes(ctx ...*lltypes.Context) goTypes {
-	var typeCtx *lltypes.Context
+func newGoTypes(ctx ...*types.Context) goTypes {
+	var typeCtx *types.Context
 	if len(ctx) != 0 {
 		typeCtx = ctx[0]
 	}
 	return goTypes{
-		typs:    make(map[unsafe.Pointer]unsafe.Pointer),
+		typs:    make(map[types.Type]types.Type),
 		cvtneed: make(map[*types.Named]conversionRequirement),
 		typeCtx: typeCtx,
 	}
@@ -199,8 +197,8 @@ func (p goTypes) shouldConvertNamed(t *types.Named) bool {
 }
 
 func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {
-	if v, ok := p.typs[unsafe.Pointer(t)]; ok {
-		raw = (*types.Named)(v)
+	if v, ok := p.typs[t]; ok {
+		raw = v.(*types.Named)
 		cvt = t != raw
 		return
 	}
@@ -211,7 +209,7 @@ func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {
 	// closure reachable through a later member could leave an earlier member
 	// permanently cached in its unconverted form.
 	if !p.namedNeedsTypeConversion(t) {
-		p.typs[unsafe.Pointer(t)] = unsafe.Pointer(t)
+		p.typs[t] = t
 		return t, false
 	}
 	n := t.NumMethods()
@@ -235,7 +233,7 @@ func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {
 	}
 	// Publish the converted placeholder before descending so every back-edge in
 	// the cycle observes the same conversion decision.
-	p.typs[unsafe.Pointer(t)] = unsafe.Pointer(named)
+	p.typs[t] = named
 	tund, _ := p.cvtType(t.Underlying())
 	// Generic instances derive their underlying type lazily from the origin.
 	// Fill the origin before any caller observes named.Underlying(), so a
@@ -435,13 +433,13 @@ func (p goTypes) cvtEmbeddedTypes(typ *types.Interface) ([]types.Type, bool) {
 }
 
 func (p goTypes) cvtInterface(typ *types.Interface) (raw *types.Interface, cvt bool) {
-	if v, ok := p.typs[unsafe.Pointer(typ)]; ok {
-		raw = (*types.Interface)(v)
+	if v, ok := p.typs[typ]; ok {
+		raw = v.(*types.Interface)
 		cvt = typ != raw
 		return
 	}
 	defer func() {
-		p.typs[unsafe.Pointer(typ)] = unsafe.Pointer(raw)
+		p.typs[typ] = raw
 	}()
 	methods, cvt1 := p.cvtExplicitMethods(typ)
 	embeddeds, cvt2 := p.cvtEmbeddedTypes(typ)
@@ -452,13 +450,13 @@ func (p goTypes) cvtInterface(typ *types.Interface) (raw *types.Interface, cvt b
 }
 
 func (p goTypes) cvtStruct(typ *types.Struct) (raw *types.Struct, cvt bool) {
-	if v, ok := p.typs[unsafe.Pointer(typ)]; ok {
-		raw = (*types.Struct)(v)
+	if v, ok := p.typs[typ]; ok {
+		raw = v.(*types.Struct)
 		cvt = typ != raw
 		return
 	}
 	defer func() {
-		p.typs[unsafe.Pointer(typ)] = unsafe.Pointer(raw)
+		p.typs[typ] = raw
 	}()
 	n := typ.NumFields()
 	flds := make([]*types.Var, n)
@@ -480,13 +478,13 @@ func (p goTypes) cvtStruct(typ *types.Struct) (raw *types.Struct, cvt bool) {
 }
 
 func (p goTypes) cvtUnion(typ *types.Union) (raw *types.Union, cvt bool) {
-	if v, ok := p.typs[unsafe.Pointer(typ)]; ok {
-		raw = (*types.Union)(v)
+	if v, ok := p.typs[typ]; ok {
+		raw = v.(*types.Union)
 		cvt = typ != raw
 		return
 	}
 	defer func() {
-		p.typs[unsafe.Pointer(typ)] = unsafe.Pointer(raw)
+		p.typs[typ] = raw
 	}()
 	n := typ.Len()
 	terms := make([]*types.Term, n)

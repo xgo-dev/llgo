@@ -18,7 +18,7 @@
 // cooperative scheduling.
 package safepointplan
 
-import "golang.org/x/tools/go/ssa"
+import "github.com/xgo-dev/llgo/ssa"
 
 // Backedges returns block terminators that close a DFS cycle. Polling before
 // these instructions intersects every cycle, including irreducible control

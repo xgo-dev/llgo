@@ -18,7 +18,9 @@ package exportdata_test
 
 import (
 	"bytes"
+	"go/ast"
 	"go/constant"
+	"go/parser"
 	"go/token"
 	"strings"
 	"testing"
@@ -154,6 +156,35 @@ func TestWriteReadDeterministicAndImporter(t *testing.T) {
 	}
 	if _, err := imp.ImportFrom(pkg.Path(), "", 1); err == nil {
 		t.Fatal("expected error for unsupported import mode")
+	}
+
+	// Verify types.Config.Check can type-check a downstream package importing
+	// the exportdata-decoded package while preserving exact *types.Named identity.
+	const downstreamSrc = `package user
+import "example.com/demo"
+var _ demo.Item
+func Use(n *demo.Node, b demo.Box[int]) int {
+	_ = demo.Answer
+	_ = demo.CFunc(1)
+	_ = demo.GlobalCount
+	return n.Len() + b.Val
+}
+`
+	f, err := parser.ParseFile(fset, "user.go", strings.Replace(downstreamSrc, "var _ demo.Item\n", "", 1), 0)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	info := &types.Info{
+		Uses: make(map[*ast.Ident]types.Object),
+	}
+	userPkg, err := (&types.Config{Importer: imp}).Check("example.com/user", fset, []*ast.File{f}, info)
+	if err != nil {
+		t.Fatalf("Config.Check against exportdata-decoded pkg: %v", err)
+	}
+	useFn := userPkg.Scope().Lookup("Use").(*types.Func)
+	paramNode := useFn.Signature().Params().At(0).Type().(*types.Pointer).Elem()
+	if paramNode != nodeNamed {
+		t.Fatalf("imported demo.Node identity mismatch: got %p, want %p", paramNode, nodeNamed)
 	}
 }
 

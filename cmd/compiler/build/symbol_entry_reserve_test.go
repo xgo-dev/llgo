@@ -8,8 +8,8 @@ import (
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/lto"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/cmd/compiler/pclnpost"
-	"golang.org/x/tools/go/packages"
 )
 
 func TestDarwinSymbolEntriesPreserveFunctionBodies(t *testing.T) {

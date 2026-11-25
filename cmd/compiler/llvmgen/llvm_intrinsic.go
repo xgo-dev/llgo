@@ -2,7 +2,7 @@ package llvmgen
 
 import (
 	"fmt"
-	"go/types"
+	"github.com/xgo-dev/llgo/types"
 	"sync"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmintrinsic"

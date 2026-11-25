@@ -1,8 +1,8 @@
 package llvmgen
 
 import (
-	"go/importer"
-	"go/types"
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"strings"
 	"testing"
 
@@ -136,7 +136,7 @@ func TestLLVMIntrinsicCallRejectsInvalidOperandsAndDeclarations(t *testing.T) {
 func TestLLVMIntrinsicGoSignatureMapping(t *testing.T) {
 	pkg := intrinsicDeclarationPackage(t, nil)
 	pkg.Prog.SetRuntime(func() *types.Package {
-		rt, err := importer.For("source", nil).Import(PkgRuntime)
+		rt, err := llpkgs.SourceImporter().Import(PkgRuntime)
 		if err != nil {
 			t.Fatal(err)
 		}

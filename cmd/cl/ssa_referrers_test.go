@@ -1,16 +1,16 @@
 package cl
 
 import (
+	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
-	"go/importer"
 	"go/parser"
 	"go/token"
-	"go/types"
 	"testing"
 
-	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
 
 func TestNonDebugReferrers(t *testing.T) {
@@ -33,7 +33,7 @@ func f(p int) int {
 		t.Fatal(err)
 	}
 	pkg, _, err := ssautil.BuildPackage(
-		&types.Config{Importer: importer.Default()},
+		&types.Config{Importer: llpkgs.DefaultImporter()},
 		fset,
 		types.NewPackage("refs", "refs"),
 		[]*ast.File{file},

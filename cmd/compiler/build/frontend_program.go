@@ -12,7 +12,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cmd/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 )
 
 type frontendProgramFeatures struct{ ReflectBridges, FuncInfoEntries bool }

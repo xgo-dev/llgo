@@ -17,11 +17,9 @@
 package llvmgen
 
 import (
+	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"go/types"
 	"testing"
-
-	lltypes "github.com/xgo-dev/llgo/types"
 )
 
 func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
@@ -77,7 +75,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if !backend.HasClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7)) || !backend.PackageSyntaxParsed(pkg) {
 		t.Fatal("backend Program lost prepared syntax metadata")
 	}
-	if background, ok := backend.typeCtx.TypeCallConv("example.com/p.CType"); !ok || background != lltypes.CDecl {
+	if background, ok := backend.typeCtx.TypeCallConv("example.com/p.CType"); !ok || background != types.CDecl {
 		t.Fatalf("type background = (%v, %v), want (cdecl, true)", background, ok)
 	}
 	if locality, ok := backend.VariableLocality("example.com/p.Value"); !ok || locality.Locality != ThreadLocal {

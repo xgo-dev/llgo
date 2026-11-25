@@ -18,17 +18,17 @@ package cl
 
 import (
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/constant"
 	"go/token"
-	"go/types"
 	"log"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 
-	"golang.org/x/tools/go/ssa"
+	"github.com/xgo-dev/llgo/ssa"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/genmethod"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"

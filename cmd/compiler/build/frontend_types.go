@@ -7,19 +7,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"go/types"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/cl"
-	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/directive"
 )
 
 var errFrontendSourceRequired = errors.New("frontend cache requires source bodies")
