@@ -1,0 +1,16 @@
+# The esp-sr S31 CI configuration (sdkconfig.ci.s31_wn9_hilexin), carried
+# over: 16 MB flash, the model partition, wn9_hilexin, perf optimization,
+# watchdog off (detect bursts can starve the idle task), SPIRAM on (DET_MODE_95
+# loads the weights there). 240 MHz instead of CI's default 320: the clock the
+# llgo demos run at, so the printed timings compare against their budget.
+CONFIG_IDF_TARGET="esp32s31"
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_SR_WN_WN9_HILEXIN=y
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_SPIRAM=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=10240
+CONFIG_ESP_TASK_WDT_EN=n
