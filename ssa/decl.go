@@ -353,10 +353,11 @@ type aFunction struct {
 	nextDeferID      uintptr
 	recov            BasicBlock
 
-	params   []Type
-	freeVars Expr
-	env      Type
-	hasVArg  bool
+	params    []Type
+	freeVars  Expr
+	env       Type
+	envDirect bool
+	hasVArg   bool
 
 	fakeUses   []llvm.Value
 	fakeUseSet map[llvm.Value]struct{}
@@ -398,7 +399,7 @@ func (p Package) NewFuncEx(name string, sig *types.Signature, cc CallConv, hasFr
 	if hasFreeVars {
 		panic("ssa: NewFuncEx cannot represent an environment; use NewEnvFunc")
 	}
-	return p.newFunc(name, sig, cc, nil, instantiated)
+	return p.newFunc(name, sig, cc, nil, false, instantiated)
 }
 
 // NewEnvFunc creates a function whose Go signature is sig and whose physical
@@ -409,16 +410,28 @@ func (p Package) NewEnvFunc(
 	if env == nil {
 		panic("ssa: nil closure environment")
 	}
-	return p.newFunc(name, sig, cc, env, instantiated)
+	return p.newFunc(name, sig, cc, env, false, instantiated)
+}
+
+// NewDirectEnvFunc creates a function whose single pointer-typed captured value
+// is transported directly in the closure's environment slot without allocating
+// a heap wrapper struct.
+func (p Package) NewDirectEnvFunc(
+	name string, sig *types.Signature, cc CallConv, env *types.Var, instantiated bool,
+) Function {
+	if env == nil {
+		panic("ssa: nil direct closure environment")
+	}
+	return p.newFunc(name, sig, cc, env, true, instantiated)
 }
 
 func (p Package) newFunc(
-	name string, sig *types.Signature, cc CallConv, env *types.Var, instantiated bool,
+	name string, sig *types.Signature, cc CallConv, env *types.Var, directEnv bool, instantiated bool,
 ) Function {
 	isLLVMName := strings.HasPrefix(name, "llvm.")
 	var cached Function
 	if v, ok := p.fns[name]; ok {
-		if v.NeedsEnv() != (env != nil) {
+		if v.NeedsEnv() != (env != nil) || v.DirectEnv() != directEnv {
 			panic("ssa: conflicting closure environment ABI for " + name)
 		}
 		if !isLLVMName || v.impl.IntrinsicID() == 0 {
@@ -436,6 +449,9 @@ func (p Package) newFunc(
 	var envType Type
 	if env != nil {
 		envType = p.Prog.Type(env.Type(), GoDecl)
+		if directEnv && envType.ll.TypeKind() != llvm.PointerTypeKind {
+			panic("ssa: direct closure environment must lower to a pointer")
+		}
 		rawEnv := types.NewParam(env.Pos(), env.Pkg(), env.Name(), envType.raw.Type)
 		entrySig = FuncAddCtx(rawEnv, entrySig)
 		entry := Type(&aType{p.Prog.toLLVMFuncBackground(entrySig, cc), t.raw, vkFuncDecl})
@@ -469,7 +485,7 @@ func (p Package) newFunc(
 			if cached != nil {
 				return cached
 			}
-			ret := newFunction(fn, t, p, p.Prog, nil)
+			ret := newFunction(fn, t, p, p.Prog, nil, false)
 			p.fns[name] = ret
 			return ret
 		}
@@ -512,7 +528,7 @@ func (p Package) newFunc(
 	if p.isPreservedName(name) {
 		p.markLLVMUsed(fn)
 	}
-	ret := newFunction(fn, t, p, p.Prog, envType)
+	ret := newFunction(fn, t, p, p.Prog, envType, directEnv)
 	p.fns[name] = ret
 	return ret
 }
@@ -522,7 +538,7 @@ func (p Package) FuncOf(name string) Function {
 	return p.fns[name]
 }
 
-func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type) Function {
+func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type, envDirect bool) Function {
 	params, hasVArg := newParams(t, prog)
 	return &aFunction{
 		Expr:       Expr{fn, t},
@@ -530,6 +546,7 @@ func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type) Fun
 		Prog:       prog,
 		params:     params,
 		env:        env,
+		envDirect:  envDirect,
 		hasVArg:    hasVArg,
 		fakeUses:   make([]llvm.Value, 0, 4),
 		fakeUseSet: make(map[llvm.Value]struct{}),
@@ -582,6 +599,12 @@ func (p Function) NeedsEnv() bool {
 	return p.env != nil
 }
 
+// DirectEnv reports whether the closure environment parameter carries the sole
+// captured pointer directly instead of pointing to a boxed environment struct.
+func (p Function) DirectEnv() bool {
+	return p.envDirect
+}
+
 // EnvType returns the physical closure environment pointer type, or nil.
 func (p Function) EnvType() Type {
 	return p.env
@@ -617,6 +640,12 @@ func (p Function) closureCtx(b Builder) Expr {
 
 // FreeVar returns the function's ith free variable.
 func (p Function) FreeVar(b Builder, i int) Expr {
+	if p.envDirect {
+		if i != 0 {
+			panic("ssa: direct closure environment only supports index 0")
+		}
+		return p.Env()
+	}
 	ctx := p.closureCtx(b)
 	return b.getField(ctx, i)
 }

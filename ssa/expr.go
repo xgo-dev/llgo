@@ -1557,21 +1557,28 @@ func (b Builder) MakeClosureEx(fn Expr, bindings []Expr, heap bool) Expr {
 	sig := fn.raw.Type.(*types.Signature)
 	data := prog.Nil(prog.VoidPtr()).impl
 	if entry := b.Pkg.FuncOf(fn.impl.Name()); entry != nil && entry.NeedsEnv() {
-		tctx := prog.Elem(entry.EnvType())
-		rawCtx := tctx.raw.Type.Underlying().(*types.Struct)
-		if len(bindings) != rawCtx.NumFields() {
-			panic("ssa: closure environment binding count mismatch")
-		}
-		if prog.SizeOf(tctx) == 0 {
-			// A required environment must remain distinguishable from a no-env
-			// entry. Heap zero-sized allocations use the module-wide non-nil
-			// sentinel.
-			data = b.Alloc(tctx, true).impl
-		} else if !heap {
-			data = b.Alloc(tctx, false).impl
-			b.aggregateInit(data, tctx, llvmFields(bindings, rawCtx, b)...)
+		if entry.DirectEnv() {
+			if len(bindings) != 1 {
+				panic("ssa: direct closure environment requires exactly one binding")
+			}
+			data = b.Convert(prog.VoidPtr(), bindings[0]).impl
 		} else {
-			data = b.aggregateAllocU(tctx, llvmFields(bindings, rawCtx, b)...)
+			tctx := prog.Elem(entry.EnvType())
+			rawCtx := tctx.raw.Type.Underlying().(*types.Struct)
+			if len(bindings) != rawCtx.NumFields() {
+				panic("ssa: closure environment binding count mismatch")
+			}
+			if prog.SizeOf(tctx) == 0 {
+				// A required environment must remain distinguishable from a no-env
+				// entry. Heap zero-sized allocations use the module-wide non-nil
+				// sentinel.
+				data = b.Alloc(tctx, true).impl
+			} else if !heap {
+				data = b.Alloc(tctx, false).impl
+				b.aggregateInit(data, tctx, llvmFields(bindings, rawCtx, b)...)
+			} else {
+				data = b.aggregateAllocU(tctx, llvmFields(bindings, rawCtx, b)...)
+			}
 		}
 	} else if len(bindings) != 0 {
 		panic("ssa: closure bindings supplied to a no-env function")

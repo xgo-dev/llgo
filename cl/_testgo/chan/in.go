@@ -22,9 +22,7 @@ package main
 // CHECK: call void @"{{.*}}PrintInt"(i64 [[CH1_CAP]])
 // CHECK: call void @"{{.*}}PrintEface"(%"{{.*}}eface" [[CH1_EFACE]])
 // CHECK: [[SEND_COPY:%.*]] = load ptr, ptr [[CH1_SLOT]]
-// CHECK: [[SEND_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
-// CHECK: store ptr [[SEND_COPY]], ptr {{%.*}}
-// CHECK: [[SEND_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr [[SEND_ENV]], 1
+// CHECK-NEXT: [[SEND_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$1", ptr undef }, ptr [[SEND_COPY]], 1
 // CHECK: store { ptr, ptr } [[SEND_CLOSURE]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$1", ptr {{%.*}})
 // CHECK: [[CH1_RECV:%.*]] = load ptr, ptr [[CH1_SLOT]]
@@ -38,9 +36,7 @@ package main
 // CHECK: [[CH2:%.*]] = call ptr @"{{.*}}NewChan"(i64 8, i64 10)
 // CHECK-NEXT: store ptr [[CH2]], ptr [[CH2_SLOT]]
 // CHECK: [[CLOSE_COPY:%.*]] = load ptr, ptr [[CH2_SLOT]]
-// CHECK: [[CLOSE_ENV:%.*]] = call ptr @"{{.*}}AllocU"(i64 8)
-// CHECK: store ptr [[CLOSE_COPY]], ptr {{%.*}}
-// CHECK: [[CLOSE_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$2", ptr undef }, ptr [[CLOSE_ENV]], 1
+// CHECK-NEXT: [[CLOSE_CLOSURE:%.*]] = insertvalue { ptr, ptr } { ptr @"main.main$2", ptr undef }, ptr [[CLOSE_COPY]], 1
 // CHECK: store { ptr, ptr } [[CLOSE_CLOSURE]], ptr {{%.*}}
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$2", ptr {{%.*}})
 // CHECK: [[CH2_RECV:%.*]] = load ptr, ptr [[CH2_SLOT]]
@@ -59,17 +55,13 @@ package main
 // AMD64-LABEL: define void @"main.main$1"(ptr nest %0){{.*}} {
 // CHECK-NEXT: _llgo_{{[0-9]+}}:
 // CHECK-NEXT: [[SEND_BUF:%[0-9]+]] = alloca i64, align 8
-// CHECK: [[SEND_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
-// CHECK-NEXT: [[SEND_CH:%.*]] = load ptr, ptr [[SEND_SLOT]]
 // CHECK: call void @llvm.memset.p0.i64(ptr [[SEND_BUF]], i8 0, i64 8, i1 false)
 // CHECK: store i64 100, ptr [[SEND_BUF]]
-// CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr [[SEND_CH]], ptr [[SEND_BUF]], i64 8)
+// CHECK-NEXT: call i1 @"{{.*}}ChanSend"(ptr %0, ptr [[SEND_BUF]], i64 8)
 
 // ARM64-LABEL: define void @"main.main$2"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.main$2"(ptr nest %0){{.*}} {
-// CHECK: [[CLOSE_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
-// CHECK-NEXT: [[CLOSE_CH:%.*]] = load ptr, ptr [[CLOSE_SLOT]]
-// CHECK-NEXT: call void @"{{.*}}ChanClose"(ptr [[CLOSE_CH]])
+// CHECK: call void @"{{.*}}ChanClose"(ptr %0)
 
 func main() {
 	ch := make(chan int, 10)

@@ -729,3 +729,67 @@ func assertDirectInterfaceMatrixEdge(t *testing.T, caller Function, attrName str
 		}
 	}
 }
+
+func TestDirectEnvClosureNoAlloc(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "darwin", GOARCH: "arm64"})
+	defer prog.Dispose()
+	if !prog.HasHiddenClosureEnv() {
+		t.Fatal("darwin/arm64 should report hidden closure env ABI")
+	}
+	wasmProg := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm"})
+	defer wasmProg.Dispose()
+	if wasmProg.HasHiddenClosureEnv() {
+		t.Fatal("wasip1/wasm should report explicit closure env ABI")
+	}
+
+	pkg := prog.NewPackage("direct", "example.com/direct")
+	intPtr := types.NewPointer(types.Typ[types.Int])
+	envVar := types.NewParam(token.NoPos, nil, "$env", intPtr)
+	sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int])), false)
+
+	callee := pkg.NewDirectEnvFunc("read", sig, GoDecl, envVar, false)
+	if !callee.NeedsEnv() || !callee.DirectEnv() {
+		t.Fatalf("NewDirectEnvFunc flags = (NeedsEnv=%v, DirectEnv=%v), want (true, true)", callee.NeedsEnv(), callee.DirectEnv())
+	}
+	cb := callee.MakeBody(1)
+	cb.Return(cb.Load(callee.FreeVar(cb, 0)))
+
+	makerSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "p", intPtr)),
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", sig)), false)
+	maker := pkg.NewFunc("make", makerSig, GoDecl)
+	mb := maker.MakeBody(1)
+	mb.Return(mb.MakeClosure(callee.Expr, []Expr{maker.Param(0)}))
+
+	makerIR := pkg.Module().NamedFunction("make").String()
+	if strings.Contains(makerIR, "AllocU") || strings.Contains(makerIR, "AllocZ") {
+		t.Fatalf("direct env closure unexpectedly allocated wrapper:\n%s", makerIR)
+	}
+	calleeIR := pkg.Module().NamedFunction("read").String()
+	if !strings.Contains(calleeIR, "swiftself") {
+		t.Fatalf("direct env callee missing swiftself attribute:\n%s", calleeIR)
+	}
+
+	mustPanic := func(name string, fn func()) {
+		t.Helper()
+		defer func() {
+			if recover() == nil {
+				t.Fatalf("%s did not panic", name)
+			}
+		}()
+		fn()
+	}
+	mustPanic("nil direct env", func() {
+		pkg.NewDirectEnvFunc("bad-nil", sig, GoDecl, nil, false)
+	})
+	mustPanic("non-pointer direct env", func() {
+		intVar := types.NewParam(token.NoPos, nil, "$env", types.Typ[types.Int])
+		pkg.NewDirectEnvFunc("bad-int", sig, GoDecl, intVar, false)
+	})
+	mustPanic("direct env index out of range", func() {
+		callee.FreeVar(cb, 1)
+	})
+	mustPanic("direct env binding mismatch", func() {
+		mb.MakeClosure(callee.Expr, nil)
+	})
+}

@@ -32,10 +32,7 @@ func add(a int, b int) int {
 // CHECK: [[DEMO1_CALL:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
 // CHECK: [[DEMO1_N:%.*]] = getelementptr inbounds nuw %main.Call, ptr [[DEMO1_CALL]], i32 0, i32 1
 // CHECK: store i64 %0, ptr [[DEMO1_N]]
-// CHECK: [[DEMO1_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK: [[DEMO1_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[DEMO1_ENV]], i32 0, i32 0
-// CHECK: store ptr [[DEMO1_CALL]], ptr [[DEMO1_ENV_SLOT]]
-// CHECK: [[DEMO1_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*Call).add$bound", ptr undef }, ptr [[DEMO1_ENV]], 1
+// CHECK: [[DEMO1_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*Call).add$bound", ptr undef }, ptr [[DEMO1_CALL]], 1
 // CHECK: [[DEMO1_FN_FIELD:%.*]] = getelementptr inbounds nuw %main.Call, ptr [[DEMO1_CALL]], i32 0, i32 0
 // CHECK: store { ptr, ptr } [[DEMO1_BOUND]], ptr [[DEMO1_BOUND_SLOT:%.*]]
 // CHECK-NEXT: [[DEMO1_BOUND_VALUE:%.*]] = load %main.Func, ptr [[DEMO1_BOUND_SLOT]]
@@ -51,10 +48,7 @@ func demo1(n int) Func {
 
 // CHECK-LABEL: define %main.Func @main.demo2(){{.*}} {
 // CHECK: [[DEMO2_CALL:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocZ"(i64 24)
-// CHECK: [[DEMO2_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK: [[DEMO2_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[DEMO2_ENV]], i32 0, i32 0
-// CHECK: store ptr [[DEMO2_CALL]], ptr [[DEMO2_ENV_SLOT]]
-// CHECK: [[DEMO2_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*Call).add$bound", ptr undef }, ptr [[DEMO2_ENV]], 1
+// CHECK: [[DEMO2_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*Call).add$bound", ptr undef }, ptr [[DEMO2_CALL]], 1
 // CHECK: store { ptr, ptr } [[DEMO2_BOUND]], ptr [[DEMO2_OUT:%.*]]
 // CHECK: [[DEMO2_RET:%.*]] = load %main.Func, ptr [[DEMO2_OUT]]
 // CHECK: ret %main.Func [[DEMO2_RET]]
@@ -168,7 +162,5 @@ func main() {
 
 // ARM64-LABEL: define i64 @"main.(*Call).add$bound"(ptr swiftself %0, i64 %1, i64 %2){{.*}} {
 // AMD64-LABEL: define i64 @"main.(*Call).add$bound"(ptr nest %0, i64 %1, i64 %2){{.*}} {
-// CHECK: [[BOUND_ENV:%.*]] = load { ptr }, ptr %0
-// CHECK: [[BOUND_CALL:%.*]] = extractvalue { ptr } [[BOUND_ENV]], 0
-// CHECK: [[BOUND_RESULT:%.*]] = call i64 @"main.(*Call).add"(ptr [[BOUND_CALL]], i64 %1, i64 %2)
+// CHECK: [[BOUND_RESULT:%.*]] = call i64 @"main.(*Call).add"(ptr %0, i64 %1, i64 %2)
 // CHECK: ret i64 [[BOUND_RESULT]]
