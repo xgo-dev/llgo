@@ -9,13 +9,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
 func TestNativeChannelSignalLifetime(t *testing.T) {
-	// Darwin calls pthreadCondWait directly; Linux's GC wrapper waits from C
-	// and would need a separate interception point.
 	if runtime.GOOS != "darwin" {
-		t.Skip("requires the Darwin pthread wait path")
+		t.Skip("requires the Darwin channel wait paths")
 	}
 	if testing.Short() {
 		t.Skip("builds and runs a native channel probe")
@@ -26,21 +27,37 @@ func TestNativeChannelSignalLifetime(t *testing.T) {
 	}
 	t.Setenv("LLGO_ROOT", root)
 
-	// Redirect only the pthread boundary in this test build. The channel
-	// implementation and its wait/finish/cleanup paths remain unmodified.
-	file := filepath.Join(root, "runtime/internal/sync/sync_unix_native.go")
-	source, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	patched := string(source)
-	for _, op := range []string{"wait", "signal", "destroy"} {
-		name := "C.pthread_cond_" + op
-		if strings.Count(patched, name) != 1 {
-			t.Fatalf("expected one binding for %s", name)
+	// Instrument the native boundaries in one test build. Each process
+	// chooses the backend before runtime initialization.
+	overlay := make(map[string][]byte)
+	patch := func(relative string, bindings [][2]string) {
+		file := filepath.Join(root, relative)
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
 		}
-		patched = strings.Replace(patched, name, "C.llgo_lifetime_cond_"+op, 1)
+		patched := string(source)
+		for _, pair := range bindings {
+			binding := "C." + pair[0]
+			if strings.Count(patched, binding) != 1 {
+				t.Fatalf("expected one binding for %s in %s", binding, file)
+			}
+			patched = strings.Replace(patched, binding, "C."+pair[1], 1)
+		}
+		overlay[file] = []byte(patched)
 	}
+	patch("runtime/internal/sync/sync_unix_native.go", [][2]string{
+		{"pthread_cond_wait", "llgo_lifetime_cond_wait"},
+		{"pthread_cond_signal", "llgo_lifetime_cond_signal"},
+		{"pthread_cond_destroy", "llgo_lifetime_cond_destroy"},
+		{"pthread_mutex_unlock", "llgo_lifetime_mutex_unlock"},
+		{"pthread_mutex_destroy", "llgo_lifetime_mutex_destroy"},
+	})
+	patch("runtime/internal/runtime/chan_sync_darwin.go", [][2]string{
+		{"llgo_bind_channel_address_wait", "llgo_lifetime_bind_address_wait"},
+		{"llgo_channel_address_wait", "llgo_lifetime_address_wait"},
+		{"llgo_channel_address_wake", "llgo_lifetime_address_wake"},
+	})
 	// Compile the shared Go/LLGo testcase with a companion that replaces only
 	// its synchronization factory. Keep each scenario in a separate process so
 	// the C probe can target exactly one wait.
@@ -83,27 +100,37 @@ func init() {
 		t.Fatal(err)
 	}
 	conf := NewDefaultConf(ModeTest)
-	conf.Overlay = map[string][]byte{file: []byte(patched)}
+	conf.Overlay = overlay
+	conf.OptLevel, conf.LTO = optlevel.O3, lto.Full
 	conf.CompileOnly = true
 	conf.OutFile = filepath.Join(dir, "channel-lifetime.test")
 	if _, err := Do([]string{filepath.Join(dir, "channel_waiter_test.go"), filepath.Join(dir, "channel_waiter_norace_test.go"), companion}, conf); err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"recv", "send", "close-recv", "close-send"} {
-		t.Run(scenario, func(t *testing.T) {
-			name := "TestChannelWaiterCompletion/" + scenario
-			if scenario == "close-send" {
-				name = "TestChannelWaiterCloseSend"
-			}
-			ctx, cancel := stdcontext.WithTimeout(t.Context(), 30*time.Second)
-			defer cancel()
-			out, err := exec.CommandContext(ctx, conf.OutFile,
-				"-test.v", "-test.run=^"+strings.ReplaceAll(name, "/", "$/^")+"$").CombinedOutput()
-			if err != nil {
-				t.Fatalf("channel lifetime probe: %v (context: %v)\n%s", err, ctx.Err(), out)
-			}
-			if !strings.Contains(string(out), "--- PASS: "+name+" ") {
-				t.Fatalf("probe did not complete its lifetime check: %s", out)
+	for _, backend := range []string{"condition", "address"} {
+		t.Run(backend, func(t *testing.T) {
+			for _, scenario := range []string{"recv", "send", "close-recv", "close-send"} {
+				t.Run(scenario, func(t *testing.T) {
+					name := "TestChannelWaiterCompletion/" + scenario
+					if scenario == "close-send" {
+						name = "TestChannelWaiterCloseSend"
+					}
+					ctx, cancel := stdcontext.WithTimeout(t.Context(), 30*time.Second)
+					defer cancel()
+					cmd := exec.CommandContext(ctx, conf.OutFile,
+						"-test.v", "-test.run=^"+strings.ReplaceAll(name, "/", "$/^")+"$")
+					cmd.Env = append(os.Environ(), "LLGO_CHANNEL_LIFETIME_BACKEND="+backend)
+					out, err := cmd.CombinedOutput()
+					if status, ok := err.(*exec.ExitError); ok && status.ExitCode() == 77 && backend == "address" {
+						t.Skip("requires Darwin address-wait APIs")
+					}
+					if err != nil {
+						t.Fatalf("channel lifetime probe: %v (context: %v)\n%s", err, ctx.Err(), out)
+					}
+					if !strings.Contains(string(out), "--- PASS: "+name+" ") {
+						t.Fatalf("probe did not complete its lifetime check: %s", out)
+					}
+				})
 			}
 		})
 	}
