@@ -3741,6 +3741,54 @@ func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) err
 	return nil
 }
 
+// optimizePostInlineHeapAllocations catches small temporary allocations that
+// only become non-escaping after LLVM inlines helper functions into their
+// callers (for example, a helper returning a fresh slice literal whose caller
+// only indexes an element). Allocator wrappers remain external declarations in
+// non-runtime packages, so Attributor can still recognize their allockind calls.
+func optimizePostInlineHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 || pkgPath == llssa.PkgRuntime {
+		return nil
+	}
+	before := countAllocKindCalls(mod)
+	if before == 0 {
+		return nil
+	}
+	if err := runHeapToStack(mod, ctx.prog.TargetMachine()); err != nil {
+		return fmt.Errorf("run post-inline Attributor heap-to-stack for %v failed: %w", pkgPath, err)
+	}
+	if countAllocKindCalls(mod) >= before {
+		return nil
+	}
+	pbo := gllvm.NewPassBuilderOptions()
+	defer pbo.Dispose()
+	if err := mod.RunPasses("function(sroa,instcombine<no-verify-fixpoint>,simplifycfg,dse)", ctx.prog.TargetMachine(), pbo); err != nil {
+		return fmt.Errorf("run post-inline heap-to-stack cleanup for %v failed: %w", pkgPath, err)
+	}
+	return nil
+}
+
+func countAllocKindCalls(mod gllvm.Module) int {
+	allocKind := gllvm.AttributeKindID("allockind")
+	count := 0
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = gllvm.NextFunction(fn) {
+		if fn.FirstBasicBlock().IsNil() {
+			continue
+		}
+		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = gllvm.NextBasicBlock(bb) {
+			for inst := bb.FirstInstruction(); !inst.IsNil(); inst = gllvm.NextInstruction(inst) {
+				switch inst.InstructionOpcode() {
+				case gllvm.Call, gllvm.Invoke, gllvm.CallBr:
+					if !inst.GetCallSiteEnumAttribute(-1, allocKind).IsNil() {
+						count++
+					}
+				}
+			}
+		}
+	}
+	return count
+}
+
 func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
 	if !ctx.passOpt {
 		return nil
@@ -3812,6 +3860,9 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 
 	// Run the default LLVM optimization pipeline selected by the requested -O level.
 	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
+		return err
+	}
+	if err := optimizePostInlineHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
 		return err
 	}
 	applyPackageDispatchInlineBudget(ctx, aPkg, ret.Module())

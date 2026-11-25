@@ -343,6 +343,80 @@ define i64 @indirect(ptr %fn) {
 	}
 }
 
+func TestCrossBlockLoopReuse(t *testing.T) {
+	mod := parseModule(t, `
+declare nonnull ptr @alloc(i64) allocsize(0)
+declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)
+declare void @observe(ptr)
+
+; A loop-local allocation merged through a cross-block PHI whose loaded
+; element (not the buffer address itself) flows to a tail call can reuse one
+; entry stack slot. The non-tail memset must also lose its "tail" marker.
+define ptr @cross_block_phi_reuse(i1 %opt, ptr %fallback, ptr %elem, i1 %again) {
+entry:
+  br label %loop
+loop:
+  br i1 %opt, label %allocblk, label %altblk
+allocblk:
+  %p = tail call ptr @alloc(i64 48) allockind("alloc,zeroed")
+  tail call void @llvm.memset.p0.i64(ptr align 8 %p, i8 0, i64 24, i1 false)
+  %slot = getelementptr inbounds i8, ptr %p, i64 40
+  store ptr %elem, ptr %slot, align 8
+  br label %merge
+altblk:
+  br label %merge
+merge:
+  %cur = phi ptr [ %p, %allocblk ], [ %fallback, %altblk ]
+  %p2 = getelementptr inbounds i8, ptr %cur, i64 40
+  %loaded = load ptr, ptr %p2, align 8
+  tail call void @observe(ptr %loaded)
+  br i1 %again, label %loop, label %exit
+exit:
+  ret ptr %loaded
+}
+
+; When a derived PHI from an earlier iteration remains live across the next
+; allocation in a separate block, storage must stay on the heap.
+define i64 @cross_block_carried(i1 %again, ptr %init) {
+entry:
+  br label %header
+header:
+  %prev = phi ptr [ %init, %entry ], [ %p, %latch ]
+  br label %allocblk
+allocblk:
+  %p = call ptr @alloc(i64 16) allockind("alloc,uninitialized")
+  store i64 7, ptr %p, align 8
+  %old = load i64, ptr %prev, align 8
+  br label %latch
+latch:
+  br i1 %again, label %header, label %exit
+exit:
+  ret i64 %old
+}
+`)
+	tm := tailTarget(t, mod)
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(mod, tm); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	reuse := mod.NamedFunction("cross_block_phi_reuse").String()
+	if strings.Contains(reuse, "@alloc(") || !strings.Contains(reuse, "alloca ") {
+		t.Fatalf("cross_block_phi_reuse was not promoted to stack:\n%s", reuse)
+	}
+	if strings.Contains(reuse, "tail call void @llvm.memset") {
+		t.Fatalf("cross_block_phi_reuse retained invalid tail marker on promoted alloca memset:\n%s", reuse)
+	}
+	carried := mod.NamedFunction("cross_block_carried").String()
+	if !strings.Contains(carried, "@alloc(") || strings.Contains(carried, "alloca ") {
+		t.Fatalf("cross_block_carried lost required heap lifetime:\n%s", carried)
+	}
+}
+
 func parseModule(t *testing.T, source string) llvm.Module {
 	t.Helper()
 	ctx := llvm.NewContext()

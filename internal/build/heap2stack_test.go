@@ -156,3 +156,100 @@ func main() {
 		})
 	}
 }
+
+func TestPostInlineHeapToStack(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs post-inline heap-to-stack allocation regression")
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", root)
+	dir := t.TempDir()
+	const source = `package main
+
+import "runtime"
+
+type field struct {
+	name string
+	val  int
+}
+
+type node struct {
+	option bool
+	elem   int
+	cases  []field
+}
+
+func cases(n *node) []field {
+	if n.option {
+		return []field{{}, {val: n.elem}}
+	}
+	return n.cases
+}
+
+//go:noinline
+func lookup(n *node, idx int) int {
+	return cases(n)[idx].val
+}
+
+//go:noinline
+func walk(n *node, depth int) int {
+	if depth <= 0 {
+		return 0
+	}
+	if n.option {
+		return cases(n)[1].val + walk(n, depth-1)
+	}
+	return 0
+}
+
+func main() {
+	n := &node{option: true, elem: 7}
+	// Warm up before measuring steady-state allocations.
+	if lookup(n, 1) != 7 || walk(n, 4) != 28 {
+		panic("unexpected result")
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	sum := 0
+	for i := 0; i < 4096; i++ {
+		sum += lookup(n, 1)
+		sum += walk(n, 2)
+	}
+	runtime.ReadMemStats(&after)
+	if sum != 4096*21 {
+		panic("bad sum")
+	}
+	if after.Mallocs != before.Mallocs {
+		panic("unexpected heap allocation after inlining")
+	}
+	println("post-inline-ok")
+}
+`
+	for name, text := range map[string]string{
+		"go.mod": "module postinlineh2s\n\ngo 1.27.0\n", "main.go": source,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, mode := range []lto.Mode{lto.Off, lto.Full} {
+		t.Run(mode.String(), func(t *testing.T) {
+			conf := NewDefaultConf(ModeBuild)
+			conf.OptLevel, conf.LTO = optlevel.O2, mode
+			conf.OutFile = filepath.Join(dir, "h2s-"+mode.String())
+			if runtime.GOOS == "windows" {
+				conf.OutFile += ".exe"
+			}
+			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.CommandContext(t.Context(), conf.OutFile).CombinedOutput()
+			if err != nil || strings.TrimSpace(string(out)) != "post-inline-ok" {
+				t.Fatalf("post-inline heap2stack execution: %v\n%s", err, out)
+			}
+		})
+	}
+}

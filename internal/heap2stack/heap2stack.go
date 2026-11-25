@@ -102,7 +102,7 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 					continue
 				}
 				if order != nil {
-					if _, known := i.ConstantAllocationSize(); !known || !canReuseAllocation(i, order) {
+					if _, known := i.ConstantAllocationSize(); !known || !canReuseAllocation(i, bb, order) {
 						excluded = append(excluded, i)
 					}
 				}
@@ -121,12 +121,15 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 			first = llvm.NextInstruction(first)
 		}
 		b.SetInsertPointBefore(first)
-		for bb := llvm.NextBasicBlock(entry); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for i := bb.FirstInstruction(); !i.IsNil(); {
 				next := llvm.NextInstruction(i)
-				if i.InstructionOpcode() == llvm.Alloca && !existing[i] && !i.Operand(0).IsAConstantInt().IsNil() {
-					i.RemoveFromParentAsInstruction()
-					b.Insert(i)
+				if i.InstructionOpcode() == llvm.Alloca && !existing[i] {
+					clearTailOnMemIntrinsics(i)
+					if bb != entry && !i.Operand(0).IsAConstantInt().IsNil() {
+						i.RemoveFromParentAsInstruction()
+						b.Insert(i)
+					}
 				}
 				i = next
 			}
@@ -156,6 +159,44 @@ func isCall(i llvm.Value) bool {
 	return false
 }
 
+// isNonTailMemIntrinsic reports whether call is a non-musttail memory
+// intrinsic (memset/memcpy/memmove) that is not in tail-return position.
+// Post-inline optimization marks such intrinsics "tail" whenever a function
+// has no existing allocas; promoting an allocation clears "tail" on them.
+func isNonTailMemIntrinsic(i llvm.Value) bool {
+	if i.InstructionOpcode() != llvm.Call || i.TailCallKind() != llvm.TailCallKindTail || i.IsAMemIntrinsic().IsNil() {
+		return false
+	}
+	next := llvm.NextInstruction(i)
+	return !next.IsNil() && next.InstructionOpcode() != llvm.Ret
+}
+
+// clearTailOnMemIntrinsics drops the non-semantic "tail" hint from memory
+// intrinsics that access a newly promoted alloca so the IR remains valid.
+func clearTailOnMemIntrinsics(alloca llvm.Value) {
+	work := []llvm.Value{alloca}
+	seen := make(map[llvm.Value]bool)
+	for len(work) != 0 {
+		v := work[len(work)-1]
+		work = work[:len(work)-1]
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		for use := v.FirstUse(); !use.IsNil(); use = use.NextUse() {
+			user := use.User()
+			switch user.InstructionOpcode() {
+			case llvm.GetElementPtr, llvm.BitCast, llvm.PHI, llvm.Select:
+				work = append(work, user)
+			case llvm.Call:
+				if user.TailCallKind() == llvm.TailCallKindTail && !user.IsAMemIntrinsic().IsNil() {
+					user.SetTailCallKind(llvm.TailCallKindNone)
+				}
+			}
+		}
+	}
+}
+
 // tailCallInputs finds SSA inputs to tail/musttail calls across all blocks.
 // A tail callee may execute after this frame has been released, even when it
 // does not capture its arguments. Follow operands backwards so GEPs, phis,
@@ -167,10 +208,17 @@ func isCall(i llvm.Value) bool {
 func tailCallInputs(fn llvm.Value) map[llvm.Value]bool {
 	inputs := make(map[llvm.Value]bool)
 	var work, published []llvm.Value
+	hasTailCall := false
 	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
-			if i.InstructionOpcode() == llvm.Call && i.IsTailCall() {
-				work = append(work, i)
+			if i.InstructionOpcode() == llvm.Call && i.IsTailCall() && !isNonTailMemIntrinsic(i) {
+				hasTailCall = true
+				for n := 0; n < i.OperandsCount(); n++ {
+					operand := i.Operand(n)
+					if !operand.IsAInstruction().IsNil() {
+						work = append(work, operand)
+					}
+				}
 			}
 			switch i.InstructionOpcode() {
 			case llvm.Store:
@@ -190,7 +238,7 @@ func tailCallInputs(fn llvm.Value) map[llvm.Value]bool {
 			}
 		}
 	}
-	if len(work) != 0 {
+	if hasTailCall {
 		work = append(work, published...)
 	}
 	for len(work) != 0 {
@@ -200,6 +248,12 @@ func tailCallInputs(fn llvm.Value) map[llvm.Value]bool {
 			continue
 		}
 		inputs[i] = true
+		if i.InstructionOpcode() == llvm.Load {
+			// Loading through a pointer reads stored contents, not the pointer
+			// address itself; any pointer stored into memory is already seeded
+			// via published above.
+			continue
+		}
 		for n := 0; n < i.OperandsCount(); n++ {
 			operand := i.Operand(n)
 			if !operand.IsAInstruction().IsNil() {
@@ -210,27 +264,36 @@ func tailCallInputs(fn llvm.Value) map[llvm.Value]bool {
 	return inputs
 }
 
-// canReuseAllocation proves a sufficient condition: all pointer uses finish
-// after the allocation in this block, without a phi, pointer publication, or
-// address observation. Attributor must still validate capture/free behavior
-// of calls. Cross-block uses remain on the heap until we have a broader proof.
-func canReuseAllocation(call llvm.Value, order map[llvm.Value]int) bool {
+// canReuseAllocation proves a sufficient condition for reusing a single entry
+// stack slot across loop iterations: no pointer derived from call is stored to
+// memory, observed as an address, passed to a cross-block free, or live at the
+// program point immediately before call executes. Attributor still validates
+// capture/free behavior of calls.
+func canReuseAllocation(call llvm.Value, allocBB llvm.BasicBlock, order map[llvm.Value]int) bool {
 	work := []llvm.Value{call}
-	seen := make(map[llvm.Value]bool)
+	derived := make(map[llvm.Value]bool)
+	allocPos := order[call]
+	freeKind := llvm.AttributeKindID("allockind")
 	for len(work) != 0 {
 		v := work[len(work)-1]
 		work = work[:len(work)-1]
-		if seen[v] {
+		if derived[v] {
 			continue
 		}
-		seen[v] = true
+		derived[v] = true
 		for use := v.FirstUse(); !use.IsNil(); use = use.NextUse() {
 			user := use.User()
-			if pos, ok := order[user]; !ok || pos <= order[call] {
+			if user.IsAInstruction().IsNil() {
 				return false
 			}
+			userBB := user.InstructionParent()
+			if userBB == allocBB && user.InstructionOpcode() != llvm.PHI {
+				if pos, ok := order[user]; !ok || pos <= allocPos {
+					return false
+				}
+			}
 			switch user.InstructionOpcode() {
-			case llvm.GetElementPtr, llvm.BitCast:
+			case llvm.GetElementPtr, llvm.BitCast, llvm.PHI, llvm.Select:
 				work = append(work, user)
 			case llvm.Load:
 				if user.Operand(0) != v {
@@ -251,12 +314,87 @@ func canReuseAllocation(call llvm.Value, order map[llvm.Value]int) bool {
 				if !argument {
 					return false
 				}
+				if userBB != allocBB && isFreeCall(user, freeKind) {
+					return false
+				}
 			default:
 				return false
 			}
 		}
 	}
+	// Verify no derived value is live immediately before call executes.
+	for v := range derived {
+		if v == call {
+			continue
+		}
+		defBB := v.InstructionParent()
+		if defBB == allocBB {
+			if pos, ok := order[v]; !ok || pos < allocPos {
+				return false
+			}
+			continue
+		}
+		if isDerivedLiveAtAlloc(v, defBB, allocBB, allocPos, order) {
+			return false
+		}
+	}
 	return true
+}
+
+func isFreeCall(call llvm.Value, allocKind uint) bool {
+	if !call.GetCallSiteEnumAttribute(-1, allocKind).IsNil() {
+		return true
+	}
+	if callee := call.CalledValue().IsAFunction(); !callee.IsNil() {
+		if !callee.GetEnumFunctionAttribute(allocKind).IsNil() {
+			return true
+		}
+	}
+	return false
+}
+
+// isDerivedLiveAtAlloc reports whether v (defined in defBB != allocBB) can
+// reach any of its uses from the point immediately after allocBB's allocation
+// without first passing through defBB (which redefines v).
+func isDerivedLiveAtAlloc(v llvm.Value, defBB, allocBB llvm.BasicBlock, allocPos int, order map[llvm.Value]int) bool {
+	// Forward BFS from allocBB without stepping into defBB.
+	reachable := map[llvm.BasicBlock]bool{allocBB: true}
+	queue := []llvm.BasicBlock{allocBB}
+	for len(queue) > 0 {
+		bb := queue[0]
+		queue = queue[1:]
+		term := bb.LastInstruction()
+		for i := 0; i < term.SuccessorsCount(); i++ {
+			succ := term.Successor(i)
+			if succ == defBB || reachable[succ] {
+				continue
+			}
+			reachable[succ] = true
+			queue = append(queue, succ)
+		}
+	}
+	for use := v.FirstUse(); !use.IsNil(); use = use.NextUse() {
+		user := use.User()
+		if user.InstructionOpcode() == llvm.PHI {
+			for i := 0; i < user.IncomingCount(); i++ {
+				if user.IncomingValue(i) == v && reachable[user.IncomingBlock(i)] {
+					return true
+				}
+			}
+			continue
+		}
+		userBB := user.InstructionParent()
+		if userBB == allocBB {
+			if pos, ok := order[user]; !ok || pos > allocPos {
+				return true
+			}
+			continue
+		}
+		if userBB != defBB && reachable[userBB] {
+			return true
+		}
+	}
+	return false
 }
 
 // cyclicBlocks uses Tarjan's SCC traversal rather than natural-loop headers,
