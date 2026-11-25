@@ -51,16 +51,63 @@ func (entry skippedFunction) restore() {
 
 // Run preserves heap storage in oversized functions, for tail-call inputs,
 // and for repeated allocations whose instances cannot be proven disjoint,
-// then moves new fixed slots to entry.
+// clears stale tail hints on memory intrinsics touching newly promoted allocas,
+// and moves new fixed slots to entry.
 // Initialization stays at the original allocation site. No lifetime markers
 // are needed for this placement, and pre-existing allocas are left alone.
 func Run(mod llvm.Module, tm llvm.TargetMachine) error {
+	_, err := run(mod, tm, false)
+	return err
+}
+
+// RunPostInline runs heap-to-stack analysis scoped to functions that still
+// contain constant-size allockind calls after inlining, returning the functions
+// in which at least one allocation was promoted. Functions without candidate
+// allocations are temporarily marked optnone so Attributor does not re-analyze
+// the entire post-ABI module; existing parameter attributes inferred by the
+// preceding O2 pipeline remain visible on their declarations.
+func RunPostInline(mod llvm.Module, tm llvm.TargetMachine) ([]llvm.Value, error) {
+	return run(mod, tm, true)
+}
+
+// CleanupPromoted runs local stack-promotion cleanup passes solely on functions
+// listed in promoted by temporarily marking all other defined functions optnone.
+func CleanupPromoted(mod llvm.Module, tm llvm.TargetMachine, promoted []llvm.Value) error {
+	if mod.IsNil() || len(promoted) == 0 {
+		return nil
+	}
+	keep := make(map[llvm.Value]bool, len(promoted))
+	for _, fn := range promoted {
+		keep[fn] = true
+	}
+	optnone := llvm.AttributeKindID("optnone")
+	var skipped []skippedFunction
+	defer func() {
+		for _, entry := range skipped {
+			entry.restore()
+		}
+	}()
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if fn.FirstBasicBlock().IsNil() || keep[fn] || !fn.GetEnumFunctionAttribute(optnone).IsNil() {
+			continue
+		}
+		entry := saveSkippedFunction(fn)
+		skipped = append(skipped, entry)
+		entry.skipAnalysis(mod.Context())
+	}
+	pbo := llvm.NewPassBuilderOptions()
+	defer pbo.Dispose()
+	return mod.RunPasses("function(sroa,instcombine<no-verify-fixpoint>,simplifycfg,dse)", tm, pbo)
+}
+
+func run(mod llvm.Module, tm llvm.TargetMachine, onlyAllocFuncs bool) ([]llvm.Value, error) {
 	if mod.IsNil() {
-		return mod.RunAttributorHeapToStack(tm, nil)
+		return nil, mod.RunAttributorHeapToStack(tm, nil)
 	}
 	var functions, excluded []llvm.Value
 	existing := make(map[llvm.Value]bool)
 	optnone := llvm.AttributeKindID("optnone")
+	allocKind := llvm.AttributeKindID("allockind")
 	var skipped []skippedFunction
 	defer func() {
 		for _, entry := range skipped {
@@ -71,7 +118,7 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 		if fn.FirstBasicBlock().IsNil() || !fn.GetEnumFunctionAttribute(optnone).IsNil() {
 			continue
 		}
-		if exceedsAnalysisBudget(fn) {
+		if exceedsAnalysisBudget(fn) || (onlyAllocFuncs && !hasConstantAllocCall(fn, allocKind)) {
 			entry := saveSkippedFunction(fn)
 			skipped = append(skipped, entry)
 			entry.skipAnalysis(mod.Context())
@@ -109,11 +156,15 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 			}
 		}
 	}
+	if onlyAllocFuncs && len(functions) == 0 {
+		return nil, nil
+	}
 	if err := mod.RunAttributorHeapToStack(tm, excluded); err != nil {
-		return err
+		return nil, err
 	}
 	b := mod.Context().NewBuilder()
 	defer b.Dispose()
+	var promoted []llvm.Value
 	for _, fn := range functions {
 		entry := fn.EntryBasicBlock()
 		first := entry.FirstInstruction()
@@ -121,10 +172,12 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 			first = llvm.NextInstruction(first)
 		}
 		b.SetInsertPointBefore(first)
+		changed := false
 		for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 			for i := bb.FirstInstruction(); !i.IsNil(); {
 				next := llvm.NextInstruction(i)
 				if i.InstructionOpcode() == llvm.Alloca && !existing[i] {
+					changed = true
 					clearTailOnMemIntrinsics(i)
 					if bb != entry && !i.Operand(0).IsAConstantInt().IsNil() {
 						i.RemoveFromParentAsInstruction()
@@ -134,8 +187,28 @@ func Run(mod llvm.Module, tm llvm.TargetMachine) error {
 				i = next
 			}
 		}
+		if changed {
+			promoted = append(promoted, fn)
+		}
 	}
-	return nil
+	return promoted, nil
+}
+
+func hasConstantAllocCall(fn llvm.Value, allocKind uint) bool {
+	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
+			if !isCall(i) || i.Type().TypeKind() != llvm.PointerTypeKind {
+				continue
+			}
+			if !isAllocatorFamilyCall(i, allocKind) {
+				continue
+			}
+			if _, known := i.ConstantAllocationSize(); known {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func exceedsAnalysisBudget(fn llvm.Value) bool {
@@ -159,11 +232,12 @@ func isCall(i llvm.Value) bool {
 	return false
 }
 
-// isNonTailMemIntrinsic reports whether call is a non-musttail memory
-// intrinsic (memset/memcpy/memmove) that is not in tail-return position.
-// Post-inline optimization marks such intrinsics "tail" whenever a function
-// has no existing allocas; promoting an allocation clears "tail" on them.
-func isNonTailMemIntrinsic(i llvm.Value) bool {
+// isTailHintOnlyMemIntrinsic reports whether call is a non-musttail memory
+// intrinsic (memset/memcpy/memmove) marked with the "tail" hint outside of
+// tail-return position. Post-inline optimization attaches "tail" to such
+// intrinsics whenever a function has no existing allocas; promoting an
+// allocation clears that hint in clearTailOnMemIntrinsics.
+func isTailHintOnlyMemIntrinsic(i llvm.Value) bool {
 	if i.InstructionOpcode() != llvm.Call || i.TailCallKind() != llvm.TailCallKindTail || i.IsAMemIntrinsic().IsNil() {
 		return false
 	}
@@ -172,7 +246,7 @@ func isNonTailMemIntrinsic(i llvm.Value) bool {
 }
 
 // clearTailOnMemIntrinsics drops the non-semantic "tail" hint from memory
-// intrinsics that access a newly promoted alloca so the IR remains valid.
+// intrinsics that access a newly promoted alloca so the IR remains correct.
 func clearTailOnMemIntrinsics(alloca llvm.Value) {
 	work := []llvm.Value{alloca}
 	seen := make(map[llvm.Value]bool)
@@ -199,19 +273,23 @@ func clearTailOnMemIntrinsics(alloca llvm.Value) {
 
 // tailCallInputs finds SSA inputs to tail/musttail calls across all blocks.
 // A tail callee may execute after this frame has been released, even when it
-// does not capture its arguments. Follow operands backwards so GEPs, phis,
-// selects, casts and returned aliases cannot hide a newly promoted stack
-// address. Conservatively include scalar/aggregate dependencies too. Attributor
-// can also forward pointers through local memory, so exclude pointer spills
-// and address conversions whenever a tail call is present. This avoids needing
-// alias analysis here. The visited set bounds cyclic phis and shared chains.
+// does not capture its arguments. Seed only the operands of each tail call
+// (not the tail call's own result, so a tail-marked allocator call does not
+// exclude itself) and ignore hint-only tail memory intrinsics whose tail flag
+// is cleared upon promotion. Walk operands backwards so GEPs, phis, selects,
+// casts, and returned aliases cannot hide a newly promoted stack address.
+// Traversal stops at load instructions because loading through a pointer reads
+// stored contents rather than forwarding the pointer's own address; pointers
+// published via store or ptrtoint are seeded through published, and pointers
+// published through atomicrmw, cmpxchg, or callees are already rejected as
+// captured by Attributor. The visited set bounds cyclic phis and shared chains.
 func tailCallInputs(fn llvm.Value) map[llvm.Value]bool {
 	inputs := make(map[llvm.Value]bool)
 	var work, published []llvm.Value
 	hasTailCall := false
 	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
-			if i.InstructionOpcode() == llvm.Call && i.IsTailCall() && !isNonTailMemIntrinsic(i) {
+			if i.InstructionOpcode() == llvm.Call && i.IsTailCall() && !isTailHintOnlyMemIntrinsic(i) {
 				hasTailCall = true
 				for n := 0; n < i.OperandsCount(); n++ {
 					operand := i.Operand(n)
@@ -250,8 +328,8 @@ func tailCallInputs(fn llvm.Value) map[llvm.Value]bool {
 		inputs[i] = true
 		if i.InstructionOpcode() == llvm.Load {
 			// Loading through a pointer reads stored contents, not the pointer
-			// address itself; any pointer stored into memory is already seeded
-			// via published above.
+			// address itself; pointers written via store/ptrtoint are seeded
+			// through published above, and other escapes are rejected by Attributor.
 			continue
 		}
 		for n := 0; n < i.OperandsCount(); n++ {
@@ -266,14 +344,14 @@ func tailCallInputs(fn llvm.Value) map[llvm.Value]bool {
 
 // canReuseAllocation proves a sufficient condition for reusing a single entry
 // stack slot across loop iterations: no pointer derived from call is stored to
-// memory, observed as an address, passed to a cross-block free, or live at the
-// program point immediately before call executes. Attributor still validates
-// capture/free behavior of calls.
+// memory, observed as an address, passed to a cross-block allocator-family
+// call, or live at the program point immediately before call executes.
+// Attributor still validates capture/free behavior of calls.
 func canReuseAllocation(call llvm.Value, allocBB llvm.BasicBlock, order map[llvm.Value]int) bool {
 	work := []llvm.Value{call}
 	derived := make(map[llvm.Value]bool)
 	allocPos := order[call]
-	freeKind := llvm.AttributeKindID("allockind")
+	allocKind := llvm.AttributeKindID("allockind")
 	for len(work) != 0 {
 		v := work[len(work)-1]
 		work = work[:len(work)-1]
@@ -314,7 +392,7 @@ func canReuseAllocation(call llvm.Value, allocBB llvm.BasicBlock, order map[llvm
 				if !argument {
 					return false
 				}
-				if userBB != allocBB && isFreeCall(user, freeKind) {
+				if userBB != allocBB && isAllocatorFamilyCall(user, allocKind) {
 					return false
 				}
 			default:
@@ -322,7 +400,9 @@ func canReuseAllocation(call llvm.Value, allocBB llvm.BasicBlock, order map[llvm
 			}
 		}
 	}
-	// Verify no derived value is live immediately before call executes.
+	// Verify no derived value is live immediately before call executes,
+	// caching forward reachability per defining block.
+	var reachableByDef map[llvm.BasicBlock]map[llvm.BasicBlock]bool
 	for v := range derived {
 		if v == call {
 			continue
@@ -334,14 +414,22 @@ func canReuseAllocation(call llvm.Value, allocBB llvm.BasicBlock, order map[llvm
 			}
 			continue
 		}
-		if isDerivedLiveAtAlloc(v, defBB, allocBB, allocPos, order) {
+		reachable := reachableByDef[defBB]
+		if reachable == nil {
+			if reachableByDef == nil {
+				reachableByDef = make(map[llvm.BasicBlock]map[llvm.BasicBlock]bool)
+			}
+			reachable = forwardReachableWithout(allocBB, defBB)
+			reachableByDef[defBB] = reachable
+		}
+		if isDerivedLiveAtAlloc(v, defBB, allocBB, allocPos, order, reachable) {
 			return false
 		}
 	}
 	return true
 }
 
-func isFreeCall(call llvm.Value, allocKind uint) bool {
+func isAllocatorFamilyCall(call llvm.Value, allocKind uint) bool {
 	if !call.GetCallSiteEnumAttribute(-1, allocKind).IsNil() {
 		return true
 	}
@@ -353,26 +441,30 @@ func isFreeCall(call llvm.Value, allocKind uint) bool {
 	return false
 }
 
-// isDerivedLiveAtAlloc reports whether v (defined in defBB != allocBB) can
-// reach any of its uses from the point immediately after allocBB's allocation
-// without first passing through defBB (which redefines v).
-func isDerivedLiveAtAlloc(v llvm.Value, defBB, allocBB llvm.BasicBlock, allocPos int, order map[llvm.Value]int) bool {
-	// Forward BFS from allocBB without stepping into defBB.
-	reachable := map[llvm.BasicBlock]bool{allocBB: true}
-	queue := []llvm.BasicBlock{allocBB}
-	for len(queue) > 0 {
-		bb := queue[0]
-		queue = queue[1:]
+// forwardReachableWithout returns the blocks reachable from start without
+// stepping into stop.
+func forwardReachableWithout(start, stop llvm.BasicBlock) map[llvm.BasicBlock]bool {
+	reachable := map[llvm.BasicBlock]bool{start: true}
+	queue := []llvm.BasicBlock{start}
+	for head := 0; head < len(queue); head++ {
+		bb := queue[head]
 		term := bb.LastInstruction()
 		for i := 0; i < term.SuccessorsCount(); i++ {
 			succ := term.Successor(i)
-			if succ == defBB || reachable[succ] {
+			if succ == stop || reachable[succ] {
 				continue
 			}
 			reachable[succ] = true
 			queue = append(queue, succ)
 		}
 	}
+	return reachable
+}
+
+// isDerivedLiveAtAlloc reports whether v (defined in defBB != allocBB) can
+// reach any of its uses from the point immediately after allocBB's allocation
+// without first passing through defBB (which redefines v).
+func isDerivedLiveAtAlloc(v llvm.Value, defBB, allocBB llvm.BasicBlock, allocPos int, order map[llvm.Value]int, reachable map[llvm.BasicBlock]bool) bool {
 	for use := v.FirstUse(); !use.IsNil(); use = use.NextUse() {
 		user := use.User()
 		if user.InstructionOpcode() == llvm.PHI {

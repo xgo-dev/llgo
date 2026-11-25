@@ -101,9 +101,75 @@ func optimizeTestAllocationsBeforeABI(t *testing.T, conf *Config, before func(ll
 	}
 }
 
-func TestHeapToStackABIExecution(t *testing.T) {
+func TestPostInlineHeapToStackGuardsAndErrors(t *testing.T) {
+	llvm.InitializeAllTargets()
+	llvm.InitializeAllTargetMCs()
+	llvm.InitializeAllTargetInfos()
+	target := &llssa.Target{GOOS: "linux", GOARCH: "amd64"}
+	prog := llssa.NewProgram(target)
+	defer prog.Dispose()
+	const pkgPath = "example.com/postinline"
+	lpkg := prog.NewPackage("postinline", pkgPath)
+	mod := lpkg.Module()
+	lc := mod.Context()
+	fn := llvm.AddFunction(mod, "noop", llvm.FunctionType(lc.VoidType(), nil, false))
+	b := lc.NewBuilder()
+	defer b.Dispose()
+	b.SetInsertPointAtEnd(lc.AddBasicBlock(fn, "entry"))
+	b.CreateRetVoid()
+
+	conf := NewDefaultConf(ModeGen)
+	conf.Goos, conf.Goarch, conf.OptLevel = target.GOOS, target.GOARCH, optlevel.O2
+	ctx := &context{prog: prog, buildConf: conf, mode: ModeGen}
+
+	// Early return without invoking Attributor when no allockind calls exist.
+	ctx.passOpt = true
+	if err := optimizePostInlineHeapAllocations(ctx, pkgPath, mod); err != nil {
+		t.Fatalf("unexpected error on allocation-free module: %v", err)
+	}
+
+	calls := 0
+	want := errors.New("post-inline failed")
+	old := runPostInlineHeapToStack
+	t.Cleanup(func() { runPostInlineHeapToStack = old })
+	runPostInlineHeapToStack = func(got llvm.Module, _ llvm.TargetMachine) ([]llvm.Value, error) {
+		calls++
+		if got != mod {
+			t.Fatal("post-inline heap-to-stack received a different module")
+		}
+		return nil, want
+	}
+
+	// Disabled passOpt, O0, and runtime package must skip post-inline analysis.
+	ctx.passOpt = false
+	if err := optimizePostInlineHeapAllocations(ctx, pkgPath, mod); err != nil {
+		t.Fatal(err)
+	}
+	ctx.passOpt, conf.OptLevel = true, optlevel.O0
+	if err := optimizePostInlineHeapAllocations(ctx, pkgPath, mod); err != nil {
+		t.Fatal(err)
+	}
+	conf.OptLevel = optlevel.O2
+	if err := optimizePostInlineHeapAllocations(ctx, llssa.PkgRuntime, mod); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("post-inline heap-to-stack ran %d times when guarded, want 0", calls)
+	}
+
+	err := optimizePostInlineHeapAllocations(ctx, pkgPath, mod)
+	if !errors.Is(err, want) || !strings.Contains(err.Error(), "post-inline") || !strings.Contains(err.Error(), pkgPath) {
+		t.Fatalf("unexpected wrapped error: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("post-inline heap-to-stack called %d times, want 1", calls)
+	}
+}
+
+func runHeapToStackFixture(t *testing.T, moduleName, binaryPrefix, source, wantOutput string) {
+	t.Helper()
 	if testing.Short() {
-		t.Skip("builds and runs aggregate ABI allocation regression")
+		t.Skip("builds and runs heap-to-stack execution fixture")
 	}
 	root, err := filepath.Abs("../..")
 	if err != nil {
@@ -111,6 +177,33 @@ func TestHeapToStackABIExecution(t *testing.T) {
 	}
 	t.Setenv("LLGO_ROOT", root)
 	dir := t.TempDir()
+	for name, text := range map[string]string{
+		"go.mod": "module " + moduleName + "\n\ngo 1.27.0\n", "main.go": source,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, mode := range []lto.Mode{lto.Off, lto.Full} {
+		t.Run(mode.String(), func(t *testing.T) {
+			conf := NewDefaultConf(ModeBuild)
+			conf.OptLevel, conf.LTO = optlevel.O2, mode
+			conf.OutFile = filepath.Join(dir, binaryPrefix+"-"+mode.String())
+			if runtime.GOOS == "windows" {
+				conf.OutFile += ".exe"
+			}
+			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.CommandContext(t.Context(), conf.OutFile).CombinedOutput()
+			if err != nil || strings.TrimSpace(string(out)) != wantOutput {
+				t.Fatalf("%s execution: %v\n%s", binaryPrefix, err, out)
+			}
+		})
+	}
+}
+
+func TestHeapToStackABIExecution(t *testing.T) {
 	const source = `package main
 type triple struct { a, b, c uint64 }
 //go:noinline
@@ -131,42 +224,10 @@ func main() {
  println("abi-ok")
 }
 `
-	for name, text := range map[string]string{
-		"go.mod": "module allocabi\n\ngo 1.27.0\n", "main.go": source,
-	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, mode := range []lto.Mode{lto.Off, lto.Full} {
-		t.Run(mode.String(), func(t *testing.T) {
-			conf := NewDefaultConf(ModeBuild)
-			conf.OptLevel, conf.LTO = optlevel.O2, mode
-			conf.OutFile = filepath.Join(dir, "abi-"+mode.String())
-			if runtime.GOOS == "windows" {
-				conf.OutFile += ".exe"
-			}
-			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err != nil {
-				t.Fatal(err)
-			}
-			out, err := exec.CommandContext(t.Context(), conf.OutFile).CombinedOutput()
-			if err != nil || strings.TrimSpace(string(out)) != "abi-ok" {
-				t.Fatalf("aggregate ABI execution: %v\n%s", err, out)
-			}
-		})
-	}
+	runHeapToStackFixture(t, "allocabi", "abi", source, "abi-ok")
 }
 
 func TestPostInlineHeapToStack(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds and runs post-inline heap-to-stack allocation regression")
-	}
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("LLGO_ROOT", root)
-	dir := t.TempDir()
 	const source = `package main
 
 import "runtime"
@@ -228,28 +289,5 @@ func main() {
 	println("post-inline-ok")
 }
 `
-	for name, text := range map[string]string{
-		"go.mod": "module postinlineh2s\n\ngo 1.27.0\n", "main.go": source,
-	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, mode := range []lto.Mode{lto.Off, lto.Full} {
-		t.Run(mode.String(), func(t *testing.T) {
-			conf := NewDefaultConf(ModeBuild)
-			conf.OptLevel, conf.LTO = optlevel.O2, mode
-			conf.OutFile = filepath.Join(dir, "h2s-"+mode.String())
-			if runtime.GOOS == "windows" {
-				conf.OutFile += ".exe"
-			}
-			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err != nil {
-				t.Fatal(err)
-			}
-			out, err := exec.CommandContext(t.Context(), conf.OutFile).CombinedOutput()
-			if err != nil || strings.TrimSpace(string(out)) != "post-inline-ok" {
-				t.Fatalf("post-inline heap2stack execution: %v\n%s", err, out)
-			}
-		})
-	}
+	runHeapToStackFixture(t, "postinlineh2s", "h2s", source, "post-inline-ok")
 }
