@@ -76,11 +76,18 @@ func TestAddUint32(t *testing.T) {
 	}
 }
 
+// Keep the atomic operation in a named function for the linked-code LTO test.
+//
+//go:noinline
+func addUint64(p *uint64, delta uint64) uint64 {
+	return atomic.AddUint64(p, delta)
+}
+
 func TestAddUint64(t *testing.T) {
 	var i uint64 = 10
 
 	// Test positive addition
-	result := atomic.AddUint64(&i, 5)
+	result := addUint64(&i, 5)
 	if result != 15 {
 		t.Fatalf("AddUint64(10, 5) = %d, want 15", result)
 	}
@@ -90,7 +97,7 @@ func TestAddUint64(t *testing.T) {
 
 	// Test addition that causes overflow
 	i = ^uint64(0) - 5 // Max value minus 5
-	result = atomic.AddUint64(&i, 10)
+	result = addUint64(&i, 10)
 	// Should wrap around
 	if result != 4 {
 		t.Fatalf("AddUint64(max-5, 10) = %d, want 4 (wraparound)", result)

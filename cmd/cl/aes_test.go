@@ -20,6 +20,8 @@ func subword(uint32) uint32
 func kernel(dst, src, key *byte, x uint32) uint32 {
 	state := (*byte)(buffer(16))
 	round(0, state, src, key)
+	round(7, state, state, key)
+	round(8, state, state, key)
 	round(1, dst, state, key)
 	return subword(x)
 }
@@ -53,7 +55,7 @@ func TestAESIntrinsicDiagnostics(t *testing.T) {
 		{"buffer size", "aesAlloca", "func instr(uintptr) unsafe.Pointer", "func bad() { _ = instr(32) }", "amd64", "aesAlloca: expected 16 or 128 bytes"},
 		{"round arity", "aesRound", "func instr(int)", "func bad() { instr(0) }", "amd64", "aesRound: expected an operation and three pointers"},
 		{"round dynamic", "aesRound", "func instr(int, *byte, *byte, *byte)", "func bad(n int, p *byte) { instr(n, p, p, p) }", "amd64", "aesRound: invalid constant operation"},
-		{"round opcode", "aesRound", "func instr(int, *byte, *byte, *byte)", "func bad(p *byte) { instr(7, p, p, p) }", "amd64", "aesRound: invalid constant operation"},
+		{"round opcode", "aesRound", "func instr(int, *byte, *byte, *byte)", "func bad(p *byte) { instr(9, p, p, p) }", "amd64", "aesRound: invalid constant operation"},
 		{"round pointers", "aesRound", "func instr(int, *uint32, *uint32, *uint32)", "func bad(p *uint32) { instr(0, p, p, p) }", "amd64", "aesRound: expected *byte operands"},
 		{"subword arity", "aesSubWord", "func instr() uint32", "func bad() uint32 { return instr() }", "amd64", "aesSubWord: expected one uint32"},
 		{"subword type", "aesSubWord", "func instr(uint64) uint64", "func bad(x uint64) uint64 { return instr(x) }", "amd64", "aesSubWord: expected uint32"},

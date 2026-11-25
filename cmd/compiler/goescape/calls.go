@@ -98,6 +98,25 @@ func callTargets(call *ssa.CallCommon) []callTarget {
 	return targets
 }
 
+// isDirectCallbackParam reports whether value is a function parameter or free
+// variable (possibly through a signature type conversion) whose Callee=1
+// invocation effect is exported directly to this function's caller.
+func isDirectCallbackParam(value ssa.Value) bool {
+	if _, ok := value.Type().Underlying().(*types.Signature); !ok {
+		return false
+	}
+	for {
+		switch cur := value.(type) {
+		case *ssa.Parameter, *ssa.FreeVar:
+			return true
+		case *ssa.ChangeType:
+			value = cur.X
+		default:
+			return false
+		}
+	}
+}
+
 // A known callback need not publish all captures. Include both heap and result
 // leaks: an unknown caller can retain any value returned by the callback.
 func (f *functionAnalysis) callback(value ssa.Value) bool {

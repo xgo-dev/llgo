@@ -263,3 +263,31 @@ func TestDeferContinuationDispatch(t *testing.T) {
 		})
 	}
 }
+
+func TestDeferReusesThreadDeferSlot(t *testing.T) {
+	prog := ssatest.NewProgram(t, nil)
+	pkg := prog.NewPackage("foo", "foo")
+
+	callee := pkg.NewFunc("callee", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
+	cb := callee.MakeBody(1)
+	cb.Return()
+	cb.EndBuild()
+
+	fn := pkg.NewFunc("main", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
+	b := fn.MakeBody(1)
+	fn.SetRecover(fn.MakeBlock())
+	b.Defer(llvmgen.DeferAlways, callee.Expr, llvmgen.Builder.Call)
+	b.RunDefers()
+	b.Return()
+	b.EndBuild()
+
+	ir := pkg.Module().String()
+	if got := strings.Count(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.ThreadDeferSlot"()`); got != 1 {
+		t.Fatalf("expected 1 ThreadDeferSlot call in defer activation, got %d:\n%s", got, ir)
+	}
+	for _, legacy := range []string{`GetThreadDefer"`, `SetThreadDefer"`} {
+		if strings.Contains(ir, legacy) {
+			t.Fatalf("defer activation unexpectedly called %s:\n%s", legacy, ir)
+		}
+	}
+}

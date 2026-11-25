@@ -55,7 +55,7 @@ and the contract tests check that their labels match the policy. CI gates use
 `linux_runner`, with a hosted fallback if preparation fails before producing outputs. This
 keeps ordinary PR startup and completion jobs out of the hosted runner queue.
 
-The amd64 Mise/Pixi environment checks, release artifact verification, Linux
+The amd64 Pixi environment checks, release artifact verification, Linux
 sysroot generation, snapshot cross-build, package/container validation, and
 installer distro containers use `linux_large_runner`. WinGet manifest
 preparation uses `linux_runner`. The sysroot job first verifies Docker daemon

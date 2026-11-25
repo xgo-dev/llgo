@@ -28,6 +28,7 @@ func init() {
 	hashkey[1] = uintptr(fastrand()) | 1
 	hashkey[2] = uintptr(fastrand()) | 1
 	hashkey[3] = uintptr(fastrand()) | 1
+	initAESHash()
 }
 
 /* TODO(xsw):

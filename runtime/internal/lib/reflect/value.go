@@ -994,18 +994,24 @@ func valueInterface(v Value, safe bool) any {
 
 	if v.kind() == Interface {
 		// Special case: return the element inside the interface.
-		// Empty interface has one layout, all interfaces with
-		// methods have a second layout.
-		if v.NumMethod() == 0 {
-			return *(*any)(v.ptr)
-		}
-		return *(*interface {
-			M()
-		})(v.ptr)
+		return packIfaceValueIntoEmptyIface(v)
 	}
 
 	// TODO: pass safe to packEface so we don't need to copy if safe==true?
 	return packEface(v)
+}
+
+// packIfaceValueIntoEmptyIface converts an interface Value into an empty interface.
+//
+// The representation of empty and non-empty interface values differs, but both
+// use the same two-word payload when copied out of an interface Value.
+func packIfaceValueIntoEmptyIface(v Value) any {
+	if v.NumMethod() == 0 {
+		return *(*any)(v.ptr)
+	}
+	return *(*interface {
+		M()
+	})(v.ptr)
 }
 
 // InterfaceData returns a pair of unspecified uintptr values.

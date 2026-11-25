@@ -256,6 +256,7 @@ func (p Function) deferInitBuilder(from Builder) (b Builder, next BasicBlock) {
 type aDefer struct {
 	nextBit     int        // next defer bit
 	data        Expr       // pointer to runtime.Defer
+	slot        Expr       // pointer to current goroutine's defer chain head (**runtime.Defer)
 	bitsPtr     Expr       // pointer to defer bits
 	rethPtr     Expr       // native block address or wasm Rethrow selector
 	rundPtr     Expr       // native block address or wasm RunDefers selector
@@ -391,7 +392,8 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	self := b.Func
 	prog := b.Prog
 	zero := prog.Val(uintptr(0))
-	link := b.Call(b.Pkg.rtFunc("GetThreadDefer"))
+	slot := b.Call(b.Pkg.rtFunc("ThreadDeferSlot"))
+	link := b.Load(slot)
 	jb := b.AllocaSigjmpBuf()
 	// Wasm Reth selector 0 is reserved for procBlk; Rund selector 0 is
 	// rethrowBlk. Native targets store the corresponding block addresses.
@@ -407,7 +409,7 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 		b.aggregateInit(ptr, prog.Defer(), fields...)
 	}
 	deferData := Expr{ptr, prog.DeferPtr()}
-	b.Call(b.Pkg.rtFunc("SetThreadDefer"), deferData)
+	b.Store(slot, deferData)
 	if prog.GCRootsEnabled() {
 		b.Call(b.Pkg.rtFunc("SetDeferGCRoot"), deferData, b.currentGCRootChain())
 	}
@@ -430,6 +432,7 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 
 	self.defer_ = &aDefer{
 		data:        deferData,
+		slot:        slot,
 		bitsPtr:     bitsPtr,
 		rethPtr:     rethPtr,
 		rundPtr:     rundPtr,
@@ -921,7 +924,7 @@ func (p Function) endDefer(b Builder) {
 		}
 	}
 	link := b.getField(b.Load(self.data), deferLink)
-	b.Call(b.Pkg.rtFunc("SetThreadDefer"), link)
+	b.Store(self.slot, link)
 	b.jumpDeferTarget(rundPtr, rundTargets)
 
 	b.SetBlockEx(panicBlk, AtEnd, false) // panicBlk: exec runDefers and rethrow

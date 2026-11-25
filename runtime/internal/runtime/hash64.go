@@ -24,6 +24,9 @@ const (
 )
 
 func memhash(p unsafe.Pointer, seed, s uintptr) uintptr {
+	if useAeshash && s > 16 {
+		return memhashAES(p, seed, s)
+	}
 	var a, b uintptr
 	seed ^= hashkey[0] ^ m1
 	switch {
@@ -69,14 +72,22 @@ func memhash(p unsafe.Pointer, seed, s uintptr) uintptr {
 	return mix(m5^s, mix(a^m2, b^seed))
 }
 
-func memhash32(p unsafe.Pointer, seed uintptr) uintptr {
-	a := r4(p)
+func memhash32Val(v uint32, seed uintptr) uintptr {
+	a := uintptr(v)
 	return mix(m5^4, mix(a^m2, a^seed^hashkey[0]^m1))
 }
 
-func memhash64(p unsafe.Pointer, seed uintptr) uintptr {
-	a := r8(p)
+func memhash64Val(v uint64, seed uintptr) uintptr {
+	a := uintptr(v)
 	return mix(m5^8, mix(a^m2, a^seed^hashkey[0]^m1))
+}
+
+func memhash32(p unsafe.Pointer, seed uintptr) uintptr {
+	return memhash32Val(readUnaligned32(p), seed)
+}
+
+func memhash64(p unsafe.Pointer, seed uintptr) uintptr {
+	return memhash64Val(readUnaligned64(p), seed)
 }
 
 func mix(a, b uintptr) uintptr {
