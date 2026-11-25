@@ -125,37 +125,67 @@ const (
 )
 
 // ErrNotReady reports a call made before Init completed (or after Close):
-// there is no engine to start, stop, or query.
-var ErrNotReady = &esperr.Error{Code: codeNotReady, Name: "WAKENET_ERR_NOT_READY"}
+// there is no engine to start, stop, or query. It is the package's semantic
+// sentinel - match it with errors.Is - and it keeps the 0x7A01 segment code
+// on Error.Code as the diagnostic annotation, so errors.As and esperr.Code
+// still expose the number the Go guard or the glue reported.
+var ErrNotReady = newSentinel("esp/wakenet: not initialized", codeNotReady)
 
 // ErrInvalidState reports a call in the wrong phase: a second Init, a Start
 // while the engine runs, a Stop while it does not, or a Close of an engine
-// that was never opened.
-var ErrInvalidState = &esperr.Error{Code: codeInvalidState, Name: "WAKENET_ERR_INVALID_STATE"}
+// that was never opened. It is the package's semantic sentinel - match it
+// with errors.Is - and it keeps the 0x7A02 segment code on Error.Code as
+// the diagnostic annotation, so errors.As and esperr.Code still expose the
+// number the Go guard or the glue reported.
+var ErrInvalidState = newSentinel("esp/wakenet: invalid state", codeInvalidState)
 
 // ErrTimeout reports Close's bounded wait for the detect task's exit
 // acknowledgment passing: the task did not leave within three seconds, and
 // Close freed nothing (the engine stays loaded; a retry after diagnosing the
-// wedged task is safe).
-var ErrTimeout = &esperr.Error{Code: codeTimeout, Name: "WAKENET_ERR_TIMEOUT"}
+// wedged task is safe). It is the package's semantic sentinel - match it
+// with errors.Is - and it keeps the 0x7A03 segment code on Error.Code as
+// the diagnostic annotation, so errors.As and esperr.Code still expose the
+// number the Go guard reported.
+var ErrTimeout = newSentinel("esp/wakenet: timeout", codeTimeout)
 
 // ErrBadValue reports a ModelConfig this package refuses before anything
 // crosses into C: a model name longer than MaxModelName, a threshold outside
 // the 0.4..0.9999 range the engine accepts, or SourceI2S without the three
-// pins a master RX bus needs.
-var ErrBadValue = &esperr.Error{Code: codeBadValue, Name: "WAKENET_ERR_BAD_VALUE"}
+// pins a master RX bus needs. It is the package's semantic sentinel - match
+// it with errors.Is - and it keeps the 0x7A04 segment code on Error.Code as
+// the diagnostic annotation, so errors.As and esperr.Code still expose the
+// number the Go guard reported.
+var ErrBadValue = newSentinel("esp/wakenet: invalid argument", codeBadValue)
 
 // ErrNotFound reports a model resolution failure: the requested Model is not
 // in the "model" partition, the partition carries no wn* model at all, or the
-// partition itself is missing (esp_srmodel_init found nothing to map).
-var ErrNotFound = &esperr.Error{Code: codeNotFound, Name: "WAKENET_ERR_NOT_FOUND"}
+// partition itself is missing (esp_srmodel_init found nothing to map). It is
+// the package's semantic sentinel - match it with errors.Is - and it keeps
+// the 0x7A05 segment code on Error.Code as the diagnostic annotation, so
+// errors.As and esperr.Code still expose the number the glue reported.
+var ErrNotFound = newSentinel("esp/wakenet: model not found", codeNotFound)
 
 // ErrUnsupported reports that this firmware (or build) has no WakeNet engine
 // at all: a host build, or the ESP_ERR_NOT_SUPPORTED the glue reports when
-// the firmware carries no engine.
-var ErrUnsupported = &esperr.Error{Code: codeUnsupported, Name: "WAKENET_ERR_UNSUPPORTED"}
+// the firmware carries no engine. It is the package's semantic sentinel -
+// match it with errors.Is - and it keeps the 0x7F00 stub-tag code on
+// Error.Code as the diagnostic annotation, so errors.As and esperr.Code
+// still expose the number the pipeline reported.
+var ErrUnsupported = newSentinel("esp/wakenet: unsupported", codeUnsupported)
 
-// espErr wraps a raw esp_err code (0 = nil) - the esp domain of this package.
+// newSentinel declares a semantic sentinel that keeps its historical
+// segment code on Error.Code as the annotation (esperr.New is text-only;
+// the glue still reports the code, and the error-model doc above pins the
+// segment).
+func newSentinel(text string, code int32) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	return e
+}
+
+// espErr wraps a raw esp_err code (0 = nil) - the esp domain of this
+// package. Everything but the no-engine translation forwards as a bare
+// esperr.Coded value - the driver's code and name are the diagnostic.
 func espErr(code int32) error {
 	if code == 0 {
 		return nil
@@ -163,7 +193,7 @@ func espErr(code int32) error {
 	if code == 0x106 { // ESP_ERR_NOT_SUPPORTED: no engine in the firmware
 		return ErrUnsupported
 	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	return esperr.Coded(code, ErrName(code))
 }
 
 // Source selects where the detect task's audio comes from.
@@ -312,19 +342,19 @@ var (
 // ErrInvalidState for a second Init without a Close.
 func Init(cfg ModelConfig) error {
 	if session {
-		return ErrInvalidState
+		return esperr.Wrap("wakenet: init", ErrInvalidState)
 	}
 	if len(cfg.Model) > MaxModelName {
-		return ErrBadValue
+		return esperr.Wrap("wakenet: init", ErrBadValue)
 	}
 	if cfg.Threshold != 0 && (cfg.Threshold < 0.4 || cfg.Threshold > 0.9999) {
-		return ErrBadValue
+		return esperr.Wrap("wakenet: init", ErrBadValue)
 	}
 	if cfg.Source != SourceTest && cfg.Source != SourceI2S {
-		return ErrBadValue
+		return esperr.Wrap("wakenet: init", ErrBadValue)
 	}
 	if cfg.Source == SourceI2S && (cfg.BCLK < 0 || cfg.WS < 0 || cfg.DIN < 0) {
-		return ErrBadValue
+		return esperr.Wrap("wakenet: init", ErrBadValue)
 	}
 	// The threshold crosses as thousandths: floats never cross the llgo
 	// soft-float / IDF hard-float boundary.
@@ -380,13 +410,13 @@ func SampleRate() int32 { return rateHz }
 // esperr.ErrClosed after Close.
 func Start() error {
 	if shutdown {
-		return esperr.ErrClosed
+		return esperr.Wrap("wakenet: start", esperr.ErrClosed)
 	}
 	if !session {
-		return ErrNotReady
+		return esperr.Wrap("wakenet: start", ErrNotReady)
 	}
 	if running {
-		return ErrInvalidState
+		return esperr.Wrap("wakenet: start", ErrInvalidState)
 	}
 	drain() // stale records from a previous run never reach the new session
 	if e := espErr(wnStart()); e != nil {
@@ -403,13 +433,13 @@ func Start() error {
 // when the engine is not running, esperr.ErrClosed after Close.
 func Stop() error {
 	if shutdown {
-		return esperr.ErrClosed
+		return esperr.Wrap("wakenet: stop", esperr.ErrClosed)
 	}
 	if !session {
-		return ErrNotReady
+		return esperr.Wrap("wakenet: stop", ErrNotReady)
 	}
 	if !running {
-		return ErrInvalidState
+		return esperr.Wrap("wakenet: stop", ErrInvalidState)
 	}
 	e := espErr(wnStop())
 	running = false
@@ -455,12 +485,12 @@ func Stats() (frames int32, avgDetectUs int32, maxDetectUs int32) {
 // failures.
 func Close() error {
 	if shutdown {
-		return esperr.ErrClosed
+		return esperr.Wrap("wakenet: close", esperr.ErrClosed)
 	}
 	// opened, not session: a failed Init still left state in the glue (the
 	// session task, at the least) that only Close may release.
 	if !opened {
-		return ErrInvalidState
+		return esperr.Wrap("wakenet: close", ErrInvalidState)
 	}
 	running = false
 	e := espErr(wnClose())

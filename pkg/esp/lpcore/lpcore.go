@@ -51,18 +51,33 @@ import "github.com/xgo-dev/llgo/pkg/esp/esperr"
 
 // errOf wraps a raw esp_err code as the error value this package returns
 // (nil for ESP_OK), named through ErrName so a printed error reads like
-// the IDF's own name for the code.
+// the IDF's own name for the code. Every code forwards as a bare
+// esperr.Coded value - the driver's code and name are the diagnostic.
 func errOf(code int32) error {
 	if code == 0 {
 		return nil
 	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	return esperr.Coded(code, ErrName(code))
 }
 
-// ErrTimeout reports a bounded mailbox wait that found nothing:
+// ErrTimeout reports a bounded mailbox wait that found nothing. It is the
+// package's semantic sentinel - match it with errors.Is - and it keeps
 // ESP_ERR_TIMEOUT (0x107), the esp_err family's own timeout code (unlike
-// the transports' ErrTimeout, which carries the lwip ETIMEDOUT value).
-var ErrTimeout = &esperr.Error{Code: 0x107, Name: ErrName(0x107)}
+// the transports' ErrTimeout, which carries the lwip ETIMEDOUT value), on
+// Error.Code as the diagnostic annotation, so errors.As and esperr.Code
+// still expose the number the pipeline reports and code-style checks
+// against it keep working. A C-level send that timed out surfaces the same
+// code through errOf and matches by it.
+var ErrTimeout = newSentinel("esp/lpcore: mailbox timeout", 0x107)
+
+// newSentinel declares a semantic sentinel that keeps its historical
+// pipeline code on Error.Code as the annotation (esperr.New is text-only;
+// the glue still reports the code).
+func newSentinel(text string, code int32) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	return e
+}
 
 // ErrName names the esp_err codes this package can surface with their IDF
 // names; anything else renders as the bare hex form, which keeps the code

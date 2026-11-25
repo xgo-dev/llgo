@@ -196,8 +196,38 @@ func TestErrOf(t *testing.T) {
 	if !errors.Is(ErrTimeout, &esperr.Error{Code: 0x107}) {
 		t.Fatal("ErrTimeout does not satisfy errors.Is against ESP_ERR_TIMEOUT")
 	}
-	if ErrTimeout.Error() != "ESP_ERR_TIMEOUT (263)" {
+	if ErrTimeout.Error() != "esp/lpcore: mailbox timeout (code 263)" {
 		t.Fatalf("ErrTimeout.Error() = %q", ErrTimeout.Error())
+	}
+}
+
+// TestErrTimeoutShape pins the migrated sentinel shape: text-first
+// rendering with ESP_ERR_TIMEOUT kept on Error.Code as the annotation,
+// matched by pointer identity and by code in both directions (a C-level
+// send timeout surfaces the same code through errOf), and readable through
+// errors.As. The startup guards keep the driver's own codes untouched: a
+// client-side rejection renders exactly like the driver's esp_err.
+func TestErrTimeoutShape(t *testing.T) {
+	var e *esperr.Error
+	if !errors.As(ErrTimeout, &e) || e.Code != 0x107 {
+		t.Fatalf("errors.As(ErrTimeout) = %v, want Code 0x107", e)
+	}
+	if !errors.Is(errOf(0x107), ErrTimeout) {
+		t.Fatal("a C-level ESP_ERR_TIMEOUT does not match ErrTimeout")
+	}
+	if !errors.Is(errOf(0x107), &esperr.Error{Code: 0x107}) {
+		t.Fatal("a C-level ESP_ERR_TIMEOUT does not match the 0x107 code")
+	}
+	if errors.Is(errOf(0x104), ErrTimeout) {
+		t.Fatal("ESP_ERR_INVALID_SIZE matched ErrTimeout")
+	}
+	// The client-side startup guards mirror the driver: code-era shape and
+	// rendering unchanged (Load's oversize guard, Run's wakeup-source guard).
+	if got := Load(make([]byte, MaxProgramSize+1)).Error(); got != "ESP_ERR_INVALID_SIZE (260)" {
+		t.Fatalf("Load(oversize) = %q", got)
+	}
+	if got := Run(Config{}).Error(); got != "ESP_ERR_INVALID_ARG (258)" {
+		t.Fatalf("Run(zero cfg) = %q", got)
 	}
 }
 
