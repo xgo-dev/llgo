@@ -1,8 +1,0 @@
-# Custom partition table: the default single 1 MiB factory partition is too
-# small once Bluedroid's classic host joins the link (app binary ~1.7 MiB).
-# A 4 MB flash holds a 3.9375 MiB (0x3F0000) factory partition with the
-# standard NVS and PHY data ahead of it.
-# Name,   Type, SubType, Offset,  Size, Flags
-nvs,      data, nvs,     0x9000,  0x6000,
-phy_init, data, phy,     0xf000,  0x1000,
-factory,  app,  factory, 0x10000, 0x3F0000,

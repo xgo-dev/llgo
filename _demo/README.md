@@ -32,15 +32,35 @@ separate:
 <demo>/goapp/          the Go program (one file per area; see each README)
 <demo>/idfproj/main/   the C shell: app_main.c, the extra linker script, and
                        the glue sources the build syncs from pkg/esp/*/glue
-<demo>/idfproj/host/   make-artifact.sh: builds goapp with llgo, renames the
-                       compiler-rt builtins, and merges host/llgo_syms.S so the
-                       runtime's symbol providers live inside llgo_out.o
+<demo>/idfproj/host/   make-artifact.sh (a symlink to the shared pipeline),
+                       which builds goapp with llgo, renames the compiler-rt
+                       builtins, and merges llgo_syms.S so the runtime's symbol
+                       providers live inside llgo_out.o
 ```
 
-The glue C files under `idfproj/main/` are **build inputs**, not sources of
-truth: `make-artifact.sh` copies them from `pkg/esp/*/glue/` on every run
-(integration way 1 in [`pkg/esp/README.md`](../../pkg/esp/README.md)). Edit the
-package template, never the copy.
+Nothing in that shape is per-demo boilerplate to maintain:
+
+- **One pipeline.** Every `idfproj/host/make-artifact.sh` is a symlink to
+  [`common/make-artifact.sh`](common/make-artifact.sh). What differs between
+  demos is a four-line
+  [`artifact.conf`](esp-idf-ble/idfproj/host/artifact.conf) - the glue set, the
+  GC window, optional diagnostics - plus an optional `post-sync.sh` hook for a
+  demo that patches a template it just copied (`esp-idf-all` does, for the
+  codec's MCLK pin).
+- **One scaffold.** The IDF project shell (`CMakeLists.txt`, `app_main.c`,
+  `llgo_dram.ld`, `llgo_syms.S`, `partitions.csv`) is identical across demos,
+  so [`common/`](common/) holds the single copy and `make-artifact.sh` writes a
+  generated one into the project on every run. Those files are gitignored; the
+  copy in `common/` is the source of truth.
+- **Generated glue.** The C glues under `idfproj/main/` are build inputs too,
+  copied from `pkg/esp/*/glue/` (integration way 1 in
+  [`pkg/esp/README.md`](../../pkg/esp/README.md)). Edit the package template,
+  never the copy.
+
+What stays per-demo is what is genuinely different: the Go program, the
+`main/CMakeLists.txt` (source list, required IDF components - `esp-idf-lpcore`
+also builds and embeds its LP-core program), and `sdkconfig.defaults` (the
+capability switches that decide which stacks are in the firmware at all).
 
 ## Memory on the console
 
