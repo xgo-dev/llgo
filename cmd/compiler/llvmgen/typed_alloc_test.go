@@ -116,3 +116,54 @@ func TestTypedAllocatorSelection(t *testing.T) {
 		})
 	}
 }
+
+func TestAppendSliceFastPath(t *testing.T) {
+	target := &Target{GOOS: "linux", GOARCH: "amd64"}
+	t.Setenv("GOOS", target.GOOS)
+	t.Setenv("GOARCH", target.GOARCH)
+	prog := NewProgram(target)
+	defer prog.Dispose()
+	setTestRuntime(t, prog)
+	prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
+	pkg := prog.NewPackage("p", "example.com/appendfast")
+
+	byteSlice := prog.Type(types.NewSlice(types.Typ[types.Byte]), GoDecl)
+	emptyStructSlice := prog.Type(types.NewSlice(types.NewStruct(nil, nil)), GoDecl)
+	intSlice := prog.Type(types.NewSlice(types.Typ[types.Int]), GoDecl)
+
+	growCalled := 0
+	fn := pkg.NewFunc("p.cases", NoArgsNoRet, GoDecl)
+	b := fn.MakeBody(1)
+	bs := b.MakeSlice(byteSlice, prog.Val(0), prog.Val(8))
+	// Normal string append emits memmove + SliceAppend with onGrow callback.
+	b.AppendSlice(bs, b.Str("abcd"), func(Builder) { growCalled++ })
+	// Empty string literal is a compile-time no-op.
+	b.AppendSlice(bs, b.Str(""), nil)
+	// Nil slice skips dead fast path.
+	b.AppendSlice(prog.Nil(byteSlice), b.Str("hi"), nil)
+	// Constant zero-cap non-nil slice skips dead fast path.
+	zeroCap := Expr{llvm.ConstNamedStruct(byteSlice.ll, []llvm.Value{
+		prog.Nil(prog.VoidPtr()).impl, prog.Val(0).impl, prog.Val(0).impl,
+	}), byteSlice}
+	b.AppendSlice(zeroCap, b.Str("hi"), nil)
+	// Zero-sized elements skip memmove.
+	zs := b.MakeSlice(emptyStructSlice, prog.Val(0), prog.Val(4))
+	b.AppendSlice(zs, zs, nil)
+	// Direct pointer/element fallback in AppendSlice.
+	is := b.MakeSlice(intSlice, prog.Val(0), prog.Val(4))
+	elemPtr := b.Alloca(prog.IntVal(8, prog.Uintptr()))
+	b.AppendSlice(is, elemPtr, nil)
+	b.Return()
+	b.EndBuild()
+
+	if growCalled != 1 {
+		t.Fatalf("onGrow called %d times, want 1", growCalled)
+	}
+	ir := fn.impl.String()
+	if !strings.Contains(ir, "@llvm.memmove.") || !strings.Contains(ir, PkgRuntime+".SliceAppend\"") {
+		t.Fatalf("missing memmove or SliceAppend in IR:\n%s", ir)
+	}
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -24,6 +24,14 @@ const (
 	// MaxSSAValueWords matches cmd/compile's ssa.MaxStruct: a value may occupy
 	// at most this many pointer-sized words and still be SSAable.
 	MaxSSAValueWords = 4
+	// MaxNativeRecoverStackValueSize is the upper bound for promoting a
+	// recover-visible local aggregate to entry-frame stack storage on native
+	// amd64 and arm64 targets. Promoted recover slots require a volatile zero
+	// initialization and volatile owner accesses across SJLJ; up to 128 bytes
+	// covers bounded structs and small buffers measured in #3208, while larger
+	// captures remain on the heap because volatile zeroing, repeated volatile
+	// loads/stores, and stack roots can cost more than a heap allocation.
+	MaxNativeRecoverStackValueSize uint64 = 128
 
 	// HeaderSnapshotMD marks a reload after the frontend has copied a value
 	// and cleared its Wasm header padding in private storage.
@@ -36,6 +44,17 @@ const (
 // MaxSSAValueSize is cmd/compile's CanSSA size limit (MaxStruct * PtrSize).
 func MaxSSAValueSize(ptrSize int) uint64 {
 	return uint64(MaxSSAValueWords * ptrSize)
+}
+
+// MaxRecoverStackValueSize returns the maximum size of a recover-visible local
+// capture that may be promoted to entry-frame stack storage on goarch.
+func MaxRecoverStackValueSize(goarch string, ptrSize int) uint64 {
+	switch goarch {
+	case "arm64", "amd64":
+		return MaxNativeRecoverStackValueSize
+	default:
+		return MaxSSAValueSize(ptrSize)
+	}
 }
 
 // ShouldLowerArrayCopy reports whether a multi-element array should be copied

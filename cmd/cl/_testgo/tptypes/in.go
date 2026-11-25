@@ -238,7 +238,9 @@ func main() {
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
 // CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP4]], ptr %[[TMP5]], i64 %[[TMP6]], i64 8, i1 false)
+// CHECK:   call void @llvm.memmove.p0.p0.i64(ptr %{{[0-9]+}}, ptr %[[TMP5]], i64 %{{[0-9]+}}, i1 false)
+// CHECK:   call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP4]], ptr %[[TMP5]], i64 %[[TMP6]], i64 8, i1 false)
+// CHECK:   %[[TMP7:[0-9]+]] = phi %"{{.*}}/runtime/internal/runtime.Slice"
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP7]], ptr %[[TMP8]], align 8
 // CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
@@ -261,7 +263,9 @@ func main() {
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
 // CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP4]], ptr %[[TMP5]], i64 %[[TMP6]], i64 16, i1 true)
+// CHECK:   call void @llvm.memmove.p0.p0.i64(ptr %{{[0-9]+}}, ptr %[[TMP5]], i64 %{{[0-9]+}}, i1 false)
+// CHECK:   call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP4]], ptr %[[TMP5]], i64 %[[TMP6]], i64 16, i1 true)
+// CHECK:   %[[TMP7:[0-9]+]] = phi %"{{.*}}/runtime/internal/runtime.Slice"
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]string,string]", ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP7]], ptr %[[TMP8]], align 8
 // CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]string,string]", ptr %[[TMP0]], i32 0, i32 0
@@ -284,7 +288,9 @@ func main() {
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = load %"{{.*}}/runtime/internal/runtime.Slice", ptr %[[TMP2]], align 8
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 0
 // CHECK-NEXT:   %[[TMP6:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP4]], ptr %[[TMP5]], i64 %[[TMP6]], i64 8, i1 false)
+// CHECK:   call void @llvm.memmove.p0.p0.i64(ptr %{{[0-9]+}}, ptr %[[TMP5]], i64 %{{[0-9]+}}, i1 false)
+// CHECK:   call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.SliceAppend"(%"{{.*}}/runtime/internal/runtime.Slice" %[[TMP4]], ptr %[[TMP5]], i64 %[[TMP6]], i64 8, i1 false)
+// CHECK:   %[[TMP7:[0-9]+]] = phi %"{{.*}}/runtime/internal/runtime.Slice"
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0
 // CHECK-NEXT:   store %"{{.*}}/runtime/internal/runtime.Slice" %[[TMP7]], ptr %[[TMP8]], align 8
 // CHECK-NEXT:   %[[TMP9:[0-9]+]] = getelementptr inbounds nuw %"main.Slice{{\[\[}}]int,int]", ptr %[[TMP0]], i32 0, i32 0

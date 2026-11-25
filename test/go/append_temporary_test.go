@@ -29,6 +29,67 @@ func TestAppendBinaryWords(t *testing.T) {
 	}
 }
 
+type appendBytes []byte
+
+func appendFourBytes(dst appendBytes, src []byte) appendBytes {
+	return append(dst, src[1:5]...)
+}
+
+func TestAppendOverlapAndGrowth(t *testing.T) {
+	for _, capacity := range []int{2, 8} {
+		b := []byte{0, 1, 2, 3, 4, 5, 6, 7}
+		got := appendFourBytes(b[:2:capacity], b)
+		if want := []byte{0, 1, 1, 2, 3, 4}; !bytes.Equal(got, want) {
+			t.Fatalf("bytes capacity %d: got %v, want %v", capacity, got, want)
+		}
+		if (capacity == 8) != (&got[0] == &b[0]) {
+			t.Fatalf("bytes capacity %d: unexpected destination alias", capacity)
+		}
+
+		nums := []int{10, 20, 30, 40, 50, 60, 70, 80}
+		gotNums := append(nums[:2:capacity], nums[1:5]...)
+		wantNums := []int{10, 20, 20, 30, 40, 50}
+		if len(gotNums) != len(wantNums) {
+			t.Fatalf("ints capacity %d: len=%d, want %d", capacity, len(gotNums), len(wantNums))
+		}
+		for i, w := range wantNums {
+			if gotNums[i] != w {
+				t.Fatalf("ints capacity %d: got %v, want %v", capacity, gotNums, wantNums)
+			}
+		}
+		if (capacity == 8) != (&gotNums[0] == &nums[0]) {
+			t.Fatalf("ints capacity %d: unexpected destination alias", capacity)
+		}
+
+		strs := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
+		gotStrs := append(strs[:2:capacity], strs[1:5]...)
+		runtime.GC()
+		wantStrs := []string{"a", "b", "b", "c", "d", "e"}
+		for i, w := range wantStrs {
+			if gotStrs[i] != w {
+				t.Fatalf("strings capacity %d: got %v, want %v", capacity, gotStrs, wantStrs)
+			}
+		}
+	}
+
+	if got := append([]byte(nil), ""...); got != nil {
+		t.Fatalf("append(nil, \"\"...) = %v, want nil", got)
+	}
+	if got := append([]byte(nil), []byte{}...); got != nil {
+		t.Fatalf("append(nil, empty...) = %v, want nil", got)
+	}
+	if got := append(make([]byte, 0, 8), "hello"...); string(got) != "hello" {
+		t.Fatalf("append string = %q, want %q", got, "hello")
+	}
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("short source did not panic")
+		}
+	}()
+	appendFourBytes(make(appendBytes, 0, 8), []byte{0})
+}
+
 type appendTemporaryItem struct {
 	p    *int
 	a, b uint64
