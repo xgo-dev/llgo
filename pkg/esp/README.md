@@ -67,38 +67,49 @@ shared error base, pure Go, no glue, no build tags.
 
 ## Error model
 
-Every pkg/esp package reports failures as Go `error` values of the shared
-`pkg/esp/esperr` type:
+Every pkg/esp package reports failures as Go `error` values built from
+the shared `pkg/esp/esperr` base. The model is Go-idiomatic: each
+package defines text-first sentinels, wraps them with an operation
+prefix, and callers match with `errors.Is` and inspect with
+`errors.As`:
 
 ```go
-type Error struct {
-    Code int32  // the raw pipeline code (lwip errno, h_errno, negative
-                // mbedtls code, esp_err, or an internal 0x7Dxx/0x7Exx value)
-    Name string // the ErrName rendering, filled by the producing package
-}
+var ErrTooLong = esperr.New("esp/nvs: value too long")   // package sentinel
+esperr.Wrap("nvs: set string", nvs.ErrTooLong)           // guard with op context
+esperr.Coded(code, name)                                 // forwarded pipeline code
 ```
 
-`Error()` renders `"NAME (CODE)"`; the code stays inspectable, so old
-code that matched numbers (or named them through `net.ErrName`,
-`tls.ErrName`, `ws.ErrName`, `wifi.ErrName`) keeps working. `errors.Is`
-matches by pipeline code: the three transport sentinels
+- `esperr.New(text)` — a semantic sentinel: binding-side refusals
+  (not initialized, bad argument, closed, ...). `Error()` renders the
+  text plus the diagnostic code annotation when the sentinel carries
+  one (`"esp/nvs: value too long (code 29953)"`).
+- `esperr.Coded(code, name)` — a forwarded pipeline code (lwip errno,
+  h_errno, negative mbedtls code, esp_err) with its ErrName rendering;
+  `Error()` keeps the historical `"NAME (CODE)"` / `"esp error CODE"`
+  form, and the code stays inspectable via `.Code` or `esperr.Code(err)`,
+  so old code that matched numbers (or named them through `net.ErrName`,
+  `tls.ErrName`, `ws.ErrName`, `wifi.ErrName`) keeps working.
+- `esperr.Wrap(op, err)` — an operation prefix (`"tls: handshake: ..."`)
+  via a standard `Unwrap` chain.
+
+`errors.Is` matches by sentinel identity; every sentinel additionally
+carries its historical segment code as the `.Code` annotation, and a
+forwarded raw code satisfies `errors.Is` against the transport
+sentinels by code:
 
 ```go
-esperr.ErrClosed     // code EBADF 9   - a second Close, or a call on a closed conn
-esperr.ErrTimeout    // code ETIMEDOUT 116 - a deadline passed
-esperr.ErrWouldBlock // code EAGAIN 11 - poll-style give-up without a deadline
+esperr.ErrClosed     // EBADF 9       - a second Close, or a call on a closed conn
+esperr.ErrTimeout    // ETIMEDOUT 116 - a deadline passed
+esperr.ErrWouldBlock // EAGAIN 11     - poll-style give-up without a deadline
 ```
 
-are re-exported by `net`, `tls` and `ws`, and an `*esperr.Error` built
-from the raw errno satisfies `errors.Is` against them with no wrapping
-step. `net`/`tls` `Read` signal an orderly peer close with `esperr.ErrEOF`
-(the family's io.EOF counterpart, kept in-family because the stdlib `io`
-package drags the errors/reflect machinery into the bare-metal image;
-UDP has no EOF - `(0, nil)` there is a zero-length datagram). I/O shapes
-follow stdlib: `Read(p) (int, error)`,
-`Write(p) (int, error)` with partial writes reporting `(n, err)` (the
-pre-error model's `-ETIMEDOUT`-discards-the-count behavior is gone), and
-`Close` is idempotent (`ErrClosed`, no more raw EBADF).
+These are re-exported by `net`, `tls` and `ws`. `net`/`tls` `Read`
+signal an orderly peer close with `esperr.ErrEOF` (the family's io.EOF
+counterpart, kept in-family because the stdlib `io` package drags the
+errors/reflect machinery into the bare-metal image; UDP has no EOF -
+`(0, nil)` there is a zero-length datagram). I/O shapes follow stdlib:
+`Read(p) (int, error)`, `Write(p) (int, error)` with partial writes
+reporting `(n, err)`, and `Close` is idempotent (`ErrClosed`).
 
 Deliberate deviations, documented on each package: deadlines stay relative
 milliseconds (`SetDeadline(ms int32)`, not `time.Time` - never validated
@@ -108,17 +119,17 @@ up after one quantum with `ErrWouldBlock`; `tls.Write` stays
 all-or-nothing (record-layer property). The peripheral and wifi drivers
 wrap plain esp_err values (Name empty or from `wifi.ErrName`; the esp_err
 family keeps its own timeout code `0x107`, surfaced as `wifi.ErrTimeout`).
-Internal code segments, one per package so `errors.Is` can never mix two
-packages' meanings:
+Historical code segments, one per package. Since the Go-shape error
+migration `errors.Is` matches by sentinel identity (each package owns
+its sentinel values), so two packages' errors can never be confused;
+the segment codes below remain only as the diagnostic `.Code`
+annotation each sentinel carries:
 
 | Segment | Package | Values |
 |---------|---------|--------|
-
 | `0x72xx` | `temp` | `ErrNotInstalled` (`0x7201`, the glue's refusal for calls before Install) |
 | `0x73xx` | `touch` | `ErrNotInit` (`0x7301`, the glue's refusal for calls before Init) |
-
 | `0x74xx` | `espnow` | `ErrGlueABI` (`0x7401`; `0x7402+` reserved) |
-
 | `0x76xx` | `bt` | `ErrGlueABI`, `ErrNotReady`, `ErrBusy` (`0x7700+` = the A2DP domain; `0x7800+` reserved for HFP) |
 | `0x7Bxx` | `ble` | `ErrTimeout`, `ErrNotReady`, `ErrUnsupported`, `ErrBadUUID`, `ErrBadValue`, `ErrBusy`, `ErrBadProperty`, `ErrNotFound`, `ErrTooLong` |
 | `0x7C01` | `esperr` | the meta error (a wrapper with no pipeline code) |
