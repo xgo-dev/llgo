@@ -4,6 +4,7 @@ import (
 	"go/types"
 	"strings"
 
+	"github.com/xgo-dev/llgo/target"
 	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
@@ -169,28 +170,46 @@ const (
 	SIMDGaloisFieldAffineTransformInverse
 )
 
-// simdTagIndex recognizes the official zero-sized alignment/noncomparability
-// tag. Giving the tag native alignment propagates through defined types,
-// unnamed underlying structs, and every enclosing array or struct.
-func simdTagIndex(t types.Type) (int, bool) {
-	return lltypes.SIMDTagIndex(t)
+var simdShapeCtx = lltypes.NewContext(target.Spec{GOOS: "linux", GOARCH: "amd64"})
+
+func simdVectorLanes(typ types.Type) (*types.Array, *lltypes.SIMDVec, bool) {
+	if typ == nil {
+		return nil, nil, false
+	}
+	vec := simdShapeCtx.FromGo(typ).SIMDVec()
+	if vec == nil {
+		return nil, nil, false
+	}
+	named, ok := types.Unalias(typ).(*types.Named)
+	if !ok {
+		return nil, nil, false
+	}
+	st, ok := named.Underlying().(*types.Struct)
+	if !ok || st.NumFields() != 2 {
+		return nil, nil, false
+	}
+	lanes, ok := st.Field(1).Type().(*types.Array)
+	return lanes, vec, ok
 }
 
 // SIMDNumericShape validates the official numeric aggregate representation.
 // Keep storage knowledge here, separate from operation selection and features.
 func SIMDNumericShape(typ types.Type) (*types.Array, bool) {
-	return lltypes.SIMDNumericShape(typ)
+	lanes, vec, ok := simdVectorLanes(typ)
+	return lanes, ok && !vec.IsMask()
 }
 
 // SIMDMaskShape recognizes fixed-width SIMD masks. Masks use canonical zero
 // or all-one integer lanes, preserving their public Go storage representation.
 func SIMDMaskShape(typ types.Type) (*types.Array, bool) {
-	return lltypes.SIMDMaskShape(typ)
+	lanes, vec, ok := simdVectorLanes(typ)
+	return lanes, ok && vec.IsMask()
 }
 
 // SIMDVectorShape validates numeric and mask SIMD128/256/512 storage.
 func SIMDVectorShape(typ types.Type) (*types.Array, bool) {
-	return lltypes.SIMDVectorShape(typ)
+	lanes, _, ok := simdVectorLanes(typ)
+	return lanes, ok
 }
 
 func simdLanes(typ types.Type) *types.Array {

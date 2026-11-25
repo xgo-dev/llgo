@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -68,10 +69,11 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *wasiSizePruningInputs) {
 	inspect := func(pkg *types.Package, files []*ast.File) {
 		for _, file := range files {
 			for _, group := range file.Comments {
-				for _, comment := range group.List {
-					fields := strings.Fields(comment.Text)
-					if len(fields) >= 2 && fields[0] == "//go:linkname" {
-						exported[llvmgen.FullName(pkg, fields[1])] = true
+				for _, item := range directive.ParseGroup(group) {
+					if item.Name == "go:linkname" {
+						if local, _ := directive.ParseLinknameArgs(item.Args); local != "" {
+							exported[llvmgen.FullName(pkg, local)] = true
+						}
 					}
 				}
 			}
@@ -164,15 +166,8 @@ func opaqueGlobalInitPackage(ctx *context, exported map[string]bool, asmRoots *w
 		if !collectAsmGlobalInitReferences(ctx, pkg, exported, asmRoots) {
 			return pkg.PkgPath
 		}
-		if pkg.Types != nil {
-			for _, name := range []string{"LLGoFiles", "LLGoPackage"} {
-				if value, ok := pkg.Types.Scope().Lookup(name).(*types.Const); ok && value.Val().Kind() == constant.String {
-					text := constant.StringVal(value.Val())
-					if name == "LLGoFiles" && text != "" || name == "LLGoPackage" && strings.HasPrefix(text, "link") {
-						return pkg.PkgPath
-					}
-				}
-			}
+		if hasNativePackageDecls(pkg.Types) {
+			return pkg.PkgPath
 		}
 		for _, file := range pkg.Syntax {
 			for _, imp := range file.Imports {
@@ -216,6 +211,25 @@ func collectAsmGlobalInitReferences(ctx *context, pkg *packages.Package, exporte
 		tr.Module.Dispose()
 	}
 	return true
+}
+
+// hasNativePackageDecls reports whether pkg declares non-empty LLGoFiles or
+// an LLGoPackage link directive ("link" / "link:...").
+func hasNativePackageDecls(pkg *types.Package) bool {
+	if pkg == nil {
+		return false
+	}
+	scope := pkg.Scope()
+	if c, ok := scope.Lookup("LLGoFiles").(*types.Const); ok && c.Val().Kind() == constant.String && constant.StringVal(c.Val()) != "" {
+		return true
+	}
+	if c, ok := scope.Lookup("LLGoPackage").(*types.Const); ok && c.Val().Kind() == constant.String {
+		kind, _ := directive.ParsePackageKind(constant.StringVal(c.Val()))
+		if kind == directive.PkgLinkIR || kind == directive.PkgLinkExtern {
+			return true
+		}
+	}
+	return false
 }
 
 // canPruneWasmTypeMetadata shares the closed-program boundary with initializer

@@ -112,9 +112,19 @@ func (k PtrKind) String() string {
 type Type interface {
 	Underlying() Type
 	HasPtrData() bool
+	IsHostLayoutMarker() bool
+	HasHostLayout() bool
+	ContainsHostLayout() bool
+	ContainsSIMDStorage() bool
+	SIMDTagIndex() int
+	SIMDVec() *SIMDVec
 	String() string
-	GoType() gotypes.Type
+	goTypeRef() gotypes.Type
 	llTypeMarker()
+}
+
+func isStructsPkgPath(path string) bool {
+	return path == "structs" || path == "github.com/xgo-dev/llgo/runtime/internal/structs"
 }
 
 // Qualifier controls how named package-level objects are printed in TypeString
@@ -311,14 +321,20 @@ var Typ = [...]*Basic{
 	UntypedNil:     {kind: UntypedNil, info: IsUntyped, name: "untyped nil", goType: gotypes.Typ[gotypes.UntypedNil]},
 }
 
-func (b *Basic) Kind() BasicKind      { return b.kind }
-func (b *Basic) Info() BasicInfo      { return b.info }
-func (b *Basic) Name() string         { return b.name }
-func (b *Basic) Underlying() Type     { return b }
-func (b *Basic) GoType() gotypes.Type { return b.goType }
-func (b *Basic) llTypeMarker()        {}
-func (b *Basic) HasPtrData() bool     { return b.kind == String || b.kind == UnsafePointer }
-func (b *Basic) String() string       { return b.name }
+func (b *Basic) Kind() BasicKind         { return b.kind }
+func (b *Basic) Info() BasicInfo         { return b.info }
+func (b *Basic) Name() string            { return b.name }
+func (b *Basic) Underlying() Type        { return b }
+func (b *Basic) goTypeRef() gotypes.Type { return b.goType }
+func (b *Basic) llTypeMarker()           {}
+func (b *Basic) HasPtrData() bool        { return b.kind == String || b.kind == UnsafePointer }
+func (b *Basic) IsHostLayoutMarker() bool { return false }
+func (b *Basic) HasHostLayout() bool      { return false }
+func (b *Basic) ContainsHostLayout() bool { return false }
+func (b *Basic) ContainsSIMDStorage() bool { return false }
+func (b *Basic) SIMDTagIndex() int        { return -1 }
+func (b *Basic) SIMDVec() *SIMDVec        { return nil }
+func (b *Basic) String() string          { return b.name }
 
 // Pointer represents a typed pointer with an explicit GC/ownership PtrKind.
 type Pointer struct {
@@ -337,12 +353,18 @@ func NewPointerWithKind(elem Type, kind PtrKind) *Pointer {
 	return &Pointer{elem: elem, kind: kind}
 }
 
-func (p *Pointer) Elem() Type           { return p.elem }
-func (p *Pointer) Kind() PtrKind        { return p.kind }
-func (p *Pointer) Underlying() Type     { return p }
-func (p *Pointer) GoType() gotypes.Type { return p.goType }
-func (p *Pointer) llTypeMarker()        {}
-func (p *Pointer) HasPtrData() bool     { return p.kind != CPtr }
+func (p *Pointer) Elem() Type              { return p.elem }
+func (p *Pointer) Kind() PtrKind           { return p.kind }
+func (p *Pointer) Underlying() Type        { return p }
+func (p *Pointer) goTypeRef() gotypes.Type { return p.goType }
+func (p *Pointer) llTypeMarker()           {}
+func (p *Pointer) HasPtrData() bool        { return p.kind != CPtr }
+func (p *Pointer) IsHostLayoutMarker() bool { return false }
+func (p *Pointer) HasHostLayout() bool      { return false }
+func (p *Pointer) ContainsHostLayout() bool { return false }
+func (p *Pointer) ContainsSIMDStorage() bool { return false }
+func (p *Pointer) SIMDTagIndex() int        { return -1 }
+func (p *Pointer) SIMDVec() *SIMDVec        { return nil }
 func (p *Pointer) String() string {
 	elem := "<nil>"
 	if p.elem != nil {
@@ -377,10 +399,16 @@ func (t *Tuple) Len() int {
 	return len(t.vars)
 }
 
-func (t *Tuple) At(i int) *Var        { return t.vars[i] }
-func (t *Tuple) Underlying() Type     { return t }
-func (t *Tuple) GoType() gotypes.Type { return t.goType }
-func (t *Tuple) llTypeMarker()        {}
+func (t *Tuple) At(i int) *Var           { return t.vars[i] }
+func (t *Tuple) Underlying() Type        { return t }
+func (t *Tuple) goTypeRef() gotypes.Type { return t.goType }
+func (t *Tuple) llTypeMarker()           {}
+func (t *Tuple) IsHostLayoutMarker() bool { return false }
+func (t *Tuple) HasHostLayout() bool      { return false }
+func (t *Tuple) ContainsHostLayout() bool { return false }
+func (t *Tuple) ContainsSIMDStorage() bool { return false }
+func (t *Tuple) SIMDTagIndex() int        { return -1 }
+func (t *Tuple) SIMDVec() *SIMDVec        { return nil }
 func (t *Tuple) HasPtrData() bool {
 	if t == nil {
 		return false
@@ -493,10 +521,16 @@ func (s *Signature) IsNative() bool                 { return s.callConv.IsNative
 func (s *Signature) IsGoVariadic() bool             { return s.variadic && s.callConv.IsGo() }
 func (s *Signature) IsCVariadic() bool              { return s.variadic && s.callConv.IsNative() }
 func (s *Signature) IsPyVariadic() bool             { return s.variadic && s.callConv == Py }
-func (s *Signature) Underlying() Type               { return s }
-func (s *Signature) GoType() gotypes.Type           { return s.goType }
-func (s *Signature) llTypeMarker()                  {}
-func (s *Signature) HasPtrData() bool               { return s.callConv.IsClosure() }
+func (s *Signature) Underlying() Type         { return s }
+func (s *Signature) goTypeRef() gotypes.Type  { return s.goType }
+func (s *Signature) llTypeMarker()            {}
+func (s *Signature) HasPtrData() bool         { return s.callConv.IsClosure() }
+func (s *Signature) IsHostLayoutMarker() bool { return false }
+func (s *Signature) HasHostLayout() bool      { return false }
+func (s *Signature) ContainsHostLayout() bool { return false }
+func (s *Signature) ContainsSIMDStorage() bool { return false }
+func (s *Signature) SIMDTagIndex() int        { return -1 }
+func (s *Signature) SIMDVec() *SIMDVec        { return nil }
 
 func (s *Signature) String() string {
 	var b strings.Builder
@@ -544,12 +578,18 @@ type Slice struct {
 
 func NewSlice(elem Type) *Slice { return &Slice{elem: elem} }
 
-func (s *Slice) Elem() Type           { return s.elem }
-func (s *Slice) Underlying() Type     { return s }
-func (s *Slice) GoType() gotypes.Type { return s.goType }
-func (s *Slice) llTypeMarker()        {}
-func (s *Slice) HasPtrData() bool     { return true }
-func (s *Slice) String() string       { return "[]" + s.elem.String() }
+func (s *Slice) Elem() Type              { return s.elem }
+func (s *Slice) Underlying() Type        { return s }
+func (s *Slice) goTypeRef() gotypes.Type { return s.goType }
+func (s *Slice) llTypeMarker()           {}
+func (s *Slice) HasPtrData() bool        { return true }
+func (s *Slice) IsHostLayoutMarker() bool { return false }
+func (s *Slice) HasHostLayout() bool      { return false }
+func (s *Slice) ContainsHostLayout() bool { return false }
+func (s *Slice) ContainsSIMDStorage() bool { return false }
+func (s *Slice) SIMDTagIndex() int        { return -1 }
+func (s *Slice) SIMDVec() *SIMDVec        { return nil }
+func (s *Slice) String() string          { return "[]" + s.elem.String() }
 
 // Array represents a fixed-length array ([N]T). NativeStorage marks arrays
 // whose element storage follows C/native rules on targets such as Wasm32.
@@ -564,14 +604,20 @@ func NewArray(elem Type, length int64) *Array {
 	return &Array{elem: elem, length: length}
 }
 
-func (a *Array) Elem() Type           { return a.elem }
-func (a *Array) Len() int64           { return a.length }
-func (a *Array) NativeStorage() bool  { return a.nativeStorage }
-func (a *Array) Underlying() Type     { return a }
-func (a *Array) GoType() gotypes.Type { return a.goType }
-func (a *Array) llTypeMarker()        {}
-func (a *Array) HasPtrData() bool     { return a.length > 0 && a.elem != nil && a.elem.HasPtrData() }
-func (a *Array) String() string       { return fmt.Sprintf("[%d]%s", a.length, a.elem.String()) }
+func (a *Array) Elem() Type              { return a.elem }
+func (a *Array) Len() int64              { return a.length }
+func (a *Array) NativeStorage() bool     { return a.nativeStorage }
+func (a *Array) Underlying() Type        { return a }
+func (a *Array) goTypeRef() gotypes.Type { return a.goType }
+func (a *Array) llTypeMarker()           {}
+func (a *Array) HasPtrData() bool        { return a.length > 0 && a.elem != nil && a.elem.HasPtrData() }
+func (a *Array) IsHostLayoutMarker() bool { return false }
+func (a *Array) HasHostLayout() bool      { return false }
+func (a *Array) ContainsHostLayout() bool { return a.elem != nil && a.elem.ContainsHostLayout() }
+func (a *Array) ContainsSIMDStorage() bool { return a.elem != nil && a.elem.ContainsSIMDStorage() }
+func (a *Array) SIMDTagIndex() int        { return -1 }
+func (a *Array) SIMDVec() *SIMDVec        { return nil }
+func (a *Array) String() string          { return fmt.Sprintf("[%d]%s", a.length, a.elem.String()) }
 
 // Map represents a Go map type (map[K]V).
 type Map struct {
@@ -582,13 +628,19 @@ type Map struct {
 
 func NewMap(key, elem Type) *Map { return &Map{key: key, elem: elem} }
 
-func (m *Map) Key() Type            { return m.key }
-func (m *Map) Elem() Type           { return m.elem }
-func (m *Map) Underlying() Type     { return m }
-func (m *Map) GoType() gotypes.Type { return m.goType }
-func (m *Map) llTypeMarker()        {}
-func (m *Map) HasPtrData() bool     { return true }
-func (m *Map) String() string       { return "map[" + m.key.String() + "]" + m.elem.String() }
+func (m *Map) Key() Type               { return m.key }
+func (m *Map) Elem() Type              { return m.elem }
+func (m *Map) Underlying() Type        { return m }
+func (m *Map) goTypeRef() gotypes.Type { return m.goType }
+func (m *Map) llTypeMarker()           {}
+func (m *Map) HasPtrData() bool        { return true }
+func (m *Map) IsHostLayoutMarker() bool { return false }
+func (m *Map) HasHostLayout() bool      { return false }
+func (m *Map) ContainsHostLayout() bool { return false }
+func (m *Map) ContainsSIMDStorage() bool { return false }
+func (m *Map) SIMDTagIndex() int        { return -1 }
+func (m *Map) SIMDVec() *SIMDVec        { return nil }
+func (m *Map) String() string          { return "map[" + m.key.String() + "]" + m.elem.String() }
 
 // Chan represents a Go channel type.
 type Chan struct {
@@ -599,12 +651,18 @@ type Chan struct {
 
 func NewChan(dir ChanDir, elem Type) *Chan { return &Chan{dir: dir, elem: elem} }
 
-func (c *Chan) Dir() ChanDir         { return c.dir }
-func (c *Chan) Elem() Type           { return c.elem }
-func (c *Chan) Underlying() Type     { return c }
-func (c *Chan) GoType() gotypes.Type { return c.goType }
-func (c *Chan) llTypeMarker()        {}
-func (c *Chan) HasPtrData() bool     { return true }
+func (c *Chan) Dir() ChanDir            { return c.dir }
+func (c *Chan) Elem() Type              { return c.elem }
+func (c *Chan) Underlying() Type        { return c }
+func (c *Chan) goTypeRef() gotypes.Type { return c.goType }
+func (c *Chan) llTypeMarker()           {}
+func (c *Chan) HasPtrData() bool        { return true }
+func (c *Chan) IsHostLayoutMarker() bool { return false }
+func (c *Chan) HasHostLayout() bool      { return false }
+func (c *Chan) ContainsHostLayout() bool { return false }
+func (c *Chan) ContainsSIMDStorage() bool { return false }
+func (c *Chan) SIMDTagIndex() int        { return -1 }
+func (c *Chan) SIMDVec() *SIMDVec        { return nil }
 func (c *Chan) String() string {
 	switch c.dir {
 	case SendOnly:
@@ -686,11 +744,17 @@ func (t *Interface) Empty() bool {
 	t.resolve()
 	return len(t.methods) == 0 && len(t.embeddeds) == 0
 }
-func (t *Interface) Comparable() bool     { return t.comparable }
-func (t *Interface) Underlying() Type     { return t }
-func (t *Interface) GoType() gotypes.Type { return t.goType }
-func (t *Interface) llTypeMarker()        {}
-func (t *Interface) HasPtrData() bool     { return true }
+func (t *Interface) Comparable() bool         { return t.comparable }
+func (t *Interface) Underlying() Type         { return t }
+func (t *Interface) goTypeRef() gotypes.Type  { return t.goType }
+func (t *Interface) llTypeMarker()            {}
+func (t *Interface) HasPtrData() bool         { return true }
+func (t *Interface) IsHostLayoutMarker() bool { return false }
+func (t *Interface) HasHostLayout() bool      { return false }
+func (t *Interface) ContainsHostLayout() bool { return false }
+func (t *Interface) ContainsSIMDStorage() bool { return false }
+func (t *Interface) SIMDTagIndex() int        { return -1 }
+func (t *Interface) SIMDVec() *SIMDVec        { return nil }
 func (t *Interface) String() string {
 	t.resolve()
 	if len(t.methods) == 0 && len(t.embeddeds) == 0 {
@@ -731,9 +795,17 @@ func NewStruct(fields []*Var, tags []string) *Struct {
 		tagCopy = make([]string, len(tags))
 		copy(tagCopy, tags)
 	}
+	host := false
+	for _, f := range cp {
+		if f != nil && f.typ != nil && f.typ.IsHostLayoutMarker() {
+			host = true
+			break
+		}
+	}
 	return &Struct{
 		fields:       cp,
 		tags:         tagCopy,
+		hostLayout:   host,
 		simdTagIndex: -1,
 	}
 }
@@ -746,15 +818,49 @@ func (s *Struct) Tag(i int) string {
 	}
 	return ""
 }
-func (s *Struct) HostLayout() bool       { return s.hostLayout }
-func (s *Struct) NativeLayout() bool     { return s.nativeLayout }
-func (s *Struct) IsClosureStruct() bool  { return s.isClosureStruct }
-func (s *Struct) SIMDTagIndex() int      { return s.simdTagIndex }
-func (s *Struct) SetHostLayout(v bool)   { s.hostLayout = v }
-func (s *Struct) SetNativeLayout(v bool) { s.nativeLayout = v }
-func (s *Struct) Underlying() Type       { return s }
-func (s *Struct) GoType() gotypes.Type   { return s.goType }
-func (s *Struct) llTypeMarker()          {}
+func (s *Struct) HasHostLayout() bool      { return s.hostLayout }
+func (s *Struct) NativeLayout() bool       { return s.nativeLayout }
+func (s *Struct) IsClosureStruct() bool    { return s.isClosureStruct }
+func (s *Struct) SIMDTagIndex() int        { return s.simdTagIndex }
+func (s *Struct) SIMDVec() *SIMDVec        { return nil }
+func (s *Struct) SetHostLayout(v bool)     { s.hostLayout = v }
+func (s *Struct) SetNativeLayout(v bool)   { s.nativeLayout = v }
+func (s *Struct) Underlying() Type         { return s }
+func (s *Struct) goTypeRef() gotypes.Type  { return s.goType }
+func (s *Struct) llTypeMarker()            {}
+func (s *Struct) IsHostLayoutMarker() bool {
+	if len(s.fields) != 1 || s.fields[0] == nil || s.fields[0].name != "_" || s.fields[0].typ == nil {
+		return false
+	}
+	n, ok := Unalias(s.fields[0].typ).(*Named)
+	if !ok || n.obj == nil || n.obj.pkg == nil || !isStructsPkgPath(n.obj.pkg.path) || n.obj.name != "hostLayout" {
+		return false
+	}
+	body, ok := n.Underlying().(*Struct)
+	return ok && len(body.fields) == 0
+}
+func (s *Struct) ContainsHostLayout() bool {
+	if s.hostLayout {
+		return true
+	}
+	for _, f := range s.fields {
+		if f != nil && f.typ != nil && f.typ.ContainsHostLayout() {
+			return true
+		}
+	}
+	return false
+}
+func (s *Struct) ContainsSIMDStorage() bool {
+	if s.simdTagIndex >= 0 {
+		return true
+	}
+	for _, f := range s.fields {
+		if f != nil && f.typ != nil && f.typ.ContainsSIMDStorage() {
+			return true
+		}
+	}
+	return false
+}
 func (s *Struct) HasPtrData() bool {
 	for _, f := range s.fields {
 		if f != nil && f.typ != nil && f.typ.HasPtrData() {
@@ -836,15 +942,21 @@ func simdTagForBits(bits int) int {
 	}
 }
 
-func (v *SIMDVec) Elem() *Basic         { return v.elem }
-func (v *SIMDVec) Len() int             { return v.length }
-func (v *SIMDVec) IsMask() bool         { return v.isMask }
-func (v *SIMDVec) TagIndex() int        { return v.tagIndex }
-func (v *SIMDVec) BitWidth() int        { return basicBits(v.elem) * v.length }
-func (v *SIMDVec) Underlying() Type     { return v }
-func (v *SIMDVec) GoType() gotypes.Type { return v.goType }
-func (v *SIMDVec) llTypeMarker()        {}
-func (v *SIMDVec) HasPtrData() bool     { return false }
+func (v *SIMDVec) Elem() *Basic            { return v.elem }
+func (v *SIMDVec) Len() int                { return v.length }
+func (v *SIMDVec) IsMask() bool            { return v.isMask }
+func (v *SIMDVec) TagIndex() int           { return v.tagIndex }
+func (v *SIMDVec) BitWidth() int           { return basicBits(v.elem) * v.length }
+func (v *SIMDVec) Underlying() Type        { return v }
+func (v *SIMDVec) goTypeRef() gotypes.Type { return v.goType }
+func (v *SIMDVec) llTypeMarker()           {}
+func (v *SIMDVec) HasPtrData() bool        { return false }
+func (v *SIMDVec) IsHostLayoutMarker() bool { return false }
+func (v *SIMDVec) HasHostLayout() bool      { return false }
+func (v *SIMDVec) ContainsHostLayout() bool { return false }
+func (v *SIMDVec) ContainsSIMDStorage() bool { return true }
+func (v *SIMDVec) SIMDTagIndex() int        { return -1 }
+func (v *SIMDVec) SIMDVec() *SIMDVec        { return v }
 func (v *SIMDVec) String() string {
 	prefix := "vec"
 	if v.isMask {
@@ -953,9 +1065,48 @@ func (n *Named) AddMethod(m *Func) {
 func (n *Named) CallConv() CallConv        { return n.callConv }
 func (n *Named) HasExplicitCallConv() bool { return n.hasCallConv }
 
-func (n *Named) HostLayout() bool {
+func (n *Named) IsHostLayoutMarker() bool {
+	if n.obj != nil && n.obj.pkg != nil && isStructsPkgPath(n.obj.pkg.path) && n.obj.name == "HostLayout" {
+		return true
+	}
 	n.resolve()
-	return n.hostLayout
+	if n.underlying == nil || n.underlying == n {
+		return false
+	}
+	return n.underlying.IsHostLayoutMarker()
+}
+
+func (n *Named) HasHostLayout() bool {
+	n.resolve()
+	if n.hostLayout {
+		return true
+	}
+	if n.underlying == nil || n.underlying == n {
+		return false
+	}
+	return n.underlying.HasHostLayout()
+}
+
+func (n *Named) ContainsHostLayout() bool {
+	n.resolve()
+	if n.hostLayout {
+		return true
+	}
+	if n.underlying == nil || n.underlying == n {
+		return false
+	}
+	return n.underlying.ContainsHostLayout()
+}
+
+func (n *Named) ContainsSIMDStorage() bool {
+	n.resolve()
+	if n.simdTagIndex >= 0 || n.simdVec != nil {
+		return true
+	}
+	if n.underlying == nil || n.underlying == n {
+		return false
+	}
+	return n.underlying.ContainsSIMDStorage()
 }
 
 func (n *Named) NativeLayout() bool {
@@ -973,8 +1124,8 @@ func (n *Named) SIMDVec() *SIMDVec {
 	return n.simdVec
 }
 
-func (n *Named) GoType() gotypes.Type { return n.goType }
-func (n *Named) llTypeMarker()        {}
+func (n *Named) goTypeRef() gotypes.Type { return n.goType }
+func (n *Named) llTypeMarker()           {}
 
 func (n *Named) SetUnderlying(u Type) {
 	n.underlying = u
@@ -1035,10 +1186,10 @@ func (a *Alias) Origin() *Alias {
 }
 func (a *Alias) TypeParams() *TypeParamList { return a.typeParams }
 func (a *Alias) TypeArgs() *TypeList        { return a.typeArgs }
-func (a *Alias) CallConv() CallConv         { return a.callConv }
-func (a *Alias) HasExplicitCallConv() bool  { return a.hasCallConv }
-func (a *Alias) GoType() gotypes.Type       { return a.goType }
-func (a *Alias) llTypeMarker()              {}
+func (a *Alias) CallConv() CallConv        { return a.callConv }
+func (a *Alias) HasExplicitCallConv() bool { return a.hasCallConv }
+func (a *Alias) goTypeRef() gotypes.Type   { return a.goType }
+func (a *Alias) llTypeMarker()             {}
 
 func (a *Alias) Underlying() Type {
 	if a.rhs == nil {
@@ -1052,6 +1203,48 @@ func (a *Alias) HasPtrData() bool {
 		return false
 	}
 	return a.rhs.HasPtrData()
+}
+
+func (a *Alias) IsHostLayoutMarker() bool {
+	if a.rhs == nil || a.rhs == a {
+		return false
+	}
+	return a.rhs.IsHostLayoutMarker()
+}
+
+func (a *Alias) HasHostLayout() bool {
+	if a.rhs == nil || a.rhs == a {
+		return false
+	}
+	return a.rhs.HasHostLayout()
+}
+
+func (a *Alias) ContainsHostLayout() bool {
+	if a.rhs == nil || a.rhs == a {
+		return false
+	}
+	return a.rhs.ContainsHostLayout()
+}
+
+func (a *Alias) ContainsSIMDStorage() bool {
+	if a.rhs == nil || a.rhs == a {
+		return false
+	}
+	return a.rhs.ContainsSIMDStorage()
+}
+
+func (a *Alias) SIMDTagIndex() int {
+	if a.rhs == nil || a.rhs == a {
+		return -1
+	}
+	return a.rhs.SIMDTagIndex()
+}
+
+func (a *Alias) SIMDVec() *SIMDVec {
+	if a.rhs == nil || a.rhs == a {
+		return nil
+	}
+	return a.rhs.SIMDVec()
 }
 
 func (a *Alias) String() string {
@@ -1084,9 +1277,15 @@ func (tp *TypeParam) Underlying() Type {
 	}
 	return tp
 }
-func (tp *TypeParam) HasPtrData() bool     { return true }
-func (tp *TypeParam) GoType() gotypes.Type { return tp.goType }
-func (tp *TypeParam) llTypeMarker()        {}
+func (tp *TypeParam) HasPtrData() bool         { return true }
+func (tp *TypeParam) IsHostLayoutMarker() bool { return false }
+func (tp *TypeParam) HasHostLayout() bool      { return false }
+func (tp *TypeParam) ContainsHostLayout() bool { return false }
+func (tp *TypeParam) ContainsSIMDStorage() bool { return false }
+func (tp *TypeParam) SIMDTagIndex() int        { return -1 }
+func (tp *TypeParam) SIMDVec() *SIMDVec        { return nil }
+func (tp *TypeParam) goTypeRef() gotypes.Type  { return tp.goType }
+func (tp *TypeParam) llTypeMarker()            {}
 func (tp *TypeParam) String() string {
 	if tp.obj != nil {
 		return tp.obj.name

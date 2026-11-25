@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/xgo-dev/llgo/directive"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -431,31 +432,21 @@ func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
 // Unlike cl/import.go directives, these are consumed only while constructing the
 // load-time overlay and are rewritten to plain comments before type checking.
 func parseSourcePatchDirective(line string) (skipAll bool, names []string, ok bool) {
-	const (
-		llgo1 = "//llgo:"
-		llgo2 = "// llgo:"
-		go1   = "//go:"
-	)
-	if strings.HasPrefix(line, go1) {
+	d, parsed := directive.Parse(&ast.Comment{Text: line})
+	if !parsed {
 		return false, nil, false
 	}
-	var tail string
-	switch {
-	case strings.HasPrefix(line, llgo1):
-		tail = line[len(llgo1):]
-	case strings.HasPrefix(line, llgo2):
-		tail = line[len(llgo2):]
-	default:
-		return false, nil, false
+	switch d.Name {
+	case "llgo:skipall":
+		if d.Args == "" {
+			return true, nil, true
+		}
+	case "llgo:skip":
+		if d.Args != "" {
+			return false, strings.Fields(d.Args), true
+		}
 	}
-	switch {
-	case tail == "skipall":
-		return true, nil, true
-	case strings.HasPrefix(tail, "skip "):
-		return false, strings.Fields(tail[len("skip "):]), true
-	default:
-		return false, nil, false
-	}
+	return false, nil, false
 }
 
 func sanitizeSourcePatchDirectiveLines(src []byte) []byte {

@@ -24,6 +24,8 @@ import (
 	gotypes "go/types"
 	"sort"
 	"strings"
+
+	"github.com/xgo-dev/llgo/directive"
 )
 
 // Object represents a named language entity (Func, Var, TypeName, Const,
@@ -37,7 +39,6 @@ type Object interface {
 	Exported() bool
 	Id() string
 	String() string
-	GoObject() gotypes.Object
 	llObjectMarker()
 }
 
@@ -90,14 +91,13 @@ type object struct {
 	goObj  gotypes.Object
 }
 
-func (o *object) Parent() *Scope           { return o.parent }
-func (o *object) Pos() token.Pos           { return o.pos }
-func (o *object) Pkg() *Package            { return o.pkg }
-func (o *object) Name() string             { return o.name }
-func (o *object) Type() Type               { return o.typ }
-func (o *object) Exported() bool           { return token.IsExported(o.name) }
-func (o *object) GoObject() gotypes.Object { return o.goObj }
-func (o *object) llObjectMarker()          {}
+func (o *object) Parent() *Scope { return o.parent }
+func (o *object) Pos() token.Pos { return o.pos }
+func (o *object) Pkg() *Package  { return o.pkg }
+func (o *object) Name() string   { return o.name }
+func (o *object) Type() Type     { return o.typ }
+func (o *object) Exported() bool { return token.IsExported(o.name) }
+func (o *object) llObjectMarker() {}
 
 func (o *object) Id() string {
 	return Id(o.pkg, o.name)
@@ -488,20 +488,49 @@ func NewPackage(path, name string) *Package {
 	return &Package{path: path, name: name, scope: scope}
 }
 
-func (p *Package) Path() string                { return p.path }
-func (p *Package) Name() string                { return p.name }
-func (p *Package) Scope() *Scope               { return p.scope }
-func (p *Package) Complete() bool              { return p.complete }
-func (p *Package) MarkComplete()               { p.complete = true }
-func (p *Package) Imports() []*Package         { return p.imports }
-func (p *Package) SetImports(list []*Package)  { p.imports = list }
-func (p *Package) GoPackage() *gotypes.Package { return p.goPkg }
+func (p *Package) Path() string               { return p.path }
+func (p *Package) Name() string               { return p.name }
+func (p *Package) Scope() *Scope              { return p.scope }
+func (p *Package) Complete() bool             { return p.complete }
+func (p *Package) MarkComplete()              { p.complete = true }
+func (p *Package) Imports() []*Package        { return p.imports }
+func (p *Package) SetImports(list []*Package) { p.imports = list }
 func (p *Package) Lookup(name string) Object {
 	if p == nil || p.scope == nil {
 		return nil
 	}
 	return p.scope.Lookup(name)
 }
+
+// PackageKind inspects p's package scope for an LLGoPackage constant and
+// classifies the package using directive.ParsePackageKind.
+func (p *Package) PackageKind() (directive.PackageKind, string) {
+	if p == nil || p.scope == nil {
+		return directive.PkgNormal, ""
+	}
+	if c, ok := p.scope.Lookup("LLGoPackage").(*Const); ok {
+		if v := c.Val(); v != nil && v.Kind() == constant.String {
+			return directive.ParsePackageKind(constant.StringVal(v))
+		}
+		return directive.PkgLLGo, ""
+	}
+	return directive.PkgNormal, ""
+}
+
+// LLGoFiles returns the string value of the LLGoFiles constant in p's package
+// scope, if declared.
+func (p *Package) LLGoFiles() (string, bool) {
+	if p == nil || p.scope == nil {
+		return "", false
+	}
+	if c, ok := p.scope.Lookup("LLGoFiles").(*Const); ok {
+		if v := c.Val(); v != nil && v.Kind() == constant.String {
+			return constant.StringVal(v), true
+		}
+	}
+	return "", false
+}
+
 func (p *Package) String() string {
 	return fmt.Sprintf("package %s (%q)", p.name, p.path)
 }
@@ -604,15 +633,6 @@ type Info struct {
 	Instances  map[*ast.Ident]Instance
 
 	goInfo *gotypes.Info
-}
-
-// GoInfo returns the provenance *gotypes.Info if this Info was lowered from
-// go/types, or nil for synthetic Info values.
-func (info *Info) GoInfo() *gotypes.Info {
-	if info == nil {
-		return nil
-	}
-	return info.goInfo
 }
 
 // TypeOf returns the LLGo Type of expression e, or nil if unknown.

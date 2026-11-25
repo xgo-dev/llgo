@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"go/token"
 	"go/types"
-	"strings"
 
-	"github.com/xgo-dev/llgo/target"
+	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -33,7 +32,7 @@ const nativeCallbackABIError = "C callback with a different ABI must be a direct
 // pointer can currently refer to an unadapted Go entry.
 func (p Program) nativeIntegerAttrs(sig *types.Signature, ft llvm.Type, add func(int, llvm.Attribute)) {
 	extension := p.nativeIntegerExt
-	if extension == nativeIntegerNoExt {
+	if extension == lltypes.NativeIntNoExt {
 		return
 	}
 	// This runs during SSA codegen, before cabi.TransformModule can reorder or
@@ -53,10 +52,10 @@ func (p Program) nativeIntegerAttrs(sig *types.Signature, ft llvm.Type, add func
 			return
 		}
 		width := physical.IntTypeWidth()
-		if width > 32 || width == 32 && extension != nativeIntegerRV64Ext {
+		if width > 32 || width == 32 && extension != lltypes.NativeIntRV64Ext {
 			return
 		}
-		if extension == nativeIntegerBoolExt && basic.Info()&types.IsBoolean == 0 {
+		if extension == lltypes.NativeIntBoolExt && basic.Info()&types.IsBoolean == 0 {
 			return
 		}
 		kind := nativeSignExtKind
@@ -72,48 +71,9 @@ func (p Program) nativeIntegerAttrs(sig *types.Signature, ft llvm.Type, add func
 	}
 }
 
-type nativeIntegerExtension uint8
-
-const (
-	nativeIntegerNoExt nativeIntegerExtension = iota
-	nativeIntegerNarrowExt
-	nativeIntegerBoolExt
-	nativeIntegerRV64Ext
-)
-
-func nativeIntegerExtensionForTarget(tgt *Target) nativeIntegerExtension {
-	// Named embedded targets may use GOARCH only for package selection (for
-	// example, RISC-V profiles use arm). Their ABI follows the physical triple,
-	// even when Spec retains a compatibility target for the host LLVM library.
-	triple := tgt.LLVMTarget
-	if triple == "" {
-		triple = tgt.Spec().Triple
-	}
-	triple = strings.ToLower(triple)
-	arch, _, _ := strings.Cut(triple, "-")
-	switch {
-	case arch == "arm64", arch == "arm64_32", arch == "aarch64", arch == "aarch64_be":
-		if target.IsDarwinTriple(triple) {
-			return nativeIntegerNarrowExt
-		}
-	case arch == "x86_64", arch == "amd64":
-		if strings.Contains(triple, "windows") || strings.Contains(triple, "win32") || strings.Contains(triple, "mingw") {
-			return nativeIntegerBoolExt
-		}
-		return nativeIntegerNarrowExt
-	case arch == "riscv64":
-		return nativeIntegerRV64Ext
-	case arch == "riscv32", arch == "wasm32", arch == "wasm64",
-		arch == "x86", arch == "386", arch == "i386", arch == "i486", arch == "i586", arch == "i686",
-		strings.HasPrefix(arch, "arm"), strings.HasPrefix(arch, "thumb"):
-		return nativeIntegerNarrowExt
-	}
-	return nativeIntegerNoExt
-}
-
 func (b Builder) setNativeIntegerCallAttrs(call llvm.Value, fn Expr, sig *types.Signature, params []llvm.Value) {
 	extension := b.Prog.nativeIntegerExt
-	if extension == nativeIntegerNoExt {
+	if extension == lltypes.NativeIntNoExt {
 		return
 	}
 	ft := call.CalledFunctionType()
@@ -136,7 +96,7 @@ func (b Builder) setNativeIntegerCallAttrs(call llvm.Value, fn Expr, sig *types.
 			copyInteger(i+1, physical)
 		}
 	}
-	if extension == nativeIntegerRV64Ext && ft.IsFunctionVarArg() {
+	if extension == lltypes.NativeIntRV64Ext && ft.IsFunctionVarArg() {
 		// C's promoted int/unsigned int ellipsis arguments also use RV64's
 		// sign-extended 32-bit representation. They have no declaration slots.
 		for i := len(ft.ParamTypes()); i < len(params); i++ {
@@ -160,7 +120,7 @@ func (b Builder) needsNativeFuncval(fn Expr) bool {
 		return false
 	}
 	wasmNative := prog.isWasm32NativeCall(fn)
-	if !wasmNative && prog.nativeIntegerExt == nativeIntegerNoExt {
+	if !wasmNative && prog.nativeIntegerExt == lltypes.NativeIntNoExt {
 		return false
 	}
 	sig, native := prog.callSignature(fn)

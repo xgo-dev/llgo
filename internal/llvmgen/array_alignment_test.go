@@ -58,7 +58,7 @@ func TestGoArrayAccessAlignment(t *testing.T) {
 				{"pointer", types.NewArray(types.NewPointer(types.Typ[types.Byte]), 2), prog.PointerSize()},
 				{"native", types.NewArray(native, 2), int(prog.AlignOf(prog.Type(native, CDecl)))},
 				{"host", types.NewArray(host, 2), int(sizes.Alignof(host))},
-				{"vector", types.NewArray(vector, 2), int(prog.simdAlignments[0])},
+				{"vector", types.NewArray(vector, 2), int(prog.typeCtx.SIMDAlignment(0))},
 			} {
 				for _, viaField := range []bool{false, true} {
 					name := tc.name + "_pointer"

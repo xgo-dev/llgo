@@ -97,7 +97,7 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	pkg := types.NewPackage("example.com/cov", "cov")
 	pkg.MarkComplete()
 	pkg.SetImports([]*types.Package{types.NewPackage("unsafe", "unsafe")})
-	if pkg.GoPackage() != nil || pkg.Lookup("missing") != nil {
+	if pkg.Lookup("missing") != nil {
 		t.Fatal("unexpected Package defaults")
 	}
 
@@ -124,7 +124,7 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	}, []string{"json:\"a\"", ""})
 	st.SetHostLayout(true)
 	st.SetNativeLayout(false)
-	if st.NumFields() != 2 || st.Field(0).Name() != "A" || st.Tag(0) != "json:\"a\"" || st.Tag(5) != "" || !st.HostLayout() || st.NativeLayout() || st.IsClosureStruct() || st.SIMDTagIndex() != -1 || !st.HasPtrData() || st.String() == "" {
+	if st.NumFields() != 2 || st.Field(0).Name() != "A" || st.Tag(0) != "json:\"a\"" || st.Tag(5) != "" || !st.HasHostLayout() || !st.ContainsHostLayout() || st.NativeLayout() || st.IsClosureStruct() || st.SIMDTagIndex() != -1 || !st.HasPtrData() || st.String() == "" {
 		t.Fatalf("Struct = %v", st)
 	}
 	if types.NewStruct(nil, nil).String() != "struct{}" {
@@ -155,7 +155,7 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	mFn.SetSkip(false)
 	mFn.SetPyList(false)
 	named.AddMethod(mFn)
-	if named.Obj() != namedObj || named.Origin() != named || named.NumMethods() != 1 || named.Method(0) != mFn || named.HasExplicitCallConv() || named.HostLayout() || named.NativeLayout() || named.SIMDTagIndex() != -1 || named.SIMDVec() != nil || !named.HasPtrData() || named.String() == "" {
+	if named.Obj() != namedObj || named.Origin() != named || named.NumMethods() != 1 || named.Method(0) != mFn || named.HasExplicitCallConv() || !named.HasHostLayout() || !named.ContainsHostLayout() || named.NativeLayout() || named.SIMDTagIndex() != -1 || named.SIMDVec() != nil || !named.HasPtrData() || named.String() == "" {
 		t.Fatalf("Named = %v", named)
 	}
 
@@ -237,7 +237,6 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 		_ = o.Exported()
 		_ = o.Id()
 		_ = o.String()
-		_ = o.GoObject()
 	}
 	if sc.Insert(cObj) != cObj || sc.Len() != 6 || len(sc.Names()) != 6 || pkg.Scope().NumChildren() != 1 || pkg.Scope().Child(0) != sc {
 		t.Fatalf("Scope operations failed: len=%d", sc.Len())
@@ -294,9 +293,12 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 		t.Fatal("Identical checks failed")
 	}
 
-	// Context mutators & HostFieldLayout & FromGoObject & FromGoWithCallConv & StructFromGoFields.
+	// Context mutators, native metadata & HostFieldLayout & FromGoObject & FromGoWithCallConv.
 	ctx.SetSizes(8, 8)
 	ctx.InvalidateGoCache()
+	if aligns := ctx.SIMDAlignments(); aligns[0] != 16 {
+		t.Fatalf("SIMDAlignments = %v", aligns)
+	}
 	_ = ctx.HostFieldLayout(i64)
 	_ = ctx.HostFieldLayout(arr)
 	_ = ctx.HostFieldLayout(mSig)
@@ -328,11 +330,23 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 			t.Fatalf("FromGoObject(%T) returned nil", goObj)
 		}
 	}
-	sf := ctx.StructFromGoFields([]*gotypes.Var{
+	ctx.SetTypeCallConv("example.com/cov.Rec", types.CDecl)
+	if !ctx.HasNativeMetadata() {
+		t.Fatal("HasNativeMetadata = false after SetTypeCallConv")
+	}
+	if cc, ok := ctx.TypeCallConv("example.com/cov.Rec"); !ok || cc != types.CDecl {
+		t.Fatalf("TypeCallConv = (%v, %v)", cc, ok)
+	}
+	if cc, ok := ctx.NativeTypeCallConv(alias); !ok || cc != types.CDecl {
+		t.Fatalf("NativeTypeCallConv(alias) = (%v, %v)", cc, ok)
+	}
+	fnField := types.NewField(0, pkg, "fn", types.NewSignature(nil, nil, nil, false), false)
+	ctx.MarkNativeField(fnField)
+	ctx.SetNativeStructFields([]token.Pos{token.Pos(42)})
+	if sf := ctx.FromGoWithCallConv(gotypes.NewStruct([]*gotypes.Var{
 		gotypes.NewField(0, goPkg, "fn", goSig, false),
-	}, true)
-	if !sf.NativeLayout() || sf.Field(0).Type().(*types.Signature).CallConv() != types.CDecl {
-		t.Fatalf("StructFromGoFields native = %v", sf)
+	}, nil), types.CDecl).(*types.Struct); !sf.NativeLayout() || sf.Field(0).Type().(*types.Signature).CallConv() != types.CDecl {
+		t.Fatalf("FromGoWithCallConv native struct = %v", sf)
 	}
 
 	// Overflow edge cases in AggregateLayout & GCBitmap.
@@ -410,7 +424,7 @@ func TestCoverageFuncABITargetsAndSIMDShapes(t *testing.T) {
 		t.Fatal("ClassifyFuncABI(nil) != nil")
 	}
 
-	// SIMDNumericShape & SIMDMaskShape.
+	// SIMD Type methods on numeric/mask vectors and arrays.
 	spkg := gotypes.NewPackage("simd/archsimd", "archsimd")
 	v128 := gotypes.NewNamed(gotypes.NewTypeName(0, spkg, "v128", nil), gotypes.NewStruct([]*gotypes.Var{
 		gotypes.NewField(0, spkg, "_", gotypes.NewArray(gotypes.Typ[gotypes.Int8], 0), false),
@@ -426,23 +440,38 @@ func TestCoverageFuncABITargetsAndSIMDShapes(t *testing.T) {
 		gotypes.NewField(0, spkg, "_", v512, false),
 		gotypes.NewField(0, spkg, "x", gotypes.NewArray(gotypes.Typ[gotypes.Int64], 8), false),
 	}, nil), nil)
-	if _, ok := types.SIMDNumericShape(numVec); !ok {
-		t.Fatal("SIMDNumericShape(Float32x4) = false")
+	simdCtx := types.NewContext(target.Spec{GOOS: "linux", GOARCH: "amd64"})
+	llNum := simdCtx.FromGo(numVec)
+	llMask := simdCtx.FromGo(maskVec)
+	if v := llNum.SIMDVec(); v == nil || v.IsMask() || v.BitWidth() != 128 || v.SIMDVec() != v || v.SIMDTagIndex() != -1 || !v.ContainsSIMDStorage() {
+		t.Fatalf("Float32x4 SIMDVec = %+v", v)
 	}
-	if _, ok := types.SIMDMaskShape(maskVec); !ok {
-		t.Fatal("SIMDMaskShape(Mask64x8) = false")
+	if v := llMask.SIMDVec(); v == nil || !v.IsMask() || v.BitWidth() != 512 {
+		t.Fatalf("Mask64x8 SIMDVec = %+v", v)
 	}
-	if _, ok := types.SIMDMaskShape(numVec); ok {
-		t.Fatal("SIMDMaskShape accepted Float32x4")
+	if !simdCtx.FromGo(gotypes.NewArray(numVec, 2)).ContainsSIMDStorage() {
+		t.Fatal("[2]Float32x4.ContainsSIMDStorage() = false")
 	}
-	if _, ok := types.SIMDNumericShape(maskVec); ok {
-		t.Fatal("SIMDNumericShape accepted Mask64x8")
+	if simdCtx.FromGo(v128).SIMDTagIndex() != 0 || simdCtx.FromGo(v512).SIMDTagIndex() != 2 {
+		t.Fatal("v128/v512 SIMDTagIndex mismatch")
 	}
-	if !types.ContainsVectorStorage(gotypes.NewArray(numVec, 2)) || types.ContainsVectorStorage(nil) {
-		t.Fatal("ContainsVectorStorage failed")
-	}
-	if types.TypeContainsSIMDStorage(nil) || types.TypeContainsHostLayout(nil) || types.TypeIsHostLayoutMarker(nil) {
-		t.Fatal("nil TypeContains helpers should be false")
+	// Exercise Type predicate methods across all concrete types.
+	for _, typ := range []types.Type{
+		types.Typ[types.Int], types.NewPointer(types.Typ[types.Int]),
+		types.NewTuple(types.NewParam(0, nil, "a", types.Typ[types.Int])),
+		types.NewSignature(nil, nil, nil, false),
+		types.NewSlice(types.Typ[types.Int]),
+		types.NewArray(types.Typ[types.Int], 2),
+		types.NewMap(types.Typ[types.String], types.Typ[types.Int]),
+		types.NewChan(types.SendRecv, types.Typ[types.Int]),
+		types.NewInterfaceType(nil, nil),
+		types.NewStruct(nil, nil),
+		types.NewTypeParam(types.NewTypeName(0, nil, "T", nil), nil),
+		types.NewAlias(types.NewTypeName(0, nil, "A", nil), types.Typ[types.Int]),
+	} {
+		if typ.IsHostLayoutMarker() || typ.HasHostLayout() || typ.ContainsHostLayout() || typ.ContainsSIMDStorage() || typ.SIMDTagIndex() != -1 || typ.SIMDVec() != nil {
+			t.Fatalf("unexpected layout/SIMD predicate on %T", typ)
+		}
 	}
 
 	// Info lazy fallback & TypeAndValue methods.
@@ -463,8 +492,8 @@ func F() int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.GoInfo() == nil || len(info.InitOrder) != 1 {
-		t.Fatalf("unexpected Info: goInfo=%v initOrder=%d", info.GoInfo() != nil, len(info.InitOrder))
+	if len(info.InitOrder) != 1 {
+		t.Fatalf("unexpected Info: initOrder=%d", len(info.InitOrder))
 	}
 	for _, tv := range info.Types {
 		_ = tv.IsType()
@@ -475,7 +504,7 @@ func F() int {
 		_ = tv.HasOk()
 		_ = tv.IsBuiltin()
 	}
-	if (*types.Info)(nil).TypeOf(nil) != nil || (*types.Info)(nil).ObjectOf(nil) != nil || (*types.Info)(nil).GoInfo() != nil {
+	if (*types.Info)(nil).TypeOf(nil) != nil || (*types.Info)(nil).ObjectOf(nil) != nil {
 		t.Fatal("nil Info methods failed")
 	}
 }

@@ -2,9 +2,7 @@ package directive
 
 import (
 	"go/ast"
-	"go/constant"
 	"go/token"
-	"go/types"
 	"reflect"
 	"testing"
 )
@@ -84,11 +82,14 @@ func TestParseTypeCallConv(t *testing.T) {
 	if err != nil || res.CallConv != CallConvStdcall || !res.Deprecated || res.Replacement != "//llgo:stdcall" {
 		t.Fatalf("legacy stdcall = %+v, %v", res, err)
 	}
-	if _, err := ParseTypeCallConv(commentGroup("//llgo:cdecl extra")); err == nil {
-		t.Fatal("expected error for cdecl with args")
+	if res, err := ParseTypeCallConv(commentGroup("//llgo:cdecl extra")); err == nil || !res.Pos.IsValid() {
+		t.Fatalf("expected error with pos for cdecl with args, got (%+v, %v)", res, err)
 	}
-	if _, err := ParseTypeCallConv(commentGroup("//llgo:cdecl", "//llgo:stdcall")); err == nil {
-		t.Fatal("expected error for conflicting calling conventions")
+	if res, err := ParseTypeCallConv(commentGroup("//llgo:cdecl", "//llgo:stdcall")); err == nil || !res.Pos.IsValid() {
+		t.Fatalf("expected error with pos for conflicting calling conventions, got (%+v, %v)", res, err)
+	}
+	if res, err := ParseTypeCallConv(commentGroup("//llgo:cdecl", "//llgo:cdecl")); err == nil || !res.Pos.IsValid() {
+		t.Fatalf("expected error with pos for duplicate calling convention, got (%+v, %v)", res, err)
 	}
 }
 
@@ -97,8 +98,11 @@ func TestParseLocality(t *testing.T) {
 	if err != nil || loc != LocalityGoroutine || loc.String() != "gls" {
 		t.Fatalf("gls = %v, %v", loc, err)
 	}
-	if _, _, err := ParseLocality(commentGroup("//llgo:tls")); err == nil {
-		t.Fatal("expected error for legacy //llgo:tls")
+	if _, pos, err := ParseLocality(commentGroup("//llgo:threadlocal")); err == nil || !pos.IsValid() {
+		t.Fatalf("expected error with pos for legacy //llgo:threadlocal, got (%v, %v)", pos, err)
+	}
+	if _, pos, err := ParseLocality(commentGroup("//llgo:goroutinelocal")); err == nil || !pos.IsValid() {
+		t.Fatalf("expected error with pos for legacy //llgo:goroutinelocal, got (%v, %v)", pos, err)
 	}
 	if _, _, err := ParseLocality(commentGroup("//llgointernal:tls", "//llgointernal:gls")); err == nil {
 		t.Fatal("expected error for conflicting locality")
@@ -142,7 +146,7 @@ func TestParseSemanticHelpers(t *testing.T) {
 	}
 }
 
-func TestPackageKindAndFilesFromScope(t *testing.T) {
+func TestParsePackageKind(t *testing.T) {
 	cases := []struct {
 		in    string
 		kind  PackageKind
@@ -163,18 +167,5 @@ func TestPackageKindAndFilesFromScope(t *testing.T) {
 		if kind != tc.kind || param != tc.param {
 			t.Errorf("ParsePackageKind(%q) = (%v, %q), want (%v, %q)", tc.in, kind, param, tc.kind, tc.param)
 		}
-	}
-
-	pkg := types.NewPackage("example.com/c", "c")
-	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "LLGoPackage", types.Typ[types.UntypedString], constant.MakeString("link: -lfoo")))
-	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "LLGoFiles", types.Typ[types.UntypedString], constant.MakeString("a.c; b.c")))
-
-	kind, param := PackageKindFromScope(pkg.Scope())
-	if kind != PkgLinkExtern || param != " -lfoo" {
-		t.Fatalf("PackageKindFromScope = (%v, %q)", kind, param)
-	}
-	files, ok := LLGoFiles(pkg.Scope())
-	if !ok || files != "a.c; b.c" {
-		t.Fatalf("LLGoFiles = (%q, %v)", files, ok)
 	}
 }

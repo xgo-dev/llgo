@@ -22,6 +22,7 @@ import (
 	gotypes "go/types"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/target"
@@ -37,14 +38,6 @@ type ContextConfig struct {
 
 	// SIMDAlignments optionally overrides v128/v256/v512 alignments when non-zero.
 	SIMDAlignments [3]int64
-
-	// Optional metadata hooks for compiler frontends/backends that track
-	// per-package directive syntax outside Context.Check.
-	CallConvLookup            func(typeKey string) (CallConv, bool)
-	HasNativeMetadata         func() bool
-	NativeTypeDirective       func(gotypes.Type) (CallConv, bool)
-	HasLegacyNativeTypeLayout func(gotypes.Type) bool
-	NativeFields              func([]*gotypes.Var) bool
 }
 
 type ptrInternKey struct {
@@ -94,14 +87,13 @@ type Context struct {
 	hostBasicLayouts [UnsafePointer + 1]LayoutPair
 	simdAlignments   [3]int64
 
-	callConvLookup            func(typeKey string) (CallConv, bool)
-	hasNativeMetadata         func() bool
-	nativeTypeDirective       func(gotypes.Type) (CallConv, bool)
-	hasLegacyNativeTypeLayout func(gotypes.Type) bool
-	nativeFields              func([]*gotypes.Var) bool
-
-	// Registered type-level calling conventions (from Check pre-scan or SetTypeCallConv).
-	typeCallConvs map[string]CallConv
+	// Registered type-level calling conventions and native struct field markers
+	// (from Check pre-scan, SetTypeCallConv, SetNativeStructFields, MarkNativeField).
+	hasNativeMetadata  atomic.Bool
+	typeCallConvs      map[string]CallConv
+	nativeStructFields map[token.Pos]bool
+	nativeGoVars       map[gotypes.Object]bool
+	nativeVars         map[*Var]bool
 
 	// Interning tables.
 	anyType *Interface
@@ -150,31 +142,29 @@ func NewContextWithConfig(cfg ContextConfig) *Context {
 		simdAligns = DefaultSIMDAlignments(spec)
 	}
 	return &Context{
-		spec:                      spec,
-		hostBasicLayouts:          hostLayouts,
-		simdAlignments:            simdAligns,
-		callConvLookup:            cfg.CallConvLookup,
-		hasNativeMetadata:         cfg.HasNativeMetadata,
-		nativeTypeDirective:       cfg.NativeTypeDirective,
-		hasLegacyNativeTypeLayout: cfg.HasLegacyNativeTypeLayout,
-		nativeFields:              cfg.NativeFields,
-		typeCallConvs:             make(map[string]CallConv),
-		anyType:                   &Interface{resolved: true, comparable: true},
-		ptrs:                      make(map[ptrInternKey]*Pointer),
-		slices:                    make(map[Type]*Slice),
-		maps:                      make(map[mapInternKey]*Map),
-		chans:                     make(map[chanInternKey]*Chan),
-		arrays:                    make(map[arrayInternKey]*Array),
-		simds:                     make(map[simdInternKey]*SIMDVec),
-		goPkgs:                    make(map[*gotypes.Package]*Package),
-		goScopes:                  make(map[*gotypes.Scope]*Scope),
-		goObjs:                    make(map[gotypes.Object]Object),
-		goTypes:                   make(map[goTypeCacheKey]Type),
-		goNamed:                   make(map[*gotypes.Named]*Named),
-		goAliases:                 make(map[gotypes.Type]*Alias),
-		goTParams:                 make(map[*gotypes.TypeParam]*TypeParam),
-		layouts:                   make(map[Type]*Layout),
-		funcABIs:                  make(map[*Signature]*FuncABI),
+		spec:               spec,
+		hostBasicLayouts:   hostLayouts,
+		simdAlignments:     simdAligns,
+		typeCallConvs:      make(map[string]CallConv),
+		nativeStructFields: make(map[token.Pos]bool),
+		nativeGoVars:       make(map[gotypes.Object]bool),
+		nativeVars:         make(map[*Var]bool),
+		anyType:            &Interface{resolved: true, comparable: true},
+		ptrs:               make(map[ptrInternKey]*Pointer),
+		slices:             make(map[Type]*Slice),
+		maps:               make(map[mapInternKey]*Map),
+		chans:              make(map[chanInternKey]*Chan),
+		arrays:             make(map[arrayInternKey]*Array),
+		simds:              make(map[simdInternKey]*SIMDVec),
+		goPkgs:             make(map[*gotypes.Package]*Package),
+		goScopes:           make(map[*gotypes.Scope]*Scope),
+		goObjs:             make(map[gotypes.Object]Object),
+		goTypes:            make(map[goTypeCacheKey]Type),
+		goNamed:            make(map[*gotypes.Named]*Named),
+		goAliases:          make(map[gotypes.Type]*Alias),
+		goTParams:          make(map[*gotypes.TypeParam]*TypeParam),
+		layouts:            make(map[Type]*Layout),
+		funcABIs:           make(map[*Signature]*FuncABI),
 	}
 }
 
@@ -185,12 +175,108 @@ func (c *Context) Spec() target.Spec {
 	return c.spec
 }
 
+// SIMDAlignments returns the resolved v128/v256/v512 alignments of c.
+func (c *Context) SIMDAlignments() [3]int64 {
+	return c.simdAlignments
+}
+
+// HasNativeMetadata reports whether any native calling-convention type or
+// native struct field has been registered in c.
+func (c *Context) HasNativeMetadata() bool {
+	return c.hasNativeMetadata.Load()
+}
+
 // SetTypeCallConv registers a type-level calling convention directive (such as
 // //llgo:cdecl or //llgo:stdcall) by qualified type name ("pkg.Name") and
 // invalidates cached go/types lowerings so subsequent queries reflect it.
 func (c *Context) SetTypeCallConv(typeKey string, cc CallConv) {
 	c.mu.Lock()
 	c.typeCallConvs[typeKey] = cc
+	if cc.IsNative() {
+		c.hasNativeMetadata.Store(true)
+	}
+	c.resetGoCachesLocked()
+	c.mu.Unlock()
+}
+
+// TypeCallConv looks up a calling convention previously registered for typeKey.
+func (c *Context) TypeCallConv(typeKey string) (CallConv, bool) {
+	c.mu.RLock()
+	cc, ok := c.typeCallConvs[typeKey]
+	c.mu.RUnlock()
+	return cc, ok
+}
+
+// NativeTypeCallConv resolves the effective native calling convention attached
+// directly to t (walking *Alias chains before unaliasing).
+func (c *Context) NativeTypeCallConv(t Type) (CallConv, bool) {
+	if t == nil {
+		return Go, false
+	}
+	cur := t
+	for {
+		switch u := cur.(type) {
+		case *Named:
+			if u.hasCallConv && u.callConv.IsNative() {
+				return u.callConv, true
+			}
+			if key := typeNameKey(u.obj); key != "" && c.hasNativeMetadata.Load() {
+				if cc, ok := c.TypeCallConv(key); ok && cc.IsNative() {
+					return cc, true
+				}
+			}
+			return Go, false
+		case *Alias:
+			if u.hasCallConv && u.callConv.IsNative() {
+				return u.callConv, true
+			}
+			if key := typeNameKey(u.obj); key != "" && c.hasNativeMetadata.Load() {
+				if cc, ok := c.TypeCallConv(key); ok && cc.IsNative() {
+					return cc, true
+				}
+			}
+			if u.rhs == nil || u.rhs == cur {
+				return Go, false
+			}
+			cur = u.rhs
+		default:
+			return Go, false
+		}
+	}
+}
+
+// SetNativeStructFields registers source positions of fields belonging to
+// native structs (//llgo:cdecl / //llgo:stdcall) so Offsetsof can identify
+// native struct layouts even when invoked without the enclosing named type.
+func (c *Context) SetNativeStructFields(positions []token.Pos) {
+	c.mu.Lock()
+	changed := false
+	for _, pos := range positions {
+		if pos.IsValid() {
+			c.nativeStructFields[pos] = true
+			c.hasNativeMetadata.Store(true)
+			changed = true
+		}
+	}
+	if changed {
+		c.resetGoCachesLocked()
+	}
+	c.mu.Unlock()
+}
+
+// MarkNativeField marks a struct field (typically field 0 of a programmatically
+// constructed native struct without source positions) as belonging to a native
+// struct layout.
+func (c *Context) MarkNativeField(v *Var) {
+	if v == nil {
+		return
+	}
+	c.mu.Lock()
+	c.nativeVars[v] = true
+	if v.goObj != nil {
+		c.nativeGoVars[v.goObj] = true
+	}
+	c.hasNativeMetadata.Store(true)
 	c.resetGoCachesLocked()
 	c.mu.Unlock()
 }
@@ -389,6 +475,16 @@ func (c *Context) FuncABI(sig *Signature) *FuncABI {
 
 // --- Native Directive Helpers ---
 
+func typeNameKey(obj *TypeName) string {
+	if obj == nil {
+		return ""
+	}
+	if obj.pkg != nil && obj.pkg.path != "" {
+		return obj.pkg.path + "." + obj.name
+	}
+	return obj.name
+}
+
 func goTypeNameKey(obj *gotypes.TypeName) string {
 	if obj == nil {
 		return ""
@@ -400,10 +496,8 @@ func goTypeNameKey(obj *gotypes.TypeName) string {
 }
 
 func (c *Context) lookupTypeCallConvLocked(t gotypes.Type) (CallConv, bool) {
-	if c.nativeTypeDirective != nil {
-		if cc, ok := c.nativeTypeDirective(t); ok {
-			return cc, true
-		}
+	if len(c.typeCallConvs) == 0 {
+		return Go, false
 	}
 	cur := t
 	for {
@@ -418,14 +512,8 @@ func (c *Context) lookupTypeCallConvLocked(t gotypes.Type) (CallConv, bool) {
 			isAlias = true
 		}
 		if obj != nil {
-			key := goTypeNameKey(obj)
-			if cc, ok := c.typeCallConvs[key]; ok {
+			if cc, ok := c.typeCallConvs[goTypeNameKey(obj)]; ok {
 				return cc, true
-			}
-			if c.callConvLookup != nil {
-				if cc, ok := c.callConvLookup(key); ok {
-					return cc, true
-				}
 			}
 		}
 		if !isAlias || next == cur {
@@ -436,10 +524,7 @@ func (c *Context) lookupTypeCallConvLocked(t gotypes.Type) (CallConv, bool) {
 }
 
 func (c *Context) hasLegacyNativeLayoutLocked(raw gotypes.Type) bool {
-	if c.hasLegacyNativeTypeLayout != nil {
-		return c.hasLegacyNativeTypeLayout(raw)
-	}
-	if len(c.typeCallConvs) == 0 && c.callConvLookup == nil {
+	if !c.hasNativeMetadata.Load() {
 		return false
 	}
 	switch t := unaliasType(raw).(type) {
@@ -453,7 +538,34 @@ func (c *Context) hasLegacyNativeLayoutLocked(raw gotypes.Type) bool {
 }
 
 func (c *Context) hasNativeFieldsLocked(fields []*gotypes.Var) bool {
-	return c.nativeFields != nil && c.nativeFields(fields)
+	if len(fields) == 0 || !c.hasNativeMetadata.Load() {
+		return false
+	}
+	return c.nativeGoVars[fields[0]] || c.nativeStructFields[fields[0].Pos()]
+}
+
+func (c *Context) hasNativeFields(fields []*gotypes.Var) bool {
+	if len(fields) == 0 || !c.hasNativeMetadata.Load() {
+		return false
+	}
+	c.mu.RLock()
+	ok := c.nativeGoVars[fields[0]] || c.nativeStructFields[fields[0].Pos()]
+	c.mu.RUnlock()
+	return ok
+}
+
+func (c *Context) hasNativeLLFields(fields []*Var) bool {
+	if len(fields) == 0 || !c.hasNativeMetadata.Load() {
+		return false
+	}
+	f0 := fields[0]
+	if f0 == nil {
+		return false
+	}
+	c.mu.RLock()
+	ok := c.nativeVars[f0] || (f0.goObj != nil && c.nativeGoVars[f0.goObj]) || c.nativeStructFields[f0.pos]
+	c.mu.RUnlock()
+	return ok
 }
 
 func isGoClosureFields(fields []*gotypes.Var) bool {
@@ -503,18 +615,18 @@ func (c *Context) resolveNamedLocked(n *Named) {
 	}
 
 	tagIdx := -1
-	if idx, ok := SIMDTagIndex(gt); ok {
+	if idx, ok := goSIMDTagIndex(gt); ok {
 		tagIdx = idx
 	}
 	var vec *SIMDVec
-	if lanes, ok := SIMDVectorShape(gt); ok {
+	if lanes, ok := goSIMDVectorShape(gt); ok {
 		if elem, ok := lanes.Elem().(*gotypes.Basic); ok {
 			isMask := strings.HasPrefix(gt.Obj().Name(), "Mask")
 			vec = c.internSIMDLocked(elem.Kind(), int(lanes.Len()), isMask, gt)
 		}
 	}
 
-	host := HasHostLayout(gt)
+	host := goHasHostLayout(gt)
 	_, isUnderStruct := under.(*gotypes.Struct)
 	_, isUnderArray := under.(*gotypes.Array)
 	native := (isUnderStruct || isUnderArray) && ((n.hasCallConv && n.callConv.IsNative()) || c.hasLegacyNativeLayoutLocked(gt))
@@ -675,14 +787,6 @@ func (c *Context) FromGoWithCallConv(t gotypes.Type, cc CallConv) Type {
 	defer c.mu.Unlock()
 	c.checkIncompleteNamedLocked()
 	return c.fromGoLocked(t, cc, true)
-}
-
-// StructFromGoFields builds a transient LLGo *Struct from a bare go/types field
-// slice (used by callers inspecting struct field slices).
-func (c *Context) StructFromGoFields(fields []*gotypes.Var, forceNative bool) *Struct {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.structFromGoFieldsLocked(fields, nil, forceNative, nil)
 }
 
 func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Type {
@@ -885,7 +989,7 @@ func (c *Context) structFromGoFieldsLocked(fields []*gotypes.Var, tags []string,
 		case *gotypes.Basic, *gotypes.Pointer, *gotypes.Slice, *gotypes.Map, *gotypes.Chan, *gotypes.Signature, *gotypes.Interface:
 			continue
 		}
-		if IsHostLayoutMarker(ft) {
+		if goIsHostLayoutMarker(ft) {
 			host = true
 			break
 		}
@@ -1223,7 +1327,7 @@ func methodSetOf(c *Context, t Type) *MethodSet {
 		return &MethodSet{}
 	}
 	if c != nil {
-		if gt := t.GoType(); gt != nil {
+		if gt := t.goTypeRef(); gt != nil {
 			gms := gotypes.NewMethodSet(gt)
 			c.mu.Lock()
 			defer c.mu.Unlock()
@@ -1435,6 +1539,9 @@ func (c *Context) prescanTypeDirectives(pkgPath string, files []*ast.File) {
 						key = pkgPath + "." + key
 					}
 					c.typeCallConvs[key] = cc
+					if cc.IsNative() {
+						c.hasNativeMetadata.Store(true)
+					}
 					changed = true
 				}
 			}
@@ -1447,26 +1554,18 @@ func (c *Context) prescanTypeDirectives(pkgPath string, files []*ast.File) {
 }
 
 func parseTypeCallConvDirective(doc *ast.CommentGroup) (CallConv, bool) {
-	for _, d := range directive.ParseGroup(doc) {
-		switch d.Name {
-		case "llgo:cdecl":
-			if d.Args == "" {
-				return CDecl, true
-			}
-		case "llgo:stdcall":
-			if d.Args == "" {
-				return Stdcall, true
-			}
-		case "llgo:type":
-			switch strings.TrimSpace(d.Args) {
-			case "C":
-				return CDecl, true
-			case "stdcall":
-				return Stdcall, true
-			}
-		}
+	res, err := directive.ParseTypeCallConv(doc)
+	if err != nil {
+		return Go, false
 	}
-	return Go, false
+	switch res.CallConv {
+	case directive.CallConvC:
+		return CDecl, true
+	case directive.CallConvStdcall:
+		return Stdcall, true
+	default:
+		return Go, false
+	}
 }
 
 func (c *Context) bindDeclDirectives(pkg *Package, info *Info, files []*ast.File) {

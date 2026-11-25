@@ -20,6 +20,8 @@ import (
 	"go/token"
 	"go/types"
 	"testing"
+
+	lltypes "github.com/xgo-dev/llgo/types"
 )
 
 func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
@@ -57,7 +59,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if backend.tm.C == coordinator.tm.C {
 		t.Fatal("backend Program shares the coordinator TargetMachine")
 	}
-	if backend.packageSyntax != coordinator.packageSyntax || backend.localities != coordinator.localities {
+	if backend.packageSyntax != coordinator.packageSyntax || backend.localities != coordinator.localities || backend.typeCtx != coordinator.typeCtx {
 		t.Fatal("backend Program did not share prepared Go metadata")
 	}
 	if backend.gocvt.typs == nil || len(backend.gocvt.typs) != 0 || backend.named == nil || backend.abiSymbol == nil {
@@ -75,8 +77,8 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if !backend.HasClosureEnvDirective(fset, "example.com/p.Entry", token.Pos(7)) || !backend.PackageSyntaxParsed(pkg) {
 		t.Fatal("backend Program lost prepared syntax metadata")
 	}
-	if background, ok := backend.packageTypeCallConv("example.com/p.CType"); !ok || background != CDecl {
-		t.Fatalf("type background = (%v, %v), want (InC, true)", background, ok)
+	if background, ok := backend.typeCtx.TypeCallConv("example.com/p.CType"); !ok || background != lltypes.CDecl {
+		t.Fatalf("type background = (%v, %v), want (cdecl, true)", background, ok)
 	}
 	if locality, ok := backend.VariableLocality("example.com/p.Value"); !ok || locality.Locality != ThreadLocal {
 		t.Fatalf("locality = (%+v, %v), want ThreadLocal", locality, ok)

@@ -148,11 +148,8 @@ func (c *Context) Offsetsof(fields []*Var) []int64 {
 		return nil
 	}
 	st := NewStruct(fields, nil)
-	for _, f := range fields {
-		if TypeIsHostLayoutMarker(f.typ) {
-			st.hostLayout = true
-			break
-		}
+	if c.hasNativeLLFields(fields) {
+		st.nativeLayout = true
 	}
 	lay := c.computeStructLayout(st, modeGo)
 	out := make([]int64, len(lay.Fields))
@@ -595,11 +592,11 @@ func (c *Context) computeStructLayout(st *Struct, mode layoutMode) *Layout {
 	case mode == modeHostNative:
 		effectiveMode = modeHostNative
 		padTail = false
-	case !st.nativeLayout && c.HostUsesNativeGoLayout() && TypeContainsHostLayout(st):
+	case !st.nativeLayout && c.HostUsesNativeGoLayout() && st.ContainsHostLayout():
 		effectiveMode = modeHostNative
 		padTail = false
 	default:
-		if st.nativeLayout && TypeContainsSIMDStorage(st) {
+		if st.nativeLayout && st.ContainsSIMDStorage() {
 			padTail = false
 		}
 	}
@@ -845,10 +842,7 @@ func (g *goSizesAdapter) Offsetsof(fields []*gotypes.Var) []int64 {
 	if isGoClosureFields(fields) {
 		return []int64{0, int64(c.spec.WordSize)}
 	}
-	native := c.hasNativeFieldsLocked(fields)
-	if !native && n > 0 && c.hasNativeFieldsLocked(fields[:1]) {
-		native = true
-	}
+	native := c.hasNativeFields(fields)
 	host := false
 	containsHost := false
 	for _, f := range fields {
@@ -858,12 +852,12 @@ func (g *goSizesAdapter) Offsetsof(fields []*gotypes.Var) []int64 {
 		case *gotypes.Basic, *gotypes.Pointer, *gotypes.Slice, *gotypes.Map, *gotypes.Chan, *gotypes.Signature, *gotypes.Interface:
 			continue
 		}
-		if IsHostLayoutMarker(ft) {
+		if goIsHostLayoutMarker(ft) {
 			host = true
 			containsHost = true
 			break
 		}
-		if !containsHost && ContainsHostLayout(ft) {
+		if !containsHost && goContainsHostLayout(ft) {
 			containsHost = true
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -287,10 +288,12 @@ func TestVectorMapLoweringRejectsStorage(t *testing.T) {
 }
 
 func TestSIMDTagRejectsMalformedMarker(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
 	pkg := types.NewPackage("simd/archsimd", "archsimd")
 	for _, raw := range []types.Type{types.Typ[types.Int], types.NewStruct(nil, nil)} {
 		tag := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "v128", nil), raw, nil)
-		if _, ok := simdTagIndex(tag); ok {
+		if prog.typeCtx.FromGo(tag).SIMDTagIndex() >= 0 {
 			t.Fatalf("malformed marker accepted: %s", raw)
 		}
 	}
@@ -308,7 +311,7 @@ func TestVectorNativeFunctionFieldLayout(t *testing.T) {
 				types.NewField(token.NoPos, nil, "callback", NoArgsNoRet, false),
 				types.NewField(token.NoPos, nil, "byte", types.Typ[types.Byte], false),
 			}
-			st := prog.typeCtx.StructFromGoFields(fields, true)
+			st := prog.typeCtx.FromGoWithCallConv(types.NewStruct(fields, nil), lltypes.CDecl)
 			layout := prog.typeCtx.Layout(st)
 			wantByte := int64(16 + prog.ptrSize)
 			if !layout.HasSIMDStorage || layout.Size != 32 || layout.Align != 16 || len(layout.Fields) != 3 || layout.Fields[0].Offset != 0 || layout.Fields[1].Offset != 16 || layout.Fields[2].Offset != wantByte {

@@ -19,9 +19,7 @@ package directive
 import (
 	"fmt"
 	"go/ast"
-	"go/constant"
 	"go/token"
-	"go/types"
 	"strings"
 )
 
@@ -58,7 +56,8 @@ type TypeCallConvResult struct {
 
 // ParseTypeCallConv extracts the calling-convention directive attached to a
 // type declaration, rejecting arguments on //llgo:cdecl / //llgo:stdcall and
-// conflicting calling conventions in the same doc group.
+// multiple calling-convention directives in the same doc group.
+// On error, the returned TypeCallConvResult carries the offending directive Pos.
 func ParseTypeCallConv(doc *ast.CommentGroup) (TypeCallConvResult, error) {
 	var res TypeCallConvResult
 	for _, d := range ParseGroup(doc) {
@@ -68,12 +67,12 @@ func ParseTypeCallConv(doc *ast.CommentGroup) (TypeCallConvResult, error) {
 		switch d.Name {
 		case "llgo:cdecl":
 			if d.Args != "" {
-				return TypeCallConvResult{}, fmt.Errorf("//llgo:cdecl does not accept arguments")
+				return TypeCallConvResult{Pos: d.Pos}, fmt.Errorf("//llgo:cdecl does not accept arguments")
 			}
 			next, name = CallConvC, "//llgo:cdecl"
 		case "llgo:stdcall":
 			if d.Args != "" {
-				return TypeCallConvResult{}, fmt.Errorf("//llgo:stdcall does not accept arguments")
+				return TypeCallConvResult{Pos: d.Pos}, fmt.Errorf("//llgo:stdcall does not accept arguments")
 			}
 			next, name = CallConvStdcall, "//llgo:stdcall"
 		case "llgo:type":
@@ -88,17 +87,15 @@ func ParseTypeCallConv(doc *ast.CommentGroup) (TypeCallConvResult, error) {
 		default:
 			continue
 		}
-		if res.CallConv != CallConvNone && res.CallConv != next {
-			return TypeCallConvResult{}, fmt.Errorf("conflicting calling convention directives %s and %s", res.Directive, name)
+		if res.CallConv != CallConvNone {
+			return TypeCallConvResult{Pos: d.Pos}, fmt.Errorf("conflicting calling-convention directives on one type: %s and %s", res.Directive, name)
 		}
-		if res.CallConv == CallConvNone {
-			res = TypeCallConvResult{
-				CallConv:    next,
-				Directive:   name,
-				Replacement: replacement,
-				Deprecated:  deprecated,
-				Pos:         d.Pos,
-			}
+		res = TypeCallConvResult{
+			CallConv:    next,
+			Directive:   name,
+			Replacement: replacement,
+			Deprecated:  deprecated,
+			Pos:         d.Pos,
 		}
 	}
 	return res, nil
@@ -125,8 +122,9 @@ func (l Locality) String() string {
 	}
 }
 
-// ParseLocality extracts a locality directive from doc. Legacy //llgo:tls and
-// //llgo:gls spellings and conflicting directives return an error.
+// ParseLocality extracts a locality directive from doc. Legacy //llgo:threadlocal
+// and //llgo:goroutinelocal spellings, arguments, and conflicting directives
+// return an error along with the offending directive position.
 func ParseLocality(doc *ast.CommentGroup) (Locality, token.Pos, error) {
 	kind := LocalityNone
 	pos := token.NoPos
@@ -137,10 +135,10 @@ func ParseLocality(doc *ast.CommentGroup) (Locality, token.Pos, error) {
 			next = LocalityThread
 		case "llgointernal:gls":
 			next = LocalityGoroutine
-		case "llgo:tls":
-			return LocalityNone, d.Pos, fmt.Errorf("//llgo:tls is not supported; use //llgointernal:tls")
-		case "llgo:gls":
-			return LocalityNone, d.Pos, fmt.Errorf("//llgo:gls is not supported; use //llgointernal:gls")
+		case "llgo:threadlocal":
+			return LocalityNone, d.Pos, fmt.Errorf("//llgo:threadlocal is not supported; use //llgointernal:tls")
+		case "llgo:goroutinelocal":
+			return LocalityNone, d.Pos, fmt.Errorf("//llgo:goroutinelocal is not supported; use //llgointernal:gls")
 		default:
 			continue
 		}
@@ -148,7 +146,7 @@ func ParseLocality(doc *ast.CommentGroup) (Locality, token.Pos, error) {
 			return LocalityNone, d.Pos, fmt.Errorf("//%s does not accept arguments", d.Name)
 		}
 		if kind != LocalityNone && kind != next {
-			return LocalityNone, d.Pos, fmt.Errorf("conflicting locality directives")
+			return LocalityNone, d.Pos, fmt.Errorf("//llgointernal:tls and //llgointernal:gls cannot apply to the same variable declaration")
 		}
 		kind, pos = next, d.Pos
 	}
@@ -286,31 +284,4 @@ func ParsePackageKind(v string) (PackageKind, string) {
 		}
 	}
 	return PkgLLGo, ""
-}
-
-// PackageKindFromScope inspects a package scope for an LLGoPackage constant.
-func PackageKindFromScope(scope *types.Scope) (PackageKind, string) {
-	if scope == nil {
-		return PkgNormal, ""
-	}
-	if c, ok := scope.Lookup("LLGoPackage").(*types.Const); ok {
-		if v := c.Val(); v != nil && v.Kind() == constant.String {
-			return ParsePackageKind(constant.StringVal(v))
-		}
-		return PkgLLGo, ""
-	}
-	return PkgNormal, ""
-}
-
-// LLGoFiles returns the string value of the LLGoFiles constant in scope, if set.
-func LLGoFiles(scope *types.Scope) (string, bool) {
-	if scope == nil {
-		return "", false
-	}
-	if c, ok := scope.Lookup("LLGoFiles").(*types.Const); ok {
-		if v := c.Val(); v != nil && v.Kind() == constant.String {
-			return constant.StringVal(v), true
-		}
-	}
-	return "", false
 }

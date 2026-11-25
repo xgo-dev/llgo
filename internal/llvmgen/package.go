@@ -149,13 +149,10 @@ type aProgram struct {
 	// Canonical types and their native slot-width views map to the same view.
 	nativeStorage map[Type]Type
 	goWordSize    int
-	// Immutable target ABI alignments, safe to read during concurrent type checking.
-	simdAlignments   [3]int64
-	hostBasicLayouts [types.UnsafePointer + 1]lltypes.LayoutPair
-	typeCtx          *lltypes.Context
-	typeSizes        types.Sizes
+	typeCtx       *lltypes.Context
+	typeSizes     types.Sizes
 	// Resolve the physical C ABI once, outside declaration/call lowering.
-	nativeIntegerExt nativeIntegerExtension
+	nativeIntegerExt lltypes.NativeIntExt
 
 	intType   llvm.Type
 	int1Type  llvm.Type
@@ -288,22 +285,6 @@ type AbiTypeInfo struct {
 // A Program presents a program.
 type Program = *aProgram
 
-var arch32 = map[string]bool{
-	"386":    true,
-	"arm":    true,
-	"mips":   true,
-	"mipsle": true,
-	"s390x":  true,
-	"wasm":   true,
-}
-
-func is32Bits(arch string) bool {
-	if v, ok := arch32[arch]; ok {
-		return v
-	}
-	return false
-}
-
 // Dispose releases the LLVM resources owned by the program: the context
 // (and with it every module built in it), the target machine and the
 // target data. The Program and everything created from it must not be
@@ -323,6 +304,10 @@ func (p Program) Dispose() {
 
 // NewProgram creates a new program.
 func NewProgram(tgt *Target) Program {
+	return newProgram(tgt, nil)
+}
+
+func newProgram(tgt *Target, sharedTypeCtx *lltypes.Context) Program {
 	if tgt == nil {
 		tgt = &Target{
 			GOOS:   runtime.GOOS,
@@ -331,24 +316,28 @@ func NewProgram(tgt *Target) Program {
 	}
 	ctx := llvm.NewContext()
 	td, tm := tgt.targetInfo()
-	/*
-		arch := tgt.GOARCH
-		if arch == "" {
-			arch = runtime.GOARCH
-		}
-		sizes := types.SizesFor("gc", arch)
-
-		// TODO(xsw): Finalize may cause panic, so comment it.
-		ctx.Finalize()
-	*/
 	packageSyntax := newPackageSyntaxData()
 	ptrSize := td.PointerSize()
 	goWordSize := ptrSize
 	if tgt.effectiveGOARCH() == "wasm" && tgt.WasmProfile != "" {
 		goWordSize = 8
 	}
+	spec := target.ResolveSpec(target.Spec{
+		GOOS:         tgt.effectiveGOOS(),
+		GOARCH:       tgt.effectiveGOARCH(),
+		GO386:        tgt.GO386,
+		GOAMD64:      tgt.GOAMD64,
+		GOARM:        tgt.GOARM,
+		GOARM64:      tgt.GOARM64,
+		Name:         tgt.Target,
+		LLVMTarget:   tgt.LLVMTarget,
+		WasmProfile:  tgt.WasmProfile,
+		WasmProvider: tgt.WasmProvider,
+	})
+	spec.PtrSize = ptrSize
+	spec.WordSize = goWordSize
 	prog := &aProgram{
-		ctx: ctx, gocvt: newGoTypes(packageSyntax),
+		ctx:      ctx,
 		funcPtrs: make(map[types.Type]Type),
 		target:   tgt, td: td, tm: tm,
 		ptrSize: ptrSize, goWordSize: goWordSize,
@@ -356,53 +345,40 @@ func NewProgram(tgt *Target) Program {
 		packageSyntax: packageSyntax, localities: newLocalityInfos(),
 		abiSymbol:          make(map[string]*AbiSymbol),
 		debugInfoOptimized: tgt.effectiveOptLevel() != optlevel.O0,
-		nativeIntegerExt:   nativeIntegerExtensionForTarget(tgt),
-	}
-	for i, lanes := range []int{16, 32, 64} {
-		prog.simdAlignments[i] = int64(td.ABITypeAlignment(llvm.VectorType(ctx.Int8Type(), lanes)))
-		// Clang caps fixed-length AArch64 C vector alignment at 128 bits,
-		// even when LLVM's raw wide-vector type has a larger ABI alignment.
-		if tgt.effectiveGOARCH() == "arm64" {
-			prog.simdAlignments[i] = min(prog.simdAlignments[i], 16)
-		}
+		nativeIntegerExt:   lltypes.NativeIntExtForSpec(spec),
 	}
 	if prog.usesWideGoStorage() {
 		prog.nativeStorage = make(map[Type]Type)
 	}
-	// Freeze scalar host layouts before concurrent source type checking.
-	for kind := types.Bool; kind <= types.UnsafePointer; kind++ {
-		if kind == types.String {
-			continue
+	if sharedTypeCtx != nil {
+		prog.typeCtx = sharedTypeCtx
+	} else {
+		var simdAlignments [3]int64
+		for i, lanes := range []int{16, 32, 64} {
+			simdAlignments[i] = int64(td.ABITypeAlignment(llvm.VectorType(ctx.Int8Type(), lanes)))
+			// Clang caps fixed-length AArch64 C vector alignment at 128 bits,
+			// even when LLVM's raw wide-vector type has a larger ABI alignment.
+			if tgt.effectiveGOARCH() == "arm64" {
+				simdAlignments[i] = min(simdAlignments[i], 16)
+			}
 		}
-		raw := types.Typ[kind]
-		ll := prog.nativeStorageLLVMType(raw, prog.toType(raw).ll)
-		prog.hostBasicLayouts[kind] = lltypes.LayoutPair{Size: int64(td.TypeAllocSize(ll)), Align: int64(td.ABITypeAlignment(ll))}
+		// Freeze scalar host layouts before concurrent source type checking.
+		var hostBasicLayouts [types.UnsafePointer + 1]lltypes.LayoutPair
+		for kind := types.Bool; kind <= types.UnsafePointer; kind++ {
+			if kind == types.String {
+				continue
+			}
+			raw := types.Typ[kind]
+			ll := prog.nativeStorageLLVMType(raw, prog.toType(raw).ll)
+			hostBasicLayouts[kind] = lltypes.LayoutPair{Size: int64(td.TypeAllocSize(ll)), Align: int64(td.ABITypeAlignment(ll))}
+		}
+		prog.typeCtx = lltypes.NewContextWithConfig(lltypes.ContextConfig{
+			Spec:             spec,
+			HostBasicLayouts: hostBasicLayouts,
+			SIMDAlignments:   simdAlignments,
+		})
 	}
-	spec := target.ResolveSpec(target.Spec{
-		GOOS:         tgt.effectiveGOOS(),
-		GOARCH:       tgt.effectiveGOARCH(),
-		WasmProfile:  tgt.WasmProfile,
-		WasmProvider: tgt.WasmProvider,
-	})
-	spec.PtrSize = ptrSize
-	spec.WordSize = goWordSize
-	prog.typeCtx = lltypes.NewContextWithConfig(lltypes.ContextConfig{
-		Spec:             spec,
-		HostBasicLayouts: prog.hostBasicLayouts,
-		SIMDAlignments:   prog.simdAlignments,
-		HasNativeMetadata: func() bool {
-			return prog.packageSyntax.hasNativeTypeMetadata.Load()
-		},
-		NativeTypeDirective: func(t types.Type) (lltypes.CallConv, bool) {
-			return toLLCallConv(Program(prog).nativeTypeDirective(t))
-		},
-		HasLegacyNativeTypeLayout: func(raw types.Type) bool {
-			return Program(prog).hasLegacyNativeTypeLayout(raw)
-		},
-		NativeFields: func(fields []*types.Var) bool {
-			return Program(prog).nativeFields(fields)
-		},
-	})
+	prog.gocvt = newGoTypes(prog.typeCtx)
 	prog.typeSizes = prog.typeCtx.GoSizes()
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(unsafe.Pointer(prog)))
@@ -411,25 +387,20 @@ func NewProgram(tgt *Target) Program {
 }
 
 // NewBackendProgram creates a Program with fresh LLVM-owned state and the same
-// build configuration as p. Go-side package syntax and locality metadata are
-// shared directly; callers must finish preparing them before backend Programs
-// are created and use them read-only afterwards.
+// build configuration as p. Go-side package syntax, type context, and locality
+// metadata are shared directly; callers must finish preparing them before
+// backend Programs are created and use them read-only afterwards.
 func (p Program) NewBackendProgram() Program {
 	var target *Target
 	if p.target != nil {
 		targetCopy := *p.target
 		target = &targetCopy
 	}
-	backend := NewProgram(target)
+	backend := newProgram(target, p.typeCtx)
 	backend.sizes = p.sizes
-	if p.sizes != nil {
-		backend.syncTypeCtxSizes(p.sizes)
-	}
 	backend.rt, backend.rtget = p.rt, p.rtget
 	backend.py, backend.pyget = p.py, p.pyget
 	backend.packageSyntax = p.packageSyntax
-	backend.gocvt.packageSyntax = p.packageSyntax
-	backend.typeCtx.InvalidateGoCache()
 	backend.localities = p.localities
 	backend.enableGoGlobalDCE = p.enableGoGlobalDCE
 	backend.enableDeadcodeDrop = p.enableDeadcodeDrop
@@ -570,13 +541,21 @@ func (p Program) SetRuntime(runtime any) {
 // type or source positions. Source loaders instead call SetNativeStructFields
 // before type checking. Synthetic structs must not reuse registered fields.
 func (p Program) SetTypeCallConv(typFullName string, cc CallConv, fields ...*types.Var) {
-	syntax := p.packageSyntax
-	syntax.mu.Lock()
-	syntax.setTypeCallConv(typFullName, cc, fields)
-	syntax.mu.Unlock()
-	if p.typeCtx != nil {
-		p.typeCtx.InvalidateGoCache()
+	llCC, _ := toLLCallConv(cc)
+	p.typeCtx.SetTypeCallConv(typFullName, llCC)
+	if isNativeCallConv(cc) && len(fields) != 0 {
+		if v, ok := p.typeCtx.FromGoObject(fields[0]).(*lltypes.Var); ok {
+			p.typeCtx.MarkNativeField(v)
+		}
 	}
+}
+
+// SetNativeStructFields supplies the context missing from types.Sizes.Offsetsof:
+// its argument contains fields, but not their enclosing named struct. Positions
+// must be the valid field identifiers from the same parsed declarations as the
+// type calling convention, including the first field.
+func (p Program) SetNativeStructFields(positions []token.Pos) {
+	p.typeCtx.SetNativeStructFields(positions)
 }
 
 func (p Program) SetLinkname(name, link string) {

@@ -7,6 +7,8 @@ import (
 	"go/token"
 	"go/types"
 	"testing"
+
+	lltypes "github.com/xgo-dev/llgo/types"
 )
 
 func TestHostLayoutAddressableStorage(t *testing.T) {
@@ -98,7 +100,7 @@ func TestHostLayoutZeroSizedTail(t *testing.T) {
 			field := func(name string, typ types.Type) *types.Var {
 				return types.NewField(token.NoPos, nil, name, typ, false)
 			}
-			alignment := prog.hostBasicLayouts[types.Uint64].Align
+			alignment := prog.typeCtx.HostBasicLayout(lltypes.Uint64).Align
 			for _, tail := range []struct {
 				name string
 				typ  types.Type

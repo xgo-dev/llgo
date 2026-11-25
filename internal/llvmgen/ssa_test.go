@@ -2596,12 +2596,6 @@ func TestValFromDataKinds(t *testing.T) {
 }
 
 func TestPackageCoverageHelpers(t *testing.T) {
-	if !is32Bits("386") {
-		t.Fatal("is32Bits should return true for 386")
-	}
-	if is32Bits("amd64") {
-		t.Fatal("is32Bits should return false for amd64")
-	}
 	prog := NewProgram(nil)
 	_ = prog.CIntPtr()
 	pkg := prog.NewPackage("bar", "foo/bar")

@@ -245,26 +245,19 @@ func (p *context) initFiles(pkgPath string, files []*ast.File, cPkg bool) {
 // llgo:skip symbol1 symbol2 ...
 // llgo:skipall
 func (p *context) collectSkipNames(line string) bool {
-	const (
-		llgo1   = "//llgo:"
-		llgo2   = "// llgo:"
-		go1     = "//go:"
-		skip    = "skip"
-		skipAll = "skipall"
-	)
-	if strings.HasPrefix(line, go1) {
-		return true
-	}
-	var skipLine string
-	if strings.HasPrefix(line, llgo1) {
-		skipLine = line[len(llgo1):]
-	} else if strings.HasPrefix(line, llgo2) {
-		skipLine = line[len(llgo2):]
-	} else {
+	d, ok := directive.Parse(&ast.Comment{Text: line})
+	if !ok || (!strings.HasPrefix(d.Name, "go:") && !strings.HasPrefix(d.Name, "llgo:")) {
 		return false
 	}
-	if strings.HasPrefix(skipLine, skip) {
-		p.collectSkip(skipLine, len(skip))
+	switch d.Name {
+	case "llgo:skipall":
+		if d.Args == "" {
+			p.skipall = true
+		}
+	case "llgo:skip":
+		for _, name := range strings.Fields(d.Args) {
+			p.skips[name] = none{}
+		}
 	}
 	return true
 }
@@ -280,23 +273,6 @@ func (p *context) collectSkipNamesByDoc(doc *ast.CommentGroup) {
 	}
 }
 
-func (p *context) collectSkip(line string, prefix int) {
-	line = line[prefix:]
-	if line == "all" {
-		p.skipall = true
-		return
-	}
-	if len(line) == 0 || line[0] != ' ' {
-		return
-	}
-	names := strings.Split(line[1:], " ")
-	for _, name := range names {
-		if name != "" {
-			p.skips[name] = none{}
-		}
-	}
-}
-
 // collectDeclarationDirectives caches source metadata needed after the syntax
 // pass. funcPos is token.NoPos for non-function declarations.
 func collectDeclarationDirectives(prog llvmgen.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos) {
@@ -306,8 +282,6 @@ func collectDeclarationDirectives(prog llvmgen.Program, fset *token.FileSet, doc
 func collectDeclarationDirectivesWithOptions(prog llvmgen.Program, fset *token.FileSet, doc *ast.CommentGroup, fullName, inPkgName string, funcPos token.Pos, options Options) (bool, error) {
 	directives := directive.ParseGroup(doc)
 	linkCollected := false
-	hasClosureEnv := false
-	wasmImportSeen := false
 	for n := len(directives) - 1; n >= 0; n-- {
 		item := directives[n]
 		switch item.Name {
@@ -338,23 +312,15 @@ func collectDeclarationDirectivesWithOptions(prog llvmgen.Program, fset *token.F
 			prog.SetLinkname(fullName, item.Args)
 			prog.SetPackageExport(fullName, item.Args)
 			linkCollected = true
-		case "llgo:env":
-			if funcPos.IsValid() {
-				hasClosureEnv = true
-			}
-		case "go:wasmimport":
-			if !funcPos.IsValid() || wasmImportSeen {
-				continue
-			}
-			wasmImportSeen = true
-			fields := strings.Fields(item.Args)
-			if len(fields) == 2 {
-				prog.SetWasmImport(fullName, fields[0], fields[1])
-			}
 		}
 	}
-	if hasClosureEnv {
-		prog.SetClosureEnvDirective(fset, fullName, funcPos)
+	if funcPos.IsValid() {
+		if directive.HasClosureEnv(doc) {
+			prog.SetClosureEnvDirective(fset, fullName, funcPos)
+		}
+		if wi, ok, err := directive.ParseWasmImport(doc); ok && err == nil {
+			prog.SetWasmImport(fullName, wi.Module, wi.Name)
+		}
 	}
 	return linkCollected, nil
 }
@@ -430,12 +396,12 @@ func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string
 		return
 	}
 	for n := len(doc.List) - 1; n >= 0; n-- {
-		line := doc.List[n].Text
-		if line == "//go:nointerface" {
-			p.prog.SetNoInterfaceMethod(fullName)
+		d, ok := directive.Parse(doc.List[n])
+		if !ok || !strings.HasPrefix(d.Name, "go:") {
 			return
 		}
-		if !strings.HasPrefix(line, "//go:") {
+		if d.Name == "go:nointerface" && d.Args == "" {
+			p.prog.SetNoInterfaceMethod(fullName)
 			return
 		}
 	}
@@ -1122,27 +1088,27 @@ func validateInternalDirectives(fset *token.FileSet, pkgPath string, files []*as
 }
 
 func handleTypeDecl(prog llvmgen.Program, fset *token.FileSet, pkg *types.Package, decl *ast.GenDecl) error {
-	cc, err := typeCallConv(fset, decl.Doc)
+	res, err := directive.ParseTypeCallConv(decl.Doc)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s: %s", fset.Position(res.Pos), err)
 	}
-	if cc.bg == "" {
+	if res.CallConv == directive.CallConvNone {
 		return nil
 	}
 	if len(decl.Specs) != 1 {
-		return fmt.Errorf("%s: %s applies to a single type declaration, not a grouped type block", fset.Position(cc.pos), cc.name)
+		return fmt.Errorf("%s: %s applies to a single type declaration, not a grouped type block", fset.Position(res.Pos), res.Directive)
 	}
 	spec, ok := decl.Specs[0].(*ast.TypeSpec)
 	if !ok {
-		return fmt.Errorf("%s: %s applies to a type declaration", fset.Position(cc.pos), cc.name)
+		return fmt.Errorf("%s: %s applies to a type declaration", fset.Position(res.Pos), res.Directive)
 	}
 	// Emit the deprecation warning only after placement is validated, so an
 	// invalid use of a deprecated directive reports the placement error without
 	// also suggesting a replacement that would be equally invalid.
-	if cc.replacement != "" {
-		fmt.Fprintf(os.Stderr, "DEPRECATED: %s is deprecated at %s; use %s instead\n", cc.name, fset.Position(cc.pos), cc.replacement)
+	if res.Deprecated {
+		fmt.Fprintf(os.Stderr, "DEPRECATED: %s is deprecated at %s; use %s instead\n", res.Directive, fset.Position(res.Pos), res.Replacement)
 	}
-	prog.SetNativeTypeDecl(pkg, spec.Name.Name, toCallConv(cc.bg))
+	prog.SetNativeTypeDecl(pkg, spec.Name.Name, toCallConv(res.CallConv.String()))
 	if st, ok := spec.Type.(*ast.StructType); ok {
 		var positions []token.Pos
 		for _, field := range st.Fields.List {
@@ -1172,68 +1138,6 @@ func embeddedStructFieldPos(expr ast.Expr) token.Pos {
 		return embeddedStructFieldPos(expr.X)
 	}
 	return expr.Pos()
-}
-
-// Directive names, normalized by the directive package (the "//" / "// "
-// prefix and any arguments are stripped). These identify directive spellings;
-// they are distinct from the background values ("C" / "stdcall") they map to.
-const (
-	nameType    = "llgo:type"
-	nameCdecl   = "llgo:cdecl"
-	nameStdcall = "llgo:stdcall"
-)
-
-// callConv is the calling-convention directive resolved for a type declaration.
-type callConv struct {
-	bg          string    // normalized background value: "C", "stdcall", or ""
-	name        string    // human-readable directive spelling for diagnostics
-	pos         token.Pos // position of the directive comment
-	replacement string    // non-empty when the directive is deprecated: the spelling to use instead
-}
-
-// typeCallConv scans doc for calling-convention directives on a type
-// declaration. It recognizes the new //llgo:cdecl and //llgo:stdcall forms as
-// well as the deprecated //llgo:type C / //llgo:type stdcall forms. For the
-// deprecated forms it records the replacement spelling in the returned
-// callConv; the caller emits the deprecation warning only once placement is
-// validated. More than one calling-convention directive on the same
-// declaration is reported as an error.
-func typeCallConv(fset *token.FileSet, doc *ast.CommentGroup) (cc callConv, err error) {
-	seen := false
-	for _, d := range directive.ParseGroup(doc) {
-		var bg, name, replacement string
-		switch d.Name {
-		case nameCdecl:
-			if d.Args != "" {
-				return cc, fmt.Errorf("%s: //llgo:cdecl does not accept arguments", fset.Position(d.Pos))
-			}
-			bg, name = "C", "//llgo:cdecl"
-		case nameStdcall:
-			if d.Args != "" {
-				return cc, fmt.Errorf("%s: //llgo:stdcall does not accept arguments", fset.Position(d.Pos))
-			}
-			bg, name = "stdcall", "//llgo:stdcall"
-		case nameType:
-			// //llgo:type has other forms beyond the two calling-convention
-			// values; only C and stdcall are affected by this task.
-			switch d.Args {
-			case "C":
-				bg, name, replacement = "C", "//llgo:type C", "//llgo:cdecl"
-			case "stdcall":
-				bg, name, replacement = "stdcall", "//llgo:type stdcall", "//llgo:stdcall"
-			default:
-				continue
-			}
-		default:
-			continue
-		}
-		if seen {
-			return cc, fmt.Errorf("%s: conflicting calling-convention directives on one type: %s and %s", fset.Position(d.Pos), cc.name, name)
-		}
-		cc = callConv{bg: bg, name: name, pos: d.Pos, replacement: replacement}
-		seen = true
-	}
-	return cc, nil
 }
 
 func toCallConv(cc string) llvmgen.CallConv {

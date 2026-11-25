@@ -21,29 +21,30 @@ import (
 	"go/token"
 	"go/types"
 	"unsafe"
+
+	lltypes "github.com/xgo-dev/llgo/types"
 )
 
 // -----------------------------------------------------------------------------
 
 type goTypes struct {
 	// typs and cvtneed are owned by the single lowering goroutine for one
-	// Program. packageSyntax is prepared before backend lowering and shared
-	// read-only by Programs with independent LLVM contexts.
-	typs          map[unsafe.Pointer]unsafe.Pointer
-	cvtneed       map[*types.Named]conversionRequirement
-	packageSyntax *packageSyntaxData
+	// Program. typeCtx is prepared before backend lowering and shared
+	// across Programs with independent LLVM contexts.
+	typs    map[unsafe.Pointer]unsafe.Pointer
+	cvtneed map[*types.Named]conversionRequirement
+	typeCtx *lltypes.Context
 }
 
-func newGoTypes(syntax ...*packageSyntaxData) goTypes {
-	packageSyntax := newPackageSyntaxData()
-	if len(syntax) != 0 && syntax[0] != nil {
-		packageSyntax = syntax[0]
+func newGoTypes(ctx ...*lltypes.Context) goTypes {
+	var typeCtx *lltypes.Context
+	if len(ctx) != 0 {
+		typeCtx = ctx[0]
 	}
-	typs := make(map[unsafe.Pointer]unsafe.Pointer)
 	return goTypes{
-		typs:          typs,
-		cvtneed:       make(map[*types.Named]conversionRequirement),
-		packageSyntax: packageSyntax,
+		typs:    make(map[unsafe.Pointer]unsafe.Pointer),
+		cvtneed: make(map[*types.Named]conversionRequirement),
+		typeCtx: typeCtx,
 	}
 }
 
@@ -182,13 +183,19 @@ func typeNameLinkname(obj *types.TypeName) string {
 }
 
 func (p goTypes) shouldConvertAlias(t *types.Alias) bool {
-	background, ok := p.packageSyntax.typeCallConv(typeNameLinkname(t.Obj()))
-	return !ok || !isNativeCallConv(background)
+	if p.typeCtx == nil || !p.typeCtx.HasNativeMetadata() {
+		return true
+	}
+	cc, ok := p.typeCtx.TypeCallConv(typeNameLinkname(t.Obj()))
+	return !ok || !cc.IsNative()
 }
 
 func (p goTypes) shouldConvertNamed(t *types.Named) bool {
-	background, ok := p.packageSyntax.typeCallConv(namedLinkname(t))
-	return !ok || !isNativeCallConv(background)
+	if p.typeCtx == nil || !p.typeCtx.HasNativeMetadata() {
+		return true
+	}
+	cc, ok := p.typeCtx.TypeCallConv(namedLinkname(t))
+	return !ok || !cc.IsNative()
 }
 
 func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {

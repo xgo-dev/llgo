@@ -28,6 +28,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llgo/types"
 )
@@ -373,6 +374,22 @@ func TestSingleEngineLayoutsHostWasmSIMDAndOverflow(t *testing.T) {
 		if !armCtx.HostUsesNativeGoLayout() {
 			t.Fatal("expected arm HostUsesNativeGoLayout = true")
 		}
+		llHostMarker := armCtx.FromGo(hostMarker)
+		llGoSt := armCtx.FromGo(goSt)
+		llOuterSt := armCtx.FromGo(outerSt)
+		if !llHostMarker.IsHostLayoutMarker() || llGoSt.IsHostLayoutMarker() {
+			t.Fatalf("IsHostLayoutMarker mismatch: marker=%v st=%v", llHostMarker.IsHostLayoutMarker(), llGoSt.IsHostLayoutMarker())
+		}
+		if !llGoSt.HasHostLayout() || !llGoSt.ContainsHostLayout() || llOuterSt.HasHostLayout() || !llOuterSt.ContainsHostLayout() {
+			t.Fatalf("HostLayout methods mismatch: st=(%v,%v) outer=(%v,%v)", llGoSt.HasHostLayout(), llGoSt.ContainsHostLayout(), llOuterSt.HasHostLayout(), llOuterSt.ContainsHostLayout())
+		}
+		// Real stdlib shape: struct { _ structs.hostLayout } and defined types of it.
+		innerHost := gotypes.NewNamed(gotypes.NewTypeName(0, structsPkg, "hostLayout", nil), gotypes.NewStruct(nil, nil), nil)
+		realMarkerBody := gotypes.NewStruct([]*gotypes.Var{gotypes.NewField(0, structsPkg, "_", innerHost, false)}, nil)
+		myHost := gotypes.NewNamed(gotypes.NewTypeName(0, nil, "MyHost", nil), realMarkerBody, nil)
+		if !armCtx.FromGo(myHost).IsHostLayoutMarker() {
+			t.Fatal("defined type of real structs.HostLayout shape should be recognized as IsHostLayoutMarker")
+		}
 		armSizes := armCtx.GoSizes()
 		if got := armSizes.Alignof(goSt); got != 8 {
 			t.Fatalf("arm HostLayout Alignof = %d, want 8", got)
@@ -444,11 +461,19 @@ func TestSingleEngineLayoutsHostWasmSIMDAndOverflow(t *testing.T) {
 		)
 
 		amd64Ctx := types.NewContext(target.Spec{GOOS: "linux", GOARCH: "amd64"})
-		amdLay := amd64Ctx.Layout(amd64Ctx.FromGo(i32x8))
+		llV256 := amd64Ctx.FromGo(v256)
+		llI32x8 := amd64Ctx.FromGo(i32x8)
+		if llV256.SIMDTagIndex() != 1 || llV256.SIMDVec() != nil || !llV256.ContainsSIMDStorage() {
+			t.Fatalf("v256 SIMD methods mismatch: tag=%d vec=%v contains=%v", llV256.SIMDTagIndex(), llV256.SIMDVec(), llV256.ContainsSIMDStorage())
+		}
+		if llI32x8.SIMDTagIndex() != -1 || !llI32x8.ContainsSIMDStorage() {
+			t.Fatalf("Int32x8 SIMD methods mismatch: tag=%d contains=%v", llI32x8.SIMDTagIndex(), llI32x8.ContainsSIMDStorage())
+		}
+		amdLay := amd64Ctx.Layout(llI32x8)
 		if amdLay.Size != 32 || amdLay.Align != 32 || !amdLay.HasSIMDStorage {
 			t.Fatalf("amd64 Int32x8 layout = %+v", amdLay)
 		}
-		if vec := amd64Ctx.FromGo(i32x8).(*types.Named).SIMDVec(); vec == nil || vec.Len() != 8 || vec.BitWidth() != 256 || vec.IsMask() {
+		if vec := llI32x8.SIMDVec(); vec == nil || vec.Len() != 8 || vec.BitWidth() != 256 || vec.IsMask() {
 			t.Fatalf("Int32x8 SIMDVec = %+v", vec)
 		}
 
@@ -533,10 +558,39 @@ func TestFuncABIAndRuntimeMetadata(t *testing.T) {
 		t.Fatalf("win64 ABI = %+v", winABI)
 	}
 
-	// RV64 sign-extends both int32 and uint32.
+	// RV64 sign-extends both int32 and uint32; embedded physical triples override GOARCH.
 	rv64 := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "riscv64"})
 	if types.NativeIntExtForSpec(rv64) != types.NativeIntRV64Ext {
 		t.Fatal("riscv64 NativeIntExt mismatch")
+	}
+	esp32c3 := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "arm", LLVMTarget: "riscv32-esp-elf"})
+	if types.NativeIntExtForSpec(esp32c3) != types.NativeIntNarrowExt {
+		t.Fatal("riscv32 physical triple NativeIntExt mismatch")
+	}
+	winMinGW := target.ResolveSpec(target.Spec{GOOS: "windows", GOARCH: "amd64", LLVMTarget: "x86_64-w64-mingw32"})
+	if types.NativeIntExtForSpec(winMinGW) != types.NativeIntBoolExt {
+		t.Fatal("mingw64 physical triple NativeIntExt mismatch")
+	}
+	darwinTriple := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "arm64", LLVMTarget: "arm64-apple-macosx14.0.0"})
+	if types.NativeIntExtForSpec(darwinTriple) != types.NativeIntNarrowExt {
+		t.Fatal("darwin arm64 physical triple NativeIntExt mismatch")
+	}
+
+	// Package.PackageKind and Package.LLGoFiles speak native llgo/types.
+	cpkg := types.NewPackage("example.com/clib", "clib")
+	cpkg.Scope().Insert(types.NewConst(token.NoPos, cpkg, "LLGoPackage", types.Typ[types.UntypedString], constant.MakeString("link: -lm")))
+	cpkg.Scope().Insert(types.NewConst(token.NoPos, cpkg, "LLGoFiles", types.Typ[types.UntypedString], constant.MakeString("a.c; b.c")))
+	if kind, param := cpkg.PackageKind(); kind != directive.PkgLinkExtern || param != " -lm" {
+		t.Fatalf("Package.PackageKind = (%v, %q)", kind, param)
+	}
+	if files, ok := cpkg.LLGoFiles(); !ok || files != "a.c; b.c" {
+		t.Fatalf("Package.LLGoFiles = (%q, %v)", files, ok)
+	}
+	if kind, param := (*types.Package)(nil).PackageKind(); kind != directive.PkgNormal || param != "" {
+		t.Fatalf("nil Package.PackageKind = (%v, %q)", kind, param)
+	}
+	if files, ok := (*types.Package)(nil).LLGoFiles(); ok || files != "" {
+		t.Fatalf("nil Package.LLGoFiles = (%q, %v)", files, ok)
 	}
 
 	// DataKindOf & EqualName & IsRegularMemory.

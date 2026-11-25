@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/cl"
+	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/internal/frontcache"
 	"github.com/xgo-dev/llgo/internal/goescape"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -205,10 +206,8 @@ func (l *frontendTypeLoader) capture(pkg Package, record *frontendExport, index 
 	}
 	for _, file := range pkg.Syntax {
 		for _, group := range file.Comments {
-			for _, c := range group.List {
-				if strings.Contains(c.Text, "llgo:env") {
-					return
-				}
+			if directive.HasClosureEnv(group) {
+				return
 			}
 		}
 	}

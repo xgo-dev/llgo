@@ -82,7 +82,7 @@ func (b Builder) aggregateInit(ptr llvm.Value, t Type, flds ...llvm.Value) {
 }
 
 func (b Builder) wrapStructField(t Type, index int, value llvm.Value) llvm.Value {
-	if _, ok := simdTagIndex(t.RawType()); ok {
+	if b.Prog.typeCtx.FromGo(t.RawType()).SIMDTagIndex() >= 0 {
 		return llvm.ConstNull(t.ll.StructElementTypes()[index])
 	}
 	if t.kind == vkTuple && t.ll.StructElementTypes()[index] == b.Prog.aggregateElementType(t, index).ll {
@@ -106,7 +106,7 @@ func (b Builder) wrapStructField(t Type, index int, value llvm.Value) llvm.Value
 }
 
 func (b Builder) unwrapStructField(t Type, index int, value llvm.Value) llvm.Value {
-	if _, ok := simdTagIndex(t.RawType()); ok {
+	if b.Prog.typeCtx.FromGo(t.RawType()).SIMDTagIndex() >= 0 {
 		return b.Prog.Zero(b.Prog.Field(t, index)).impl
 	}
 	layout, ok := b.Prog.structLayout(t)

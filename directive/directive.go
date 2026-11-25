@@ -15,8 +15,8 @@
  */
 
 // Package directive parses Go and LLGo source directives (//llgo:*,
-// //llgointernal:*, //go:*, //export) and package-level LLGo constants
-// (LLGoPackage, LLGoFiles) in pure Go with zero LLVM or CGo dependencies.
+// //llgointernal:*, //go:*, //export) and classifies package-level LLGoPackage
+// values in pure Go with zero LLVM, CGo, or go/types dependencies.
 package directive
 
 import (

@@ -61,10 +61,43 @@ const (
 )
 
 // NativeIntExtForSpec determines the C ABI narrow-integer extension policy for
-// spec without inspecting LLVM IR.
+// spec without inspecting LLVM IR. Named embedded targets may use GOARCH only
+// for package selection (for example, RISC-V profiles use arm), so PhysicalTriple
+// / LLVMTarget / Triple takes precedence over GOARCH/GOOS when present.
 func NativeIntExtForSpec(spec target.Spec) NativeIntExt {
 	if spec.WordSize == 0 || spec.PtrSize == 0 {
 		spec = target.ResolveSpec(spec)
+	}
+	triple := spec.PhysicalTriple
+	if triple == "" {
+		triple = spec.LLVMTarget
+	}
+	if triple == "" {
+		triple = spec.Triple
+	}
+	if triple != "" {
+		triple = strings.ToLower(triple)
+		arch, _, _ := strings.Cut(triple, "-")
+		switch {
+		case arch == "arm64", arch == "arm64_32", arch == "aarch64", arch == "aarch64_be":
+			if target.IsDarwinTriple(triple) {
+				return NativeIntNarrowExt
+			}
+			return NativeIntNoExt
+		case arch == "x86_64", arch == "amd64":
+			if target.IsWindowsTriple(triple) {
+				return NativeIntBoolExt
+			}
+			return NativeIntNarrowExt
+		case arch == "riscv64":
+			return NativeIntRV64Ext
+		case arch == "riscv32", arch == "wasm32", arch == "wasm64",
+			arch == "x86", arch == "386", arch == "i386", arch == "i486", arch == "i586", arch == "i686",
+			strings.HasPrefix(arch, "arm"), strings.HasPrefix(arch, "thumb"):
+			return NativeIntNarrowExt
+		default:
+			return NativeIntNoExt
+		}
 	}
 	arch := strings.ToLower(spec.GOARCH)
 	goos := strings.ToLower(spec.GOOS)

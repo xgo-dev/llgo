@@ -2,9 +2,6 @@ package directive
 
 import (
 	"go/ast"
-	"go/constant"
-	"go/token"
-	"go/types"
 	"testing"
 )
 
@@ -34,11 +31,17 @@ func TestDirectiveSemanticsEdgeCases(t *testing.T) {
 	if _, err := ParseTypeCallConv(commentGroup("//llgo:cdecl", "//llgo:stdcall")); err == nil {
 		t.Fatal("expected error for conflicting calling conventions")
 	}
-	if _, _, err := ParseLocality(commentGroup("//llgo:tls")); err == nil {
-		t.Fatal("expected error for legacy //llgo:tls")
+	if _, err := ParseTypeCallConv(commentGroup("//llgo:type C", "//llgo:cdecl")); err == nil {
+		t.Fatal("expected error for duplicate calling convention")
 	}
-	if _, _, err := ParseLocality(commentGroup("//llgo:gls")); err == nil {
-		t.Fatal("expected error for legacy //llgo:gls")
+	if res, err := ParseTypeCallConv(commentGroup("//llgo:type Python")); err != nil || res.CallConv != CallConvNone {
+		t.Fatalf("unrelated //llgo:type = (%+v, %v)", res, err)
+	}
+	if _, _, err := ParseLocality(commentGroup("//llgo:threadlocal")); err == nil {
+		t.Fatal("expected error for legacy //llgo:threadlocal")
+	}
+	if _, _, err := ParseLocality(commentGroup("//llgo:goroutinelocal")); err == nil {
+		t.Fatal("expected error for legacy //llgo:goroutinelocal")
 	}
 	if _, _, err := ParseLocality(commentGroup("//llgointernal:tls extra")); err == nil {
 		t.Fatal("expected error for //llgointernal:tls with args")
@@ -54,22 +57,5 @@ func TestDirectiveSemanticsEdgeCases(t *testing.T) {
 	}
 	if HasClosureEnv(nil) {
 		t.Fatal("HasClosureEnv(nil) = true")
-	}
-
-	pkg := types.NewPackage("example.com/clib", "clib")
-	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "LLGoPackage", types.Typ[types.UntypedString], constant.MakeString("link: -lm")))
-	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "LLGoFiles", types.Typ[types.UntypedString], constant.MakeString("a.c;b.c")))
-	kind, param := PackageKindFromScope(pkg.Scope())
-	if kind != PkgLinkExtern || param != " -lm" {
-		t.Fatalf("PackageKindFromScope = (%v, %q), want (PkgLinkExtern, \" -lm\")", kind, param)
-	}
-	if got, ok := LLGoFiles(pkg.Scope()); !ok || got != "a.c;b.c" {
-		t.Fatalf("LLGoFiles() = (%q, %v), want (a.c;b.c, true)", got, ok)
-	}
-	if kind, param := PackageKindFromScope(nil); kind != PkgNormal || param != "" {
-		t.Fatalf("PackageKindFromScope(nil) = (%v, %q)", kind, param)
-	}
-	if got, ok := LLGoFiles(nil); ok || got != "" {
-		t.Fatalf("LLGoFiles(nil) = (%q, %v)", got, ok)
 	}
 }

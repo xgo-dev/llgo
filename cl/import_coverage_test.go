@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/llvmgen"
 )
@@ -57,13 +58,12 @@ func TestReplaceGoNameRuntimeBranch(t *testing.T) {
 }
 
 func TestTypeBackgroundAndParsePkgSyntaxCoverage(t *testing.T) {
-	callConvFset := token.NewFileSet()
 	callConvBg := func(doc *ast.CommentGroup) string {
-		cc, err := typeCallConv(callConvFset, doc)
+		res, err := directive.ParseTypeCallConv(doc)
 		if err != nil {
-			t.Fatalf("typeCallConv(%v) error: %v", doc, err)
+			t.Fatalf("ParseTypeCallConv(%v) error: %v", doc, err)
 		}
-		return cc.bg
+		return res.CallConv.String()
 	}
 
 	if got := callConvBg(nil); got != "" {

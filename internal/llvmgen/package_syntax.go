@@ -17,10 +17,8 @@
 package llvmgen
 
 import (
-	"go/token"
 	"go/types"
 	"sync"
-	"sync/atomic"
 )
 
 // packageSyntaxData is Go-owned metadata collected before LLVM package
@@ -28,18 +26,14 @@ import (
 // so those Programs can share it directly for concurrent read-only access.
 // One-shot compiler users keep the same Program-local mutation behavior.
 type packageSyntaxData struct {
-	mu                    sync.RWMutex
-	hasNativeTypeMetadata atomic.Bool
-	linknames             map[string]string
-	wasmImports           map[string]wasmImport
-	exports               map[string]string
-	closureEnvDirectives  map[closureEnvDirectiveKey]none
-	parsedPackages        map[*types.Package]struct{}
-	noInterface           map[string]none
-	typeCallConvs         map[string]CallConv
-	nativeTypes           []nativeTypeDecl
-	nativeStructFields    map[token.Pos]bool
-	nativeStructVars      map[*types.Var]bool
+	mu                   sync.RWMutex
+	linknames            map[string]string
+	wasmImports          map[string]wasmImport
+	exports              map[string]string
+	closureEnvDirectives map[closureEnvDirectiveKey]none
+	parsedPackages       map[*types.Package]struct{}
+	noInterface          map[string]none
+	nativeTypes          []nativeTypeDecl
 }
 
 func newPackageSyntaxData() *packageSyntaxData {
@@ -50,9 +44,6 @@ func newPackageSyntaxData() *packageSyntaxData {
 		closureEnvDirectives: make(map[closureEnvDirectiveKey]none),
 		parsedPackages:       make(map[*types.Package]struct{}),
 		noInterface:          make(map[string]none),
-		typeCallConvs:        make(map[string]CallConv),
-		nativeStructFields:   make(map[token.Pos]bool),
-		nativeStructVars:     make(map[*types.Var]bool),
 	}
 }
 
@@ -90,13 +81,6 @@ func (p Program) markPackageSyntaxParsed(pkg *types.Package) {
 	p.packageSyntax.mu.Unlock()
 }
 
-func (p Program) packageTypeCallConv(name string) (CallConv, bool) {
-	p.packageSyntax.mu.RLock()
-	background, ok := p.packageSyntax.typeCallConvs[name]
-	p.packageSyntax.mu.RUnlock()
-	return background, ok
-}
-
 type nativeTypeDecl struct {
 	pkg  *types.Package
 	name string
@@ -104,11 +88,11 @@ type nativeTypeDecl struct {
 
 // SetNativeTypeDecl records a source declaration before its underlying type is known.
 func (p Program) SetNativeTypeDecl(pkg *types.Package, name string, cc CallConv) {
+	p.SetTypeCallConv(pkg.Path()+"."+name, cc)
 	syntax := p.packageSyntax
 	syntax.mu.Lock()
-	defer syntax.mu.Unlock()
-	syntax.setTypeCallConv(pkg.Path()+"."+name, cc, nil)
 	syntax.nativeTypes = append(syntax.nativeTypes, nativeTypeDecl{pkg, name})
+	syntax.mu.Unlock()
 }
 
 // HasNativeFuncTypes reports whether a native callback can reach reflection.
@@ -128,22 +112,4 @@ func (p Program) HasNativeFuncTypes(visible map[*types.TypeName]bool) bool {
 		}
 	}
 	return false
-}
-
-// The caller holds p.mu while registering the declaration.
-func (p *packageSyntaxData) setTypeCallConv(name string, cc CallConv, fields []*types.Var) {
-	p.typeCallConvs[name] = cc
-	if isNativeCallConv(cc) {
-		if len(fields) != 0 {
-			p.nativeStructVars[fields[0]] = true
-		}
-		p.hasNativeTypeMetadata.Store(true)
-	}
-}
-
-func (p *packageSyntaxData) typeCallConv(name string) (CallConv, bool) {
-	p.mu.RLock()
-	background, ok := p.typeCallConvs[name]
-	p.mu.RUnlock()
-	return background, ok
 }

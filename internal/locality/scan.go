@@ -24,11 +24,6 @@ import (
 	"github.com/xgo-dev/llgo/directive"
 )
 
-const (
-	legacyThread    = "llgo:threadlocal"
-	legacyGoroutine = "llgo:goroutinelocal"
-)
-
 // Variable records locality metadata collected for one package variable.
 type Variable struct {
 	Name string
@@ -130,32 +125,18 @@ func ValidateFuncBody(fset *token.FileSet, body *ast.BlockStmt) error {
 
 // FromDoc returns the locality directive attached to doc.
 func FromDoc(fset *token.FileSet, doc *ast.CommentGroup) (Kind, token.Pos, error) {
-	var kind Kind
-	var pos token.Pos
-	for _, directive := range directive.ParseGroup(doc) {
-		var next Kind
-		switch directive.Name {
-		case "llgointernal:tls":
-			next = Thread
-		case "llgointernal:gls":
-			next = Goroutine
-		case legacyThread:
-			return None, token.NoPos, errorAt(fset, directive.Pos, "//%s is not supported; use %s", legacyThread, ThreadDirective)
-		case legacyGoroutine:
-			return None, token.NoPos, errorAt(fset, directive.Pos, "//%s is not supported; use %s", legacyGoroutine, GoroutineDirective)
-		default:
-			continue
-		}
-		if directive.Args != "" {
-			return None, token.NoPos, errorAt(fset, directive.Pos, "//%s does not accept arguments", directive.Name)
-		}
-		var err error
-		kind, pos, err = mergeAt(fset, kind, pos, next, directive.Pos)
-		if err != nil {
-			return None, token.NoPos, err
-		}
+	loc, pos, err := directive.ParseLocality(doc)
+	if err != nil {
+		return None, token.NoPos, errorAt(fset, pos, "%s", err)
 	}
-	return kind, pos, nil
+	switch loc {
+	case directive.LocalityThread:
+		return Thread, pos, nil
+	case directive.LocalityGoroutine:
+		return Goroutine, pos, nil
+	default:
+		return None, token.NoPos, nil
+	}
 }
 
 // ValidateDoc rejects a locality directive outside a package-level var.

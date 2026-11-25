@@ -645,7 +645,7 @@ func isPkgScope(parent, pkgScope *types.Scope) bool {
 }
 
 func (p Program) toNamed(raw *types.Named) Type {
-	if background, ok := p.packageTypeCallConv(namedLinkname(raw)); ok && background == Stdcall {
+	if cc, ok := p.typeCtx.TypeCallConv(namedLinkname(raw)); ok && cc == lltypes.Stdcall {
 		p.validateStdcallType(raw)
 	}
 	name := p.llvmNameOf(raw)
@@ -668,11 +668,11 @@ func (p Program) toNamed(raw *types.Named) Type {
 			break
 		}
 	}
-	if index, ok := simdTagIndex(raw); ok {
+	if index := p.typeCtx.FromGo(raw).SIMDTagIndex(); index >= 0 {
 		// Preserve the one-field, zero-size shape while making LLVM carry the
 		// target vector alignment into all aggregate storage.
 		ll := p.ctx.StructCreateNamed(name)
-		ll.StructSetBody([]llvm.Type{llvm.ArrayType(llvm.VectorType(p.tyInt8(), int(p.simdAlignments[index])), 0)}, false)
+		ll.StructSetBody([]llvm.Type{llvm.ArrayType(llvm.VectorType(p.tyInt8(), int(p.typeCtx.SIMDAlignment(index))), 0)}, false)
 		typ := &aType{ll, rawType{raw}, vkStruct}
 		p.named[name] = typ
 		return typ

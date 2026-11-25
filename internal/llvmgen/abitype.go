@@ -1036,7 +1036,7 @@ func (p Program) publicReflectFunc(t types.Type) *types.Signature {
 }
 
 func (p Program) publicReflectSignature(sig *types.Signature) *types.Signature {
-	if !p.packageSyntax.hasNativeTypeMetadata.Load() {
+	if !p.typeCtx.HasNativeMetadata() {
 		return sig
 	}
 	project := func(t *types.Tuple) *types.Tuple {

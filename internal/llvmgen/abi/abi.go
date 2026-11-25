@@ -102,11 +102,15 @@ func DataKindOf(raw types.Type, lvl int, is32Bits bool) (DataKind, types.Type, i
 	default:
 		panic("unknown type")
 	}
-	llT := defaultDataKindCtx.FromGo(raw)
-	dk, inner, depth := lltypes.DataKindOf(llT, is32Bits)
+	dk, _, depth := lltypes.DataKindOf(defaultDataKindCtx.FromGo(raw), is32Bits)
 	goInner := raw
-	if inner != nil && inner.GoType() != nil {
-		goInner = inner.GoType()
+	for i := 0; i < depth; i++ {
+		switch u := goInner.Underlying().(type) {
+		case *types.Struct:
+			goInner = u.Field(0).Type()
+		case *types.Array:
+			goInner = u.Elem()
+		}
 	}
 	return DataKind(dk), goInner, lvl + depth
 }

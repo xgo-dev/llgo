@@ -24,10 +24,10 @@ import (
 	"github.com/xgo-dev/llgo/target"
 )
 
-// IsHostLayoutMarker reports whether goT is structs.HostLayout (including
+// goIsHostLayoutMarker reports whether goT is structs.HostLayout (including
 // aliases and defined types of structs.HostLayout). HostLayout deliberately
 // does not propagate across nested struct boundaries.
-func IsHostLayoutMarker(goT gotypes.Type) bool {
+func goIsHostLayoutMarker(goT gotypes.Type) bool {
 	if goT == nil {
 		return false
 	}
@@ -35,7 +35,7 @@ func IsHostLayoutMarker(goT gotypes.Type) bool {
 	// `hostLayout` is an unexported empty struct in package `structs`.
 	if st, ok := goT.Underlying().(*gotypes.Struct); ok && st.NumFields() == 1 && st.Field(0).Name() == "_" {
 		if n, ok := unaliasType(st.Field(0).Type()).(*gotypes.Named); ok && n.Obj().Pkg() != nil &&
-			(n.Obj().Pkg().Path() == "structs" || n.Obj().Pkg().Path() == "github.com/xgo-dev/llgo/runtime/internal/structs") &&
+			isStructsPkgPath(n.Obj().Pkg().Path()) &&
 			n.Obj().Name() == "hostLayout" {
 			if body, ok := n.Underlying().(*gotypes.Struct); ok && body.NumFields() == 0 {
 				return true
@@ -44,16 +44,16 @@ func IsHostLayoutMarker(goT gotypes.Type) bool {
 	}
 	// Also accept synthetic test markers named structs.HostLayout directly.
 	if n, ok := unaliasType(goT).(*gotypes.Named); ok && n.Obj().Pkg() != nil &&
-		(n.Obj().Pkg().Path() == "structs" || n.Obj().Pkg().Path() == "github.com/xgo-dev/llgo/runtime/internal/structs") &&
+		isStructsPkgPath(n.Obj().Pkg().Path()) &&
 		n.Obj().Name() == "HostLayout" {
 		return true
 	}
 	return false
 }
 
-// HasHostLayout reports whether goT's underlying struct has a direct
+// goHasHostLayout reports whether goT's underlying struct has a direct
 // structs.HostLayout marker field.
-func HasHostLayout(goT gotypes.Type) bool {
+func goHasHostLayout(goT gotypes.Type) bool {
 	if goT == nil {
 		return false
 	}
@@ -62,82 +62,38 @@ func HasHostLayout(goT gotypes.Type) bool {
 		return false
 	}
 	for i := 0; i < st.NumFields(); i++ {
-		if IsHostLayoutMarker(st.Field(i).Type()) {
+		if goIsHostLayoutMarker(st.Field(i).Type()) {
 			return true
 		}
 	}
 	return false
 }
 
-// ContainsHostLayout reports whether goT is or transitively contains a
+// goContainsHostLayout reports whether goT is or transitively contains a
 // structs.HostLayout struct through fields or array elements.
-func ContainsHostLayout(goT gotypes.Type) bool {
+func goContainsHostLayout(goT gotypes.Type) bool {
 	if goT == nil {
 		return false
 	}
 	switch u := goT.Underlying().(type) {
 	case *gotypes.Struct:
-		if HasHostLayout(u) {
+		if goHasHostLayout(u) {
 			return true
 		}
 		for i := 0; i < u.NumFields(); i++ {
-			if ContainsHostLayout(u.Field(i).Type()) {
+			if goContainsHostLayout(u.Field(i).Type()) {
 				return true
 			}
 		}
 	case *gotypes.Array:
-		return ContainsHostLayout(u.Elem())
+		return goContainsHostLayout(u.Elem())
 	}
 	return false
 }
 
-// TypeIsHostLayoutMarker reports whether t is LLGo's representation of
-// structs.HostLayout.
-func TypeIsHostLayoutMarker(t Type) bool {
-	if t == nil {
-		return false
-	}
-	cur := Unalias(t)
-	for {
-		n, ok := cur.(*Named)
-		if !ok {
-			return false
-		}
-		if n.obj != nil && n.obj.pkg != nil && n.obj.pkg.path == "structs" && n.obj.name == "HostLayout" {
-			return true
-		}
-		if n.underlying == nil || n.underlying == cur {
-			return false
-		}
-		cur = Unalias(n.underlying)
-	}
-}
-
-// TypeContainsHostLayout reports whether an LLGo Type is or transitively
-// contains a structs.HostLayout struct.
-func TypeContainsHostLayout(t Type) bool {
-	if t == nil {
-		return false
-	}
-	switch u := t.Underlying().(type) {
-	case *Struct:
-		if u.hostLayout {
-			return true
-		}
-		for _, f := range u.fields {
-			if f != nil && TypeContainsHostLayout(f.typ) {
-				return true
-			}
-		}
-	case *Array:
-		return TypeContainsHostLayout(u.elem)
-	}
-	return false
-}
-
-// SIMDTagIndex recognizes simd/archsimd zero-sized vector alignment markers
+// goSIMDTagIndex recognizes simd/archsimd zero-sized vector alignment markers
 // (v128 -> 0, v256 -> 1, v512 -> 2).
-func SIMDTagIndex(t gotypes.Type) (int, bool) {
+func goSIMDTagIndex(t gotypes.Type) (int, bool) {
 	if t == nil {
 		return 0, false
 	}
@@ -165,64 +121,9 @@ func SIMDTagIndex(t gotypes.Type) (int, bool) {
 	return index, ok && a.Len() == 0
 }
 
-// ContainsVectorStorage reports whether t is or transitively contains a
-// simd/archsimd vector alignment marker through named types, arrays, or structs.
-func ContainsVectorStorage(t gotypes.Type) bool {
-	if t == nil {
-		return false
-	}
-	if _, ok := SIMDTagIndex(t); ok {
-		return true
-	}
-	switch u := unaliasType(t).(type) {
-	case *gotypes.Named:
-		return ContainsVectorStorage(u.Underlying())
-	case *gotypes.Array:
-		return ContainsVectorStorage(u.Elem())
-	case *gotypes.Struct:
-		for i := 0; i < u.NumFields(); i++ {
-			if ContainsVectorStorage(u.Field(i).Type()) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// TypeContainsSIMDStorage reports whether an LLGo Type is or transitively
-// contains SIMD vector storage or a simd/archsimd alignment tag.
-func TypeContainsSIMDStorage(t Type) bool {
-	if t == nil {
-		return false
-	}
-	switch u := Unalias(t).(type) {
-	case *SIMDVec:
-		return true
-	case *Named:
-		if u.SIMDTagIndex() >= 0 || u.SIMDVec() != nil {
-			return true
-		}
-		if under := u.Underlying(); under != nil && under != u {
-			return TypeContainsSIMDStorage(under)
-		}
-	case *Array:
-		return TypeContainsSIMDStorage(u.elem)
-	case *Struct:
-		if u.simdTagIndex >= 0 {
-			return true
-		}
-		for _, f := range u.fields {
-			if f != nil && TypeContainsSIMDStorage(f.typ) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// SIMDVectorShape validates numeric and mask SIMD128/256/512 storage in
+// goSIMDVectorShape validates numeric and mask SIMD128/256/512 storage in
 // simd/archsimd and returns its underlying lane array.
-func SIMDVectorShape(typ gotypes.Type) (*gotypes.Array, bool) {
+func goSIMDVectorShape(typ gotypes.Type) (*gotypes.Array, bool) {
 	if typ == nil {
 		return nil, false
 	}
@@ -274,35 +175,11 @@ func SIMDVectorShape(typ gotypes.Type) (*gotypes.Array, bool) {
 	default:
 		return nil, false
 	}
-	tag, ok := SIMDTagIndex(st.Field(0).Type())
+	tag, ok := goSIMDTagIndex(st.Field(0).Type())
 	if !ok || tag != wantTag {
 		return nil, false
 	}
 	return lanes, true
-}
-
-// SIMDNumericShape validates non-mask simd/archsimd numeric vectors.
-func SIMDNumericShape(typ gotypes.Type) (*gotypes.Array, bool) {
-	if typ == nil {
-		return nil, false
-	}
-	named, ok := unaliasType(typ).(*gotypes.Named)
-	if !ok || strings.HasPrefix(named.Obj().Name(), "Mask") {
-		return nil, false
-	}
-	return SIMDVectorShape(typ)
-}
-
-// SIMDMaskShape validates simd/archsimd mask vectors.
-func SIMDMaskShape(typ gotypes.Type) (*gotypes.Array, bool) {
-	if typ == nil {
-		return nil, false
-	}
-	named, ok := unaliasType(typ).(*gotypes.Named)
-	if !ok || !strings.HasPrefix(named.Obj().Name(), "Mask") {
-		return nil, false
-	}
-	return SIMDVectorShape(typ)
 }
 
 // DefaultSIMDAlignments returns target-accurate vector alignments for

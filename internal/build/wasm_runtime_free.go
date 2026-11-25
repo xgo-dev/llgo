@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/llvmgen"
 	"github.com/xgo-dev/llgo/internal/optlevel"
@@ -90,9 +91,8 @@ func configureWasmRuntimeFree(ctx *context) {
 				}
 			}
 			for _, group := range file.Comments {
-				for _, comment := range group.List {
-					fields := strings.Fields(strings.TrimPrefix(comment.Text, "//"))
-					if len(fields) > 0 && (fields[0] == "export" || fields[0] == "go:wasmexport" || fields[0] == "llgo:export") {
+				for _, item := range directive.ParseGroup(group) {
+					if item.Name == "export" || item.Name == "go:wasmexport" || item.Name == "llgo:export" {
 						return
 					}
 				}
@@ -101,13 +101,8 @@ func configureWasmRuntimeFree(ctx *context) {
 		if flags, imports := collectGoCgoPragmas(pkg.Syntax); len(flags) != 0 || len(imports) != 0 {
 			return
 		}
-		for _, name := range []string{"LLGoFiles", "LLGoPackage"} {
-			if value, ok := pkg.Types.Scope().Lookup(name).(*types.Const); ok && value.Val().Kind() == constant.String {
-				text := constant.StringVal(value.Val())
-				if name == "LLGoFiles" && text != "" || name == "LLGoPackage" && strings.HasPrefix(text, "link") {
-					return
-				}
-			}
+		if hasNativePackageDecls(pkg.Types) {
+			return
 		}
 		for _, name := range pkg.Types.Scope().Names() {
 			if _, variable := pkg.Types.Scope().Lookup(name).(*types.Var); !variable {
