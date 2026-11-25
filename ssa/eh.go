@@ -70,18 +70,22 @@ func (p Program) tyStackrestore() *types.Signature {
 	return p.stackRestoreTy
 }
 
+func applySigjmpBufAlignment(prog Program, ptr llvm.Value) {
+	if prog.target.effectiveGOOS() == "windows" {
+		// UCRT jmp_buf uses up to 16-byte alignment on supported Windows
+		// architectures. CreateArrayAlloca otherwise inherits byte alignment
+		// from its i8 element.
+		ptr.SetAlignment(16)
+	}
+}
+
 func (b Builder) AllocaSigjmpBuf() Expr {
 	prog := b.Prog
 	sigjmpBufTy := prog.rtType("SigjmpBuf") // Get type from runtime (target architecture)
 	n := prog.SizeOf(sigjmpBufTy)           // Get size for target architecture
 	size := prog.IntVal(n, prog.Uintptr())
 	ret := b.Alloca(size)
-	if prog.target.effectiveGOOS() == "windows" {
-		// UCRT jmp_buf uses up to 16-byte alignment on supported Windows
-		// architectures. CreateArrayAlloca otherwise inherits byte alignment
-		// from its i8 element.
-		ret.impl.SetAlignment(16)
-	}
+	applySigjmpBufAlignment(prog, ret.impl)
 	return ret
 }
 
@@ -241,8 +245,8 @@ func (b Builder) cLongjmp(jb, retval Expr) {
 
 // -----------------------------------------------------------------------------
 
-func (b Builder) allocaDeferSigjmpBuf(inEntry bool) Expr {
-	if !inEntry {
+func (b Builder) allocaDeferSigjmpBuf(hoistToEntry bool) Expr {
+	if !hoistToEntry {
 		return b.AllocaSigjmpBuf()
 	}
 	prog := b.Prog
@@ -251,9 +255,7 @@ func (b Builder) allocaDeferSigjmpBuf(inEntry bool) Expr {
 	size := prog.IntVal(n, prog.Uintptr())
 	ab := b.Func.entryAllocaBuilder()
 	ptr := llvm.CreateArrayAlloca(ab, prog.tyInt8(), size.impl)
-	if prog.target.effectiveGOOS() == "windows" {
-		ptr.SetAlignment(16)
-	}
+	applySigjmpBufAlignment(prog, ptr)
 	return Expr{ptr, prog.VoidPtr()}
 }
 
@@ -409,6 +411,8 @@ func (b Builder) getDeferInCurrentBlock() *aDefer {
 
 	// Range-over-func yield bodies need an addressable defer stack in the
 	// current block so the synthetic frame can push into its enclosing owner.
+	// getDefer also routes anchored non-entry defer initialization here when
+	// the builder is already emitting the designated defer-init block.
 	logicalBlk := b.blk
 	blks := self.MakeBlocks(4)
 	procBlk, rethrowBlk, next, panicBlk := blks[0], blks[1], blks[2], blks[3]

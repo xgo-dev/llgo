@@ -2838,9 +2838,13 @@ func isBlankFieldStore(addr ssa.Value) bool {
 
 const rangeOverFuncYieldSynthetic = "range-over-func yield"
 
-// prepareLazyDeferInit anchors conditional defer-frame setup at the nearest
-// common non-loop dominator of all defer-producing blocks when early return
-// paths bypass it, avoiding ThreadDeferSlot + setjmp on fast-path returns.
+// prepareLazyDeferInit moves conditional defer-frame setup from the entry block
+// to the nearest common non-loop dominator dom of all defer-producing blocks
+// whenever at least one RunDefers block is unreachable from dom (so fast-path
+// returns bypass ThreadDeferSlot and setjmp). Unreachable RunDefers blocks are
+// recorded in p.skipRunDefers so compileInstr emits nothing for them; because
+// no path from any defer registration can reach those blocks, no defer can be
+// active when they execute.
 func (p *context) prepareLazyDeferInit(f *ssa.Function) {
 	if f == nil || f.Recover == nil || len(f.Blocks) <= 1 || p.functionHasExplicitStackDeferInAnon(f) {
 		return
@@ -2875,20 +2879,21 @@ func (p *context) prepareLazyDeferInit(f *ssa.Function) {
 			runDeferBlocks = append(runDeferBlocks, blk)
 		}
 	}
-	if len(deferBlocks) == 0 {
+	if len(deferBlocks) == 0 || len(runDeferBlocks) == 0 {
 		return
 	}
 	dom := deferBlocks[0]
 	for _, blk := range deferBlocks[1:] {
 		dom = nearestCommonDominator(dom, blk)
 	}
-	var reachable []bool
+	reachable := make([]bool, len(f.Blocks))
+	queue := make([]*ssa.BasicBlock, 0, len(f.Blocks))
 	for dom != nil && dom.Index != 0 {
 		if p.blkInfos[dom.Index].Kind == llssa.DeferInLoop {
 			dom = dom.Idom()
 			continue
 		}
-		reachable = reachableBlocks(f, dom)
+		fillReachableBlocks(dom, reachable, queue)
 		needHoist := false
 		for _, rblk := range runDeferBlocks {
 			if reachable[rblk.Index] && !dom.Dominates(rblk) {
@@ -2902,6 +2907,16 @@ func (p *context) prepareLazyDeferInit(f *ssa.Function) {
 		dom = dom.Idom()
 	}
 	if dom == nil || dom.Index == 0 {
+		return
+	}
+	hasSkipped := false
+	for _, rblk := range runDeferBlocks {
+		if !reachable[rblk.Index] {
+			hasSkipped = true
+			break
+		}
+	}
+	if !hasSkipped {
 		return
 	}
 	p.fn.SetDeferInitBlock(p.fn.Block(dom.Index))
@@ -2931,13 +2946,12 @@ func nearestCommonDominator(a, b *ssa.BasicBlock) *ssa.BasicBlock {
 	return nil
 }
 
-func reachableBlocks(f *ssa.Function, start *ssa.BasicBlock) []bool {
-	seen := make([]bool, len(f.Blocks))
-	queue := []*ssa.BasicBlock{start}
+func fillReachableBlocks(start *ssa.BasicBlock, seen []bool, queue []*ssa.BasicBlock) {
+	clear(seen)
+	queue = append(queue[:0], start)
 	seen[start.Index] = true
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
+	for head := 0; head < len(queue); head++ {
+		cur := queue[head]
 		for _, succ := range cur.Succs {
 			if !seen[succ.Index] {
 				seen[succ.Index] = true
@@ -2945,7 +2959,6 @@ func reachableBlocks(f *ssa.Function, start *ssa.BasicBlock) []bool {
 			}
 		}
 	}
-	return seen
 }
 
 func (p *context) rangeFuncCallNeedsDeferDrain(call *ssa.CallCommon) bool {
