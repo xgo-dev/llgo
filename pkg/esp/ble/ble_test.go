@@ -400,3 +400,22 @@ func TestErrNames(t *testing.T) {
 		}
 	}
 }
+
+func TestDisconnectReasonName(t *testing.T) {
+	cases := map[int32]string{
+		0x00: "success",
+		0x08: "connection timeout (supervision timeout)",
+		0x13: "remote user terminated the connection",
+		0x16: "local host terminated the connection",
+		0x3b: "unacceptable connection interval",
+		0x100: "connection establish failed",
+	}
+	for code, want := range cases {
+		if got := DisconnectReasonName(code); got != want {
+			t.Errorf("DisconnectReasonName(%#x) = %q, want %q", code, got, want)
+		}
+	}
+	if got := DisconnectReasonName(0x7e); got != "reason 0x7e" {
+		t.Errorf("unknown reason = %q, want the hex form", got)
+	}
+}

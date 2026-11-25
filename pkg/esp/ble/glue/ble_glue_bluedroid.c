@@ -1308,6 +1308,31 @@ int32_t llgo_ble_init(void)
         return e;
     }
 
+    /* Pairing posture: bonding with MITM (secure connections where the peer
+     * supports them), display-only IO so a KeyboardOnly peer resolves to
+     * passkey entry with the passkey printed on this console, and both
+     * encryption and identity keys distributed in both directions. Every
+     * parameter is set explicitly: Bluedroid keeps no usable defaults, and a
+     * pairing left without them reports success while distributing no key
+     * (AUTH_CMPL key_present = 0), so nothing is stored and a bonded peer
+     * has to re-pair on every reconnect. */
+    {
+        uint8_t auth_req = ESP_LE_AUTH_REQ_SC_MITM_BOND;
+        uint8_t io_cap = ESP_IO_CAP_OUT;
+        uint8_t key_size = 16; /* BLE maximum; unset => no key distributed */
+        uint8_t keys = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
+        esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE, &auth_req,
+                                       sizeof auth_req);
+        esp_ble_gap_set_security_param(ESP_BLE_SM_IOCAP_MODE, &io_cap,
+                                       sizeof io_cap);
+        esp_ble_gap_set_security_param(ESP_BLE_SM_MAX_KEY_SIZE, &key_size,
+                                       sizeof key_size);
+        esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY, &keys,
+                                       sizeof keys);
+        esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &keys,
+                                       sizeof keys);
+    }
+
     /* The address type every own-side call carries. NimBLE inferred it from
      * the controller's identity; here the device address is available as soon
      * as the stack is enabled, and public-vs-random is the same distinction. */
@@ -1650,6 +1675,41 @@ int32_t llgo_ble_scan_stop(uint32_t op_id)
         return e;
     }
     return 0;
+}
+
+/* Stored bonds: one seven-byte record per peer (six address bytes in stack
+ * order, then the address type). A caller connects straight to a returned
+ * address - a bonded keyboard waits for the central instead of advertising,
+ * and the stored key skips the pairing procedure. Static storage on purpose:
+ * this runs outside the Go scheduler, where the wrapped allocator has no
+ * locking story. */
+int32_t llgo_ble_bond_list(uint8_t *out, int32_t max_peers)
+{
+    static esp_ble_bond_dev_t s_bonds[8];
+    if (!s_inited || out == NULL || max_peers <= 0) {
+        return 0;
+    }
+    int num = esp_ble_get_bond_device_num();
+    if (num <= 0) {
+        return 0;
+    }
+    int want = num > 8 ? 8 : num;
+    if (want > max_peers) {
+        want = max_peers;
+    }
+    int got = want;
+    if (esp_ble_get_bond_device_list(&got, s_bonds) != ESP_OK) {
+        return 0;
+    }
+    for (int i = 0; i < got; i++) {
+        /* The Go record carries the stack's little-endian order, exactly
+         * like every address in an event (see bw_addr_swap); connecting
+         * swaps it back. A raw memcpy here hands Connect a reversed
+         * address, which fails to establish (0x100). */
+        bw_addr_swap(out + i * 7, s_bonds[i].bd_addr);
+        out[i * 7 + 6] = 0; /* bonded peers are public-address devices here */
+    }
+    return got;
 }
 
 int32_t llgo_ble_connect(const uint8_t *addr, int32_t addr_type, int32_t timeout_ms,

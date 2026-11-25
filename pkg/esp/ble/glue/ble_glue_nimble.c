@@ -1165,6 +1165,32 @@ int32_t llgo_ble_scan_stop(uint32_t op_id)
     return bw_submit(&c);
 }
 
+/* Stored bonds, same record layout as the Bluedroid sibling (six address
+ * bytes in stack order, then the address type). See that file for why the
+ * caller wants this: a bonded peer stops advertising and waits to be
+ * connected, and the stored key skips pairing on the way back up. */
+int32_t llgo_ble_bond_list(uint8_t *out, int32_t max_peers)
+{
+    if (!s_synced || out == NULL || max_peers <= 0) {
+        return 0;
+    }
+    ble_addr_t peers[8];
+    int num = 0;
+    int want = max_peers > 8 ? 8 : (int)max_peers;
+    int rc = ble_store_util_bonded_peers(peers, &num, want);
+    if (rc != 0 || num <= 0) {
+        return 0;
+    }
+    if (num > want) {
+        num = want;
+    }
+    for (int i = 0; i < num; i++) {
+        memcpy(out + i * 7, peers[i].val, 6);
+        out[i * 7 + 6] = peers[i].type;
+    }
+    return num;
+}
+
 int32_t llgo_ble_connect(const uint8_t *addr, int32_t addr_type, int32_t timeout_ms,
                         uint32_t op_id)
 {

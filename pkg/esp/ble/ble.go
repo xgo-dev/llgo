@@ -437,6 +437,39 @@ type Peer struct {
 	AddrType uint8
 }
 
+// MaxBonds is the number of stored bonds BondedPeers can report at once.
+const MaxBonds = 8
+
+// BondedPeers lists the peers whose pairing keys this node has stored. A
+// bonded peer does not need to be rediscovered by scanning: it either waits
+// for the central to connect (directed advertising, or no advertising at
+// all) or is already accepting - Connect straight to the address returned
+// here. Reconnecting a bond also skips the pairing procedure, so the link is
+// encrypted with the stored key.
+//
+// A node with no stored bonds returns an empty slice.
+func BondedPeers() ([]Peer, error) {
+	if !Ready() {
+		return nil, ErrNotReady
+	}
+	buf := make([]uint8, MaxBonds*7)
+	n := bondedPeers(&buf[0], MaxBonds)
+	if n <= 0 {
+		return nil, nil
+	}
+	if n > MaxBonds {
+		n = MaxBonds
+	}
+	peers := make([]Peer, 0, n)
+	for i := int32(0); i < n; i++ {
+		var pr Peer
+		copy(pr.Addr[:], buf[i*7:i*7+6])
+		pr.AddrType = buf[i*7+6]
+		peers = append(peers, pr)
+	}
+	return peers, nil
+}
+
 // ScanOptions configures StartScan. The zero value is a usable configuration:
 // active scanning, 100 ms interval / 50 ms window, duplicate filtering on, no
 // duration bound (the scan runs until StopScan).
@@ -1410,6 +1443,117 @@ func AdvName(adv []uint8) string {
 // codes, the NimBLE host statuses a central meets (named BLE_HS_*), the common
 // HCI disconnection reasons, and the esp_err codes the lifecycle calls can
 // return.
+// DisconnectReasonName renders the HCI reason an EvDisconnect carries (the
+// Status field, also the value the reason accessor reports) as text: a bare
+// 0x08 or 0x13 in a log says nothing, "connection timeout" and "remote user
+// terminated" tell the reader what happened. Stack-side codes above 0xFF use
+// the Bluedroid GATT extension names.
+func DisconnectReasonName(code int32) string {
+	switch code {
+	case 0x00:
+		return "success"
+	case 0x01:
+		return "unknown HCI error"
+	case 0x02:
+		return "unknown connection identifier"
+	case 0x03:
+		return "hardware failure"
+	case 0x04:
+		return "page timeout"
+	case 0x05:
+		return "authentication failure"
+	case 0x06:
+		return "PIN or key missing"
+	case 0x07:
+		return "memory capacity exceeded"
+	case 0x08:
+		return "connection timeout (supervision timeout)"
+	case 0x09:
+		return "connection limit exceeded"
+	case 0x0a:
+		return "synchronous connection limit exceeded"
+	case 0x0b:
+		return "connection already exists"
+	case 0x0c:
+		return "command disallowed"
+	case 0x0d:
+		return "connection rejected: limited resources"
+	case 0x0e:
+		return "connection rejected: security reasons"
+	case 0x0f:
+		return "connection rejected: unacceptable BD_ADDR"
+	case 0x10:
+		return "connection accept timeout"
+	case 0x11:
+		return "unsupported feature or parameter value"
+	case 0x12:
+		return "invalid HCI command parameters"
+	case 0x13:
+		return "remote user terminated the connection"
+	case 0x14:
+		return "remote device terminated: low resources"
+	case 0x15:
+		return "remote device terminated: power off"
+	case 0x16:
+		return "local host terminated the connection"
+	case 0x17:
+		return "repeated attempts"
+	case 0x18:
+		return "pairing not allowed"
+	case 0x19:
+		return "unknown LMP PDU"
+	case 0x1a:
+		return "unsupported remote feature"
+	case 0x1b:
+		return "unsupported LMP parameter value"
+	case 0x1c:
+		return "role change not allowed"
+	case 0x1d:
+		return "LMP response timeout"
+	case 0x1e:
+		return "LMP error transaction collision"
+	case 0x1f:
+		return "LMP PDU not allowed"
+	case 0x20:
+		return "encryption mode not acceptable"
+	case 0x21:
+		return "link key cannot be changed"
+	case 0x22:
+		return "requested QoS not supported"
+	case 0x23:
+		return "instant passed"
+	case 0x24:
+		return "pairing with unit key not supported"
+	case 0x25:
+		return "different transaction collision"
+	case 0x28:
+		return "connection parameters unacceptable"
+	case 0x29:
+		return "peer rejected: QoS parameters"
+	case 0x2a:
+		return "peer rejected: insufficient security"
+	case 0x3b:
+		return "unacceptable connection interval"
+	case 0x3d:
+		return "MIC failure (link not secure)"
+	case 0x3e:
+		return "connection failed to be established"
+	case 0x100:
+		return "connection establish failed"
+	case 0x101:
+		return "LMP response timeout"
+	case 0x102:
+		return "connection cancelled"
+	case 0x103:
+		return "no connection to cancel"
+	}
+	h := hex4(uint16(code))
+	for len(h) > 2 && h[0] == '0' { // "007e" reads worse than "0x7e"
+		h = h[1:]
+	}
+	return "reason 0x" + h
+}
+
 func ErrName(code int32) string {
 	if code >= NimbleBase {
 		return nimbleName(code - NimbleBase)

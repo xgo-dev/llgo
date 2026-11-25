@@ -24,8 +24,11 @@
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
 
-/* Install a master bus: port auto-selected, internal pull-ups off (real
- * buses want external ones), glitch filter left at the driver default.
+/* Install a master bus: port auto-selected, internal pull-ups on, glitch
+ * filter left at the driver default. Real boards often have no fitted
+ * external pull-ups (the S31 function-core board's codec bus has none:
+ * series 0R + 22pF filter only), and the ~45k internal pull-ups are
+ * harmless in parallel when external ones exist.
  * Note: this IDF release's i2c_master_bus_config_t has no timeout field;
  * the only bound is the per-transfer xfer_timeout_ms wait that every
  * llgo_i2c_transmit/receive/transmit_receive call passes down (Go's
@@ -41,7 +44,7 @@ int32_t llgo_i2c_new_bus(uintptr_t *out, int32_t sda, int32_t scl)
         .scl_io_num = (gpio_num_t)scl,
         .clk_source = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = 0,
+        .flags.enable_internal_pullup = 1,
     };
     i2c_master_bus_handle_t handle;
     esp_err_t e = i2c_new_master_bus(&cfg, &handle);

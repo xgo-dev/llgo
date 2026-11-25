@@ -42,6 +42,9 @@ func cancel(opID uint32) int32
 //go:linkname disconnect C.llgo_ble_disconnect
 func disconnect(connID uint32) int32
 
+//go:linkname bondedPeers C.llgo_ble_bond_list
+func bondedPeers(out *uint8, maxPeers int32) int32
+
 //go:linkname backendName C.llgo_ble_backend_name
 func backendName(buf *uint8, n int32) int32
 

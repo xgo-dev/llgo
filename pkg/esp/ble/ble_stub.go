@@ -18,6 +18,9 @@ const errUnsupported = 0x7F00
 
 func initHost() int32     { return errUnsupported }
 func deinitHost() int32   { return errUnsupported }
+// bondedPeers has no host-side counterpart: a hosted build has no bonds.
+func bondedPeers(out *uint8, maxPeers int32) int32 { return 0 }
+
 func ready() int32        { return 0 }
 func printVersion() int32 { return errUnsupported }
 func nowMs() uint32 {
