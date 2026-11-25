@@ -48,7 +48,7 @@ func groupInitialBuilds(ctx *context, alts []*packages.Package) []initialBuildGr
 				features.reflectBridges, features.funcInfoEntries = imported.ReflectBridges, imported.FuncInfoEntries
 			} else {
 				use := analyzeWasmInitialUse(ctx.progSSA, pkg.Types)
-				features.reflectBridges = wasmReflectBridgeProvider(ctx) && use.usesWasmReflectBridges()
+				features.reflectBridges = wasmReflectBridgeProvider(ctx) && use.usesWasmReflectBridges(ctx.prog)
 				features.funcInfoEntries = ctx.buildConf.BuildMode != BuildModeExe || use.usesRuntimeFuncForPC()
 			}
 		}

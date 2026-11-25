@@ -131,7 +131,7 @@ func widen(x,y archsimd.Uint32x4) archsimd.Uint64x2 { return x.MulWidenLo(y) }
 						t.Fatal(err)
 					}
 					if target.os == "linux" {
-						assertSIMDBaselineAssembly(t, string(asm.Bytes()))
+						assertSIMDBaselineAssembly(t, mod, string(asm.Bytes()))
 					}
 					asm.Dispose()
 				}

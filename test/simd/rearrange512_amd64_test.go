@@ -3,14 +3,13 @@
 package simd_test
 
 import (
-	"runtime"
 	"simd/archsimd"
 	"testing"
 )
 
 func TestSIMD512Rearrange(t *testing.T) {
-	if runtime.Compiler != "llgo" && !archsimd.X86.AVX512() {
-		t.Skip("requires AVX512 in gc")
+	if !archsimd.X86.AVX512() {
+		t.Skip("requires AVX512")
 	}
 	var a, b, indices, out [16]uint32
 	for i := range a {

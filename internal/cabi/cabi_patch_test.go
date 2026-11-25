@@ -1263,6 +1263,7 @@ func TestParamHomeReusePreservesObjectIdentity(t *testing.T) {
 %Aggregate = type { i64, i64, i64 }
 
 declare void @capture(ptr)
+declare void @side_effect()
 declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)
 
 define i64 @copy_then_mutate(%Aggregate %value) {
@@ -1288,10 +1289,18 @@ entry:
   ret i64 %result
 }
 
+define void @keep_volatile_init(%Aggregate %value) {
+entry:
+  %copy = alloca %Aggregate, align 8
+  store volatile %Aggregate %value, ptr %copy, align 8
+  ret void
+}
+
 define i64 @reuse_after_memset(%Aggregate %value) {
 entry:
   %copy = alloca %Aggregate, align 8
   call void @llvm.memset.p0.i64(ptr %copy, i8 0, i64 24, i1 false)
+  call void @side_effect()
   store %Aggregate %value, ptr %copy, align 8
   %copy.field = getelementptr inbounds %Aggregate, ptr %copy, i32 0, i32 1
   %result = load i64, ptr %copy.field, align 8
@@ -1418,6 +1427,15 @@ entry:
 			if strings.Contains(memsetCopy, "getelementptr inbounds %Aggregate, ptr %copy") {
 				t.Fatalf("C ABI lowering did not reuse storage after a direct memset:\n%s", memsetCopy)
 			}
+			// SysV amd64 supplies a private byval copy. Darwin arm64 borrows
+			// an indirect pointer whose contents may change before initialization.
+			keepInit := test.goarch == "arm64"
+			if strings.Contains(memsetCopy, "store %Aggregate") != keepInit {
+				t.Fatalf("unexpected parameter initialization:\n%s", memsetCopy)
+			}
+			if got := mod.NamedFunction("keep_volatile_init").String(); !strings.Contains(got, "store volatile %Aggregate") {
+				t.Fatalf("lost volatile parameter initialization:\n%s", got)
+			}
 			naturalAlignment := mod.NamedFunction("reuse_natural_alignment").String()
 			if strings.Contains(naturalAlignment, "getelementptr inbounds %Aggregate, ptr %copy") {
 				t.Fatalf("C ABI lowering did not use the alloca type's natural alignment:\n%s", naturalAlignment)
@@ -1485,7 +1503,7 @@ entry:
 	body := llvm.NextBasicBlock(entry)
 	alloc := body.FirstInstruction()
 	initStore := llvm.NextInstruction(alloc)
-	if canReuseParamHome(alloc, initStore, entry, nonEntry.Param(0).Type(), 8, 8) {
+	if initializedParamHomeUsers(alloc, initStore, entry, nonEntry.Param(0).Type(), 8, 8) != nil {
 		t.Fatal("parameter home outside the entry block was accepted")
 	}
 
@@ -1497,7 +1515,7 @@ entry:
 	if alloc.Alignment() != 0 {
 		t.Fatalf("failed to clear candidate alloca alignment: got %d", alloc.Alignment())
 	}
-	if canReuseParamHome(alloc, initStore, entry, earlierInit.Param(0).Type(), 8, 8) {
+	if initializedParamHomeUsers(alloc, initStore, entry, earlierInit.Param(0).Type(), 8, 8) != nil {
 		t.Fatal("parameter initialization before its candidate alloca was accepted")
 	}
 }

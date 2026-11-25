@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/abi"
 	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
@@ -37,17 +38,7 @@ func usesWindowsCABI(target *ssa.Target, llvmTarget string) bool {
 	if llvmTarget == "" || !strings.Contains(llvmTarget, "-") {
 		return target != nil && target.GOOS == "windows"
 	}
-	parts := strings.Split(strings.ToLower(llvmTarget), "-")
-	windows := false
-	for _, part := range parts[1:] {
-		switch {
-		case strings.Contains(part, "cygwin"), part == "cygnus", strings.Contains(part, "msys"):
-			return false
-		case part == "windows", part == "win32", strings.Contains(part, "mingw"):
-			windows = true
-		}
-	}
-	return windows
+	return intllvm.IsWindowsTarget(llvmTarget)
 }
 
 func NewTransformer(prog ssa.Program, llvmTarget string, targetAbi string, optimize bool) *Transformer {
@@ -150,6 +141,12 @@ func (p *Transformer) shouldSkipCall(call llvm.Value) bool {
 type CallInstr struct {
 	call llvm.Value
 	fn   llvm.Value
+}
+
+// LowerGoABI makes Go parameter storage explicit before FMV emits forwarders.
+func (p *Transformer) LowerGoABI(path string, m llvm.Module) {
+	p.lowerWindowsVectorParams(m)
+	p.TransformModule(path, m)
 }
 
 func (p *Transformer) TransformModule(path string, m llvm.Module) {
@@ -274,9 +271,7 @@ type TypeInfo struct {
 	Align      int
 	ByValAlign int // explicit stack alignment for AttrPointer parameters
 	StackAlign int // alignstack attribute for direct HFA parameters
-	// PreservePointerABI prevents later argument/return promotion from restoring
-	// a feature-dependent vector ABI across baseline and specialized functions.
-	PreservePointerABI bool
+
 }
 
 func (p *TypeInfo) nativeType() llvm.Type {
@@ -482,7 +477,6 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 
 func loadIndirectParam(b llvm.Builder, info *TypeInfo, ptr llvm.Value) llvm.Value {
 	value := b.CreateLoad(info.nativeType(), ptr, "")
-	value.SetVolatile(info.PreservePointerABI)
 	if info.ByValAlign != 0 {
 		value.SetAlignment(info.ByValAlign)
 	}
@@ -626,6 +620,18 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 			// skip
 			continue
 		case AttrPointer:
+			// A byval argument is already private to this invocation. Clear its
+			// headers there, including in unoptimized builds with debug info.
+			byval := !nfn.GetEnumAttributeAtIndex(index+1, llvm.AttributeKindID("byval")).IsNil()
+			if byval && !ti.hasNativeLayoutConversion() {
+				if slot := abi.TakeWasmBoundarySlot(ctx, fn.Param(i)); !slot.IsNil() {
+					slot.ReplaceAllUsesWith(params[index])
+					slot.EraseFromParentAsInstruction()
+					b.SetInsertPointBefore(nfn.EntryBasicBlock().FirstInstruction())
+					index++
+					continue
+				}
+			}
 			// void @fn(%typ %0)
 			// %1 = alloca %typ, align 8
 			// call void @llvm.memset(ptr %1, i8 0, i64 36, i1 false)
@@ -638,12 +644,17 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 			// store %typ %1, ptr %2, align 4
 			nv = aggregateFromNative(b, ti, loadIndirectParam(b, ti, params[index]))
 			// Reuse the incoming ABI storage for one proven parameter home.
-			if p.optimize && !ti.hasNativeLayoutConversion() && !ti.PreservePointerABI {
+			if p.optimize && !ti.hasNativeLayoutConversion() {
 				storageAlign := ti.Align
 				if ti.ByValAlign != 0 {
 					storageAlign = ti.ByValAlign
 				}
-				p.reuseParamHome(fn.Param(i), params[index], nfn.EntryBasicBlock(), ti.Align, storageAlign)
+				init := p.reuseParamHome(fn.Param(i), params[index], nfn.EntryBasicBlock(), ti.Align, storageAlign)
+				// A private byval slot already contains the entry value. Writing
+				// it back after a call can scalarize the entire aggregate.
+				if byval && !init.IsNil() && !init.IsVolatile() && init.Ordering() == llvm.AtomicOrderingNotAtomic {
+					init.EraseFromParentAsInstruction()
+				}
 			}
 		case AttrWidthType:
 			storageType := ti.Type1
@@ -723,8 +734,7 @@ func (p *Transformer) transformFuncBody(m llvm.Module, ctx llvm.Context, info *F
 				// Note: We don't use memcpy optimization here because the source
 				// address content may be modified between load and ret.
 				// See: https://github.com/xgo-dev/llgo/issues/1608
-				store := b.CreateStore(nativeRet, params[0])
-				store.SetVolatile(info.Return.PreservePointerABI)
+				b.CreateStore(nativeRet, params[0])
 				rv = b.CreateRetVoid()
 			case AttrWidthType, AttrWidthType2:
 				if info.Return.Kind == AttrWidthType && p.optimize && !info.Return.hasNativeLayoutConversion() {
@@ -770,9 +780,8 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	b := ctx.NewBuilder()
 	b.SetInsertPointBefore(call)
 
-	first := fn.EntryBasicBlock().FirstInstruction()
 	createAlloca := func(t llvm.Type) (ret llvm.Value) {
-		b.SetInsertPointBefore(first)
+		b.SetInsertPointBefore(fn.EntryBasicBlock().FirstInstruction())
 		ret = llvm.CreateAlloca(b, t)
 		b.SetInsertPointBefore(call)
 		return
@@ -870,9 +879,16 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 			instr = llvm.ConstNull(info.Return.Type)
 		}
 	case AttrPointer:
-		ret := createAlloca(info.Return.nativeType())
-		call := llvm.CreateCall(b, nft, nfn, append([]llvm.Value{ret}, nparams...))
-		updateCallAttr(call)
+		ret := abi.TakeWasmBoundarySlot(ctx, call)
+		if ret.IsNil() {
+			ret = createAlloca(info.Return.nativeType())
+		}
+		loweredCall := llvm.CreateCall(b, nft, nfn, append([]llvm.Value{ret}, nparams...))
+		updateCallAttr(loweredCall)
+		if call.FirstUse().IsNil() {
+			call.EraseFromParentAsInstruction()
+			return true
+		}
 		instr = aggregateFromNative(b, info.Return, b.CreateLoad(info.Return.nativeType(), ret, ""))
 	case AttrWidthType, AttrWidthType2:
 		ret := llvm.CreateCall(b, nft, nfn, nparams)
@@ -968,15 +984,15 @@ func (p *Transformer) callMemcpy(_ llvm.Module, ctx llvm.Context, b llvm.Builder
 
 // reuseParamHome replaces at most one local copy of param with storage. The
 // incoming ABI storage can stand in for one parameter home, but independent
-// copies must remain distinct objects.
-func (p *Transformer) reuseParamHome(param, storage llvm.Value, entry llvm.BasicBlock, naturalAlign, storageAlign int) {
+// copies must remain distinct objects. Return the matching initializing store.
+func (p *Transformer) reuseParamHome(param, storage llvm.Value, entry llvm.BasicBlock, naturalAlign, storageAlign int) llvm.Value {
 	// Debug declarations must keep referring to the authoritative aggregate
 	// storage after assignments. Replacing it with an indirect ABI parameter
 	// can make a debugger apply an extra dereference at O0. Optimized debug
 	// information uses value tracking and must not disable this optimization
 	// merely because native builds retain DWARF by default.
 	if !p.prog.DebugInfoOptimized() && !entry.Parent().Subprogram().IsNil() {
-		return
+		return llvm.Value{}
 	}
 	seen := make(map[llvm.Value]bool)
 	for instr := entry.FirstInstruction(); !instr.IsNil(); instr = llvm.NextInstruction(instr) {
@@ -989,30 +1005,41 @@ func (p *Transformer) reuseParamHome(param, storage llvm.Value, entry llvm.Basic
 			continue
 		}
 		seen[alloc] = true
-		if canReuseParamHome(alloc, store, entry, param.Type(), naturalAlign, storageAlign) {
-			replaceParamHomeUses(alloc, storage, store)
-			return
+		users := initializedParamHomeUsers(alloc, store, entry, param.Type(), naturalAlign, storageAlign)
+		if len(users) == 0 {
+			continue
 		}
+		for _, user := range users {
+			for i, n := 0, user.OperandsCount(); i < n; i++ {
+				if user.Operand(i) == alloc {
+					user.SetOperand(i, storage)
+				}
+			}
+		}
+		return store
 	}
+	return llvm.Value{}
 }
 
-func canReuseParamHome(alloc, initStore llvm.Value, entry llvm.BasicBlock, paramType llvm.Type, naturalAlign, storageAlign int) bool {
+// initializedParamHomeUsers returns uses to redirect once the alloca starts
+// holding the parameter. A proven home always includes its initializing store.
+func initializedParamHomeUsers(alloc, initStore llvm.Value, entry llvm.BasicBlock, paramType llvm.Type, naturalAlign, storageAlign int) []llvm.Value {
 	if alloc.InstructionParent() != entry || initStore.InstructionParent() != entry {
-		return false
+		return nil
 	}
 	if alloc.AllocatedType() != paramType {
-		return false
+		return nil
 	}
 	count := alloc.Operand(0).IsAConstantInt()
 	if count.IsNil() || count.ZExtValue() != 1 {
-		return false
+		return nil
 	}
 	allocAlign := alloc.Alignment()
 	if allocAlign == 0 {
 		allocAlign = naturalAlign
 	}
 	if storageAlign < allocAlign {
-		return false
+		return nil
 	}
 
 	// The initialization in the entry block dominates every later block. In
@@ -1020,49 +1047,27 @@ func canReuseParamHome(alloc, initStore llvm.Value, entry llvm.BasicBlock, param
 	// pointer that would keep referring to the old object nor observes the
 	// parameter value that begins at initStore.
 	prefix := make(map[llvm.Value]bool)
-	foundInit := false
-	for instr := llvm.NextInstruction(alloc); !instr.IsNil(); instr = llvm.NextInstruction(instr) {
-		if instr == initStore {
-			foundInit = true
-			break
+	for instr := llvm.NextInstruction(alloc); instr != initStore; instr = llvm.NextInstruction(instr) {
+		if instr.IsNil() {
+			return nil
 		}
-		prefix[instr] = true
-	}
-	if !foundInit {
-		return false
-	}
-	for use := alloc.FirstUse(); !use.IsNil(); use = use.NextUse() {
-		user := use.User()
-		if prefix[user] && !isDirectMemset(user, alloc) {
-			return false
-		}
-	}
-	return true
-}
-
-func isDirectMemset(instr, ptr llvm.Value) bool {
-	call := instr.IsACallInst()
-	return !call.IsNil() && call.CalledValue().IntrinsicID() == llvm.LookupIntrinsicID("llvm.memset") && call.Operand(0) == ptr
-}
-
-func replaceParamHomeUses(alloc, storage, initStore llvm.Value) {
-	prefix := make(map[llvm.Value]bool)
-	for instr := llvm.NextInstruction(alloc); !instr.IsNil() && instr != initStore; instr = llvm.NextInstruction(instr) {
 		prefix[instr] = true
 	}
 	var users []llvm.Value
 	for use := alloc.FirstUse(); !use.IsNil(); use = use.NextUse() {
 		user := use.User()
 		if prefix[user] {
+			if !isDirectMemset(user, alloc) {
+				return nil
+			}
 			continue
 		}
 		users = append(users, user)
 	}
-	for _, user := range users {
-		for i, n := 0, user.OperandsCount(); i < n; i++ {
-			if user.Operand(i) == alloc {
-				user.SetOperand(i, storage)
-			}
-		}
-	}
+	return users
+}
+
+func isDirectMemset(instr, ptr llvm.Value) bool {
+	call := instr.IsACallInst()
+	return !call.IsNil() && call.CalledValue().IntrinsicID() == llvm.LookupIntrinsicID("llvm.memset") && call.Operand(0) == ptr
 }

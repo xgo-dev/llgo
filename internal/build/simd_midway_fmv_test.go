@@ -107,9 +107,9 @@ func main() { println(sum(3)) }
 					}
 				}
 			}
-			simdCodegenVariants(t, []string{"O0", "O2"}, append(pkgs, kernels...), func(t *testing.T, asm string) {
+			simdCodegenVariants(t, []string{"O0", "O2"}, append(pkgs, kernels...), func(t *testing.T, mod llvm.Module, asm string) {
 				if goos == "linux" {
-					assertSIMDBaselineAssembly(t, asm)
+					assertSIMDBaselineAssembly(t, mod, asm)
 				}
 			})
 		})

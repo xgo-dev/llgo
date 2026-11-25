@@ -46,10 +46,11 @@ func main() {
 // CHECK-NEXT: [[RESET_METHOD:%.*]] = load ptr, ptr [[RESET_SLOT]]
 // CHECK-NEXT: [[RESET_CALL0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[RESET_METHOD]], 0
 // CHECK-NEXT: [[RESET_CALL:%.*]] = insertvalue { ptr, ptr } [[RESET_CALL0]], ptr [[RESET_RECEIVER]], 1
-// CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
+// CHECK: [[DEFER_SLOT:%.*]] = call ptr @"{{.*}}ThreadDeferSlot"()
+// CHECK-NEXT: [[PREV_DEFER:%.*]] = load ptr, ptr [[DEFER_SLOT]]
 // CHECK: [[FRAME:%.*]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
-// CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
+// CHECK: store ptr [[FRAME]], ptr [[DEFER_SLOT]]
 // CHECK: [[HEAD:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 5
 // CHECK: [[HEAD_CANDIDATE:%.*]] = load ptr, ptr [[HEAD]]
 // CHECK-NEXT: icmp ne ptr [[HEAD_CANDIDATE]], null

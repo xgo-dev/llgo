@@ -120,28 +120,32 @@ preserve selected lanes, zero-filled upper lanes and 128-bit group order;
 invalid floating-to-integer inputs retain the architecture's defined results.
 The same group boundaries apply to SIMD512.
 
-Wide Go parameters and results use an explicit memory carrier on amd64,
-including indirect calls, cross-package calls and multiple-result tuples.
-This carrier is fixed before FMV creates baseline/AVX2 bodies and tail-forwarding
-entries. Both implementations use the same pointer ABI; the selected body can
-use AVX2 internally without requiring AVX in its caller. Carrier loads/stores
-remain volatile so later argument/return promotion, including LTO, cannot
-silently recreate a feature-dependent YMM calling convention. This first stage
-does not introduce a separate register-vector ABI for calls between fast bodies.
+On amd64, 256-bit and 512-bit Go vector parameters and results use the native
+vector types through package boundaries and function values. LLVM uses AVX for YMM registers and AVX-512F for ZMM registers.
+Runtime dispatch to a 512-bit caller requires the Go `archsimd.X86.AVX512()`
+predicate (F, CD, BW, DQ and VL together). Win64 uses vectorcall for these
+signatures. Ordinary aggregate and stack argument rules
+still apply. Guard explicit wide calls with the corresponding Go CPU query.
+A scalar-signature caller can execute its scalar branch on a lower baseline.
+When it also calls a wider signature, FMV selects a body that can issue that
+call. In a body without the required registers, reaching the wide call traps.
+The runtime choice preserves the same ABI for each call target.
 
 Runtime tests cover scalar-reference arithmetic, distinct upper/lower halves,
 mask bitmaps, partial stores at a guard page, initialization, many arguments,
 multiple results, source mutation during calls, interfaces, closures, recovery
-and goroutine scheduling. The native amd64 matrix includes these tests at O0/O2,
-Thin/Full LTO, and with optional CPU features disabled. Compiler tests check the
-pointer carriers and baseline instruction safety on Linux and Windows.
+and goroutine scheduling. The native amd64 matrix runs wide calls at O0/O2 and with
+Thin/Full LTO when the required predicates are enabled. With the predicates
+disabled it checks initialization and the scalar branches of guarded callers.
+Compiler tests check the register arguments, results and baseline instruction
+safety on Linux and Windows.
 Bridge tests additionally cover every byte pair for saturation/average,
 word saturation boundaries, NaNs and signed zeros, invalid floating conversions,
 single-rounding/subnormal FMA cases, and all four carryless lane selectors.
 
 Official Go controls require AVX2. Its mask bitmap constructors and some other
-256-bit operations require AVX512; LLGo's baseline implementations use scalar
-references where the control hardware cannot execute those instructions.
+256-bit operations require AVX512. The LLGo-only bridge and integer multiply
+tests exercise their 256-bit implementations on AVX2 hosts.
 Go 1.27.0 also restores only XMM0 on a recovered SIMD256 return, losing the
 upper half. LLGo keeps an executable recovery regression; the official failing
 control is retained separately (run on an AVX2-capable amd64 target):
@@ -159,7 +163,7 @@ By-value `archsimd` values across native C boundaries require a separate ABI con
 ## AMD64 SIMD512
 
 The compiler recognizes all ten numeric 512-bit types and four mask shapes.
-Their Go size, alignment and indirect call carriers follow the same rules as
+Their Go size, alignment and vector call ABI follow the same rules as
 the 256-bit family. Grouped permutations and saturating packing operate within
 128-bit groups. Mask bitsets can carry up to 64 active lanes.
 
@@ -339,8 +343,10 @@ coordinator backends with off/Thin/Full LTO, plus frontend-cache reuse, baseline
 CPU overrides, and source-frame identity.
 
 On Windows/amd64, the compiler exposes the native indirect SIMD128 parameter
-ABI before creating dispatchers. Tail transfers forward the caller's parameter
-storage, avoiding vector temporaries in a resolver frame that the jump releases.
+ABI before creating dispatchers. SIMD128 tail transfers forward the caller's
+parameter storage. When a wide vector occupies the seventh or a later parameter
+position, the vectorcall forwarder uses an ordinary call so its temporary
+storage for overflow arguments remains live until the callee returns.
 Aggregate ABI lowering also runs before specialization on every target, so
 forwarding preserves byval/sret attributes and caller-owned result storage.
 Vector results keep their native register ABI.
@@ -374,9 +380,9 @@ retains the O0/O2 suite and an additional portable emulation run.
 
 ## Running
 
-From the repository root, using the built LLGo binary on `PATH`. The official
-Go amd64 comparison excludes helpers that require AVX512; LLGo tests their
-baseline legalization against scalar references at GOAMD64=v1:
+Run from the repository root with the built LLGo binary on `PATH`. Wide
+archsimd tests compare results with scalar references on CPUs that satisfy
+their feature checks.
 
 ```sh
 GOEXPERIMENT=simd go test -count=1 ./test/simd/...
@@ -473,10 +479,11 @@ queries with official Go and check the platform hooks:
 go test ./cl ./ssa ./internal/build -run '^(TestSIMD|TestCPUInitialization|TestEmscriptenSIMDCallBridge)' -count=1
 ```
 
-Generic LLVM legalization handles baseline operations. CPU-guarded leaves carry the features required by instruction-specific operations. The amd64 assembly check explicitly uses
-`GOAMD64=v1` and rejects AVX instructions. Tests needing official AVX512 APIs
-use separate LLGo-only scalar-reference cases when that hardware is not
-available. On an AVX512 host the native gate exercises the enabled paths.
+Generic LLVM legalization handles baseline operations. CPU-guarded leaves
+carry the features required by instruction-specific operations. The amd64
+assembly check uses `GOAMD64=v1` and rejects AVX instructions in baseline
+functions. The native gate exercises AVX512 paths on capable hosts and the
+guard tests exercise scalar branches on lower baselines.
 For emulated AVX512 execution, run `dev/test_simd_amd64_sde.sh` on Linux/amd64.
 
 Reference boundaries:
@@ -521,8 +528,10 @@ that take array pointers and use vectors internally. Recursive helper calls
 reuse the same copy for a given feature combination. Indirect calls keep
 the ordinary entry.
 Calls to separately compiled functions can use their ordinary Go entries.
-The public function value and its wide argument/return carriers stay valid
-through dispatch. The baseline implementation serves calls before CPU feature
-publication. `TestSIMD512Guarded` exercises the runtime path, and
+Function values retain the public entry and its static calling convention.
+The baseline implementation serves calls before CPU feature publication. `TestLazyDispatcherPolicy` checks that this call does not cache
+the baseline. `TestSIMD512ScalarSignatureHelpers` exercises the scalar fallback
+when AVX512 is unavailable. `TestSIMD512Guarded` checks the wide call on
+supported CPUs, and
 `TestGuardedFeatureCombinations` checks positive guards, a negated early exit,
-local helper calls and repeated execution of the LLVM transformation.
+local helper calls and that a second call to the pass leaves a completed module unchanged.

@@ -77,9 +77,9 @@ func unsigned(x archsimd.Uint32x4) archsimd.Float64x2 {return x.ConvertLo2ToFloa
 					}
 				}
 			}
-			simdCodegenVariants(t, []string{"O0", "O2"}, pkgs, func(t *testing.T, asm string) {
+			simdCodegenVariants(t, []string{"O0", "O2"}, pkgs, func(t *testing.T, mod llvm.Module, asm string) {
 				if target.os == "linux" {
-					assertSIMDBaselineAssembly(t, asm)
+					assertSIMDBaselineAssembly(t, mod, asm)
 				}
 			})
 		})

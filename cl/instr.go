@@ -2838,7 +2838,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				panic("aesRound: expected an operation and three pointers")
 			}
 			op, ok := constInt(args[0])
-			if !ok || op < 0 || op > int(llssa.AESXORBlock) {
+			if !ok || op < 0 || op > int(llssa.AESHashLast) {
 				panic("aesRound: invalid constant operation")
 			}
 			values := p.compileValues(b, args[1:], fnNormal)

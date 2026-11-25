@@ -18,6 +18,7 @@ package ssa
 
 import (
 	"fmt"
+	"go/importer"
 	"go/token"
 	"go/types"
 	"strings"
@@ -46,12 +47,16 @@ func newStdcallType(prog Program, pkgPath, name string, sig *types.Signature) *t
 }
 
 func TestNativeCallbackTypeMetadata(t *testing.T) {
+	runtimePkg, err := importer.For("source", nil).Import(PkgRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, arch := range []string{"386", "amd64", "arm64"} {
 		t.Run(arch, func(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: "windows", GOARCH: arch})
 			defer prog.Dispose()
 			prog.TypeSizes(types.SizesFor("gc", arch))
-			setTestRuntime(t, prog)
+			prog.SetRuntime(runtimePkg)
 			pkg := prog.NewPackage("p", "example.com/p")
 			b := pkg.NewFunc("use", NoArgsNoRet, GoDecl).MakeBody(1)
 			for _, cc := range []CallConv{GoDecl, CDecl, Stdcall} {
@@ -60,16 +65,104 @@ func TestNativeCallbackTypeMetadata(t *testing.T) {
 				if cc != GoDecl {
 					prog.SetTypeCallConv(pkg.Path()+"."+name, cc)
 				}
-				fields := b.abiCommonFields(typ, name, false, llvm.Value{})
+				fields := b.abiCommonFields(typ, name, false, nil, llvm.Value{})
 				flags, kind := fields[3].ZExtValue(), fields[6].ZExtValue()
-				if (flags&uint64(abi.TFlagNative) != 0) != (cc != GoDecl) ||
+				directGo := cc == CDecl || cc == Stdcall && arch != "386"
+				if (flags&uint64(abi.TFlagDirectGoCallback) != 0) != directGo ||
+					(flags&uint64(abi.TFlagNative) != 0) != (cc != GoDecl) ||
 					(kind&uint64(abi.KindStdcall) != 0) != (cc == Stdcall) ||
 					kind&uint64(abi.KindMask) != uint64(abi.Func) {
 					t.Fatalf("%s: flags=%#x kind=%#x", name, flags, kind)
 				}
 			}
+			scope := types.NewPackage(pkg.Path(), "p")
+			alias := func(name string) *types.Alias {
+				return types.NewAlias(types.NewTypeName(token.NoPos, scope, name, nil), NoArgsNoRet)
+			}
+			plain := b.abiType(NoArgsNoRet).impl
+			if got := b.abiType(alias("GoAlias")).impl; got != plain {
+				t.Fatalf("ordinary function alias has a distinct descriptor: %s", got)
+			}
+			prog.SetTypeCallConv(pkg.Path()+".WinAlias", Stdcall)
+			win := b.abiType(alias("WinAlias")).impl
+			if win.Name() != plain.Name()+"$stdcall" || win.Initializer().Operand(1) != plain {
+				t.Fatalf("stdcall alias has the wrong public descriptor: %s", win)
+			}
+			entry := win.Initializer().Operand(2)
+			if arch == "386" {
+				if entry.IsNull() || !strings.Contains(entry.String(), "call x86_stdcallcc") {
+					t.Fatalf("missing x86 stdcall call in alias adapter: %s", entry)
+				}
+			} else if !entry.IsNull() {
+				t.Fatalf("compatible windows/%s alias acquired an adapter: %s", arch, entry)
+			}
 			b.Return()
 		})
+	}
+}
+
+func TestWasm32NativeAliasDescriptors(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", "wasm"))
+	runtimePkg, err := importer.For("source", nil).Import(PkgRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog.SetRuntime(runtimePkg)
+	pkg := prog.NewPackage("callback", "callback")
+	b := pkg.NewFunc("use", NoArgsNoRet, GoDecl).MakeBody(1)
+	defer b.Return()
+
+	unary := func(param types.Type) *types.Signature {
+		arg := types.NewTuple(types.NewVar(token.NoPos, nil, "", param))
+		return types.NewSignatureType(nil, nil, nil, arg, arg, false)
+	}
+	sig := unary(types.Typ[types.Uintptr])
+	alias := types.NewAlias(types.NewTypeName(token.NoPos, types.NewPackage("callback", "callback"), "Native", nil), sig)
+	prog.SetTypeCallConv("callback.Native", CDecl)
+
+	// Cache the ordinary Go code slot before requesting the native alias.
+	plain := b.abiType(sig).impl
+	prog.rawType(sig)
+	if !prog.hasNativeTypeDirective(prog.rawType(alias).RawType()) {
+		t.Fatal("caching the ordinary signature erased the native calling convention")
+	}
+	scalar := b.abiType(alias).impl
+	if scalar.Name() != plain.Name()+"$cdecl" {
+		t.Fatalf("native descriptor %q, want %q plus $cdecl", scalar.Name(), plain.Name())
+	}
+	init := scalar.Initializer()
+	header := init.Operand(0).Operand(0)
+	if flags := abi.TFlag(header.Operand(3).ZExtValue()); flags&(abi.TFlagNative|abi.TFlagDirectGoCallback) != abi.TFlagNative ||
+		init.Operand(1).Operand(0) != plain || init.Operand(2).IsNull() {
+		t.Fatalf("native uintptr callback needs its public type and an ABI adapter: %s", scalar)
+	}
+
+	plainSig, aliasSig := unary(sig), unary(alias)
+	for _, want := range []*types.Signature{plainSig, aliasSig} {
+		got := prog.rawType(want).RawType().(*types.Signature)
+		if prog.toLLVMFunc(got) != prog.toLLVMFunc(want) {
+			t.Fatalf("cached call prototype for %s uses %s", want, got)
+		}
+	}
+	// Request the qualified descriptor before its public counterpart.
+	frame := b.abiType(aliasSig).impl
+	public := b.abiType(plainSig).impl
+	if frame == public || frame.Initializer().Operand(1).Operand(0) != public {
+		t.Fatalf("higher-order callback has the wrong public type: %s", frame)
+	}
+	common := frame.Initializer().Operand(0).Operand(0)
+	if common.Operand(6).ZExtValue()&uint64(abi.KindFuncPublic) == 0 || common.Operand(3).ZExtValue()&uint64(abi.TFlagNative) != 0 {
+		t.Fatalf("wrong native/public flags on the higher-order Go function: %s", frame)
+	}
+	for _, suffix := range []string{"$in", "$out"} {
+		member := func(desc llvm.Value) llvm.Value {
+			return pkg.Module().NamedGlobal(desc.Name() + suffix).Initializer().Operand(0).Operand(0)
+		}
+		if member(frame) != scalar || member(public) != plain {
+			t.Fatalf("%s of %q and %q lost the native/public distinction", suffix, frame.Name(), public.Name())
+		}
 	}
 }
 

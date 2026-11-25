@@ -119,15 +119,15 @@ func dispatch%s(x archsimd.%s,a,b,c,d uint8) archsimd.%s {
 					t.Fatal(err)
 				}
 			}
-			simdCodegenVariants(t, []string{"O0", "O2"}, callers, func(t *testing.T, asm string) {
+			simdCodegenVariants(t, []string{"O0", "O2"}, callers, func(t *testing.T, mod llvm.Module, asm string) {
 				if goos != "linux" {
 					return
 				}
-				assertSIMDBaselineAssembly(t, asm)
+				assertSIMDBaselineAssembly(t, mod, asm)
 				bodies := regexp.MustCompile(`(?ms)^\s*\.type\s+([^\n]+),@function\n(.*?)^\s*\.size\s+[^\n]+`).FindAllStringSubmatch(asm, -1)
 				indexedStack := regexp.MustCompile(`\([^\n)]*%(?:rsp|rbp),`)
 				baseline, avx2, constants := 0, 0, 0
-				shuffle := regexp.MustCompile(`\b(?:v?pshuf[a-z]+|v?shufps|vpermilps)\b`)
+				shuffle := regexp.MustCompile(`\b(?:v?pshuf[a-z]+|v?shufp[sd]|vpermilps)\b`)
 				for _, body := range bodies {
 					if strings.Contains(body[1], "main.constant") && strings.HasSuffix(t.Name(), "/O2") {
 						constants++

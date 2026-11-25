@@ -17,13 +17,11 @@ type stringStruct struct {
 	len int
 }
 
-// The hasher only borrows its input. On targets where LLGo's escape analysis
-// heap-promotes an address-taken string parameter, keep the temporary header
-// in explicit stack storage to avoid allocating it for each operation.
-func hashMapKeyString(t *maptype, key string, seed uintptr) uintptr {
-	p := c.Alloca(unsafe.Sizeof(key))
-	*(*string)(p) = key
-	return t.Hasher(p, seed)
+// All faststr map keys are strings whose ABI hasher is strhash; hash the
+// string bytes directly without stack-allocating a temporary header or calling
+// through an indirect closure.
+func hashMapKeyString(key string, seed uintptr) uintptr {
+	return memhash(unsafe.Pointer(unsafe.StringData(key)), seed, uintptr(len(key)))
 }
 
 func memequal(p, q unsafe.Pointer, size uintptr) bool {
@@ -96,7 +94,7 @@ func mapaccess1_faststr(t *maptype, h *hmap, ky string) unsafe.Pointer {
 		return unsafe.Pointer(&zeroVal[0])
 	}
 dohash:
-	hash := hashMapKeyString(t, ky, uintptr(h.hash0))
+	hash := hashMapKeyString(ky, uintptr(h.hash0))
 	m := bucketMask(h.B)
 	b := (*bmap)(add(h.buckets, (hash&m)*uintptr(t.BucketSize)))
 	if c := h.oldbuckets; c != nil {
@@ -196,7 +194,7 @@ func mapaccess2_faststr(t *maptype, h *hmap, ky string) (unsafe.Pointer, bool) {
 		return unsafe.Pointer(&zeroVal[0]), false
 	}
 dohash:
-	hash := hashMapKeyString(t, ky, uintptr(h.hash0))
+	hash := hashMapKeyString(ky, uintptr(h.hash0))
 	m := bucketMask(h.B)
 	b := (*bmap)(add(h.buckets, (hash&m)*uintptr(t.BucketSize)))
 	if c := h.oldbuckets; c != nil {
@@ -243,7 +241,7 @@ func mapassign_faststr(t *maptype, h *hmap, s string) unsafe.Pointer {
 		fatal("concurrent map writes")
 	}
 	key := stringStruct{unsafe.Pointer(unsafe.StringData(s)), len(s)}
-	hash := hashMapKeyString(t, s, uintptr(h.hash0))
+	hash := hashMapKeyString(s, uintptr(h.hash0))
 
 	// Set hashWriting after calling t.hasher for consistency with mapassign.
 	h.flags ^= hashWriting
@@ -338,7 +336,7 @@ func mapdelete_faststr(t *maptype, h *hmap, ky string) {
 	}
 
 	key := stringStruct{unsafe.Pointer(unsafe.StringData(ky)), len(ky)}
-	hash := hashMapKeyString(t, ky, uintptr(h.hash0))
+	hash := hashMapKeyString(ky, uintptr(h.hash0))
 
 	// Set hashWriting after calling t.hasher for consistency with mapdelete
 	h.flags ^= hashWriting
@@ -465,7 +463,7 @@ func evacuate_faststr(t *maptype, h *hmap, oldbucket uintptr) {
 				if !h.sameSizeGrow() {
 					// Compute hash to make our evacuation decision (whether we need
 					// to send this key/elem to bucket x or bucket y).
-					hash := t.Hasher(k, uintptr(h.hash0))
+					hash := strhash(k, uintptr(h.hash0))
 					if hash&newbit != 0 {
 						useY = 1
 					}

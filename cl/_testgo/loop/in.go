@@ -6,10 +6,11 @@ package main
 // compile: dynamic defer nodes and allocation-free constant strings.
 // CHECK: [[LOOP_TEXT:@[0-9]+]] = private unnamed_addr constant [4 x i8] c"loop"
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
+// CHECK: [[DEFER_SLOT:%.*]] = call ptr @"{{.*}}ThreadDeferSlot"()
+// CHECK-NEXT: [[PREV_DEFER:%.*]] = load ptr, ptr [[DEFER_SLOT]]
 // CHECK: [[FRAME:%.*]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
-// CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
+// CHECK: store ptr [[FRAME]], ptr [[DEFER_SLOT]]
 // CHECK: [[HEAD:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 5
 // CHECK: [[I:%.*]] = phi i64 [ 0, %{{.*}} ], [ [[NEXT_I:%.*]], %{{.*}} ]
 // CHECK: [[IN_RANGE:%.*]] = icmp slt i64 [[I]], 3

@@ -157,13 +157,14 @@ func GrowSliceAligned(src Slice, num, etSize, etAlign int, hasPointers bool) Sli
 
 // ReflectGrowSlice preserves the length and all elements in the old capacity.
 // The caller has checked that len+num exceeds cap.
-func ReflectGrowSlice(src Slice, num int, elem *Type) Slice {
+func ReflectGrowSlice(src Slice, num int, elem *Type, stride uintptr) Slice {
 	oldLen := src.len
 	num -= src.cap - oldLen
 	src.len = src.cap
-	grown := GrowSliceAligned(src, num, int(elem.Size_), int(elem.Align_), elem.Pointers())
-	if wideGoHeaderSlots {
-		clearTypedHeaderRange(elem, grown.data, uintptr(src.len), elem.Size_)
+	grown := GrowSliceAligned(src, num, int(stride), int(elem.Align_), elem.Pointers())
+	// A packed callback array has a smaller physical stride and contains no headers.
+	if wideGoHeaderSlots && stride == elem.Size_ {
+		clearTypedHeaderRange(elem, grown.data, uintptr(src.len), stride)
 	}
 	grown.len = oldLen
 	return grown

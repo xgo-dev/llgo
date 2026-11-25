@@ -23,7 +23,6 @@ import (
 	"reflect"
 	"slices"
 
-	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -230,17 +229,9 @@ func compileEmbeddedEntry(ctx *context, plan *mainLinkPlan, ir, object string) e
 		return err
 	}
 	defer mod.Dispose()
-	var buffer llvm.MemoryBuffer
-	switch ctx.buildConf.ltoMode() {
-	case lto.Full:
-		buffer = llvm.WriteFullLTOBitcodeToMemoryBuffer(mod, ctx.buildConf.Goos != "darwin")
-	case lto.Thin:
-		buffer = llvm.WriteThinLTOBitcodeToMemoryBuffer(mod)
-	default:
-		buffer, err = prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.ObjectFile)
-		if err != nil {
-			return err
-		}
+	buffer, _, err := emitObjectToMemoryBuffer(ctx.buildConf, prog, mod)
+	if err != nil {
+		return err
 	}
 	defer buffer.Dispose()
 	return os.WriteFile(object, buffer.Bytes(), 0o600)

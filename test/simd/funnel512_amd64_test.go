@@ -10,6 +10,7 @@ import (
 )
 
 func TestSIMD512Funnel(t *testing.T) {
+	requireSIMD256(t)
 	if runtime.Compiler != "llgo" && !archsimd.X86.AVX512VBMI2() {
 		t.Skip("requires AVX512VBMI2 in gc")
 	}

@@ -17,6 +17,7 @@
 package ssa
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/xgo-dev/llvm"
@@ -115,5 +116,49 @@ func TestArchitectureFeatureTargetMachines(t *testing.T) {
 		}
 		buf.Dispose()
 		prog.Dispose()
+	}
+}
+
+// A generic downstream target machine must recover the GOARM64 instruction
+// floor from the IR, while respecting a local feature override.
+func TestARM64BaselineInIR(t *testing.T) {
+	Initialize(InitAll)
+	generic := NewProgram(&Target{GOOS: "linux", GOARCH: "arm64"})
+	defer generic.Dispose()
+	ldadd := regexp.MustCompile(`(?m)^\s*ldadd\s`)
+	for _, tc := range []struct {
+		level, local string
+		wantLSE      bool
+	}{
+		{"v8.0", "", false},
+		{"v8.1", "", true},
+		{"v8.1", "-lse", false},
+	} {
+		t.Run(tc.level+tc.local, func(t *testing.T) {
+			prog := NewProgram(&Target{GOOS: "linux", GOARCH: "arm64", GOARM64: tc.level})
+			defer prog.Dispose()
+			pkg := prog.NewPackage("p", "p")
+			mod := pkg.Module()
+			ctx := mod.Context()
+			i32 := ctx.Int32Type()
+			ft := llvm.FunctionType(i32, []llvm.Type{llvm.PointerType(i32, 0)}, false)
+			fn := llvm.AddFunction(mod, "increment", ft)
+			if tc.local != "" {
+				fn.AddTargetDependentFunctionAttr("target-features", tc.local)
+			}
+			b := ctx.NewBuilder()
+			defer b.Dispose()
+			b.SetInsertPointAtEnd(ctx.AddBasicBlock(fn, "entry"))
+			b.CreateRet(b.CreateAtomicRMW(llvm.AtomicRMWBinOpAdd, fn.Param(0), llvm.ConstInt(i32, 1, false), llvm.AtomicOrderingMonotonic, false))
+			pkg.ApplyTargetBaseline()
+			asm, err := generic.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer asm.Dispose()
+			if ldadd.Match(asm.Bytes()) != tc.wantLSE {
+				t.Fatalf("GOARM64=%s, override %q:\n%s", tc.level, tc.local, asm.Bytes())
+			}
+		})
 	}
 }

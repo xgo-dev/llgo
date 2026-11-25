@@ -24,3 +24,8 @@ for compiler in go "$LLGO"; do
     fi
   done
 done
+
+# Exercise Clang's textual IR path with a v3 callee and an AVX512 caller.
+GOAMD64=v3 "$LLGO" test -O2 -gen-llfiles -lto=thin -c -o "$output/test" ./test/simd
+"$SDE" -spr -- "$output/test" -test.count=1 -test.run='^TestSIMD256CrossPackageAVX512$' -test.v | tee "$output/result"
+grep -q '^--- PASS: TestSIMD256CrossPackageAVX512' "$output/result"

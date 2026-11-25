@@ -9,8 +9,9 @@ import (
 )
 
 // These official intrinsics require AVX512-family features. Test LLGo's
-// baseline legalization against scalar references, including cpu.all=off.
+// lowering against scalar references on CPUs with 256-bit vectors.
 func TestSIMD256BridgeInteger64(t *testing.T) {
+	requireSIMD256(t)
 	t.Run("int64", func(t *testing.T) {
 		testSIMD256BridgeInteger(t, func(a, b []int64, out [][]int64) {
 			x, y := archsimd.LoadInt64x4(a), archsimd.LoadInt64x4(b)
@@ -30,6 +31,7 @@ func TestSIMD256BridgeInteger64(t *testing.T) {
 }
 
 func TestSIMD256BridgeCarryless(t *testing.T) {
+	requireSIMD256(t)
 	values := []uint64{0, 1, 3, ^uint64(0), 0x0123456789abcdef, 0xfedcba9876543210}
 	for bit := uint(0); bit < 64; bit++ {
 		values = append(values, 1<<bit)
@@ -58,6 +60,7 @@ func TestSIMD256BridgeCarryless(t *testing.T) {
 }
 
 func TestSIMD256BridgeConvert64(t *testing.T) {
+	requireSIMD256(t)
 	values := []float64{0, -0.9, -1, -1.9, 1.9, math.Ldexp(1, 63), -math.Ldexp(1, 63), math.Nextafter(math.Ldexp(1, 63), 0), math.Nextafter(math.Ldexp(1, 64), 0), math.Ldexp(1, 64), math.NaN(), math.Inf(1), math.Inf(-1)}
 	for sample := range values {
 		var input [4]float64
@@ -104,6 +107,7 @@ func TestSIMD256BridgeConvert64(t *testing.T) {
 }
 
 func TestSIMD256BridgeConvertUint32(t *testing.T) {
+	requireSIMD256(t)
 	values := []float32{0, -0.9, -1, -1.9, 1.9, 0x1p31, math.Nextafter32(0x1p32, 0), 0x1p32, float32(math.NaN()), float32(math.Inf(1)), float32(math.Inf(-1))}
 	for sample := range values {
 		var input [8]float32

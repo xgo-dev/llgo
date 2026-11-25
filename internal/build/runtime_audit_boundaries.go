@@ -108,7 +108,7 @@ type runtimeNativeOwner struct {
 var runtimeNativeOwners = []runtimeNativeOwner{
 	{"C.llgo_wasm_debug_capture_pcs", "LLGo opt-in browser suspended-PC bridge", "runtime/internal/wasmdebugpc/_wrap/capture.c"},
 	{
-		`C.getenv C.getpagesize C.gettimeofday C.pipe2 C.poll C.rand C.srand C.syscall C.write C.getentropy
+		`C.getenv C.getauxval C.getpagesize C.gettimeofday C.pipe2 C.poll C.rand C.srand C.syscall C.write C.getentropy
 C.clock_gettime_nsec_np`,
 		"target libc / platform SDK",
 		``,
@@ -119,7 +119,11 @@ C.clock_gettime_nsec_np`,
 		"ESP-IDF FreeRTOS task core-affinity surface: the kernel getters, plus llgoLockCore - a weak runtime default (not provided) that a firmware overrides with a strong core-pin implementation, e.g. _demo/esp-idf-lockcore/main/lockcore_glue.c (the IDF kernel has no runtime setter)",
 		"runtime/internal/runtime/_wrap/lockcore_idf.c",
 	},
-	{"stdcall.GetSystemDirectoryA", "Windows kernel32; stdcall on 386, native Windows ABI on amd64/arm64", ""},
+	{
+		`stdcall.GetSystemDirectoryA stdcall.IsProcessorFeaturePresent`,
+		"Windows kernel32; stdcall on 386, native Windows ABI on amd64/arm64",
+		``,
+	},
 	{"C.__sigsetjmp C.sigsetjmp C.siglongjmp", "target libc; returns-twice and target SigjmpBuf layout", "ssa/eh.go"},
 	{
 		`C.setjmp C.longjmp`,
@@ -136,6 +140,7 @@ C.llgo_cgo_setresgid C.llgo_cgo_setgroups`,
 		"LLGo packed C argument and libc credential bridges",
 		`runtime/internal/lib/runtime/_wrap/libcall.c`,
 	},
+	{"C.llgo_cpu_has_aes", "LLGo x86 CPUID AES-NI/SSE2 probe", "runtime/internal/runtime/_wrap/cpuid_x86.c"},
 	{
 		`C.llgo_cpu_profile_drain C.llgo_cpu_profile_refresh_signal C.llgo_cpu_profile_start
 C.llgo_cpu_profile_stop C.llgo_cpu_profile_update_signal`,

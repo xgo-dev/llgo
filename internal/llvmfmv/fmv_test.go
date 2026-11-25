@@ -125,8 +125,8 @@ func TestEarlySpecialization(t *testing.T) {
 		!strings.Contains(mod.NamedFunction("recursive.__llgo_fmv_avx2").String(), "@recursive.__llgo_fmv_avx2(") {
 		t.Fatal("direct call propagation missing")
 	}
-	if !mod.NamedFunction("wide.__llgo_fmv_avx2").IsNil() || !mod.NamedFunction("assembly.__llgo_fmv_avx2").IsNil() {
-		t.Fatal("unsupported ABI or unpromised external entry specialized")
+	if mod.NamedFunction("wide.__llgo_fmv_avx2").IsNil() || !mod.NamedFunction("assembly.__llgo_fmv_avx2").IsNil() {
+		t.Fatal("unexpected wide or external entry selection")
 	}
 	if !mod.NamedFunction("addressOnly.__llgo_fmv_avx2").IsNil() {
 		t.Fatal("taking a query's address must not establish a CPU guard")
@@ -142,6 +142,21 @@ func TestEarlySpecialization(t *testing.T) {
 	}
 	if mod.String() != before {
 		t.Fatal("FMV is not idempotent")
+	}
+}
+
+func checkUnversionedFunction(t *testing.T, mod llvm.Module, baseline, name string) {
+	t.Helper()
+	fn := mod.NamedFunction(name)
+	before := fn.String()
+	if err := Run(mod, baseline); err != nil {
+		t.Fatal(err)
+	}
+	if fn.String() != before || strings.Contains(mod.String(), symbolPrefix) || !mod.NamedGlobal(featureSymbol).IsNil() {
+		t.Fatalf("unexpected FMV changes to %s:\n%s", name, mod.String())
+	}
+	if mod.NamedMetadataNumOperands(moduleDone) != 1 {
+		t.Fatal("missing FMV completion marker")
 	}
 }
 
@@ -176,18 +191,6 @@ func TestSymbolCollision(t *testing.T) {
 
 func TestUnsupportedSignaturesUnchanged(t *testing.T) {
 	for name, function := range map[string]string{
-		"nested_wide_parameter": `define i32 @unsupported({[2 x <8 x float>]} %x) {
-  %q = call i1 @avx2()
-  ret i32 0
-}`,
-		"nested_wide_result": `define {[2 x <8 x float>]} @unsupported() {
-  %q = call i1 @avx2()
-  ret {[2 x <8 x float>]} zeroinitializer
-}`,
-		"wide_parameter": `define void @unsupported(<8 x float> %x) {
-  %q = call i1 @avx2()
-  ret void
-}`,
 		"variadic": `define void @unsupported(i32 %n, ...) {
   %q = call i1 @avx2()
   ret void
@@ -199,10 +202,7 @@ func TestUnsupportedSignaturesUnchanged(t *testing.T) {
 			mod := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
 `+function)
-			before := mod.String()
-			if err := Run(mod, "v1"); err != nil || mod.String() != before {
-				t.Fatalf("unsupported ABI was changed: %v\n%s", err, mod.String())
-			}
+			checkUnversionedFunction(t, mod, "v1", "unsupported")
 		})
 	}
 }
@@ -272,10 +272,7 @@ define void @root() {
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			before := mod.String()
-			if err := Run(mod, "v1"); err != nil || mod.String() != before {
-				t.Fatalf("invalid CPU query established an AVX2 guard: %v\n%s", err, mod.String())
-			}
+			checkUnversionedFunction(t, mod, "v1", "root")
 		})
 	}
 }

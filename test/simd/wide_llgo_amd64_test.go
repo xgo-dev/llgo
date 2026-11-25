@@ -12,6 +12,7 @@ import (
 func simd256LinkedAdd(x, y archsimd.Float32x8) archsimd.Float32x8
 
 func TestSIMD256IntrinsicBoundary(t *testing.T) {
+	requireSIMD256(t)
 	x, y := archsimd.BroadcastFloat32x8(7), archsimd.BroadcastFloat32x8(2)
 	checkSIMD256Lanes(t, simd256LinkedAdd(x, y), func(int) float32 { return 9 })
 	for _, call := range []func(){
@@ -29,7 +30,7 @@ func TestSIMD256IntrinsicBoundary(t *testing.T) {
 		}()
 	}
 	// The official Uint64x4.Mul needs AVX512. LLGo's generic vector multiply
-	// must retain its wraparound semantics even with every optional flag off.
+	// must retain its wraparound semantics without AVX-512.
 	a := [4]uint64{0, 1 << 63, ^uint64(0), 0xfedcba9876543210}
 	b := [4]uint64{99, 3, 17, 0x0123456789abcdef}
 	var out [4]uint64
@@ -53,6 +54,7 @@ func simd256Defer(x, y archsimd.Float32x8) (result archsimd.Float32x8) {
 }
 
 func TestSIMD256Recovery(t *testing.T) {
+	requireSIMD256(t)
 	x, y := archsimd.BroadcastFloat32x8(9), archsimd.BroadcastFloat32x8(2)
 	checkSIMD256Lanes(t, simd256Defer(x, y), func(int) float32 { return 7 })
 }
