@@ -29,7 +29,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/quoted"
+	"github.com/xgo-dev/llgo/cmd/compiler/quoted"
 )
 
 func TestGDBIntegration(t *testing.T) {

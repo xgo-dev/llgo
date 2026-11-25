@@ -1,0 +1,4035 @@
+/*
+ * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package llvmgen
+
+import (
+	"fmt"
+	"go/constant"
+	"go/importer"
+	"go/token"
+	"go/types"
+	"math"
+	"os"
+	"reflect"
+	"runtime"
+	"sort"
+	"strings"
+	"testing"
+	"unsafe"
+
+	"github.com/goplus/gogen/packages"
+	rtabi "github.com/xgo-dev/llgo/runtime/abi"
+	"github.com/xgo-dev/llvm"
+)
+
+func TestEndDefer(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("foo", "foo")
+	fn := pkg.NewFunc("main", NoArgsNoRet, CDecl)
+	b := fn.MakeBody(1)
+	fn.defer_ = &aDefer{}
+	fn.endDefer(b)
+}
+
+func TestDeferToPendingLoopCasesAndFallback(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("foo", "foo")
+
+	callee := pkg.NewFunc("callee", NoArgsNoRet, GoDecl)
+	cb := callee.MakeBody(1)
+	cb.Return()
+	cb.EndBuild()
+
+	fn := pkg.NewFunc("main", NoArgsNoRet, GoDecl)
+	fn.SetRecover(fn.MakeBlock())
+	b := fn.MakeBody(1)
+
+	stack := b.DeferStack()
+	if stack.IsNil() {
+		t.Fatal("defer stack should be available with recover")
+	}
+	fn.defer_ = nil
+	fn.pendingLoopCases = nil
+	fn.nextDeferID = 0
+
+	b.DeferTo(fn, stack, callee.Expr, Builder.Call)
+	if got := len(fn.pendingLoopCases); got != 1 {
+		t.Fatalf("pendingLoopCases len = %d, want 1", got)
+	}
+	if fn.nextDeferID != 1 {
+		t.Fatalf("nextDeferID = %d, want 1", fn.nextDeferID)
+	}
+
+	self := b.getDeferInCurrentBlock()
+	if self == nil {
+		t.Fatal("expected current-block defer stack")
+	}
+	if len(fn.pendingLoopCases) != 0 {
+		t.Fatal("pendingLoopCases should be consumed once defer stack is materialized")
+	}
+	if got := len(self.loopCases); got != 1 {
+		t.Fatalf("loopCases len = %d, want 1", got)
+	}
+
+	b.DeferTo(fn, stack, callee.Expr, Builder.Call)
+	if got := len(self.loopCases); got != 2 {
+		t.Fatalf("loopCases len after direct append = %d, want 2", got)
+	}
+
+	fallback := pkg.NewFunc("fallback", NoArgsNoRet, GoDecl)
+	fallback.SetRecover(fallback.MakeBlock())
+	fb := fallback.MakeBody(1)
+	fb.Return()
+	fb.SetBlockEx(fallback.Block(0), BeforeLast, true)
+	fb.DeferTo(nil, prog.Nil(prog.VoidPtr()), callee.Expr, Builder.Call)
+	if fallback.defer_ == nil || len(fallback.defer_.loopCases) != 1 {
+		t.Fatal("owner=nil should fall back to normal loop defer")
+	}
+}
+
+func TestUnsafeString(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Chdir("../../../runtime")
+	defer os.Chdir(wd)
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("foo", "foo")
+	b := pkg.NewFunc("main", NoArgsNoRet, CDecl).MakeBody(1)
+	b.Println(b.BuiltinCall("String", b.CStr("hello"), prog.Val(5)))
+	b.Return()
+}
+
+func TestTooManyConditionalDefers(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Chdir("../../../runtime")
+	defer os.Chdir(wd)
+
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+
+	pkg := prog.NewPackage("foo", "foo")
+	target := pkg.NewFunc("f", NoArgsNoRet, GoDecl)
+	fn := pkg.NewFunc("main", NoArgsNoRet, GoDecl)
+	fn.SetRecover(fn.MakeBlock())
+	b := fn.MakeBody(1)
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic: too many conditional defers")
+		} else if r != "too many conditional defers" {
+			t.Fatalf("unexpected panic: %v", r)
+		}
+	}()
+
+	b.Return()
+	for i := 0; i < 65; i++ {
+		b.Defer(DeferInCond, target.Expr, Builder.Call)
+	}
+}
+
+func TestPointerSize(t *testing.T) {
+	expected := unsafe.Sizeof(uintptr(0))
+	if size := NewProgram(nil).PointerSize(); size != int(expected) {
+		t.Fatal("bad PointerSize:", size)
+	}
+}
+
+func TestNewFuncExLLVMUsed(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+
+	// Mark the exported name before function creation so NewFuncEx can protect it via llvm.compiler.used.
+	pkg.SetExport("main.Foo", "Foo")
+	pkg.SetExport("main.Bar", "Bar")
+	pkg.NewFunc("Foo", sig, GoDecl)
+	pkg.NewFunc("Bar", sig, GoDecl)
+	pkg.NewFunc("Baz", sig, GoDecl)
+	pkg.MaterializePreserveSyms()
+
+	used := pkg.Module().NamedGlobal("llvm.compiler.used")
+	if used.IsNil() {
+		t.Fatal("missing llvm.compiler.used")
+	}
+	if got := used.Linkage(); got != llvm.AppendingLinkage {
+		t.Fatalf("llvm.compiler.used linkage = %v, want %v", got, llvm.AppendingLinkage)
+	}
+	if got := used.Section(); got != "llvm.metadata" {
+		t.Fatalf("llvm.compiler.used section = %q, want %q", got, "llvm.metadata")
+	}
+	if got := pkg.String(); !strings.Contains(got, `@llvm.compiler.used = appending global [2 x ptr] [ptr @Foo, ptr @Bar], section "llvm.metadata"`) {
+		t.Fatalf("module missing llvm.compiler.used entry:\n%s", got)
+	}
+}
+
+func TestFuncInfoMetadataDoesNotPreserveFunctions(t *testing.T) {
+	testFuncInfoMetadataDoesNotPreserveFunctions(t)
+}
+
+func TestPCLineMetadataEmission(t *testing.T) {
+	testPCLineMetadataEmission(t)
+}
+
+func testPCLineMetadataEmission(t *testing.T) {
+	t.Helper()
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+
+	pkg.EmitPCLineInfo(0, "ignored", "ignored.go", -1, -1)
+	pkg.EmitPCLineInfo(0x1234, "", "ignored.go", -1, -1)
+	if ir := pkg.String(); strings.Contains(ir, PCLineMetadataName) {
+		t.Fatalf("invalid pcline rows should not emit metadata:\n%s", ir)
+	}
+
+	pkg.EmitPCLineInfo(0x1234, "main.live", "call.go", 23, 5)
+	pkg.EmitPCLineInfo(0x5678, "main.negative", "negative.go", -7, -1)
+	ir := pkg.String()
+	for _, want := range []string{
+		`!llgo.pcline = !{!`,
+		`i64 4660`,
+		`!"main.live"`,
+		`!"call.go"`,
+		`i32 23`,
+		`i32 5`,
+		`i64 22136`,
+		`!"main.negative"`,
+		`!"negative.go"`,
+		`i32 0`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing pcline field %s:\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, `ptr @main.live`) || strings.Contains(ir, `ptr @"main.live"`) {
+		t.Fatalf("pcline metadata must not contain function pointer operands:\n%s", ir)
+	}
+}
+
+func testFuncInfoMetadataDoesNotPreserveFunctions(t *testing.T) {
+	t.Helper()
+
+	prog := NewProgram(nil)
+	if prog.FuncInfoMetadataEnabled() {
+		t.Fatal("funcinfo metadata should be disabled by default")
+	}
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	if !prog.FuncInfoMetadataEnabled() {
+		t.Fatal("funcinfo metadata should be enabled")
+	}
+
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+
+	pkg.NewFunc("main.unused", sig, GoDecl)
+	pkg.EmitFuncInfo("", "ignored", "ignored.go", -1, -1)
+	if ir := pkg.String(); strings.Contains(ir, FuncInfoMetadataName) {
+		t.Fatalf("empty symbol should not emit funcinfo metadata:\n%s", ir)
+	}
+
+	pkg.EmitFuncInfo("main.unused", "main.unused", "unused.go", 7, 1)
+	pkg.EmitFuncInfo("main.negative", "main.negative", "negative.go", -7, -1)
+	pkg.EmitFuncInfoFlags("main.wrapper", "main.wrapper", "wrapper.go", 9, 2, FuncInfoFlagWrapper)
+	ir := pkg.String()
+
+	if !strings.Contains(ir, `!llgo.funcinfo = !{!`) {
+		t.Fatalf("missing %s metadata:\n%s", FuncInfoMetadataName, ir)
+	}
+	for _, want := range []string{`!"main.unused"`, `!"unused.go"`, `i32 7`, `!"main.negative"`, `!"negative.go"`, `i32 0`, `!"main.wrapper"`, `!"wrapper.go"`, `i32 9, i32 2, i32 1`} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing funcinfo field %s:\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, "llvm.compiler.used") {
+		t.Fatalf("funcinfo metadata must not preserve symbols with llvm.compiler.used:\n%s", ir)
+	}
+	if strings.Contains(ir, `ptr @"main.unused"`) || strings.Contains(ir, `ptr @main.unused`) {
+		t.Fatalf("funcinfo metadata must not contain function pointer operands:\n%s", ir)
+	}
+}
+
+func TestFuncInfoMetadataDoesNotBlockGlobalDCE(t *testing.T) {
+	testFuncInfoMetadataDoesNotBlockGlobalDCE(t)
+}
+
+func testFuncInfoMetadataDoesNotBlockGlobalDCE(t *testing.T) {
+	t.Helper()
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+
+	live := pkg.NewFunc("main.main", sig, GoDecl)
+	lb := live.MakeBody(1)
+	lb.Return()
+	lb.EndBuild()
+
+	unused := pkg.NewFuncEx("main.unused", sig, GoDecl, false, true)
+	ub := unused.MakeBody(1)
+	ub.Return()
+	ub.EndBuild()
+	pkg.EmitFuncInfo(unused.Name(), unused.Name(), "unused.go", 7, 1)
+
+	mod := pkg.Module()
+	if mod.NamedFunction("main.unused").IsNil() {
+		t.Fatal("missing main.unused before DCE")
+	}
+	mod.SetDataLayout(prog.DataLayout())
+	mod.SetTarget(prog.Target().Spec().Triple)
+	pbo := llvm.NewPassBuilderOptions()
+	defer pbo.Dispose()
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("verify module before DCE: %v", err)
+	}
+	if err := mod.RunPasses("globaldce", prog.TargetMachine(), pbo); err != nil {
+		t.Fatalf("run globaldce: %v", err)
+	}
+	if !mod.NamedFunction("main.unused").IsNil() {
+		t.Fatalf("funcinfo metadata kept main.unused alive:\n%s", mod.String())
+	}
+	if mod.NamedFunction("main.main").IsNil() {
+		t.Fatalf("globaldce removed externally visible live function:\n%s", mod.String())
+	}
+	if ir := mod.String(); !strings.Contains(ir, `!"main.unused"`) {
+		t.Fatalf("funcinfo metadata should remain available for later materialization:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEFuncInfoMetadata(t *testing.T) {
+	requireGoGlobalDCE(t)
+	testFuncInfoMetadataDoesNotPreserveFunctions(t)
+	testFuncInfoMetadataDoesNotBlockGlobalDCE(t)
+}
+
+func TestDevLTOGlobalDCEPCLineMetadata(t *testing.T) {
+	requireGoGlobalDCE(t)
+	testPCLineMetadataEmission(t)
+}
+
+func requireGoGlobalDCE(t *testing.T) {
+	t.Helper()
+}
+
+func TestDevLTOGlobalDCEAddTypeMetadata(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	g := pkg.NewVarEx("g", prog.Pointer(prog.Int()))
+	prog.addTypeMetadata(g.impl, 8, "go.method.F:func()")
+	prog.addTypeMetadata(g.impl, 16, "go.method.G:func()")
+	prog.setVCallVisibilityMetadata(g.impl, vcallVisibilityLinkageUnit)
+	ir := pkg.String()
+	if !strings.Contains(ir, `!type !`) {
+		t.Fatalf("missing !type metadata:\n%s", ir)
+	}
+	if !strings.Contains(ir, `!"go.method.F:func()"`) {
+		t.Fatalf("missing F type metadata:\n%s", ir)
+	}
+	if !strings.Contains(ir, `!"go.method.G:func()"`) {
+		t.Fatalf("missing G type metadata:\n%s", ir)
+	}
+	if !strings.Contains(ir, `!vcall_visibility !`) {
+		t.Fatalf("missing !vcall_visibility metadata:\n%s", ir)
+	}
+	if !strings.Contains(ir, `!"Virtual Function Elim"`) {
+		t.Fatalf("missing Virtual Function Elim module flag:\n%s", ir)
+	}
+	if !strings.Contains(ir, `i32 1, !"Virtual Function Elim", i32 1`) {
+		t.Fatalf("missing error-behavior Virtual Function Elim module flag:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilitySigIgnoresParameterNames(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	errType := types.Universe.Lookup("error").Type()
+	named := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "path", types.Typ[types.String])),
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "fd", types.Typ[types.Int]),
+			types.NewVar(token.NoPos, nil, "err", errType),
+		),
+		false)
+	unnamed := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.String])),
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", types.Typ[types.Int]),
+			types.NewVar(token.NoPos, nil, "", errType),
+		),
+		false)
+
+	got := methodCapabilitySig(named)
+	want := methodCapabilitySig(unnamed)
+	if got != want {
+		t.Fatalf("methodCapabilitySig should ignore parameter names: got %q, want %q", got, want)
+	}
+	if got != "func(string) (int, error)" {
+		t.Fatalf("methodCapabilitySig kept parameter names: %q", got)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityKeyMatchesInterfaceAndConcreteNames(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	pkg := types.NewPackage("p", "p")
+	tname := types.NewTypeName(token.NoPos, pkg, "T", nil)
+	recvType := types.NewNamed(tname, types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkg, "", recvType)
+	concrete := types.NewFunc(token.NoPos, pkg, "F", types.NewSignatureType(recv, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "path", types.Typ[types.String])),
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "ret", types.Typ[types.Int])),
+		false))
+	iface := types.NewFunc(token.NoPos, pkg, "F", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "", types.Typ[types.String])),
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "", types.Typ[types.Int])),
+		false))
+
+	got := methodCapabilityKey(concrete)
+	want := methodCapabilityKey(iface)
+	if got != want {
+		t.Fatalf("concrete and interface method capability keys differ: got %q, want %q", got, want)
+	}
+	if want := "go.method.F:func(string) int"; got != want {
+		t.Fatalf("methodCapabilityKey = %q, want %q", got, want)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityKeyNormalizesABIClosure(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	pkg := types.NewPackage("testing", "testing")
+	callback := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", types.Typ[types.String]),
+			types.NewVar(token.NoPos, nil, "", types.Typ[types.String]),
+		),
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool]),
+			types.NewVar(token.NoPos, nil, "", types.Universe.Lookup("error").Type()),
+		),
+		false)
+	closure := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, nil, "$f", callback, false),
+		types.NewField(token.NoPos, nil, "$data", types.Typ[types.UnsafePointer], false),
+	}, nil)
+	method := func(param types.Type) *types.Func {
+		return types.NewFunc(token.NoPos, pkg, "verify", types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(
+				types.NewVar(token.NoPos, nil, "", types.Typ[types.String]),
+				types.NewVar(token.NoPos, nil, "", param),
+			),
+			types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Universe.Lookup("error").Type())),
+			false))
+	}
+
+	sourceKey := methodCapabilityKey(method(callback))
+	abiKey := methodCapabilityKey(method(closure))
+	if abiKey != sourceKey {
+		t.Fatalf("ABI closure capability key mismatch: got %q, want %q", abiKey, sourceKey)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityKeyQualifiesUnexportedNames(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	pkgA := types.NewPackage("example.com/a", "a")
+	pkgB := types.NewPackage("example.com/b", "b")
+	makeMethod := func(pkg *types.Package) *types.Func {
+		recvType := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "T", nil), types.NewStruct(nil, nil), nil)
+		recv := types.NewVar(token.NoPos, pkg, "", recvType)
+		return types.NewFunc(token.NoPos, pkg, "hidden", types.NewSignatureType(recv, nil, nil, nil,
+			types.NewTuple(types.NewVar(token.NoPos, pkg, "", types.Typ[types.Int])),
+			false))
+	}
+
+	gotA := methodCapabilityKey(makeMethod(pkgA))
+	gotB := methodCapabilityKey(makeMethod(pkgB))
+	if gotA == gotB {
+		t.Fatalf("unexported methods from different packages share a key: %q", gotA)
+	}
+	if want := "go.method.example.com/a.hidden:func() int"; gotA != want {
+		t.Fatalf("methodCapabilityKey = %q, want %q", gotA, want)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityKeyUsesPromotedMethodPackage(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	pkgA := types.NewPackage("example.com/a", "a")
+	pkgB := types.NewPackage("example.com/b", "b")
+	exported := types.NewNamed(types.NewTypeName(token.NoPos, pkgA, "Exported", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkgA, "", exported)
+	exported.AddMethod(types.NewFunc(token.NoPos, pkgA, "hidden", types.NewSignatureType(recv, nil, nil, nil, nil, false)))
+
+	field := types.NewField(token.NoPos, pkgB, "Exported", exported, true)
+	wrapper := types.NewNamed(types.NewTypeName(token.NoPos, pkgB, "Wrapper", nil), types.NewStruct([]*types.Var{field}, nil), nil)
+	mset := types.NewMethodSet(wrapper)
+	if mset.Len() != 1 {
+		t.Fatalf("promoted method set length = %d, want 1", mset.Len())
+	}
+	promoted := mset.At(0).Obj().(*types.Func)
+	if got := promoted.Pkg().Path(); got != pkgA.Path() {
+		t.Fatalf("promoted method package = %q, want %q", got, pkgA.Path())
+	}
+
+	ifaceMethod := types.NewFunc(token.NoPos, pkgA, "hidden", types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	got := methodCapabilityKey(promoted)
+	want := methodCapabilityKey(ifaceMethod)
+	if got != want {
+		t.Fatalf("promoted method key = %q, want interface key %q", got, want)
+	}
+	if wantLiteral := "go.method.example.com/a.hidden:func()"; got != wantLiteral {
+		t.Fatalf("promoted method key = %q, want %q", got, wantLiteral)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityKeyUnaliasesNestedTypes(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	pkg := types.NewPackage("example.com/p", "p")
+	pointStruct := func() *types.Struct {
+		return types.NewStruct([]*types.Var{
+			types.NewField(token.NoPos, pkg, "x", types.Typ[types.Float64], false),
+			types.NewField(token.NoPos, pkg, "y", types.Typ[types.Float64], false),
+		}, nil)
+	}
+	myPoint := types.NewAlias(types.NewTypeName(token.NoPos, pkg, "MyPoint", nil), pointStruct())
+	iPoint := types.NewAlias(types.NewTypeName(token.NoPos, pkg, "IPoint", nil), pointStruct())
+	recvType := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "S", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkg, "", recvType)
+	params := types.NewTuple(
+		types.NewVar(token.NoPos, pkg, "dx", types.Typ[types.Float64]),
+		types.NewVar(token.NoPos, pkg, "dy", types.Typ[types.Float64]),
+	)
+	concrete := types.NewFunc(token.NoPos, pkg, "NewPoint", types.NewSignatureType(recv, nil, nil,
+		params,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "", types.NewPointer(myPoint))),
+		false))
+	iface := types.NewFunc(token.NoPos, pkg, "NewPoint", types.NewSignatureType(nil, nil, nil,
+		params,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "", types.NewPointer(iPoint))),
+		false))
+
+	got := methodCapabilityKey(concrete)
+	want := methodCapabilityKey(iface)
+	if got != want {
+		t.Fatalf("methodCapabilityKey should ignore aliases: got %q, want %q", got, want)
+	}
+	if strings.Contains(got, "MyPoint") || strings.Contains(got, "IPoint") {
+		t.Fatalf("methodCapabilityKey kept alias names: %q", got)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCapabilityTypeCoversCompositeForms(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	if got := methodCapabilityTuple(nil); got != nil {
+		t.Fatalf("methodCapabilityTuple(nil) = %v, want nil", got)
+	}
+	if got := methodCapabilityTuple(types.NewTuple()); got != nil {
+		t.Fatalf("methodCapabilityTuple(empty) = %v, want nil", got)
+	}
+
+	pkg := types.NewPackage("example.com/p", "p")
+	alias := types.NewAlias(types.NewTypeName(token.NoPos, pkg, "AliasPtr", nil), types.NewPointer(types.Typ[types.String]))
+
+	tp := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), types.Universe.Lookup("any").Type().Underlying().(*types.Interface))
+	box := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Box", nil), types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, pkg, "V", tp, false),
+	}, nil), nil)
+	box.SetTypeParams([]*types.TypeParam{tp})
+	boxAlias, err := types.Instantiate(types.NewContext(), box, []types.Type{alias}, false)
+	if err != nil {
+		t.Fatalf("Instantiate(Box[AliasPtr]) failed: %v", err)
+	}
+
+	nestedSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "x", alias)),
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "ok", types.Typ[types.Bool])),
+		false)
+	method := types.NewFunc(token.NoPos, pkg, "M", nestedSig)
+	embedded := types.NewInterfaceType(nil, nil).Complete()
+	iface := types.NewInterfaceType([]*types.Func{method}, []types.Type{embedded}).Complete()
+	union := types.NewUnion([]*types.Term{
+		types.NewTerm(false, alias),
+		types.NewTerm(true, types.NewSlice(alias)),
+	})
+
+	composite := []types.Type{
+		types.NewArray(alias, 2),
+		types.NewSlice(alias),
+		types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "F", alias, false)}, []string{`json:"f"`}),
+		types.NewPointer(alias),
+		nestedSig,
+		iface,
+		types.NewMap(alias, types.NewChan(types.SendRecv, alias)),
+		boxAlias,
+		union,
+	}
+	for _, typ := range composite {
+		got := methodCapabilityType(typ)
+		gotString := types.TypeString(got, func(pkg *types.Package) string {
+			if pkg == nil {
+				return ""
+			}
+			return pkg.Path()
+		})
+		if strings.Contains(gotString, "AliasPtr") {
+			t.Fatalf("methodCapabilityType(%T) kept alias in %q", typ, gotString)
+		}
+	}
+
+	gotUnion := methodCapabilityType(union).(*types.Union)
+	if ptr, ok := gotUnion.Term(0).Type().(*types.Pointer); !ok || ptr.Elem() != types.Typ[types.String] {
+		t.Fatalf("union term was not canonicalized through alias: %s", gotUnion.Term(0).Type())
+	}
+}
+
+func TestDevLTOGlobalDCEReflectPackageEnablesVirtualFunctionElim(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("reflect", "reflect")
+
+	ir := pkg.String()
+	if !strings.Contains(ir, `i32 1, !"Virtual Function Elim", i32 1`) {
+		t.Fatalf("missing enabled Virtual Function Elim module flag for reflect:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEFakeUseValueInlineAsm(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	target := pkg.NewFunc("Target", sig, GoDecl)
+	fn := pkg.NewFunc("Use", sig, GoDecl)
+	b := fn.MakeBody(1)
+	prog.fakeUseValueInlineAsm(b.impl, target.impl)
+	b.Return()
+
+	ir := pkg.String()
+	if !strings.Contains(ir, "asm sideeffect") {
+		t.Fatalf("missing inline asm fake-use:\n%s", ir)
+	}
+	if !strings.Contains(ir, "ptr @Target") {
+		t.Fatalf("missing inline asm operand:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEMethodCheckedLoadEmitsIntrinsicAndAssume(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+	g := pkg.NewVarEx("itab", prog.Pointer(prog.VoidPtr()))
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	fn := pkg.NewFunc("Use", sig, GoDecl)
+	b := fn.MakeBody(1)
+	loaded := prog.methodCheckedLoad(b.impl, g.impl, "go.method.M:func()")
+	prog.methodCheckedLoad(b.impl, g.impl, "go.method.N:func()")
+	prog.fakeUseValueInlineAsm(b.impl, loaded)
+	b.Return()
+
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+
+	ir := pkg.String()
+	for _, want := range []string{
+		"@llvm.type.checked.load",
+		"@llvm.assume",
+		`!"go.method.M:func()"`,
+		`!"go.method.N:func()"`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing %s in method checked load IR:\n%s", want, ir)
+		}
+	}
+}
+
+func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.EnableGoGlobalDCE(true)
+	prog.EnableLTOPluginMarkers(true)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkgTypes := types.NewPackage("example.com/staticitab", "staticitab")
+	concrete := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkgTypes, "T", nil),
+		types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkgTypes, "", concrete)
+	methodSig := types.NewSignatureType(recv, nil, nil, nil, nil, false)
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "M", methodSig))
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "N", methodSig))
+	interfaceMethodSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	interfaceMethodM := types.NewFunc(token.NoPos, pkgTypes, "M", interfaceMethodSig)
+	interfaceMethodN := types.NewFunc(token.NoPos, pkgTypes, "N", interfaceMethodSig)
+	intf := types.NewInterfaceType([]*types.Func{interfaceMethodM, interfaceMethodN}, nil)
+	intf.Complete()
+
+	pkg := prog.NewPackage("staticitab", pkgTypes.Path())
+	returns := types.NewTuple(types.NewVar(token.NoPos, nil, "", intf))
+	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), GoDecl)
+	b := fn.MakeBody(1)
+	ifaceValue := b.MakeInterface(prog.Type(intf, GoDecl), prog.Zero(prog.Type(concrete, GoDecl)))
+	b.Imethod(ifaceValue, interfaceMethodM)
+	prog.EnableLTOPluginMarkers(false)
+	b.Imethod(ifaceValue, interfaceMethodM)
+	prog.EnableLTOPluginMarkers(true)
+	b.Return(ifaceValue)
+	if _, ok := b.staticItab(intf, concrete, b.abiType(intf), b.abiType(concrete)); !ok {
+		t.Fatal("cached static itab template was not reused")
+	}
+	if _, ok := b.staticItab(intf, nil, b.abiType(intf), Expr{}); ok {
+		t.Fatal("dynamic concrete type emitted a static itab template")
+	}
+	empty := types.NewInterfaceType(nil, nil).Complete()
+	if _, ok := b.staticItab(empty, concrete, b.abiType(empty), b.abiType(concrete)); ok {
+		t.Fatal("empty interface emitted a static itab template")
+	}
+	unrelated := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkgTypes, "Unrelated", nil),
+		types.NewStruct(nil, nil), nil)
+	if _, ok := b.staticItab(intf, unrelated, b.abiType(intf), b.abiType(unrelated)); ok {
+		t.Fatal("unassignable concrete type emitted a static itab template")
+	}
+	prog.EnableLTOPluginMarkers(false)
+	if _, ok := b.staticItab(intf, concrete, b.abiType(intf), b.abiType(concrete)); !ok {
+		t.Fatal("runtime static itab was not emitted without LTO plugin markers")
+	}
+	prog.EnableLTOPluginMarkers(true)
+	noInterface := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkgTypes, "NoInterface", nil),
+		types.NewStruct(nil, nil), nil)
+	noInterfaceRecv := types.NewVar(token.NoPos, pkgTypes, "", noInterface)
+	noInterfaceSig := types.NewSignatureType(noInterfaceRecv, nil, nil, nil, nil, false)
+	noInterface.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "M", noInterfaceSig))
+	noInterface.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "N", noInterfaceSig))
+	prog.SetNoInterfaceMethod(pkgTypes.Path() + ".NoInterface.M")
+	if _, ok := b.staticItab(intf, noInterface, b.abiType(intf), b.abiType(noInterface)); ok {
+		t.Fatal("nointerface method emitted a static itab template")
+	}
+	b.EndBuild()
+	pkg.MaterializePreserveSyms()
+
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.String()
+	interfaceTypeID := prog.interfaceCapabilityKey(intf)
+	for _, want := range []string{
+		`_llgo_itab$`,
+		`!"go.method.M:func()"`,
+		`!"go.method.N:func()"`,
+		`!llgo.static.itab.slot`,
+		`"llgo.interface.call"="1"`,
+		`"llgo.interface.id"="` + interfaceTypeID + `"`,
+		`!"` + prog.interfaceMethodCapabilityKey(intf, 0) + `"`,
+		`!"` + prog.interfaceMethodCapabilityKey(intf, 1) + `"`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing %s in static itab IR:\n%s", want, ir)
+		}
+	}
+	if !strings.Contains(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab"`) {
+		t.Fatalf("LTO T2I dropped NewItab; method-drop DCE needs the runtime call:\n%s", ir)
+	}
+	if !strings.Contains(ir, `@llvm.compiler.used`) {
+		t.Fatalf("missing compiler.used for LTO itab template:\n%s", ir)
+	}
+	for _, typeID := range []string{
+		prog.interfaceMethodCapabilityKey(intf, 0),
+		methodCapabilityKey(interfaceMethodM),
+	} {
+		if !strings.Contains(ir, `call { ptr, i1 } @llvm.type.checked.load`+"(") ||
+			!strings.Contains(ir, `metadata !"`+typeID+`"`) {
+			t.Fatalf("missing checked load for %s:\n%s", typeID, ir)
+		}
+	}
+	if strings.Contains(ir, `!llgo.interface.type`) || strings.Contains(ir, `!llgo.interface.method`) {
+		t.Fatalf("interface declaration remained attached to a type descriptor:\n%s", ir)
+	}
+}
+
+func TestDeadcodeDropT2IUsesNewItab(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.EnableDeadcodeDrop(true)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkgTypes := types.NewPackage("example.com/deadcodedrop", "deadcodedrop")
+	concrete := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkgTypes, "T", nil),
+		types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkgTypes, "", concrete)
+	methodSig := types.NewSignatureType(recv, nil, nil, nil, nil, false)
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "Read", methodSig))
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "Write", methodSig))
+	interfaceMethodSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	intf := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkgTypes, "Read", interfaceMethodSig),
+		types.NewFunc(token.NoPos, pkgTypes, "Write", interfaceMethodSig),
+	}, nil)
+	intf.Complete()
+
+	pkg := prog.NewPackage("deadcodedrop", pkgTypes.Path())
+	returns := types.NewTuple(types.NewVar(token.NoPos, nil, "", intf))
+	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), GoDecl)
+	b := fn.MakeBody(1)
+	b.Return(b.MakeInterface(prog.Type(intf, GoDecl), prog.Zero(prog.Type(concrete, GoDecl))))
+	if _, ok := b.staticItab(intf, concrete, b.abiType(intf), b.abiType(concrete)); ok {
+		t.Fatal("deadcode-drop T2I emitted a static itab vtable")
+	}
+	b.EndBuild()
+
+	ir := pkg.String()
+	if strings.Contains(ir, `_llgo_itab$`) {
+		t.Fatalf("deadcode-drop T2I emitted a static itab global:\n%s", ir)
+	}
+	if !strings.Contains(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab"`) {
+		t.Fatalf("deadcode-drop T2I dropped NewItab:\n%s", ir)
+	}
+}
+
+func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkgTypes := types.NewPackage("example.com/runtimeitab", "runtimeitab")
+	concrete := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkgTypes, "T", nil),
+		types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, pkgTypes, "", concrete)
+	methodSig := types.NewSignatureType(recv, nil, nil, nil, nil, false)
+	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "M", methodSig))
+	interfaceMethodSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	intf := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkgTypes, "M", interfaceMethodSig),
+	}, nil)
+	intf.Complete()
+
+	pkg := prog.NewPackage("runtimeitab", pkgTypes.Path())
+	returns := types.NewTuple(types.NewVar(token.NoPos, nil, "", intf))
+	fn := pkg.NewFunc("Make", types.NewSignatureType(nil, nil, nil, nil, returns, false), GoDecl)
+	b := fn.MakeBody(1)
+	tabi := b.abiType(intf)
+	tcon := b.abiType(concrete)
+	itab1, ok1 := b.staticItab(intf, concrete, tabi, tcon)
+	itab2, ok2 := b.staticItab(intf, concrete, tabi, tcon)
+	if !ok1 || !ok2 || itab1.impl != itab2.impl {
+		t.Fatal("repeated T2I did not reuse the static itab global")
+	}
+	// Exercise the module-global fallback independently of the type cache.
+	pkg.staticItabByType = nil
+	itab3, ok3 := b.staticItab(intf, concrete, tabi, tcon)
+	if !ok3 || itab3.impl != itab1.impl {
+		t.Fatal("named static itab was not reused after cache reset")
+	}
+	if got := len(pkg.staticItabByType); got != 1 {
+		t.Fatalf("static itab cache has %d entries, want 1", got)
+	}
+	b.Return(b.MakeInterface(prog.Type(intf, GoDecl), prog.Zero(prog.Type(concrete, GoDecl))))
+	b.EndBuild()
+
+	ir := pkg.String()
+	if !strings.Contains(ir, `_llgo_itab$`) {
+		t.Fatalf("missing static itab global:\n%s", ir)
+	}
+	if strings.Contains(ir, `call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.NewItab"`) {
+		t.Fatalf("runtime T2I still called NewItab:\n%s", ir)
+	}
+	if strings.Contains(ir, `RegisterStaticItab`) {
+		t.Fatalf("T2I must not register itabs from package init:\n%s", ir)
+	}
+}
+
+func TestStaticIfaceBoxFingerprintsDistinguishSameLengthStrings(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxfp", "boxfp")
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	rets := types.NewTuple(
+		types.NewVar(token.NoPos, nil, "", empty),
+		types.NewVar(token.NoPos, nil, "", empty),
+	)
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), GoDecl)
+	b := fn.MakeBody(1)
+	tany := prog.Type(empty, GoDecl)
+	e1 := b.MakeInterface(tany, pkg.ConstString(strings.Repeat("a", 28)))
+	e2 := b.MakeInterface(tany, pkg.ConstString(strings.Repeat("b", 28)))
+	b.Return(e1, e2)
+	b.EndBuild()
+	ir := pkg.String()
+	seen := map[string]bool{}
+	for _, line := range strings.Split(ir, "\n") {
+		if i := strings.Index(line, `@"_llgo_ifacebox$`); i >= 0 {
+			rest := line[i+2:]
+			end := strings.Index(rest, `"`)
+			if end > 0 {
+				seen[rest[:end]] = true
+			}
+		}
+	}
+	if len(seen) < 2 {
+		t.Fatalf("same-length strings shared an ifacebox name: %v\n%s", seen, ir)
+	}
+}
+
+func TestConstantFingerprintFloats(t *testing.T) {
+	pkg := &aPackage{}
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+
+	f32 := ctx.FloatType()
+	f64 := ctx.DoubleType()
+	tests := []struct {
+		name string
+		x    llvm.Value
+		y    llvm.Value
+	}{
+		{"float32 values", llvm.ConstFloat(f32, 0), llvm.ConstFloat(f32, 3.14)},
+		{"float64 values", llvm.ConstFloat(f64, 0), llvm.ConstFloat(f64, 3.14)},
+		{"signed float32 zero", llvm.ConstFloat(f32, 0), llvm.ConstFloat(f32, math.Copysign(0, -1))},
+		{"signed float64 zero", llvm.ConstFloat(f64, 0), llvm.ConstFloat(f64, math.Copysign(0, -1))},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if x, y := pkg.constantFingerprint(test.x), pkg.constantFingerprint(test.y); x == y {
+				t.Fatalf("fingerprints collide: %q", x)
+			}
+		})
+	}
+
+	c1 := ctx.ConstStruct([]llvm.Value{llvm.ConstFloat(f64, 1), llvm.ConstFloat(f64, 2)}, false)
+	c2 := ctx.ConstStruct([]llvm.Value{llvm.ConstFloat(f64, 1), llvm.ConstFloat(f64, 3)}, false)
+	if x, y := pkg.constantFingerprint(c1), pkg.constantFingerprint(c2); x == y {
+		t.Fatalf("complex fingerprints collide: %q", x)
+	}
+}
+
+func TestStaticIfaceBoxReusesLLVMValue(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxreuse", "boxreuse")
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	rets := types.NewTuple(types.NewVar(token.NoPos, nil, "", empty))
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), GoDecl)
+	b := fn.MakeBody(1)
+	tany := prog.Type(empty, GoDecl)
+	c := prog.IntVal(42, prog.Int64())
+	e1 := b.MakeInterface(tany, c)
+	e2 := b.MakeInterface(tany, c)
+	if len(pkg.ifaceBoxByValue) != 1 {
+		t.Fatalf("pointer cache size = %d, want 1", len(pkg.ifaceBoxByValue))
+	}
+	b.Return(e1)
+	_ = e2
+	b.EndBuild()
+	ir := pkg.String()
+	seen := map[string]bool{}
+	for _, line := range strings.Split(ir, "\n") {
+		if i := strings.Index(line, `@"_llgo_ifacebox$`); i >= 0 {
+			rest := line[i+2:]
+			end := strings.Index(rest, `"`)
+			if end > 0 {
+				seen[rest[:end]] = true
+			}
+		}
+	}
+	if len(seen) != 1 {
+		t.Fatalf("repeated boxing of the same constant created %d boxes: %v\n%s", len(seen), seen, ir)
+	}
+}
+
+func TestConstantFingerprintKinds(t *testing.T) {
+	pkg := &aPackage{}
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	mod := ctx.NewModule("fpkinds")
+	defer mod.Dispose()
+
+	var none llvm.Value
+	if got := pkg.constantFingerprint(none); got != "-" {
+		t.Fatalf("nil fingerprint = %q, want -", got)
+	}
+
+	ptr := llvm.PointerType(ctx.Int8Type(), 0)
+	if got := pkg.constantFingerprint(llvm.ConstPointerNull(ptr)); got != "n" {
+		t.Fatalf("null fingerprint = %q, want n", got)
+	}
+
+	fn := llvm.AddFunction(mod, "fp.fn", llvm.FunctionType(ctx.VoidType(), nil, false))
+	if got := pkg.constantFingerprint(fn); got != "f:fp.fn" {
+		t.Fatalf("function fingerprint = %q, want f:fp.fn", got)
+	}
+
+	g := llvm.AddGlobal(mod, ctx.Int32Type(), "fp.g")
+	if got := pkg.constantFingerprint(g); got != "g:fp.g" {
+		t.Fatalf("uninitialized global fingerprint = %q, want g:fp.g", got)
+	}
+
+	g.SetInitializer(llvm.ConstInt(ctx.Int32Type(), 7, false))
+	if got := pkg.constantFingerprint(g); got != "g:fp.g" {
+		t.Fatalf("initialized global fingerprint = %q, want g:fp.g", got)
+	}
+	g2 := llvm.AddGlobal(mod, ctx.Int32Type(), "fp.g2")
+	g2.SetInitializer(llvm.ConstInt(ctx.Int32Type(), 7, false))
+	if pkg.constantFingerprint(g) == pkg.constantFingerprint(g2) {
+		t.Fatal("distinct globals with matching initializers share a fingerprint")
+	}
+
+	sg := llvm.AddGlobal(mod, llvm.ArrayType(ctx.Int8Type(), 2), "fp.s")
+	sg.SetInitializer(ctx.ConstString("hi", false))
+	if got := pkg.constantFingerprint(sg); got != "g:fp.s" {
+		t.Fatalf("ordinary byte-array global fingerprint = %q, want g:fp.s", got)
+	}
+	pkg.staticStringBacking = map[llvm.Value]struct{}{sg: {}}
+	if got := pkg.constantFingerprint(sg); got != "b:2:hi" {
+		t.Fatalf("string backing fingerprint = %q, want b:2:hi", got)
+	}
+
+	str := ctx.ConstString("ab", false)
+	if got := pkg.constantFingerprint(str); got != "b:2:ab" {
+		t.Fatalf("constant string fingerprint = %q, want b:2:ab", got)
+	}
+	if got := pkg.constantFingerprint(ctx.ConstString(",)", false)); got != "b:2:,)" {
+		t.Fatalf("delimiter string fingerprint = %q, want b:2:,)", got)
+	}
+
+	zeroBytes := llvm.ConstNull(llvm.ArrayType(ctx.Int8Type(), 1))
+	if got := pkg.constantFingerprint(zeroBytes); got != "z:1" {
+		t.Fatalf("zero byte array fingerprint = %q, want z:1", got)
+	}
+
+	undef := llvm.Undef(ctx.Int32Type())
+	if got := pkg.constantFingerprint(undef); got != "?" {
+		t.Fatalf("undef fingerprint = %q, want ?", got)
+	}
+	if isSafeStaticIfaceConstant(undef, nil) {
+		t.Fatal("undef was accepted as a static interface constant")
+	}
+	if !isSafeStaticIfaceConstant(llvm.ConstInt(ctx.Int32Type(), 1, false), nil) {
+		t.Fatal("integer constant was rejected as a static interface constant")
+	}
+	if isSafeStaticIfaceConstant(llvm.Value{}, nil) {
+		t.Fatal("nil value was accepted as a static interface constant")
+	}
+	seen := map[llvm.Value]bool{}
+	seenValue := llvm.ConstInt(ctx.Int32Type(), 2, false)
+	seen[seenValue] = true
+	if isSafeStaticIfaceConstant(seenValue, seen) {
+		t.Fatal("visited constant was accepted as a static interface constant")
+	}
+	zeroGlobal := llvm.AddGlobal(mod, llvm.ArrayType(ctx.Int8Type(), 4), "fp.zero")
+	zeroGlobal.SetInitializer(llvm.ConstNull(llvm.ArrayType(ctx.Int8Type(), 4)))
+	if got := pkg.constantFingerprint(zeroGlobal); got != "g:fp.zero" {
+		t.Fatalf("zero global fingerprint = %q, want g:fp.zero", got)
+	}
+	if isSafeStaticIfaceConstant(llvm.ConstFloat(ctx.DoubleType(), math.NaN()), nil) {
+		t.Fatal("NaN constant was accepted as a static interface constant")
+	}
+	if got := pkg.constantFingerprint(llvm.ConstNull(llvm.ArrayType(ctx.Int8Type(), 4))); got != "z:4" {
+		t.Fatalf("zero aggregate fingerprint = %q, want z:4", got)
+	}
+	badAggregate := ctx.ConstStruct([]llvm.Value{
+		llvm.ConstInt(ctx.Int32Type(), 1, false),
+		llvm.Undef(ctx.Int32Type()),
+	}, false)
+	if isSafeStaticIfaceConstant(badAggregate, nil) {
+		t.Fatal("aggregate containing undef was accepted as a static interface constant")
+	}
+}
+
+func TestStaticIfaceBoxReusesByName(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxname", "boxname")
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	rets := types.NewTuple(types.NewVar(token.NoPos, nil, "", empty))
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), GoDecl)
+	b := fn.MakeBody(1)
+	tany := prog.Type(empty, GoDecl)
+	first := b.MakeInterface(tany, prog.IntVal(42, prog.Int64()))
+	pkg.ifaceBoxByValue = nil
+	second := b.MakeInterface(tany, prog.IntVal(42, prog.Int64()))
+	if first.impl.IsNil() || second.impl.IsNil() {
+		t.Fatal("MakeInterface returned a nil iface")
+	}
+	if len(pkg.ifaceBoxByValue) != 1 {
+		t.Fatalf("name-cache reuse size = %d, want 1", len(pkg.ifaceBoxByValue))
+	}
+	pkg.ifaceBoxByValue = nil
+	if _, ok := b.staticIfaceBox(prog.Type(types.Typ[types.Int64], GoDecl), prog.IntVal(42, prog.Int64())); !ok {
+		t.Fatal("VarOf fallback did not reuse the static box")
+	}
+	b.Return(first)
+	b.EndBuild()
+	ir := pkg.String()
+	if strings.Count(ir, `_llgo_ifacebox$`) == 0 {
+		t.Fatalf("missing ifacebox after VarOf reuse:\n%s", ir)
+	}
+	pkg.ifaceBoxByValue = nil
+}
+
+func TestStaticIfaceBoxSkipsZeroSizedTypes(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxzero", "boxzero")
+	empty := types.NewInterfaceType(nil, nil)
+	empty.Complete()
+	z := types.NewStruct(nil, nil)
+	rets := types.NewTuple(types.NewVar(token.NoPos, nil, "", empty))
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, rets, false), GoDecl)
+	b := fn.MakeBody(1)
+	e := b.MakeInterface(prog.Type(empty, GoDecl), prog.Zero(prog.Type(z, GoDecl)))
+	b.Return(e)
+	b.EndBuild()
+	zero := pkg.Module().NamedGlobal(moduleZeroName)
+	if !zero.IsNil() && zero.Linkage() == llvm.WeakODRLinkage {
+		t.Fatal("zero-sized iface box mutated the shared sentinel linkage")
+	}
+	ir := pkg.String()
+	if strings.Contains(ir, `_llgo_ifacebox$`) {
+		t.Fatalf("zero-sized value used an ifacebox:\n%s", ir)
+	}
+	if _, ok := b.staticIfaceBox(prog.Type(z, GoDecl), prog.Zero(prog.Type(z, GoDecl))); ok {
+		t.Fatal("zero-sized value returned a static box")
+	}
+}
+
+func TestDevLTOGlobalDCEReflectMethodByNameCallMarkers(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+	fn := pkg.NewFunc("UseReflectMethodByName", NoArgsNoRet, CDecl)
+	b := fn.MakeBody(1)
+	callTy := llvm.FunctionType(prog.tyVoid(), []llvm.Type{
+		prog.tyVoidPtr(),
+		prog.tyVoidPtr(),
+		prog.tyVoidPtr(),
+		prog.Int64().ll,
+	}, false)
+	callee := llvm.AddFunction(pkg.Module(), "reflect.Value.MethodByName", callTy)
+	call := llvm.CreateCall(b.impl, callTy, callee, []llvm.Value{
+		llvm.ConstPointerNull(prog.tyVoidPtr()),
+		llvm.ConstPointerNull(prog.tyVoidPtr()),
+		llvm.ConstPointerNull(prog.tyVoidPtr()),
+		llvm.ConstInt(prog.Int64().ll, 4, false),
+	})
+
+	b.MarkReflectValueMethodByNameCall(call, 2)
+	if attr := call.GetCallSiteStringAttribute(-1, reflectMethodByNameCallAttr); !attr.IsNil() {
+		t.Fatalf("reflect MethodByName call marker should be disabled by default")
+	}
+	if attr := call.GetCallSiteStringAttribute(3, reflectMethodByNameArgAttr); !attr.IsNil() {
+		t.Fatalf("reflect MethodByName name-arg marker should be disabled by default")
+	}
+
+	prog.EnableLTOPluginMarkers(true)
+	b.MarkReflectValueMethodByNameCall(call, 2)
+	if attr := call.GetCallSiteStringAttribute(-1, reflectMethodByNameCallAttr); attr.IsNil() || attr.GetStringValue() != reflectMethodByNameValue {
+		t.Fatalf("reflect MethodByName call marker = %v, want %q", attr, reflectMethodByNameValue)
+	}
+	if attr := call.GetCallSiteStringAttribute(3, reflectMethodByNameArgAttr); attr.IsNil() || attr.GetStringValue() != "1" {
+		t.Fatalf("reflect MethodByName name-arg marker = %v, want 1", attr)
+	}
+
+	b.MarkReflectTypeMethodByNameCall(llvm.ConstPointerNull(prog.tyVoidPtr()), 0)
+	b.Return()
+}
+
+func TestDevLTOGlobalDCEEmitFakeUsesInlineAsmAtEntry(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	targetA := pkg.NewFunc("TargetA", sig, GoDecl)
+	targetB := pkg.NewFunc("TargetB", sig, GoDecl)
+	fn := pkg.NewFunc("UseIntrinsic", sig, GoDecl)
+	b := fn.MakeBody(1)
+
+	pkg.NewFunc("NoFakeUses", sig, GoDecl).emitFakeUsesInlineAsm(b)
+	fn.recordFakeUse(targetA.impl)
+	fn.recordFakeUse(targetB.impl)
+	b.Return()
+	fn.emitFakeUsesInlineAsm(b)
+
+	ir := pkg.String()
+	if !strings.Contains(ir, `call void asm sideeffect "", "X"(ptr @TargetA)`) {
+		t.Fatalf("missing inline asm fake-use for TargetA:\n%s", ir)
+	}
+	if !strings.Contains(ir, `call void asm sideeffect "", "X"(ptr @TargetB)`) {
+		t.Fatalf("missing inline asm fake-use for TargetB:\n%s", ir)
+	}
+	if strings.Index(ir, `call void asm sideeffect "", "X"(ptr @TargetA)`) > strings.Index(ir, "ret void") {
+		t.Fatalf("inline asm fake-use should be emitted before the return:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEAddMethodTypeMetadataEarlyReturns(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	g := pkg.NewVarEx("g", prog.Pointer(prog.Int()))
+
+	prog.addMethodTypeMetadata(g.impl, prog.Pointer(prog.Int()), nil)
+
+	ir := pkg.String()
+	if strings.Contains(ir, "!vcall_visibility") || strings.Contains(ir, "!type !") {
+		t.Fatalf("early-return paths should not attach method metadata:\n%s", ir)
+	}
+}
+
+func TestDevLTOGlobalDCEInterfaceMethodCheckedLoadAttributes(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableLTOPluginMarkers(true)
+	pkg := prog.NewPackage("main", "main")
+	g := pkg.NewVarEx("itab", prog.Pointer(prog.VoidPtr()))
+	methodSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	methodM := types.NewFunc(token.NoPos, nil, "M", methodSig)
+	methodN := types.NewFunc(token.NoPos, nil, "N", methodSig)
+	intf := types.NewInterfaceType([]*types.Func{methodM, methodN}, nil).Complete()
+	fn := pkg.NewFunc("Use", types.NewSignatureType(nil, nil, nil, nil, nil, false), GoDecl)
+	b := fn.MakeBody(1)
+	prog.interfaceMethodCheckedLoad(b.impl, g.impl, intf, 1)
+	b.Return()
+
+	ir := pkg.String()
+	interfaceID := prog.interfaceCapabilityKey(intf)
+	for _, want := range []string{
+		`metadata !"` + interfaceMethodCapabilityKeyFromID(interfaceID, 1) + `") #`,
+		`"llgo.interface.call"="1"`,
+		`"llgo.interface.id"="` + interfaceID + `"`,
+		`"llgo.interface.index"="1"`,
+		`"llgo.interface.count"="2"`,
+		`"llgo.interface.method.0"="go.method.M:func()"`,
+		`"llgo.interface.method.1"="go.method.N:func()"`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing checked-load interface attribute %s:\n%s", want, ir)
+		}
+	}
+	for _, unwanted := range []string{`!llgo.interface.type`, `!llgo.interface.method`, `@llvm.compiler.used`} {
+		if strings.Contains(ir, unwanted) {
+			t.Fatalf("checked load retained descriptor-based interface declaration %s:\n%s", unwanted, ir)
+		}
+	}
+}
+
+func TestDevLTOGlobalDCEAddMethodTypeMetadataMarksIFnAndTFnForReflectContexts(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	g := pkg.NewVarEx("g", prog.Pointer(prog.Int()))
+
+	goPkg := types.NewPackage("example.com/p", "p")
+	named := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "S", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, goPkg, "", named)
+	method := types.NewFunc(token.NoPos, goPkg, "Keep", types.NewSignatureType(recv, nil, nil, nil, nil, false))
+	named.AddMethod(method)
+	mset := types.NewMethodSet(named)
+
+	methodArray := prog.Type(types.NewArray(prog.rtNamed("Method"), 1), GoDecl)
+	fullType := prog.Struct(prog.Int(), prog.Int(), methodArray)
+	prog.addMethodTypeMetadata(g.impl, fullType, []*types.Selection{mset.At(0)})
+
+	methodType := prog.Type(prog.rtNamed("Method"), GoDecl)
+	methodArrayOffset := prog.OffsetOf(fullType, 2)
+	ifnOffset := methodArrayOffset + prog.OffsetOf(methodType, abiMethodIFnFieldIndex)
+	tfnOffset := methodArrayOffset + prog.OffsetOf(methodType, abiMethodTFnFieldIndex)
+
+	ir := pkg.String()
+	for _, want := range []string{
+		fmt.Sprintf(`!{i64 %d, !"%s"}`, ifnOffset, reflectValueMethodTypeID),
+		fmt.Sprintf(`!{i64 %d, !"%s"}`, ifnOffset, reflectValueMethodNameTypeID("Keep")),
+		fmt.Sprintf(`!{i64 %d, !"%s"}`, tfnOffset, reflectTypeMethodTypeID),
+		fmt.Sprintf(`!{i64 %d, !"%s"}`, tfnOffset, reflectTypeMethodNameTypeID("Keep")),
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing reflect method metadata %s:\n%s", want, ir)
+		}
+	}
+	for _, typeID := range []string{
+		reflectValueMethodTypeID,
+		reflectValueMethodNameTypeID("Keep"),
+		reflectTypeMethodTypeID,
+		reflectTypeMethodNameTypeID("Keep"),
+	} {
+		if count := strings.Count(ir, `!"`+typeID+`"`); count != 1 {
+			t.Fatalf("reflect method metadata count for %s = %d, want 1:\n%s", typeID, count, ir)
+		}
+	}
+}
+
+func TestDevLTOGlobalDCERecordAbiTypeFakeUsesEarlyReturns(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	target := pkg.NewFunc("CachedTarget", sig, GoDecl)
+	fn := pkg.NewFunc("UseAbiType", sig, GoDecl)
+	b := fn.MakeBody(1)
+	g := pkg.NewVarEx("typeinfo", prog.Pointer(prog.Int()))
+	pkg.abiTypeFakeUseCache[g.impl] = []llvm.Value{target.impl}
+
+	b.recordAbiTypeFakeUses(g.impl)
+	if len(fn.fakeUses) != 0 {
+		t.Fatalf("recordAbiTypeFakeUses recorded fake uses while global DCE is disabled")
+	}
+	prog.EnableGoGlobalDCE(true)
+	(&aBuilder{Prog: prog, Pkg: pkg}).recordAbiTypeFakeUses(g.impl)
+	if len(fn.fakeUses) != 0 {
+		t.Fatalf("recordAbiTypeFakeUses recorded fake uses without a current function")
+	}
+}
+
+func TestDevLTOGlobalDCEAbiTypeFakeUseFieldIndexes(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	checkFieldIndex := func(typ reflect.Type, idx int, want string) {
+		t.Helper()
+		if idx < 0 || idx >= typ.NumField() {
+			t.Fatalf("%s field index %d is out of range", typ, idx)
+		}
+		if got := typ.Field(idx).Name; got != want {
+			t.Fatalf("%s field %d = %q, want %q", typ, idx, got, want)
+		}
+	}
+
+	checkFieldIndex(reflect.TypeOf(rtabi.Method{}), abiMethodIFnFieldIndex, "Ifn_")
+	checkFieldIndex(reflect.TypeOf(rtabi.Method{}), abiMethodTFnFieldIndex, "Tfn_")
+	checkFieldIndex(reflect.TypeOf(reflect.Value{}), reflectValuePtrFieldIndex, "ptr")
+	checkFieldIndex(reflect.TypeOf(reflect.Method{}), reflectMethodFuncFieldIndex, "Func")
+}
+
+func TestRecordTypeChildren(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	disabledPkg := prog.NewPackage("pkg", "pkg/disabled")
+	(&aBuilder{Prog: prog, Pkg: disabledPkg}).recordTypeChildren("pkg.disabled", types.Typ[types.Int])
+	if disabledPkg.metaBuilder != nil {
+		t.Fatal("metadata builder should remain disabled")
+	}
+
+	params := types.NewTuple(
+		types.NewVar(token.NoPos, nil, "n", types.Typ[types.Int]),
+		types.NewVar(token.NoPos, nil, "s", types.Typ[types.String]),
+	)
+	results := types.NewTuple(
+		types.NewVar(token.NoPos, nil, "ok", types.Typ[types.Bool]),
+		types.NewVar(token.NoPos, nil, "n", types.Typ[types.Int]),
+	)
+	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+
+	mapType := types.NewMap(types.Typ[types.String], types.Typ[types.Int])
+	arrayElem := types.Typ[types.Byte]
+	pkgTypes := types.NewPackage("example.com/pkg", "pkg")
+	namedType := types.NewNamed(
+		types.NewTypeName(token.NoPos, pkgTypes, "Named", nil),
+		types.NewStruct([]*types.Var{
+			types.NewVar(token.NoPos, pkgTypes, "Field", types.Typ[types.Bool]),
+		}, nil),
+		nil,
+	)
+	ifaceMethod := types.NewFunc(token.NoPos, pkgTypes, "M", types.NewSignatureType(
+		nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "n", types.Typ[types.Int])),
+		nil,
+		false,
+	))
+	interfaceType := types.NewInterfaceType([]*types.Func{ifaceMethod}, nil)
+	interfaceType.Complete()
+
+	pkg := prog.NewPackageEx("pkg", "pkg", true)
+	b := &aBuilder{Prog: prog, Pkg: pkg}
+	b.recordTypeChildren("pkg.basic", types.Typ[types.Int])
+	b.recordTypeChildren("pkg.pointer", types.NewPointer(types.Typ[types.Int]))
+	b.recordTypeChildren("pkg.channel", types.NewChan(types.SendRecv, types.Typ[types.String]))
+	b.recordTypeChildren("pkg.slice", types.NewSlice(types.Typ[types.Bool]))
+	b.recordTypeChildren("pkg.array", types.NewArray(arrayElem, 4))
+	b.recordTypeChildren("pkg.map", mapType)
+	b.recordTypeChildren("pkg.signature", sig)
+	b.recordTypeChildren("pkg.emptySignature", types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	b.recordTypeChildren("pkg.struct", types.NewStruct([]*types.Var{
+		types.NewVar(token.NoPos, pkgTypes, "N", types.Typ[types.Int]),
+		types.NewVar(token.NoPos, pkgTypes, "S", types.Typ[types.String]),
+	}, nil))
+	b.recordTypeChildren("pkg.named", namedType)
+	b.recordTypeChildren("pkg.namedFloat", types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "Number", nil), types.Typ[types.Float64], nil))
+	b.recordTypeChildren("pkg.interface", interfaceType)
+
+	pm, err := pkg.metaBuilder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	const want = `[TypeChildren]
+pkg.array:
+    _llgo_uint8
+pkg.channel:
+    _llgo_string
+pkg.map:
+    _llgo_int
+    _llgo_string
+pkg.named:
+    _llgo_bool
+pkg.namedFloat:
+    _llgo_float64
+pkg.pointer:
+    _llgo_int
+pkg.signature:
+    _llgo_bool
+    _llgo_int
+    _llgo_string
+pkg.slice:
+    _llgo_bool
+pkg.struct:
+    _llgo_int
+    _llgo_string
+
+`
+	if got := pm.String(); got != want {
+		t.Fatalf("metadata mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestAbiTypeLazyPtrToThis(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+
+	goPkg := types.NewPackage("example.com/pkg", "pkg")
+	plain := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "Plain", nil), types.NewStruct(nil, nil), nil)
+	withMethod := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "WithMethod", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, goPkg, "", types.NewPointer(withMethod))
+	withMethod.AddMethod(types.NewFunc(token.NoPos, goPkg, "M", types.NewSignatureType(recv, nil, nil, nil, nil, false)))
+
+	pkg := prog.NewPackageEx("pkg", goPkg.Path(), true)
+	fn := pkg.NewFunc("use", types.NewSignatureType(nil, nil, nil, nil, nil, false), GoDecl)
+	b := fn.MakeBody(1)
+	b.abiType(plain)
+	b.abiType(withMethod)
+	b.Return()
+
+	plainPtrName, _ := prog.abi.TypeName(types.NewPointer(plain))
+	if got := pkg.VarOf(plainPtrName); got != nil {
+		t.Fatalf("methodless pointer descriptor %q was generated eagerly", plainPtrName)
+	}
+	methodPtrName, _ := prog.abi.TypeName(types.NewPointer(withMethod))
+	if got := pkg.VarOf(methodPtrName); got == nil {
+		t.Fatalf("pointer descriptor with methods %q was not generated", methodPtrName)
+	}
+}
+
+func TestRecordMethodSlots(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+
+	goPkg := types.NewPackage("example.com/pkg", "pkg")
+	named := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "T", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, goPkg, "", named)
+	named.AddMethod(types.NewFunc(token.NoPos, goPkg, "M", types.NewSignatureType(recv, nil, nil, nil, nil, false)))
+
+	pkg := prog.NewPackageEx("pkg", goPkg.Path(), true)
+	fn := pkg.NewFunc("use", types.NewSignatureType(nil, nil, nil, nil, nil, false), GoDecl)
+	b := fn.MakeBody(1)
+	b.abiType(named)
+	b.Return()
+
+	pm, err := pkg.metaBuilder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	const want = `[TypeChildren]
+*_llgo_example.com/pkg.T:
+    _llgo_example.com/pkg.T
+_llgo_example.com/pkg.T:
+    *_llgo_example.com/pkg.T
+
+[MethodInfo]
+*_llgo_example.com/pkg.T:
+    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac example.com/pkg.(*T).M example.com/pkg.(*T).M
+_llgo_example.com/pkg.T:
+    0 M _llgo_func$2_iS07vIlF2_rZqWB5eU0IvP_9HviM4MYZNkXZDvbac example.com/pkg.(*T).M example.com/pkg.T.M
+
+`
+	if got := pm.String(); got != want {
+		t.Fatalf("metadata mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRecordReflectMethodDemands(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	pkg := prog.NewPackageEx("pkg", "pkg", true)
+	pkg.RecordReflectMethodByName("pkg.named", "Keep")
+	pkg.MarkReflectMethod("pkg.dynamic")
+
+	pm, err := pkg.metaBuilder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	const want = `[UseNamedMethod]
+pkg.named:
+    Keep
+
+[Reflect]
+    pkg.dynamic
+
+`
+	if got := pm.String(); got != want {
+		t.Fatalf("metadata mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestReflectInterfaceWrappersRetainMethodCapabilities(t *testing.T) {
+	for _, tt := range []struct {
+		caller, callee string
+		want           bool
+	}{
+		{"reflect.(*Value).Method", "reflect.Value.Method", true},
+		{"reflect.(*Value).MethodByName", "reflect.Value.MethodByName", true},
+		{"reflect.Value.MethodByName", "reflect.Value.Method", false},
+		{"reflect.(*Value).Method", "reflect.Value.Other", false},
+	} {
+		t.Run(tt.caller+"/"+tt.callee, func(t *testing.T) {
+			prog := NewProgram(nil)
+			defer prog.Dispose()
+			prog.EnableGoGlobalDCE(true)
+			pkg := prog.NewPackage("reflect", "reflect")
+			value := prog.Struct(prog.VoidPtr(), prog.VoidPtr(), prog.Uintptr())
+			result := types.NewTuple(types.NewVar(token.NoPos, nil, "", value.RawType()))
+			sig := types.NewSignatureType(nil, nil, nil, nil, result, false)
+			lookup := pkg.NewFunc(tt.callee, sig, GoDecl)
+			wrapper := pkg.NewFunc(tt.caller, sig, GoDecl)
+			b := wrapper.MakeBody(1)
+			b.Return(b.Call(lookup.Expr))
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			ir := pkg.String()
+			if got := strings.Contains(ir, "@llvm.type.checked.load"); got != tt.want {
+				t.Fatalf("method capability present=%v, want %v:\n%s", got, tt.want, ir)
+			}
+			if pkg.NeedAbiInit != 0 {
+				t.Fatal("an unused wrapper requested global ABI registration")
+			}
+		})
+	}
+}
+
+func TestReflectSliceAtDemandsSliceTypeInit(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	pkg := prog.NewPackage("pkg", "pkg")
+	sliceAt := pkg.NewFunc("reflect.SliceAt", NoArgsNoRet, GoDecl)
+	caller := pkg.NewFunc("pkg.callSliceAt", NoArgsNoRet, GoDecl)
+	b := caller.MakeBody(1)
+	b.Call(sliceAt.Expr)
+	b.Return()
+
+	if got := pkg.NeedAbiInit & ReflectSliceOf; got == 0 {
+		t.Fatal("reflect.SliceAt did not retain slice type-construction metadata")
+	}
+}
+
+func TestReflectPointerOperationsDemandPointerTypeInit(t *testing.T) {
+	for _, name := range []string{
+		"reflect.New",
+		"reflect.NewAt",
+		"reflect.PointerTo",
+		"reflect.PtrTo",
+		"reflect.Value.Addr",
+	} {
+		t.Run(name, func(t *testing.T) {
+			prog := NewProgram(nil)
+			defer prog.Dispose()
+			pkg := prog.NewPackage("pkg", "pkg")
+			operation := pkg.NewFunc(name, NoArgsNoRet, GoDecl)
+			caller := pkg.NewFunc("pkg.call", NoArgsNoRet, GoDecl)
+			b := caller.MakeBody(1)
+			b.Call(operation.Expr)
+			b.Return()
+
+			if got := pkg.NeedAbiInit & ReflectPointerTo; got == 0 {
+				t.Fatalf("%s did not retain pointer type-construction metadata", name)
+			}
+		})
+	}
+}
+
+func TestRecordUseIface(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackageEx("pkg", "pkg", true)
+	fn := pkg.NewFunc("caller", types.NewSignatureType(nil, nil, nil, nil, nil, false), GoDecl)
+	b := fn.MakeBody(1)
+	b.recordUseIface(prog.Int())
+	b.recordUseIface(prog.Any())
+	b.Return()
+
+	pm, err := pkg.metaBuilder.Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pm.Close()
+
+	const want = `[UseIface]
+caller:
+    _llgo_int
+
+`
+	if got := pm.String(); got != want {
+		t.Fatalf("metadata mismatch\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestDevLTOGlobalDCERecordAbiTypeFakeUsesUsesCache(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	target := pkg.NewFunc("CachedTarget", sig, GoDecl)
+	fn := pkg.NewFunc("UseCachedAbiType", sig, GoDecl)
+	b := fn.MakeBody(1)
+	g := pkg.NewVarEx("typeinfo", prog.Pointer(prog.Int()))
+	pkg.abiTypeFakeUseCache[g.impl] = []llvm.Value{target.impl}
+
+	b.recordAbiTypeFakeUses(g.impl)
+	if len(fn.fakeUses) != 1 || fn.fakeUses[0] != target.impl {
+		t.Fatalf("recordAbiTypeFakeUses did not use cached fake uses: %v", fn.fakeUses)
+	}
+}
+
+func TestDevLTOGlobalDCERecordAbiTypeFakeUsesCacheIsPerGlobal(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+
+	pkgA := prog.NewPackage("a", "a")
+	targetA := pkgA.NewFunc("CachedTargetA", sig, GoDecl)
+	gA := pkgA.NewVarEx("typeinfo", prog.Pointer(prog.Int()))
+	pkgA.abiTypeFakeUseCache[gA.impl] = []llvm.Value{targetA.impl}
+
+	pkgB := prog.NewPackage("b", "b")
+	fnB := pkgB.NewFunc("UseCachedAbiTypeB", sig, GoDecl)
+	b := fnB.MakeBody(1)
+	gB := pkgB.NewVarEx("typeinfo", prog.Pointer(prog.Int()))
+	b.recordAbiTypeFakeUses(gB.impl)
+	if len(fnB.fakeUses) != 0 {
+		t.Fatalf("recordAbiTypeFakeUses reused fake uses from another global: %v", fnB.fakeUses)
+	}
+}
+
+func TestDevLTOGlobalDCEAbiTypeFakeUsesRecordedDuringAbiTypeBuild(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	fn := pkg.NewFunc("UseAbiType", sig, GoDecl)
+	b := fn.MakeBody(1)
+
+	stringType := types.Typ[types.String]
+	b.abiType(stringType)
+	stringName, _ := prog.abi.TypeName(stringType)
+	stringFakeUses := pkg.abiTypeFakeUseCache[pkg.VarOf(stringName).impl]
+	if !containsLLVMValueNameSuffix(stringFakeUses, ".strequal") {
+		t.Fatalf("string abi type fake uses = %v, want strequal", stringFakeUses)
+	}
+
+	mapType := types.NewMap(types.Typ[types.String], types.Typ[types.Int])
+	b.abiType(mapType)
+	mapName, _ := prog.abi.TypeName(mapType)
+	mapFakeUses := pkg.abiTypeFakeUseCache[pkg.VarOf(mapName).impl]
+	if !containsLLVMValueNameSuffix(mapFakeUses, ".typehash") {
+		t.Fatalf("map abi type fake uses = %v, want typehash", mapFakeUses)
+	}
+
+	// Indirect map keys and elements are represented by pointers in the
+	// runtime bucket, so the ABI descriptor must report pointer-sized fields.
+	large := types.NewArray(types.Typ[types.Uint64], 17)
+	b.abiType(types.NewMap(large, large))
+}
+
+func TestMapKeyPtrCoverage(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("main", "main")
+	key := types.NewArray(types.Typ[types.Int], 2)
+	keyObj := types.NewTypeName(token.NoPos, nil, "Key", nil)
+	namedKey := types.NewNamed(keyObj, key, nil)
+	mapType := types.NewMap(namedKey, types.Typ[types.Int])
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "m", mapType),
+			types.NewVar(token.NoPos, nil, "k", key),
+		), nil, false)
+	fn := pkg.NewFunc("mapKeyPtr", sig, GoDecl)
+	b := fn.MakeBody(1)
+
+	// The map uses the named key while the expression uses its underlying
+	// array type. This exercises the ChangeType path in mapKeyPtr.
+	ptr := b.mapKeyPtr(fn.Param(0), fn.Param(1))
+	if ptr.RawType() != types.Typ[types.UnsafePointer] {
+		t.Fatalf("mapKeyPtr type = %v, want unsafe.Pointer", ptr.RawType())
+	}
+	b.Return()
+
+	// Exercise the defensive paths as well. A mismatched, larger expression
+	// reaches the size-preserving branch before ChangeType rejects it.
+	func() {
+		defer func() { _ = recover() }()
+		smallMap := types.NewMap(types.Typ[types.Int], types.Typ[types.Int])
+		smallSig := types.NewSignatureType(nil, nil, nil, types.NewTuple(
+			types.NewVar(token.NoPos, nil, "m", smallMap),
+			types.NewVar(token.NoPos, nil, "k", key),
+		), nil, false)
+		smallFn := pkg.NewFunc("mapKeyPtrLarger", smallSig, GoDecl)
+		smallBody := smallFn.MakeBody(1)
+		smallBody.mapKeyPtr(smallFn.Param(0), smallFn.Param(1))
+	}()
+	func() {
+		defer func() { _ = recover() }()
+		b.mapKeyPtr(fn.Param(1), fn.Param(1))
+	}()
+}
+
+func containsLLVMValueNameSuffix(values []llvm.Value, suffix string) bool {
+	for _, value := range values {
+		if strings.HasSuffix(value.Name(), suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDevLTOGlobalDCEEmitFakeUsesAtEntry(t *testing.T) {
+	requireGoGlobalDCE(t)
+
+	prog := NewProgram(nil)
+	prog.EnableGoGlobalDCE(true)
+	pkg := prog.NewPackage("main", "main")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	targetA := pkg.NewFunc("TargetA", sig, GoDecl)
+	targetB := pkg.NewFunc("TargetB", sig, GoDecl)
+	fn := pkg.NewFunc("Use", sig, GoDecl)
+	b := fn.MakeBody(1)
+	fn.recordFakeUse(targetA.impl)
+	fn.recordFakeUse(targetB.impl)
+	fn.recordFakeUse(targetA.impl)
+	b.Return()
+	b.EndBuild()
+
+	ir := pkg.String()
+	if strings.Count(ir, `call void asm sideeffect "", "X"(ptr @TargetA)`) != 1 {
+		t.Fatalf("missing deduplicated inline asm fake-use for TargetA:\n%s", ir)
+	}
+	if strings.Count(ir, `call void asm sideeffect "", "X"(ptr @TargetB)`) != 1 {
+		t.Fatalf("missing inline asm fake-use for TargetB:\n%s", ir)
+	}
+}
+
+func TestSetBlock(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Log("SetBlock: no error?")
+		}
+	}()
+	fn := &aFunction{}
+	b := &aBuilder{Func: fn}
+	b.SetBlock(&aBasicBlock{})
+}
+
+func TestSetBlockEx(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Log("SetBlockEx: no error?")
+		}
+	}()
+	fn := &aFunction{}
+	b := &aBuilder{Func: fn}
+	b.SetBlockEx(&aBasicBlock{fn: fn}, -1, false)
+}
+
+func TestSetPython(t *testing.T) {
+	prog := NewProgram(nil)
+	typ := types.NewPackage("foo", "foo")
+	prog.SetPython(typ)
+}
+
+func TestClosureCtx(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Log("closureCtx: no error?")
+		}
+	}()
+	var f aFunction
+	f.closureCtx(nil)
+}
+
+func TestClosureNoCtxValue(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	params := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	fn := pkg.NewFunc("fn", sig, GoDecl)
+	b := fn.MakeBody(1)
+	b.Return(fn.Param(0))
+
+	holderSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	holder := pkg.NewFunc("holder", holderSig, GoDecl)
+	hb := holder.MakeBody(1)
+	closureT := prog.Closure(sig)
+	ptr := hb.AllocaT(closureT)
+	hb.Store(ptr, fn.Expr)
+	hb.Return()
+
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0) #0 {
+_llgo_0:
+  ret i64 %0
+}
+
+; Function Attrs: null_pointer_is_valid
+define void @holder() #0 {
+_llgo_0:
+  %0 = alloca { ptr, ptr }, align 8
+  store { ptr, ptr } { ptr @fn, ptr null }, ptr %0, align 8
+  ret void
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestClosureFuncPtrValue(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	params := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	fn := pkg.NewFunc("fn", sig, GoDecl)
+	b := fn.MakeBody(1)
+	b.Return(fn.Param(0))
+
+	holderSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	holder := pkg.NewFunc("holder", holderSig, GoDecl)
+	hb := holder.MakeBody(1)
+	closureT := prog.Closure(sig)
+	ptr := hb.AllocaT(closureT)
+	fnPtrType := prog.rawType(sig)
+	fnPtr := hb.ChangeType(fnPtrType, fn.Expr)
+	hb.Store(ptr, fnPtr)
+	hb.Return()
+
+	expected := `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0) #0 {
+_llgo_0:
+  ret i64 %0
+}
+
+; Function Attrs: null_pointer_is_valid
+define void @holder() #0 {
+_llgo_0:
+  %0 = alloca { ptr, ptr }, align 8
+  store { ptr, ptr } { ptr @fn, ptr null }, ptr %0, align 8
+  ret void
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`
+	assertPkg(t, pkg, expected)
+}
+
+func TestChangeTypeNamedClosureUsesGoTypeIdentity(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	tpkg := types.NewPackage("foo/bar", "bar")
+
+	params := types.NewTuple(types.NewVar(0, tpkg, "x", types.Typ[types.Int]))
+	rets := types.NewTuple(types.NewVar(0, tpkg, "", types.Typ[types.Int]))
+	baseSig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	srcNamed := types.NewNamed(types.NewTypeName(0, tpkg, "SrcFn", nil), baseSig, nil)
+	dstNamed := types.NewNamed(types.NewTypeName(0, tpkg, "DstFn", nil), baseSig, nil)
+
+	convertSig := types.NewSignatureType(
+		nil,
+		nil,
+		nil,
+		types.NewTuple(types.NewParam(0, tpkg, "v", srcNamed)),
+		types.NewTuple(types.NewParam(0, tpkg, "", dstNamed)),
+		false,
+	)
+	convertFn := pkg.NewFunc("convertNamedClosure", convertSig, GoDecl)
+	b := convertFn.MakeBody(1)
+	b.Return(b.ChangeType(prog.Type(dstNamed, GoDecl), convertFn.Param(0)))
+
+	ir := convertFn.impl.String()
+	if !strings.Contains(ir, `insertvalue %"foo/bar.DstFn"`) {
+		t.Fatalf("named closure conversion did not rebuild destination type:\n%s", ir)
+	}
+	if strings.Contains(ir, `ret %"foo/bar.SrcFn"`) {
+		t.Fatalf("named closure conversion returned source type:\n%s", ir)
+	}
+	if !strings.Contains(ir, `ret %"foo/bar.DstFn"`) {
+		t.Fatalf("named closure conversion did not return destination type:\n%s", ir)
+	}
+
+	sameSig := types.NewSignatureType(
+		nil,
+		nil,
+		nil,
+		types.NewTuple(types.NewParam(0, tpkg, "v", srcNamed)),
+		types.NewTuple(types.NewParam(0, tpkg, "", srcNamed)),
+		false,
+	)
+	sameFn := pkg.NewFunc("sameNamedClosure", sameSig, GoDecl)
+	sb := sameFn.MakeBody(1)
+	sb.Return(sb.ChangeType(prog.Type(srcNamed, GoDecl), sameFn.Param(0)))
+
+	sameIR := sameFn.impl.String()
+	if strings.Contains(sameIR, "insertvalue") {
+		t.Fatalf("identical named closure type should not be rebuilt:\n%s", sameIR)
+	}
+}
+
+func TestConvertNamedStructValue(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	tpkg := types.NewPackage("foo/bar", "bar")
+
+	st := types.NewStruct([]*types.Var{
+		types.NewField(0, tpkg, "sec", types.Typ[types.Int64], false),
+		types.NewField(0, tpkg, "nsec", types.Typ[types.Int64], false),
+		types.NewField(0, tpkg, "loc", types.NewPointer(types.Typ[types.Int8]), false),
+	}, nil)
+	srcNamed := types.NewNamed(types.NewTypeName(0, tpkg, "SrcTime", nil), st, nil)
+	dstNamed := types.NewNamed(types.NewTypeName(0, tpkg, "DstTime", nil), st, nil)
+
+	sig := types.NewSignatureType(
+		nil,
+		nil,
+		nil,
+		types.NewTuple(types.NewParam(0, tpkg, "v", srcNamed)),
+		types.NewTuple(types.NewParam(0, tpkg, "", dstNamed)),
+		false,
+	)
+	fn := pkg.NewFunc("convertNamed", sig, GoDecl)
+	b := fn.MakeBody(1)
+	src := fn.Param(0)
+	dst := b.Convert(prog.Type(dstNamed, GoDecl), src)
+	b.Return(dst)
+
+	ir := fn.impl.String()
+	if strings.Contains(ir, `ret %"foo/bar.SrcTime"`) {
+		t.Fatalf("named struct convert returned source type:\n%s", ir)
+	}
+	if !strings.Contains(ir, `ret %"foo/bar.DstTime"`) {
+		t.Fatalf("named struct convert did not return destination type:\n%s", ir)
+	}
+}
+
+func TestConvertStringFromWideIntegers(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	params := types.NewTuple(
+		types.NewVar(0, nil, "i64", types.Typ[types.Int64]),
+		types.NewVar(0, nil, "u64", types.Typ[types.Uint64]),
+		types.NewVar(0, nil, "i32", types.Typ[types.Int32]),
+		types.NewVar(0, nil, "u32", types.Typ[types.Uint32]),
+	)
+	rets := types.NewTuple(
+		types.NewVar(0, nil, "", types.Typ[types.String]),
+		types.NewVar(0, nil, "", types.Typ[types.String]),
+		types.NewVar(0, nil, "", types.Typ[types.String]),
+		types.NewVar(0, nil, "", types.Typ[types.String]),
+	)
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	fn := pkg.NewFunc("convertStrings", sig, GoDecl)
+	b := fn.MakeBody(1)
+	str := prog.Type(types.Typ[types.String], GoDecl)
+	b.Return(
+		b.Convert(str, fn.Param(0)),
+		b.Convert(str, fn.Param(1)),
+		b.Convert(str, fn.Param(2)),
+		b.Convert(str, fn.Param(3)),
+	)
+
+	ir := fn.impl.String()
+	for _, want := range []string{
+		`StringFromInt64"(i64 %0)`,
+		`StringFromUint64"(i64 %1)`,
+		`sext i32 %2 to i64`,
+		`StringFromInt64"(i64 %6)`,
+		`zext i32 %3 to i64`,
+		`StringFromUint64"(i64 %8)`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing %q in IR:\n%s", want, ir)
+		}
+	}
+}
+
+func TestCallClosureDynamic(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm"})
+	defer prog.Dispose()
+	setTestRuntime(t, prog)
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	params := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	callerParams := types.NewTuple(
+		types.NewVar(0, nil, "f", sig),
+		types.NewVar(0, nil, "x", types.Typ[types.Int]),
+	)
+	callerSig := types.NewSignatureType(nil, nil, nil, callerParams, rets, false)
+	caller := pkg.NewFunc("caller", callerSig, GoDecl)
+	b := caller.MakeBody(1)
+	b.Return(b.Call(caller.Param(0), caller.Param(1)))
+
+	ir := pkg.String()
+	for _, want := range []string{
+		"icmp ne ptr %2, null",
+		"call i32 %3(ptr ",
+		"call i32 %3(i32 %1)",
+		"phi i32",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("dynamic closure call missing %q:\n%s", want, ir)
+		}
+	}
+}
+
+func TestMakeClosureWithCtx(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+	ctxFields := []*types.Var{types.NewField(0, nil, "x", types.Typ[types.Int], false)}
+	ctxStruct := types.NewStruct(ctxFields, nil)
+	ctxPtr := types.NewPointer(ctxStruct)
+	ctxParam := types.NewParam(0, nil, "$env", ctxPtr)
+	innerParams := types.NewTuple(types.NewVar(0, nil, "y", types.Typ[types.Int]))
+	innerRets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	innerSig := types.NewSignatureType(nil, nil, nil, innerParams, innerRets, false)
+	inner := pkg.NewEnvFunc("inner", innerSig, GoDecl, ctxParam, false)
+	ib := inner.MakeBody(1)
+	ib.Return(inner.Param(0))
+
+	outerParams := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))
+	outerRetSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(0, nil, "y", types.Typ[types.Int])),
+		innerRets, false)
+	outerSig := types.NewSignatureType(nil, nil, nil, outerParams,
+		types.NewTuple(types.NewVar(0, nil, "", outerRetSig)), false)
+	outer := pkg.NewFunc("outer", outerSig, GoDecl)
+	ob := outer.MakeBody(1)
+	closure := ob.MakeClosure(inner.Expr, []Expr{outer.Param(0)})
+	ob.Return(closure)
+
+	if got := inner.Expr.raw.Type.(*types.Signature).Params().Len(); got != 1 {
+		t.Fatalf("semantic closure entry signature has %d params, want 1", got)
+	}
+	ir := pkg.String()
+	for _, want := range []string{
+		"define i64 @inner(ptr ",
+		"i64 %1)",
+		`call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU"(i64 8)`,
+		`declare nonnull ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU"(i64)`,
+		"insertvalue { ptr, ptr } { ptr @inner, ptr undef }",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("closure environment IR missing %q:\n%s", want, ir)
+		}
+	}
+}
+
+func TestCvtClosureDropsRecv(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := types.NewPackage("foo", "foo")
+	iface := types.NewInterfaceType(nil, nil)
+	namedIface := types.NewNamed(types.NewTypeName(0, pkg, "IFmt", nil), iface, nil)
+	recv := types.NewVar(0, pkg, "recv", namedIface)
+	params := types.NewTuple(VArg())
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(recv, nil, nil, params, rets, true)
+
+	st := prog.gocvt.cvtClosure(sig)
+	fnSig, ok := st.Field(0).Type().(*types.Signature)
+	if !ok {
+		t.Fatalf("closure field[0] not signature: %T", st.Field(0).Type())
+	}
+	if fnSig.Recv() != nil {
+		t.Fatalf("closure signature should not keep recv: %v", fnSig.Recv())
+	}
+	if !fnSig.Variadic() {
+		t.Fatal("closure signature should be variadic")
+	}
+	if fnSig.Params().Len() != 1 {
+		t.Fatalf("closure signature should have 1 param for variadic, got %d", fnSig.Params().Len())
+	}
+	if fnSig.Params().At(0).Name() != NameValist {
+		t.Fatalf("closure signature param name mismatch: got %q, want %q",
+			fnSig.Params().At(0).Name(), NameValist)
+	}
+}
+
+func TestIfaceMethodClosureCallIR(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkgTypes := types.NewPackage("foo/bar", "bar")
+	rawSig := types.NewSignatureType(nil, nil, nil, types.NewTuple(VArg()),
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), true)
+	rawMeth := types.NewFunc(0, pkgTypes, "Printf", rawSig)
+	rawIface := types.NewInterfaceType([]*types.Func{rawMeth}, nil)
+	rawIface.Complete()
+	namedIface := types.NewNamed(types.NewTypeName(0, pkgTypes, "IFmt", nil), rawIface, nil)
+	recv := types.NewVar(0, pkgTypes, "recv", namedIface)
+	recvSig := types.NewSignatureType(recv, nil, nil, types.NewTuple(VArg()),
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), true)
+	recvMeth := types.NewFunc(0, pkgTypes, "Printf", recvSig)
+
+	pkg := prog.NewPackageEx("bar", "foo/bar", true)
+	callerSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(0, pkgTypes, "i", namedIface)),
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), false)
+	caller := pkg.NewFunc("caller", callerSig, GoDecl)
+	b := caller.MakeBody(1)
+	closure := b.Imethod(caller.Param(0), recvMeth)
+	ret := b.Call(closure, prog.Val(100), prog.Val(200))
+	b.Return(ret)
+
+	if err := pkg.FinishMetaCollection(); err != nil {
+		t.Fatal(err)
+	}
+	pm := pkg.Meta
+	defer pm.Close()
+	const wantMeta = `[OrdinaryEdges]
+caller:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData
+
+[UseIfaceMethod]
+caller:
+    _llgo_iface$Yoe3OCWqNu8XXGUO_vekWtum96Bix1ffdbPGjVhQ1pI Printf _llgo_func$_RYiBYcSxJjuvzYmA4xYm18hT18pH0_ng6z76aK77Bk
+
+[InterfaceInfo]
+_llgo_iface$Yoe3OCWqNu8XXGUO_vekWtum96Bix1ffdbPGjVhQ1pI:
+    Printf _llgo_func$_RYiBYcSxJjuvzYmA4xYm18hT18pH0_ng6z76aK77Bk
+
+`
+	if got := pm.String(); got != wantMeta {
+		t.Fatalf("metadata mismatch\ngot:\n%s\nwant:\n%s", got, wantMeta)
+	}
+
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+%"github.com/xgo-dev/llgo/runtime/internal/runtime.iface" = type { ptr, ptr }
+
+; Function Attrs: null_pointer_is_valid
+define i64 @caller(%"github.com/xgo-dev/llgo/runtime/internal/runtime.iface" %0) #0 {
+_llgo_0:
+  %1 = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData"(%"github.com/xgo-dev/llgo/runtime/internal/runtime.iface" %0)
+  %2 = extractvalue %"github.com/xgo-dev/llgo/runtime/internal/runtime.iface" %0, 0
+  %3 = getelementptr ptr, ptr %2, i64 3
+  %4 = load ptr, ptr %3, align 8
+  %5 = insertvalue { ptr, ptr } undef, ptr %4, 0
+  %6 = insertvalue { ptr, ptr } %5, ptr %1, 1
+  %7 = extractvalue { ptr, ptr } %6, 1
+  %8 = extractvalue { ptr, ptr } %6, 0
+  %9 = call i64 (ptr, ...) %8(ptr %7, i64 100, i64 200)
+  ret i64 %9
+}
+
+; Function Attrs: null_pointer_is_valid
+declare ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData"(%"github.com/xgo-dev/llgo/runtime/internal/runtime.iface") #0
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestMakeInterfaceKinds(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	emptyIface := types.NewInterfaceType(nil, nil)
+	emptyIface.Complete()
+	emptyType := prog.Type(emptyIface, GoDecl)
+
+	makeFn := func(name string, x Expr) {
+		sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(0, nil, "", emptyIface)), false)
+		fn := pkg.NewFunc(name, sig, GoDecl)
+		b := fn.MakeBody(1)
+		iface := b.MakeInterface(emptyType, x)
+		b.Return(iface)
+	}
+
+	makeFn("intIface", prog.Val(1))
+	makeFn("ptrIface", prog.Nil(prog.VoidPtr()))
+	makeFn("floatIface", prog.FloatVal(3.5, prog.Float32()))
+
+	st := types.NewStruct([]*types.Var{
+		types.NewVar(0, nil, "a", types.Typ[types.Int]),
+		types.NewVar(0, nil, "b", types.Typ[types.Int]),
+	}, nil)
+	makeFn("structIface", prog.Zero(prog.Type(st, GoDecl)))
+
+	single := types.NewStruct([]*types.Var{
+		types.NewVar(0, nil, "v", types.Typ[types.Int]),
+	}, nil)
+	makeFn("singleFieldIface", prog.Zero(prog.Type(single, GoDecl)))
+
+	pkgTypes := types.NewPackage("foo/bar", "bar")
+	rawSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	rawMeth := types.NewFunc(0, pkgTypes, "M", rawSig)
+	nonEmpty := types.NewInterfaceType([]*types.Func{rawMeth}, nil)
+	nonEmpty.Complete()
+	nonEmptyType := prog.Type(nonEmpty, GoDecl)
+	sigNE := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(0, nil, "", nonEmpty)), false)
+	fnNE := pkg.NewFunc("nonEmptyIface", sigNE, GoDecl)
+	bNE := fnNE.MakeBody(1)
+	bNE.Return(bNE.MakeInterface(nonEmptyType, prog.Val(7)))
+}
+
+func TestCheckExprAssignmentConversions(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+	fn := pkg.NewFunc("checkExprAssignmentConversions", NoArgsNoRet, GoDecl)
+	b := fn.MakeBody(1)
+
+	pkgTypes := types.NewPackage("foo/bar", "bar")
+	intSlice := types.NewSlice(types.Typ[types.Int])
+	namedSlice := types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "checkExprSlice", nil), intSlice, nil)
+	concrete := checkExpr(prog.Zero(prog.Type(namedSlice, GoDecl)), intSlice, b)
+	if !types.Identical(concrete.RawType(), intSlice) {
+		t.Fatalf("concrete retag type = %v, want %v", concrete.RawType(), intSlice)
+	}
+
+	emptyIface := types.NewInterfaceType(nil, nil)
+	emptyIface.Complete()
+	toIface := checkExpr(prog.Val(7), emptyIface, b)
+	if !types.Identical(toIface.RawType(), emptyIface) {
+		t.Fatalf("concrete-to-interface type = %v, want %v", toIface.RawType(), emptyIface)
+	}
+
+	namedIface := types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "checkExprIface", nil), emptyIface, nil)
+	fromIface := b.MakeInterface(prog.Type(namedIface, GoDecl), prog.Val(7))
+	changedIface := checkExpr(fromIface, emptyIface, b)
+	if !types.Identical(changedIface.RawType(), emptyIface) {
+		t.Fatalf("interface-to-interface type = %v, want %v", changedIface.RawType(), emptyIface)
+	}
+
+	b.Return()
+}
+
+func TestMakeInterfaceFromPtrKinds(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	emptyIface := types.NewInterfaceType(nil, nil)
+	emptyIface.Complete()
+	emptyType := prog.Type(emptyIface, GoDecl)
+	returns := types.NewTuple(types.NewVar(0, nil, "", emptyIface))
+
+	makePtrIface := func(name string, elem types.Type) {
+		ptrTyp := types.NewPointer(elem)
+		params := types.NewTuple(types.NewVar(0, nil, "p", ptrTyp))
+		sig := types.NewSignatureType(nil, nil, nil, params, returns, false)
+		fn := pkg.NewFunc(name, sig, GoDecl)
+		b := fn.MakeBody(1)
+		b.Return(b.MakeInterfaceFromPtr(emptyType, fn.Param(0)))
+		b.EndBuild()
+	}
+
+	makePtrIface("smallPtrIface", types.Typ[types.Int])
+	makePtrIface("largePtrIface", types.NewArray(types.Typ[types.Byte], 1<<21))
+
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, "AssertNilDeref") {
+		t.Fatalf("MakeInterfaceFromPtr should emit nil-deref guard, got:\n%s", ir)
+	}
+	if !strings.Contains(ir, "Typedmemmove") {
+		t.Fatalf("large MakeInterfaceFromPtr should copy via Typedmemmove, got:\n%s", ir)
+	}
+}
+
+func TestZeroSizedLoadEmitsNilDerefGuard(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	emptyStruct := types.NewStruct(nil, nil)
+	params := types.NewTuple(types.NewVar(0, nil, "p", types.NewPointer(emptyStruct)))
+	results := types.NewTuple(types.NewVar(0, nil, "", emptyStruct))
+	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+	fn := pkg.NewFunc("loadZero", sig, GoDecl)
+	b := fn.MakeBody(1)
+	b.Return(b.Load(fn.Param(0)))
+	b.EndBuild()
+
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, "AssertNilDeref") {
+		t.Fatalf("zero-sized Load should emit nil-deref guard, got:\n%s", ir)
+	}
+}
+
+func TestTypeAssertSingleElemArrayUsesInsertValue(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	emptyIface := types.NewInterfaceType(nil, nil)
+	emptyIface.Complete()
+	arrayRaw := types.NewArray(types.Typ[types.Int], 1)
+	arrayType := prog.Type(arrayRaw, GoDecl)
+
+	params := types.NewTuple(types.NewVar(0, nil, "x", emptyIface))
+	results := types.NewTuple(
+		types.NewVar(0, nil, "", arrayRaw),
+		types.NewVar(0, nil, "", types.Typ[types.Bool]),
+	)
+	sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+	fn := pkg.NewFunc("assertArray", sig, GoDecl)
+	b := fn.MakeBody(1)
+	ret := b.TypeAssert(fn.Param(0), arrayType, true)
+	b.Return(b.Extract(ret, 0), b.Extract(ret, 1))
+
+	ir := fn.impl.String()
+	if !strings.Contains(ir, "insertvalue { [1 x i") {
+		t.Fatalf("single element array type assert should rebuild via insertvalue:\n%s", ir)
+	}
+	if strings.Contains(ir, "alloca [1 x i") {
+		t.Fatalf("single element array type assert should not rebuild via alloca:\n%s", ir)
+	}
+}
+
+func TestInterfaceHelpers(t *testing.T) {
+	rawSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	rawMeth := types.NewFunc(0, nil, "M", rawSig)
+	rawIface := types.NewInterfaceType([]*types.Func{rawMeth}, nil)
+	rawIface.Complete()
+
+	missingMethod := types.NewFunc(0, nil, "missing", rawSig)
+	if got := iMethodOf(rawIface, missingMethod); got != -1 {
+		t.Fatalf("iMethodOf missing: got %d", got)
+	}
+
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+	intfType := prog.Type(rawIface, GoDecl)
+	fn := pkg.NewFunc("call", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(0, nil, "i", rawIface)), nil, false), GoDecl)
+	b := fn.MakeBody(1)
+
+	// Method signature with first param being the interface itself.
+	params := types.NewTuple(types.NewVar(0, nil, "self", rawIface),
+		types.NewVar(0, nil, "x", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params,
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), false)
+	method := types.NewFunc(0, nil, "M", sig)
+	closure := b.Imethod(fn.Param(0), method)
+	if got := closure.raw.Type.(*types.Struct).Field(0).Type().(*types.Signature).Params().Len(); got != 1 {
+		t.Fatalf("Imethod should drop interface param: got %d params", got)
+	}
+	_ = intfType
+}
+
+func TestValFromDataKinds(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	fn := pkg.NewFunc("caller", sig, GoDecl)
+	b := fn.MakeBody(1)
+	data := prog.Nil(prog.VoidPtr()).impl
+
+	b.valFromData(prog.Int(), data)
+	b.valFromData(prog.Float32(), data)
+	b.valFromData(prog.Type(types.NewPointer(types.Typ[types.Int]), GoDecl), data)
+
+	st := types.NewStruct([]*types.Var{
+		types.NewVar(0, nil, "a", types.Typ[types.Int]),
+		types.NewVar(0, nil, "b", types.Typ[types.Int]),
+	}, nil)
+	b.valFromData(prog.Type(st, GoDecl), data)
+
+	single := types.NewStruct([]*types.Var{
+		types.NewVar(0, nil, "v", types.Typ[types.Int]),
+	}, nil)
+	b.valFromData(prog.Type(single, GoDecl), data)
+
+	arr := types.NewArray(types.Typ[types.Int], 1)
+	b.valFromData(prog.Type(arr, GoDecl), data)
+
+	b.Return()
+}
+
+func TestPackageCoverageHelpers(t *testing.T) {
+	prog := NewProgram(nil)
+	_ = prog.CIntPtr()
+	pkg := prog.NewPackage("bar", "foo/bar")
+	if len(pkg.ExportFuncs()) != 0 {
+		t.Fatal("ExportFuncs should be empty for new package")
+	}
+
+	fn := pkg.NewFunc("noop", NoArgsNoRet, GoDecl)
+	b := fn.MakeBody(1)
+	b.Return()
+}
+
+func TestExprCoverageHelpers(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	fn := pkg.NewFunc("fn", sig, GoDecl)
+	b := fn.MakeBody(1)
+
+	// SetName coverage
+	tmp := b.AllocaT(prog.Int())
+	tmp.SetName("tmp0")
+
+	// Printf / tyPrintf coverage
+	b.Printf("value=%d", prog.Val(1))
+	b.Return()
+}
+
+func TestTypes(t *testing.T) {
+	ctx := llvm.NewContext()
+	llvmIntType(ctx, 4)
+
+	intT := types.NewVar(0, nil, "", types.Typ[types.Int])
+	ret := types.NewTuple(intT, intT)
+	sig := types.NewSignatureType(nil, nil, nil, nil, ret, false)
+	prog := NewProgram(nil)
+	prog.retType(sig)
+}
+
+func TestIndexType(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Log("indexType: no error?")
+		}
+	}()
+	indexType(types.Typ[types.Int])
+}
+
+func TestCvtType(t *testing.T) {
+	gt := newGoTypes()
+	params := types.NewTuple(types.NewParam(0, nil, "", NoArgsNoRet))
+	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
+	ret1 := gt.cvtFunc(sig, nil)
+	if ret1 == sig {
+		t.Fatal("cvtFunc failed")
+	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Log("cvtType: no error?")
+		}
+	}()
+	gt.cvtType(nil)
+}
+
+func TestUserdefExpr(t *testing.T) {
+	c := &pyVarTy{}
+	b := &builtinTy{}
+	_ = c.String()
+	_ = b.String()
+	test := func(a types.Type) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Log("TestUserdefExpr: no error?")
+			}
+		}()
+		a.Underlying()
+	}
+	test(c)
+	test(b)
+}
+
+func TestAny(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		ret := types.NewPackage("runtime", "runtime")
+		scope := ret.Scope()
+		name := types.NewTypeName(0, ret, "Eface", nil)
+		types.NewNamed(name, types.NewStruct(nil, nil), nil)
+		scope.Insert(name)
+		return ret
+	})
+	prog.Any()
+}
+
+func assertPkg(t *testing.T, p Package, expected string) {
+	t.Helper()
+	got := StripModuleTarget(p.String())
+	want := StripModuleTarget(expected)
+	if target := p.Prog.Target(); target.GOOS == "windows" && (target.GOARCH == "amd64" || target.GOARCH == "arm64") {
+		// Win64 functions carry unwind tables even when LLVM marks them
+		// nounwind. Keep the IR expectations shared across host platforms;
+		// TestWindowsUnwindTablesForNoUnwindFunctions checks the actual COFF.
+		want = strings.ReplaceAll(want, "null_pointer_is_valid", "null_pointer_is_valid uwtable")
+	}
+	if got != want {
+		t.Fatalf("\n==> got:\n%s\n==> expected:\n%s\n", got, want)
+	}
+}
+
+func TestPyFunc(t *testing.T) {
+	prog := NewProgram(nil)
+	py := types.NewPackage("foo", "foo")
+	o := types.NewTypeName(0, py, "Object", nil)
+	types.NewNamed(o, types.Typ[types.Int], nil)
+	py.Scope().Insert(o)
+	prog.SetPython(py)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	a := pkg.PyNewFunc("a", NoArgsNoRet, false)
+	if pkg.PyNewFunc("a", NoArgsNoRet, false) != a {
+		t.Fatal("NewPyFunc(a) failed")
+	}
+	foo := pkg.PyNewModVar("foo", false)
+	if pkg.PyNewModVar("foo", false) != foo {
+		t.Fatal("NewPyModVar(foo) failed")
+	}
+}
+
+func TestVar(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	typ := types.NewPointer(types.Typ[types.Int])
+	a := pkg.NewVar("a", typ, GoDecl)
+	if pkg.NewVar("a", typ, GoDecl) != a {
+		t.Fatal("NewVar(a) failed")
+	}
+	pkg.NewVarEx("a", prog.Type(typ, GoDecl))
+	a.Init(prog.Val(100))
+	b := pkg.NewVar("b", typ, GoDecl)
+	b.Init(Expr{llvm.ConstPtrToInt(a.impl, prog.Int().ll), prog.Int()})
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+@a = global i64 100, align 8
+@b = global i64 ptrtoint (ptr @a to i64), align 8
+`)
+}
+
+func TestThreadLocalVar(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	a := pkg.NewThreadLocalVar("a", types.NewPointer(types.Typ[types.Int]), GoDecl)
+	if got := pkg.NewThreadLocalVar("a", types.NewPointer(types.Typ[types.Int]), GoDecl); got != a {
+		t.Fatal("NewThreadLocalVar(a) did not reuse the existing global")
+	}
+	a.InitNil()
+	empty := types.NewStruct(nil, nil)
+	z := pkg.NewThreadLocalVar("z", types.NewPointer(empty), GoDecl)
+	z.InitNil()
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+@a = thread_local global i64 0, align 8
+@z = thread_local global {} zeroinitializer, align 1
+`)
+}
+
+func TestConst(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Bool]))
+	sig := types.NewSignatureType(nil, nil, nil, nil, rets, false)
+	b := pkg.NewFunc("fn", sig, GoDecl).MakeBody(1)
+	b.Return(b.Const(constant.MakeBool(true), prog.Bool()))
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i1 @fn() #0 {
+_llgo_0:
+  ret i1 true
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestStruct(t *testing.T) {
+	empty := types.NewStruct(nil, nil)
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	pkg.NewVar("a", types.NewPointer(empty), GoDecl)
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+@a = external global {}, align 1
+`)
+	if pkg.NeedRuntime {
+		t.Fatal("NeedRuntime?")
+	}
+}
+
+func TestNamedStruct(t *testing.T) {
+	src := types.NewPackage("bar", "foo/bar")
+	empty := types.NewNamed(types.NewTypeName(0, src, "Empty", nil), types.NewStruct(nil, nil), nil)
+
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	pkg.NewVar("a", types.NewPointer(empty), GoDecl)
+	if pkg.VarOf("a") == nil {
+		t.Fatal("VarOf failed")
+	}
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+%bar.Empty = type {}
+
+@a = external global %bar.Empty, align 1
+`)
+}
+
+func TestDeclFunc(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	params := types.NewTuple(types.NewVar(0, nil, "a", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
+	pkg.NewFunc("fn", sig, GoDecl)
+	if pkg.FuncOf("fn") == nil {
+		t.Fatal("FuncOf failed")
+	}
+	if prog.retType(sig) != prog.Void() {
+		t.Fatal("retType failed")
+	}
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+declare void @fn(i64) #0
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestBasicFunc(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	params := types.NewTuple(
+		types.NewVar(0, nil, "a", types.Typ[types.Int]),
+		types.NewVar(0, nil, "b", types.Typ[types.Float64]))
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	pkg.NewFunc("fn", sig, GoDecl).MakeBody(1).
+		Return(prog.Val(1))
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0, double %1) #0 {
+_llgo_0:
+  ret i64 1
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestFuncParam(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	params := types.NewTuple(
+		types.NewVar(0, nil, "a", types.Typ[types.Int]),
+		types.NewVar(0, nil, "b", types.Typ[types.Float64]))
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	fn := pkg.NewFunc("fn", sig, GoDecl)
+	fn.MakeBody(1).Return(fn.Param(0))
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0, double %1) #0 {
+_llgo_0:
+  ret i64 %0
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestFuncCall(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	params := types.NewTuple(
+		types.NewVar(0, nil, "a", types.Typ[types.Int]),
+		types.NewVar(0, nil, "b", types.Typ[types.Float64]))
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	fn := pkg.NewFunc("fn", sig, GoDecl)
+	fn.MakeBody(1).
+		Return(prog.Val(1))
+
+	b := pkg.NewFunc("main", NoArgsNoRet, GoDecl).MakeBody(1)
+	b.Call(fn.Expr, prog.Val(1), prog.Val(1.2))
+	b.Return()
+
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0, double %1) #0 {
+_llgo_0:
+  ret i64 1
+}
+
+; Function Attrs: null_pointer_is_valid
+define void @main() #0 {
+_llgo_0:
+  %0 = call i64 @fn(i64 1, double 1.200000e+00)
+  ret void
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestFuncMultiRet(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	params := types.NewTuple(
+		types.NewVar(0, nil, "b", types.Typ[types.Float64]))
+	rets := types.NewTuple(
+		types.NewVar(0, nil, "c", types.Typ[types.Int]),
+		types.NewVar(0, nil, "d", types.Typ[types.Float64]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	a := pkg.NewVar("a", types.NewPointer(types.Typ[types.Int]), GoDecl)
+	fn := pkg.NewFunc("fn", sig, GoDecl)
+	b := fn.MakeBody(1)
+	aInt := Expr{llvm.ConstPtrToInt(a.impl, prog.Int().ll), prog.Int()}
+	b.Return(aInt, fn.Param(0))
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+@a = external global i64, align 8
+
+; Function Attrs: null_pointer_is_valid
+define { i64, double } @fn(double %0) #0 {
+_llgo_0:
+  %1 = insertvalue { i64, double } { i64 ptrtoint (ptr @a to i64), double undef }, double %0, 1
+  ret { i64, double } %1
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestJump(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	fn := pkg.NewFunc("loop", NoArgsNoRet, GoDecl)
+	b := fn.MakeBody(1)
+	b.Jump(fn.Block(0))
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define void @loop() #0 {
+_llgo_0:
+  br label %_llgo_0
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestIf(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	params := types.NewTuple(types.NewVar(0, nil, "a", types.Typ[types.Int]))
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	fn := pkg.NewFunc("fn", sig, GoDecl)
+	b := fn.MakeBody(3)
+	iftrue := fn.Block(1)
+	iffalse := fn.Block(2)
+	if iftrue.Index() != 1 || iftrue.Parent() != fn {
+		t.Fatal("iftrue")
+	}
+	cond := b.BinOp(token.GTR, fn.Param(0), prog.Val(0))
+	b.If(cond, iftrue, iffalse)
+	b.SetBlock(iftrue).Return(prog.Val(1))
+	b.SetBlock(iffalse).Return(prog.Val(0))
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0) #0 {
+_llgo_0:
+  %1 = icmp sgt i64 %0, 0
+  br i1 %1, label %_llgo_1, label %_llgo_2
+
+_llgo_1:                                          ; preds = %_llgo_0
+  ret i64 1
+
+_llgo_2:                                          ; preds = %_llgo_0
+  ret i64 0
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestPrintf(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	pchar := types.NewPointer(types.Typ[types.Int8])
+	params := types.NewTuple(types.NewVar(0, nil, "format", pchar), VArg())
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int32]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, true)
+	pkg.NewFunc("printf", sig, CDecl)
+	expected := `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+declare i32 @printf(ptr, ...)
+`
+	if target := prog.Target(); target.GOOS == "windows" && (target.GOARCH == "amd64" || target.GOARCH == "arm64") {
+		expected = `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: uwtable
+declare i32 @printf(ptr, ...) #0
+
+attributes #0 = { uwtable }
+`
+	}
+	assertPkg(t, pkg, expected)
+}
+
+func TestBinOp(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	params := types.NewTuple(
+		types.NewVar(0, nil, "a", types.Typ[types.Int]),
+		types.NewVar(0, nil, "b", types.Typ[types.Float64]))
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	fn := pkg.NewFunc("fn", sig, GoDecl)
+	b := fn.MakeBody(1)
+	ret := b.BinOp(token.ADD, fn.Param(0), prog.Val(1))
+	b.Return(ret)
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0, double %1) #0 {
+_llgo_0:
+  %2 = add i64 %0, 1
+  ret i64 %2
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestArrayEqualLowering(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("main", "main")
+	compare := func(name string, elem types.Type, n int64, op token.Token, addrMask uint) llvm.Value {
+		array := types.NewArray(elem, n)
+		sig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(
+				types.NewVar(token.NoPos, nil, "x", array),
+				types.NewVar(token.NoPos, nil, "y", array),
+			),
+			types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool])),
+			false,
+		)
+		fn := pkg.NewFunc(name, sig, GoDecl)
+		b := fn.MakeBody(1)
+		xaddr, yaddr := Nil, Nil
+		if addrMask&1 != 0 {
+			xaddr = b.AllocaT(fn.Param(0).Type)
+			b.Store(xaddr, fn.Param(0))
+		}
+		if addrMask&2 != 0 {
+			yaddr = b.AllocaT(fn.Param(1).Type)
+			b.Store(yaddr, fn.Param(1))
+		}
+		b.Return(b.ArrayBinOp(op, fn.Param(0), fn.Param(1), xaddr, yaddr))
+		return pkg.Module().NamedFunction(name)
+	}
+
+	small := compare("small", types.Typ[types.Uint8], 4, token.EQL, 0).String()
+	if strings.Contains(small, "memequal") || strings.Contains(small, "arrayequal") {
+		t.Fatalf("small scalar array comparison was not inlined:\n%s", small)
+	}
+	medium := compare("medium", types.Typ[types.Uint8], 16, token.EQL, 3).String()
+	if !strings.Contains(medium, ".memequal") || strings.Contains(medium, "extractvalue [16 x i8]") {
+		t.Fatalf("medium scalar array comparison was expanded element by element:\n%s", medium)
+	}
+	large := compare("large", types.Typ[types.Uint8], 1024, token.NEQ, 0).String()
+	if !strings.Contains(large, ".memequal") || strings.Contains(large, "extractvalue [1024 x i8]") {
+		t.Fatalf("large regular-memory array comparison was not lowered to memequal:\n%s", large)
+	}
+	nonMemory := compare("nonmemory", types.Typ[types.Float64], 5, token.EQL, 0).String()
+	if !strings.Contains(nonMemory, ".arrayequal") || strings.Contains(nonMemory, "extractvalue [5 x double]") {
+		t.Fatalf("non-memory array comparison was not lowered to arrayequal:\n%s", nonMemory)
+	}
+
+	array := types.NewArray(types.Typ[types.Uint8], 4)
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "x", array),
+			types.NewVar(token.NoPos, nil, "y", array),
+		),
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool])),
+		false,
+	)
+	fn := pkg.NewFunc("direct", sig, GoDecl)
+	b := fn.MakeBody(1)
+	mustPanic := func(want string, call func()) {
+		t.Helper()
+		defer func() {
+			if got := recover(); got != want {
+				t.Fatalf("panic = %v, want %q", got, want)
+			}
+		}()
+		call()
+	}
+	mustPanic("ArrayBinOp requires array operands", func() {
+		b.ArrayBinOp(token.EQL, prog.Val(1), prog.Val(2), Nil, Nil)
+	})
+	mustPanic("ArrayBinOp requires an equality operator", func() {
+		b.ArrayBinOp(token.ADD, fn.Param(0), fn.Param(1), Nil, Nil)
+	})
+	b.Return(b.BinOp(token.EQL, fn.Param(0), fn.Param(1)))
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("array comparison module is invalid: %v\n%s", err, pkg.String())
+	}
+}
+
+func TestCanInlineArrayEqual(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  *types.Array
+		want bool
+	}{
+		{"single interface", types.NewArray(types.NewInterfaceType(nil, nil), 1), true},
+		{"four bytes", types.NewArray(types.Typ[types.Uint8], 4), true},
+		{"five bytes", types.NewArray(types.Typ[types.Uint8], 5), false},
+		{"two strings", types.NewArray(types.Typ[types.String], 2), false},
+		{"two structs", types.NewArray(types.NewStruct(nil, nil), 2), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CanInlineArrayEqual(tt.typ); got != tt.want {
+				t.Fatalf("CanInlineArrayEqual(%v) = %v, want %v", tt.typ, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStructEqualLowering(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("main", "main")
+	compare := func(name string, typ *types.Struct, op token.Token, addrMask, zeroMask uint) string {
+		sig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(
+				types.NewVar(token.NoPos, nil, "x", typ),
+				types.NewVar(token.NoPos, nil, "y", typ),
+			),
+			types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool])),
+			false,
+		)
+		fn := pkg.NewFunc(name, sig, GoDecl)
+		b := fn.MakeBody(1)
+		x, y := fn.Param(0), fn.Param(1)
+		xaddr, yaddr := Nil, Nil
+		if addrMask&1 != 0 {
+			xaddr = b.AllocaT(x.Type)
+			b.Store(xaddr, x)
+		}
+		if addrMask&2 != 0 {
+			yaddr = b.AllocaT(y.Type)
+			b.Store(yaddr, y)
+		}
+		if zeroMask&1 != 0 {
+			x = prog.Zero(x.Type)
+		}
+		if zeroMask&2 != 0 {
+			y = prog.Zero(y.Type)
+		}
+		b.Return(b.StructBinOp(op, x, y, xaddr, yaddr))
+		return pkg.Module().NamedFunction(name).String()
+	}
+	field := func(name string, typ types.Type) *types.Var {
+		return types.NewVar(token.NoPos, nil, name, typ)
+	}
+
+	smallType := types.NewStruct([]*types.Var{
+		field("a", types.Typ[types.Int]), field("_", types.Typ[types.Int]),
+		field("b", types.Typ[types.Int]),
+	}, nil)
+	small := compare("smallStruct", smallType, token.NEQ, 0, 0)
+	if strings.Contains(small, "memequal") || strings.Contains(small, "structequal") {
+		t.Fatalf("small struct comparison was not inlined:\n%s", small)
+	}
+	regularType := types.NewStruct([]*types.Var{
+		field("value", types.NewArray(types.Typ[types.Uint8], 1024)),
+	}, nil)
+	regular := compare("largeRegularStruct", regularType, token.EQL, 0, 0)
+	if !strings.Contains(regular, ".memequal") || strings.Contains(regular, "extractvalue [1024 x i8]") {
+		t.Fatalf("large regular struct comparison was not lowered to memequal:\n%s", regular)
+	}
+	regularAddr := compare("largeRegularStructAddr", regularType, token.NEQ, 3, 0)
+	if !strings.Contains(regularAddr, ".memequal") {
+		t.Fatalf("addressed regular struct comparison was not lowered to memequal:\n%s", regularAddr)
+	}
+	zeroLeft := compare("largeZeroLeft", regularType, token.EQL, 2, 1)
+	if !strings.Contains(zeroLeft, ".memequalzero") {
+		t.Fatalf("left zero comparison did not reuse the right address:\n%s", zeroLeft)
+	}
+	zeroRight := compare("largeZeroRight", regularType, token.NEQ, 1, 2)
+	if !strings.Contains(zeroRight, ".memequalzero") {
+		t.Fatalf("right zero comparison did not reuse the left address:\n%s", zeroRight)
+	}
+	nonMemory := compare("largeNonMemoryStruct", types.NewStruct([]*types.Var{
+		field("value", types.NewArray(types.Typ[types.String], 5)),
+	}, nil), token.EQL, 0, 0)
+	if strings.Contains(nonMemory, ".structequal") || !strings.Contains(nonMemory, ".arrayequal") {
+		t.Fatalf("large semantic struct comparison was not kept field-wise:\n%s", nonMemory)
+	}
+	fiveFields := types.NewStruct([]*types.Var{
+		field("a", types.Typ[types.Uint8]), field("b", types.Typ[types.Uint8]),
+		field("c", types.Typ[types.Uint8]), field("d", types.Typ[types.Uint8]),
+		field("e", types.Typ[types.Uint8]),
+	}, nil)
+	if CanInlineStructEqual(fiveFields, 5, prog.PointerSize()) {
+		t.Fatal("five-field struct comparison was inlined")
+	}
+
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "x", smallType),
+			types.NewVar(token.NoPos, nil, "y", smallType),
+		),
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Bool])),
+		false,
+	)
+	fn := pkg.NewFunc("invalidStructCompare", sig, GoDecl)
+	b := fn.MakeBody(1)
+	mustPanic := func(want string, call func()) {
+		t.Helper()
+		defer func() {
+			if got := recover(); got != want {
+				t.Fatalf("panic = %v, want %q", got, want)
+			}
+		}()
+		call()
+	}
+	mustPanic("StructBinOp requires struct operands", func() {
+		b.StructBinOp(token.EQL, prog.Val(1), prog.Val(2), Nil, Nil)
+	})
+	mustPanic("StructBinOp requires an equality operator", func() {
+		b.StructBinOp(token.ADD, fn.Param(0), fn.Param(1), Nil, Nil)
+	})
+	b.Return(prog.BoolVal(false))
+	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("struct comparison module is invalid: %v\n%s", err, pkg.String())
+	}
+}
+
+func TestUnOp(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+	params := types.NewTuple(
+		types.NewVar(0, nil, "p", types.NewPointer(types.Typ[types.Int])),
+	)
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	fn := pkg.NewFunc("fn", sig, GoDecl)
+	b := fn.MakeBody(1)
+	ptr := fn.Param(0)
+	val := b.UnOp(token.MUL, ptr)
+	val2 := b.BinOp(token.XOR, val, prog.Val(1))
+	b.Store(ptr, val2)
+	b.Return(val2)
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(ptr %0) #0 {
+_llgo_0:
+  %1 = load i64, ptr %0, align 8
+  %2 = xor i64 %1, 1
+  store i64 %2, ptr %0, align 8
+  ret i64 %2
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestBasicType(t *testing.T) {
+	type typeInfo struct {
+		typ  Type
+		kind types.BasicKind
+	}
+	prog := NewProgram(nil)
+	infos := []*typeInfo{
+		{prog.Bool(), types.Bool},
+		{prog.Byte(), types.Byte},
+		{prog.Int(), types.Int},
+		{prog.Uint(), types.Uint},
+		{prog.Int32(), types.Int32},
+		{prog.Int64(), types.Int64},
+		{prog.Uint32(), types.Uint32},
+		{prog.Uint64(), types.Uint64},
+		{prog.Uintptr(), types.Uintptr},
+		{prog.VoidPtr(), types.UnsafePointer},
+	}
+	for _, info := range infos {
+		if info.typ.RawType() != types.Typ[info.kind] {
+			t.Fatal("bad type", info)
+		}
+	}
+}
+
+func TestCompareSelect(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	params := types.NewTuple(
+		types.NewVar(0, nil, "a", types.Typ[types.Int]),
+		types.NewVar(0, nil, "b", types.Typ[types.Int]),
+		types.NewVar(0, nil, "c", types.Typ[types.Int]),
+	)
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+	fn := pkg.NewFunc("fn", sig, GoDecl)
+
+	b := fn.MakeBody(1)
+	result := b.compareSelect(token.GTR, fn.Param(0), fn.Param(1), fn.Param(2))
+	b.Return(result)
+
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i64 @fn(i64 %0, i64 %1, i64 %2) #0 {
+_llgo_0:
+  %3 = icmp sgt i64 %0, %1
+  %4 = select i1 %3, i64 %0, i64 %1
+  %5 = icmp sgt i64 %4, %2
+  %6 = select i1 %5, i64 %4, i64 %2
+  ret i64 %6
+}
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+`)
+}
+
+func TestGlobalStrings(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+	typ := types.NewPointer(types.Typ[types.String])
+	a := pkg.NewVar("foo/bar.a", typ, GoDecl)
+	if pkg.NewVar("foo/bar.a", typ, GoDecl) != a {
+		t.Fatal("NewVar(a) failed")
+	}
+	a.InitNil()
+	pkg.NewVarEx("foo/bar.a", prog.Type(typ, GoDecl))
+	b := pkg.NewVar("foo/bar.b", typ, GoDecl)
+	b.InitNil()
+	c := pkg.NewVar("foo/bar.c", types.NewPointer(types.Typ[types.Int]), GoDecl)
+	c.Init(prog.Val(100))
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+%"github.com/xgo-dev/llgo/runtime/internal/runtime.String" = type { ptr, i64 }
+
+@"foo/bar.a" = global %"github.com/xgo-dev/llgo/runtime/internal/runtime.String" zeroinitializer, align 8
+@"foo/bar.b" = global %"github.com/xgo-dev/llgo/runtime/internal/runtime.String" zeroinitializer, align 8
+@"foo/bar.c" = global i64 100, align 8
+`)
+	err := pkg.Undefined("foo/bar.a", "foo/bar.b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg.Undefined("foo.bar.d")
+	err = pkg.Undefined("foo/bar.c")
+	if err == nil {
+		t.Fatal("must err")
+	}
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+%"github.com/xgo-dev/llgo/runtime/internal/runtime.String" = type { ptr, i64 }
+
+@"foo/bar.c" = global i64 100, align 8
+@"foo/bar.a" = external global %"github.com/xgo-dev/llgo/runtime/internal/runtime.String"
+@"foo/bar.b" = external global %"github.com/xgo-dev/llgo/runtime/internal/runtime.String"
+`)
+	global := prog.NewPackage("", "global")
+	global.AddGlobalString("foo/bar.a", "1.0")
+	global.AddGlobalString("foo/bar.b", "info")
+	assertPkg(t, global, `; ModuleID = 'global'
+source_filename = "global"
+
+%"github.com/xgo-dev/llgo/runtime/internal/runtime.String" = type { ptr, i64 }
+
+@0 = private unnamed_addr constant [3 x i8] c"1.0", align 1
+@"foo/bar.a" = global %"github.com/xgo-dev/llgo/runtime/internal/runtime.String" { ptr @0, i64 3 }, align 8
+@1 = private unnamed_addr constant [4 x i8] c"info", align 1
+@"foo/bar.b" = global %"github.com/xgo-dev/llgo/runtime/internal/runtime.String" { ptr @1, i64 4 }, align 8
+`)
+}
+
+func TestZeroSizedGlobalEmitsAliasSymbol(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Chdir("../../../runtime")
+	defer os.Chdir(wd)
+
+	// This assertion covers the non-COFF ODR definition. Windows deliberately
+	// uses a module-local sentinel and has a dedicated test in coff_comdat_test.
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
+	defer prog.Dispose()
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+	elem := types.NewArray(types.Typ[types.Int], 0)
+	typ := types.NewPointer(elem)
+	a := pkg.NewVar("foo/bar.a", typ, GoDecl)
+	a.Init(prog.Zero(prog.Type(elem, GoDecl)))
+	a.InitNil()
+	pkg.NewVar("other/pkg.a", typ, GoDecl)
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+@"__llgo.moduleZeroSizedAlloc$" = linkonce_odr unnamed_addr global i8 0
+@"other/pkg.a" = external global [0 x i64], align 8
+
+@"foo/bar.a" = alias [0 x i64], ptr @"__llgo.moduleZeroSizedAlloc$"
+`)
+}
+
+func TestGlobalConstLiterals(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.SetRuntime(func() *types.Package {
+		fset := token.NewFileSet()
+		imp := packages.NewImporter(fset)
+		pkg, _ := imp.Import(PkgRuntime)
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	_ = pkg.ConstString("hello")
+	_ = pkg.ConstString("hello")
+	ir := pkg.String()
+	if strings.Count(ir, `c"hello"`) != 1 {
+		t.Fatalf("ConstString should reuse backing global, got:\n%s", ir)
+	}
+
+	before := pkg.String()
+	_ = pkg.ConstBytes(nil)
+	_ = pkg.ConstBytes([]byte{})
+	_ = pkg.createGlobalBytes(nil)
+	afterEmpty := pkg.String()
+	if afterEmpty != before {
+		t.Fatalf("ConstBytes(empty) should not emit globals:\n%s", afterEmpty)
+	}
+
+	_ = pkg.ConstBytes([]byte("hi"))
+	_ = pkg.ConstBytes([]byte("hi"))
+	ir = pkg.String()
+	if strings.Count(ir, `c"hi"`) != 2 {
+		t.Fatalf("ConstBytes should allocate writable backing each call, got:\n%s", ir)
+	}
+}
+
+func TestSetjmpReturnsTwice(t *testing.T) {
+	// Keep this generic C setjmp check independent of the test host. Windows
+	// uses architecture-specific UCRT entry points, which are covered by the
+	// Windows ABI tests in eh_patch_test.go.
+	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	// func test(jmpbuf unsafe.Pointer) int32
+	params := types.NewTuple(
+		types.NewVar(0, nil, "jmpbuf", types.Typ[types.UnsafePointer]))
+	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int32]))
+	sig := types.NewSignatureType(nil, nil, nil, params, rets, false)
+
+	fn := pkg.NewFunc("test", sig, GoDecl)
+	b := fn.MakeBody(1)
+	ret := b.Setjmp(fn.Param(0))
+	b.Return(ret)
+
+	assertPkg(t, pkg, `; ModuleID = 'foo/bar'
+source_filename = "foo/bar"
+
+; Function Attrs: null_pointer_is_valid
+define i32 @test(ptr %0) #0 {
+_llgo_0:
+  %1 = call i32 @setjmp(ptr %0)
+  ret i32 %1
+}
+
+; Function Attrs: returns_twice
+declare i32 @setjmp(ptr) #1
+
+attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
+attributes #1 = { returns_twice }
+`)
+}
+
+func TestTargetMachineAndDataLayout(t *testing.T) {
+	tests := []struct {
+		goos       string
+		goarch     string
+		dataLayout string
+		triple     string
+	}{
+		{"linux", "amd64", "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128", "x86_64-unknown-linux-gnu"},
+		{"linux", "arm64", "e-m:e-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128-Fn32", "aarch64-unknown-linux-gnu"},
+		{"darwin", "amd64", "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128", "x86_64-apple-macosx"},
+		{"darwin", "arm64", "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32", "arm64-apple-macosx"},
+	}
+	for _, tt := range tests {
+		prog := NewProgram(&Target{GOOS: tt.goos, GOARCH: tt.goarch})
+
+		// Test TargetMachine() returns a valid target machine
+		tm := prog.TargetMachine()
+		if tm.C == nil {
+			t.Fatalf("%s/%s TargetMachine() returned nil", tt.goos, tt.goarch)
+		}
+
+		// Test TargetData() returns a valid target data
+		td := prog.TargetData()
+		if td.C == nil {
+			t.Fatalf("%s/%s TargetData() returned nil", tt.goos, tt.goarch)
+		}
+
+		// Test DataLayout() returns the expected LLVM 22 layout.
+		if dl := prog.DataLayout(); dl != tt.dataLayout {
+			t.Fatalf("%s/%s DataLayout mismatch: got %q, want %q", tt.goos, tt.goarch, dl, tt.dataLayout)
+		}
+
+		pkg := prog.NewPackage("foo", "foo/bar")
+		if dl := pkg.Module().DataLayout(); dl != tt.dataLayout {
+			t.Fatalf("%s/%s module DataLayout mismatch: got %q, want %q", tt.goos, tt.goarch, dl, tt.dataLayout)
+		}
+
+		// Test Target().Spec().Triple returns the expected triple
+		if triple := prog.Target().Spec().Triple; triple != tt.triple {
+			t.Fatalf("%s/%s Triple mismatch: got %q, want %q", tt.goos, tt.goarch, triple, tt.triple)
+		}
+	}
+}
+
+func TestARMTargetSpec(t *testing.T) {
+	for _, test := range []struct {
+		goarm       string
+		wantTriple  string
+		wantFeature string
+	}{
+		{"5", "armv5-unknown-linux-gnueabi", "+armv5t"},
+		{"6", "armv6-unknown-linux-gnueabihf", "+armv6"},
+		{"7", "armv7-unknown-linux-gnueabihf", "+armv7-a"},
+	} {
+		spec := (&Target{GOOS: "linux", GOARCH: "arm", GOARM: test.goarm}).Spec()
+		if spec.Triple != test.wantTriple {
+			t.Errorf("linux/arm GOARM=%s triple = %q, want %q", test.goarm, spec.Triple, test.wantTriple)
+		}
+		if !strings.Contains(spec.Features, test.wantFeature) {
+			t.Errorf("linux/arm GOARM=%s features = %q, want %q", test.goarm, spec.Features, test.wantFeature)
+		}
+	}
+}
+
+func TestWindowsTargetTriple(t *testing.T) {
+	for _, test := range []struct {
+		goarch string
+		want   string
+	}{
+		{"386", "i686-pc-windows-msvc"},
+		{"amd64", "x86_64-pc-windows-msvc"},
+		{"arm64", "aarch64-pc-windows-msvc"},
+	} {
+		target := &Target{GOOS: "windows", GOARCH: test.goarch}
+		if got := target.Spec().Triple; got != test.want {
+			t.Errorf("windows/%s target triple = %q, want %q", test.goarch, got, test.want)
+		}
+	}
+}
+
+func TestWasmTargetSpec(t *testing.T) {
+	for _, test := range []struct {
+		name, target, llvmTarget, wasmProfile, want string
+	}{
+		{name: "raw js wasm32", want: "wasm32-unknown-js"},
+		{name: "Emscripten wasm32", target: "emscripten", llvmTarget: "wasm32-unknown-emscripten", wasmProfile: "j32", want: "wasm32-unknown-emscripten"},
+		{name: "Emscripten Memory64", target: "emscripten-memory64", llvmTarget: "wasm64-unknown-emscripten", wasmProfile: "j64", want: "wasm64-unknown-emscripten"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got := (&Target{GOOS: "js", GOARCH: "wasm", Target: test.target, LLVMTarget: test.llvmTarget, WasmProfile: test.wasmProfile}).Spec().Triple
+			if got != test.want {
+				t.Fatalf("triple = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestAbiTables(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	emptyIface := types.NewInterfaceType(nil, nil)
+	emptyIface.Complete()
+	emptyType := prog.Type(emptyIface, GoDecl)
+
+	makeFn := func(name string, x Expr) {
+		sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(0, nil, "", emptyIface)), false)
+		fn := pkg.NewFunc(name, sig, GoDecl)
+		b := fn.MakeBody(1)
+		iface := b.MakeInterface(emptyType, x)
+		b.Return(iface)
+	}
+
+	makeFn("intIface", prog.Val(1))
+	makeFn("ptrIface", prog.Nil(prog.VoidPtr()))
+	makeFn("floatIface", prog.FloatVal(3.5, prog.Float32()))
+
+	st := types.NewStruct([]*types.Var{
+		types.NewVar(0, nil, "a", types.Typ[types.Int]),
+		types.NewVar(0, nil, "b", types.Typ[types.Int]),
+	}, nil)
+	makeFn("structIface", prog.Zero(prog.Type(st, GoDecl)))
+
+	single := types.NewStruct([]*types.Var{
+		types.NewVar(0, nil, "v", types.Typ[types.Int]),
+	}, nil)
+	makeFn("singleFieldIface", prog.Zero(prog.Type(single, GoDecl)))
+
+	pkgTypes := types.NewPackage("foo/bar", "bar")
+	rawSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	rawMeth := types.NewFunc(0, pkgTypes, "M", rawSig)
+	nonEmpty := types.NewInterfaceType([]*types.Func{rawMeth}, nil)
+	nonEmpty.Complete()
+	nonEmptyType := prog.Type(nonEmpty, GoDecl)
+	sigNE := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(0, nil, "", nonEmpty)), false)
+	fnNE := pkg.NewFunc("nonEmptyIface", sigNE, GoDecl)
+	bNE := fnNE.MakeBody(1)
+	bNE.Return(bNE.MakeInterface(nonEmptyType, prog.Val(7)))
+
+	fn := pkg.InitAbiTypes(pkg.Path() + ".init$abitables")
+	s := fn.impl.String()
+	if !strings.Contains(s, `define void @"foo/bar.init$abitables"()`) ||
+		!strings.Contains(s, `@"foo/bar.init$abitables$slice"`) ||
+		!strings.Contains(s, `@"github.com/xgo-dev/llgo/runtime/internal/runtime.typelist"`) {
+		t.Fatal("error abi tables", s)
+	}
+}
+
+func TestInitAbiTypesForSubset(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	emptyIface := types.NewInterfaceType(nil, nil)
+	emptyIface.Complete()
+	emptyType := prog.Type(emptyIface, GoDecl)
+	makeFn := func(name string, x Expr) {
+		sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(0, nil, "", emptyIface)), false)
+		fn := pkg.NewFunc(name, sig, GoDecl)
+		b := fn.MakeBody(1)
+		b.Return(b.MakeInterface(emptyType, x))
+	}
+
+	makeFn("intIface", prog.Val(1))
+	makeFn("floatIface", prog.FloatVal(3.5, prog.Float32()))
+
+	if len(prog.abiSymbol) < 2 {
+		t.Fatalf("expected multiple abi symbols, got %d", len(prog.abiSymbol))
+	}
+	names := make([]string, 0, len(prog.abiSymbol))
+	for name := range prog.abiSymbol {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	pkg.getAbiTypesFor("subset", func(sym *AbiSymbol) bool {
+		if sym.Name == names[0] || sym.Name == "missing.symbol" {
+			return true
+		}
+		return false
+	})
+	subsetArray := pkg.Module().NamedGlobal("subset$array")
+	if subsetArray.IsNil() {
+		t.Fatal("missing subset abi array global")
+	}
+	if got := subsetArray.GlobalValueType().ArrayLength(); got != 1 {
+		t.Fatalf("subset abi array length = %d, want 1", got)
+	}
+
+	pkg.getAbiTypes("all")
+	allArray := pkg.Module().NamedGlobal("all$array")
+	if allArray.IsNil() {
+		t.Fatal("missing full abi array global")
+	}
+	if got := allArray.GlobalValueType().ArrayLength(); got != len(prog.abiSymbol) {
+		t.Fatalf("full abi array length = %d, want %d", got, len(prog.abiSymbol))
+	}
+}
+
+func TestRegisterAbiTypesAcrossPrograms(t *testing.T) {
+	runtimePkg, err := importer.For("source", nil).Import(PkgRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newProgram := func() Program {
+		prog := NewProgram(nil)
+		prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+		prog.SetRuntime(runtimePkg)
+		return prog
+	}
+
+	source := newProgram()
+	defer source.Dispose()
+	sourcePkg := source.NewPackage("source", "example.com/source")
+	sourceFn := sourcePkg.NewFunc("source", NoArgsNoRet, CDecl)
+	sourceBuilder := sourceFn.MakeBody(1)
+	sourceBuilder.abiType(types.NewSlice(types.Typ[types.Int]))
+	named := types.NewNamed(
+		types.NewTypeName(token.NoPos, types.NewPackage("example.com/source", "source"), "Named", nil),
+		types.NewStruct(nil, nil),
+		nil,
+	)
+	sourceBuilder.abiType(named)
+	sourceBuilder.Return()
+	infos := source.AbiTypes()
+	if len(infos) == 0 {
+		t.Fatal("source Program produced no ABI type snapshot")
+	}
+
+	target := newProgram()
+	defer target.Dispose()
+	targetPkg := target.NewPackage("target", "example.com/target")
+	targetPkg.RegisterAbiTypes(infos)
+	targetPkg.RegisterAbiTypes(append(infos, AbiTypeInfo{}))
+	for _, info := range infos {
+		if _, ok := target.abiSymbol[info.Name]; !ok {
+			t.Fatalf("target Program did not recreate ABI type %q", info.Name)
+		}
+	}
+	if targetPkg.InitAbiTypes("init$abitypes") == nil {
+		t.Fatal("recreated ABI types did not produce typelist initializer")
+	}
+	for _, info := range infos {
+		global := targetPkg.Module().NamedGlobal(info.Name)
+		if global.IsNil() || !global.IsDeclaration() {
+			t.Fatalf("target descriptor %q is not an external declaration", info.Name)
+		}
+	}
+}
+
+func TestInitAbiTypesForEmptySelection(t *testing.T) {
+	prog := NewProgram(nil)
+	pkg := prog.NewPackage("bar", "foo/bar")
+
+	if fn := pkg.InitAbiTypes("empty"); fn != nil {
+		t.Fatalf("InitAbiTypes on empty abi symbol set = %v, want nil", fn)
+	}
+	if fn := pkg.InitAbiTypesFor("subset", nil); fn != nil {
+		t.Fatalf("InitAbiTypesFor with empty selection = %v, want nil", fn)
+	}
+}
+
+func TestNoInterfaceMethodRegistryAndFiltering(t *testing.T) {
+	prog := NewProgram(nil)
+	if prog.isNoInterfaceMethod(nil) {
+		t.Fatal("nil function should not be nointerface")
+	}
+
+	pkgTypes := types.NewPackage("example.com/p", "p")
+	named := types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "T", nil), types.NewStruct(nil, nil), nil)
+	sig := types.NewSignatureType(types.NewVar(token.NoPos, pkgTypes, "", named), nil, nil, nil, nil, false)
+	hidden := types.NewFunc(token.NoPos, pkgTypes, "Hidden", sig)
+	visible := types.NewFunc(token.NoPos, pkgTypes, "Visible", sig)
+	named.AddMethod(hidden)
+	named.AddMethod(visible)
+
+	top := types.NewFunc(token.NoPos, pkgTypes, "Top", types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	if prog.isNoInterfaceMethod(top) {
+		t.Fatal("function without receiver should not be nointerface")
+	}
+	if prog.isNoInterfaceMethod(hidden) {
+		t.Fatal("unregistered method should not be nointerface")
+	}
+	prog.SetNoInterfaceMethod("example.com/p.T.Hidden")
+	if !prog.isNoInterfaceMethod(hidden) {
+		t.Fatal("registered value receiver method should be nointerface")
+	}
+	if prog.isNoInterfaceMethod(visible) {
+		t.Fatal("unregistered sibling method should not be nointerface")
+	}
+
+	methods := (&aBuilder{Prog: prog}).abiInterfaceMethods(types.NewMethodSet(named))
+	if len(methods) != 1 || methods[0].Obj().Name() != "Visible" {
+		t.Fatalf("filtered methods = %v, want only Visible", methods)
+	}
+
+	ptrSig := types.NewSignatureType(types.NewVar(token.NoPos, pkgTypes, "", types.NewPointer(named)), nil, nil, nil, nil, false)
+	ptrHidden := types.NewFunc(token.NoPos, pkgTypes, "PtrHidden", ptrSig)
+	prog.SetNoInterfaceMethod("example.com/p.(*T).PtrHidden")
+	if !prog.isNoInterfaceMethod(ptrHidden) {
+		t.Fatal("registered pointer receiver method should be nointerface")
+	}
+}
+
+func TestRtFuncResolvesLinkname(t *testing.T) {
+	prog := NewProgram(nil)
+	rt := types.NewPackage(PkgRuntime, PkgRuntime)
+	sig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(0, nil, "env", types.NewPointer(types.NewStruct(nil, nil))),
+			types.NewVar(0, nil, "savemask", types.Typ[types.Int32]),
+		),
+		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int32])),
+		false,
+	)
+	if err := rt.Scope().Insert(types.NewFunc(token.NoPos, rt, "Sigsetjmp", sig)); err != nil {
+		t.Fatal(err)
+	}
+	prog.SetRuntime(rt)
+	prog.SetLinkname(PkgRuntime+".Sigsetjmp", "C.sigsetjmp")
+
+	pkg := prog.NewPackage("foo", "foo")
+	pkg.SetResolveLinkname(func(name string) string {
+		if link, ok := prog.Linkname(name); ok {
+			prefix, target, _ := strings.Cut(link, ".")
+			if prefix == "C" {
+				return target
+			}
+		}
+		return name
+	})
+
+	if got := pkg.RuntimeFunc("Sigsetjmp").impl.Name(); got != "sigsetjmp" {
+		t.Fatalf("rtFunc linkname = %q, want %q", got, "sigsetjmp")
+	}
+}
+
+func TestInterfaceBasicTypeUsed(t *testing.T) {
+	for _, tc := range []struct {
+		arch      string
+		enabled   bool
+		predicate bool
+	}{{"wasm", false, false}, {"amd64", true, false}, {"wasm", true, true}} {
+		t.Run(fmt.Sprintf("%s/%v", tc.arch, tc.enabled), func(t *testing.T) {
+			prog := NewProgram(&Target{GOARCH: tc.arch})
+			defer prog.Dispose()
+			prog.EnableDeadcodeDrop(tc.enabled)
+			pkg := prog.NewPackage("predicate", "predicate")
+			fn := pkg.NewFunc("check", NoArgsNoRet, CDecl)
+			b := fn.MakeBody(1)
+			b.InterfaceBasicTypeUsed(types.Typ[types.Float64])
+			b.InterfaceBasicTypeUsed(types.Typ[types.Float64])
+			b.Return()
+			b.EndBuild()
+			flag := pkg.Module().NamedFunction("_llgo_iface_use._llgo_float64")
+			if !flag.IsNil() != tc.predicate {
+				t.Fatalf("predicate present=%v, want %v", !flag.IsNil(), tc.predicate)
+			}
+			if tc.predicate && !flag.IsDeclaration() {
+				t.Fatal("package compilation must not resolve the predicate")
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestStaticIfaceBoxRejectsLocalFunctions(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxfunc", "boxfunc")
+	sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int])), false)
+	helper := pkg.NewFunc("helper", sig, GoDecl)
+	hb := helper.MakeBody(1)
+	hb.Return(prog.Val(1))
+	hb.EndBuild()
+	helper.impl.SetLinkage(llvm.InternalLinkage)
+	linkOnce := pkg.NewFunc("linkonce", sig, GoDecl)
+	lb := linkOnce.MakeBody(1)
+	lb.Return(prog.Val(2))
+	lb.EndBuild()
+	linkOnce.impl.SetLinkage(llvm.LinkOnceAnyLinkage)
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, nil, false), GoDecl)
+	b := fn.MakeBody(1)
+	for _, value := range []Expr{helper.Expr, linkOnce.Expr} {
+		if _, ok := b.staticIfaceBox(value.Type, value); ok {
+			t.Fatal("local or linkonce-any function received a static interface box")
+		}
+	}
+	b.Return()
+	b.EndBuild()
+}
+
+func TestHasStaticIfaceIdentityGuards(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	mod := ctx.NewModule("identity")
+	defer mod.Dispose()
+	pkg := &aPackage{}
+	private := llvm.AddGlobal(mod, ctx.Int32Type(), "private")
+	private.SetLinkage(llvm.PrivateLinkage)
+	if pkg.hasStaticIfaceIdentity(private) {
+		t.Fatal("private global has static identity")
+	}
+	linkOnce := llvm.AddGlobal(mod, ctx.Int32Type(), "linkonce")
+	linkOnce.SetLinkage(llvm.LinkOnceAnyLinkage)
+	if pkg.hasStaticIfaceIdentity(linkOnce) {
+		t.Fatal("linkonce-any global has static identity")
+	}
+	fn := llvm.AddFunction(mod, "local", llvm.FunctionType(ctx.VoidType(), nil, false))
+	fn.SetLinkage(llvm.InternalLinkage)
+	if pkg.hasStaticIfaceIdentity(fn) {
+		t.Fatal("internal function has static identity")
+	}
+	gep := llvm.ConstGEP(ctx.Int32Type(), private, []llvm.Value{llvm.ConstInt(ctx.Int32Type(), 0, false)})
+	if pkg.hasStaticIfaceIdentity(gep) {
+		t.Fatal("constant expression has static identity")
+	}
+	zero := llvm.AddGlobal(mod, ctx.Int32Type(), "zero")
+	zero.SetInitializer(llvm.ConstInt(ctx.Int32Type(), 9, false))
+	if !pkg.hasStaticIfaceIdentity(zero) {
+		t.Fatal("named external global lacks static identity")
+	}
+	aggregate := ctx.ConstStruct([]llvm.Value{
+		llvm.ConstInt(ctx.Int32Type(), 1, false),
+		llvm.ConstInt(ctx.Int32Type(), 2, false),
+	}, false)
+	if !pkg.hasStaticIfaceIdentity(aggregate) {
+		t.Fatal("constant aggregate lacks static identity")
+	}
+	if !pkg.hasStaticIfaceIdentity(llvm.ConstArray(llvm.ArrayType(ctx.Int32Type(), 2), []llvm.Value{
+		llvm.ConstInt(ctx.Int32Type(), 1, false),
+		llvm.ConstInt(ctx.Int32Type(), 2, false),
+	})) {
+		t.Fatal("constant array lacks static identity")
+	}
+}
+
+func TestStaticIfaceBoxRejectsAnonymousWritableBacking(t *testing.T) {
+	prog := NewProgram(nil)
+	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
+	prog.SetRuntime(func() *types.Package {
+		pkg, err := importer.For("source", nil).Import(PkgRuntime)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return pkg
+	})
+	pkg := prog.NewPackage("boxbytes", "boxbytes")
+	fn := pkg.NewFunc("F", types.NewSignatureType(nil, nil, nil, nil, nil, false), GoDecl)
+	b := fn.MakeBody(1)
+	a := pkg.ConstBytes([]byte("a"))
+	c := pkg.ConstBytes([]byte("b"))
+	empty := types.NewInterfaceType(nil, nil).Complete()
+	tany := prog.Type(empty, GoDecl)
+	for _, value := range []Expr{a, c} {
+		if _, ok := b.staticIfaceBox(value.Type, value); ok {
+			t.Fatal("anonymous writable backing received a static interface box")
+		}
+		b.MakeInterface(tany, value)
+	}
+	if strings.Contains(pkg.String(), "_llgo_ifacebox$") {
+		t.Fatal("ConstBytes conversions reused a weak-ODR static interface box")
+	}
+	b.Return()
+	b.EndBuild()
+}

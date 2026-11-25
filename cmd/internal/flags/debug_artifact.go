@@ -20,7 +20,7 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/build"
 )
 
 type debugArtifactFlag struct {

@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 
 	"github.com/xgo-dev/llgo/cmd/internal/wasmdecoder"
-	"github.com/xgo-dev/llgo/internal/browserdebug"
-	"github.com/xgo-dev/llgo/internal/debugabi"
+	"github.com/xgo-dev/llgo/cmd/compiler/browserdebug"
+	"github.com/xgo-dev/llgo/cmd/compiler/debugabi"
 )
 
 //go:embed llgo_wasi.py

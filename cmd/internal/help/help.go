@@ -29,7 +29,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/xgo-dev/llgo/cmd/internal/base"
-	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/cmd/compiler/mockable"
 )
 
 // Help implements the 'help' command.

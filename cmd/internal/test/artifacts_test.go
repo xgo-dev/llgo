@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/cmd/compiler/mockable"
 )
 
 func TestArtifactsUseInvocationOutputDirectory(t *testing.T) {

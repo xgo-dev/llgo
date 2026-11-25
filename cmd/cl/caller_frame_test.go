@@ -1,0 +1,1566 @@
+package cl
+
+import (
+	"fmt"
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/goplus/gogen/packages"
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
+)
+
+func parseCallerFrameFile(t *testing.T, src string) *ast.File {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "caller_frame.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
+func TestFilesUseRuntimeCaller(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{
+			name: "runtime selector",
+			src: `package foo
+import "runtime"
+func f() { runtime.Caller(0) }
+`,
+			want: true,
+		},
+		{
+			name: "runtime alias",
+			src: `package foo
+import rt "runtime"
+func f() { rt.Callers(0, nil) }
+`,
+			want: true,
+		},
+		{
+			name: "runtime debug stack",
+			src: `package foo
+import dbg "runtime/debug"
+func f() { _ = dbg.Stack() }
+`,
+			want: true,
+		},
+		{
+			name: "dot import",
+			src: `package foo
+import . "runtime"
+func f() { Caller(0) }
+`,
+			want: true,
+		},
+		{
+			name: "runtime FuncForPC only",
+			src: `package foo
+import "runtime"
+func f() { _ = runtime.FuncForPC(0) }
+`,
+			want: false,
+		},
+		{
+			name: "blank import",
+			src: `package foo
+import _ "runtime"
+func f() {}
+`,
+			want: false,
+		},
+		{
+			name: "non caller runtime selector",
+			src: `package foo
+import "runtime"
+func f() { _ = runtime.GOOS }
+`,
+			want: false,
+		},
+		{
+			name: "caller name without runtime import",
+			src: `package foo
+func f() { Caller(0) }
+`,
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := filesUseRuntimeCaller([]*ast.File{parseCallerFrameFile(t, tt.src)}); got != tt.want {
+				t.Fatalf("filesUseRuntimeCaller() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	badImport := &ast.File{
+		Imports: []*ast.ImportSpec{{
+			Path: &ast.BasicLit{Kind: token.STRING, Value: "runtime"},
+		}},
+	}
+	if filesUseRuntimeCaller([]*ast.File{badImport}) {
+		t.Fatal("invalid import literal should not enable caller frame tracking")
+	}
+}
+
+func buildCallerFrameSSAPackage(t *testing.T, pkgPath, src string) (*ssa.Package, []*ast.File) {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "caller_frame_compile.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []*ast.File{file}
+	imp := packages.NewImporter(fset)
+	mode := ssa.SanityCheckFunctions | ssa.InstantiateGenerics
+	ssapkg, _, err := ssautil.BuildPackage(
+		&types.Config{Importer: imp},
+		fset,
+		types.NewPackage(pkgPath, file.Name.Name),
+		files,
+		mode,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ssapkg, files
+}
+
+func newLLSSAProgForTarget(t *testing.T, target *llvmgen.Target) llvmgen.Program {
+	t.Helper()
+	prog := llvmgen.NewProgram(target)
+	prog.SetRuntime(func() *types.Package {
+		rt, err := importer.For("source", nil).Import(llvmgen.PkgRuntime)
+		if err != nil {
+			t.Fatal("load runtime failed:", err)
+		}
+		return rt
+	})
+	if target != nil && target.GOARCH != "" {
+		prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
+	}
+	return prog
+}
+
+func newRuntimeCallerAnalysis(pkg *ssa.Package) *runtimeCallerAnalysis {
+	funcs, trackable := collectRuntimeCallerFunctions(pkg)
+	return &runtimeCallerAnalysis{
+		pkg:       pkg,
+		funcs:     funcs,
+		trackable: trackable,
+		callsites: collectRuntimeCallerCallsites(funcs),
+	}
+}
+
+func TestRuntimeCallerPackageDetection(t *testing.T) {
+	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+import "runtime/debug"
+
+type callerIface interface { Call() }
+type callerImpl struct{}
+type workerIface interface { Work() }
+type workerImpl struct{}
+
+func direct() { runtime.Caller(0) }
+func indirect() { direct() }
+func dynamic(f func()) { f() }
+func dynamicCaller() { dynamic(direct) }
+func (callerImpl) Call() { direct() }
+func interfaceDispatch(c callerIface) { c.Call() }
+func interfaceCaller(c callerIface) { interfaceDispatch(c) }
+func closureLayer(next func()) func() { return func() { next() } }
+func closureCaller() { closureLayer(closureLayer(direct))() }
+func stack() { _ = debug.Stack() }
+func anonOnly() { func() { runtime.Caller(0) }() }
+func funcForPCOnly() { _ = runtime.FuncForPC(0) }
+func leaf() {}
+func callFunc(f func()) { f() }
+func callFuncHot() { callFunc(leaf) }
+func (workerImpl) Work() {}
+func callWorker(w workerIface) { w.Work() }
+func workerHot() { var w workerIface = workerImpl{}; callWorker(w) }
+func generic[T any]() { runtime.Caller(0) }
+func genericCaller() { generic[int]() }
+func plain() {}
+`)
+	callerCaches := NewCallerTracking()
+	if !packageUsesRuntimeCaller(callerCaches, ssapkg) {
+		t.Fatal("package should report runtime caller usage")
+	}
+	if !fnUsesRuntimeCaller(callerCaches, ssapkg.Func("direct")) {
+		t.Fatal("direct runtime.Caller use should be detected")
+	}
+	if !fnUsesRuntimeCaller(callerCaches, ssapkg.Func("indirect")) {
+		t.Fatal("transitive runtime.Caller use should be detected")
+	}
+	if !fnUsesRuntimeCaller(callerCaches, ssapkg.Func("stack")) {
+		t.Fatal("runtime/debug.Stack use should be detected")
+	}
+	if !fnUsesRuntimeCaller(callerCaches, ssapkg.Func("anonOnly")) {
+		t.Fatal("runtime caller use in anonymous functions should be detected")
+	}
+	if fnUsesRuntimeCaller(callerCaches, ssapkg.Func("plain")) {
+		t.Fatal("plain function should not report runtime caller usage")
+	}
+	runtimeCallerFuncs := runtimeCallerFuncSet(callerCaches, ssapkg)
+	var genericInstance *ssa.Function
+	forEachCall(ssapkg.Func("genericCaller"), func(call *ssa.CallCommon) {
+		genericInstance = call.StaticCallee()
+	})
+	if genericInstance == nil || !runtimeCallerFuncs[genericInstance] {
+		t.Fatal("instantiated generic runtime.Caller use should retain its own frame")
+	}
+	for _, name := range []string{"dynamic", "dynamicCaller", "interfaceDispatch", "interfaceCaller", "closureLayer", "closureCaller"} {
+		if !runtimeCallerFuncs[ssapkg.Func(name)] {
+			t.Fatalf("%s should be tracked because dynamic calls may reach runtime stack APIs", name)
+		}
+	}
+	for _, name := range []string{"leaf", "callFunc", "callFuncHot", "callWorker", "workerHot"} {
+		if runtimeCallerFuncs[ssapkg.Func(name)] {
+			t.Fatalf("%s should not be tracked when resolved dynamic targets do not reach runtime stack APIs", name)
+		}
+	}
+	if runtimeCallerFuncs[ssapkg.Func("funcForPCOnly")] {
+		t.Fatal("FuncForPC-only function should not need caller frame tracking")
+	}
+	if runtimeCallerFuncs[ssapkg.Func("plain")] {
+		t.Fatal("plain function should not be tracked")
+	}
+
+	for _, name := range []string{"Caller", "Callers", "CallersFrames", "FuncForPC", "Stack"} {
+		if !isRuntimeCallerName(name) {
+			t.Fatalf("%s should be a runtime caller metadata function", name)
+		}
+	}
+	if isRuntimeCallerFrameName("FuncForPC") {
+		t.Fatal("FuncForPC should not require caller frame tracking")
+	}
+	if !isRuntimeCallerFrameName("Caller") {
+		t.Fatal("Caller should require caller frame tracking")
+	}
+	if isRuntimeCallerName("Version") {
+		t.Fatal("Version should not be a runtime caller metadata function")
+	}
+
+	rtpkg, _ := buildCallerFrameSSAPackage(t, "github.com/xgo-dev/llgo/runtime/internal/lib/runtime", `package runtime
+func Caller(skip int) (uintptr, string, int, bool) { return 0, "", 0, false }
+func FuncForPC(pc uintptr) uintptr { return 0 }
+`)
+	if !isRuntimeCallerFunc(rtpkg.Func("Caller")) || !isRuntimeCallerLookupFunc(rtpkg.Func("Caller")) {
+		t.Fatal("LLGo runtime lib Caller should be treated as runtime.Caller")
+	}
+	if !isRuntimeCallerFunc(rtpkg.Func("FuncForPC")) {
+		t.Fatal("LLGo runtime lib FuncForPC should be treated as runtime metadata use")
+	}
+	if isRuntimeCallerFrameFunc(rtpkg.Func("FuncForPC")) {
+		t.Fatal("FuncForPC should not require caller frame tracking")
+	}
+	if isRuntimeCallerLookupFunc(rtpkg.Func("FuncForPC")) {
+		t.Fatal("FuncForPC should not consume caller lookup tokens")
+	}
+}
+
+func TestRuntimeCallerFuncSetKeepsRecoverObservableCallees(t *testing.T) {
+	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func inspect() {
+	recover()
+	runtime.Caller(0)
+}
+
+func staticOwner() {
+	defer inspect()
+	defer deferredLeaf()
+	staticLeaf()
+	go goroutineLeaf()
+}
+
+func staticLeaf() { staticNested() }
+func staticNested() {}
+func deferredLeaf() { deferredNested() }
+func deferredNested() {}
+func goroutineLeaf() {}
+
+func closureObserverOwner() {
+	defer func() {
+		recover()
+		runtime.Caller(0)
+	}()
+	defer closureDeferredLeaf()
+}
+func closureDeferredLeaf() {}
+
+func dynamicOwner(fn func()) {
+	defer inspect()
+	fn()
+}
+
+func dynamicEntry() { dynamicOwner(dynamicLeaf) }
+func dynamicLeaf() {}
+
+type unresolvedArg int
+
+func unresolvedOwner(fn func(unresolvedArg)) {
+	defer inspect()
+	fn(1)
+	fn(2)
+}
+func unresolvedCandidate(unresolvedArg) {}
+func unresolvedCandidate2(unresolvedArg) {}
+func unresolvedWrong(string) {}
+
+func directCallerOwner() {
+	runtime.Caller(0)
+	directCallerLeaf()
+}
+func directCallerLeaf() {}
+
+func noRecoverInspect() { runtime.Caller(0) }
+func noRecoverOwner() {
+	defer noRecoverInspect()
+	noRecoverLeaf()
+}
+func noRecoverLeaf() {}
+
+//go:noinline
+func pinned() {}
+
+func unrelated() {}
+`)
+	tracking := NewCallerTracking()
+	set := runtimeCallerFuncSet(tracking, ssapkg)
+	for _, name := range []string{"staticOwner", "staticLeaf", "staticNested", "deferredLeaf", "deferredNested", "closureObserverOwner", "closureDeferredLeaf", "dynamicOwner", "dynamicEntry", "dynamicLeaf", "unresolvedOwner", "unresolvedCandidate", "unresolvedCandidate2"} {
+		if !set[ssapkg.Func(name)] {
+			t.Fatalf("%s must keep a frame because a recovering defer can inspect its panic pc", name)
+		}
+	}
+	if !set[ssapkg.Func("pinned")] {
+		t.Fatal("//go:noinline function must keep its frame")
+	}
+	if set[ssapkg.Func("unrelated")] {
+		t.Fatal("an unrelated function must not be pinned by recover-visible frame tracking")
+	}
+	for _, name := range []string{"goroutineLeaf", "directCallerLeaf", "noRecoverLeaf", "unresolvedWrong"} {
+		if set[ssapkg.Func(name)] {
+			t.Fatalf("%s must not be pinned without a recover-visible synchronous call path", name)
+		}
+	}
+
+	panicSites := recoverPanicSiteFuncSet(tracking, ssapkg)
+	for _, name := range []string{"staticOwner", "staticLeaf", "staticNested", "deferredLeaf", "deferredNested", "closureObserverOwner", "closureDeferredLeaf", "dynamicOwner", "dynamicLeaf", "unresolvedOwner", "unresolvedCandidate", "unresolvedCandidate2"} {
+		if !panicSites[ssapkg.Func(name)] {
+			t.Fatalf("%s needs implicit panic-site anchors below a recovering defer", name)
+		}
+	}
+	for _, name := range []string{"inspect", "dynamicEntry", "goroutineLeaf", "directCallerOwner", "directCallerLeaf", "noRecoverInspect", "noRecoverOwner", "noRecoverLeaf", "pinned", "unrelated", "unresolvedWrong"} {
+		if panicSites[ssapkg.Func(name)] {
+			t.Fatalf("%s must not get implicit panic-site anchors outside a recover-visible synchronous call subtree", name)
+		}
+	}
+}
+
+func TestCompileRuntimeNilCheckCondition(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, llvmgen.PkgRuntime, `package runtime
+//go:noinline
+func AssertNilDeref(b bool) { if b { for {} } }
+func ordinary(b bool) { if b { for {} } }
+`)
+	for _, target := range []*llvmgen.Target{
+		{GOOS: "linux", GOARCH: "amd64"},
+		{GOOS: "js", GOARCH: "wasm"},
+	} {
+		t.Run(target.GOARCH, func(t *testing.T) {
+			prog := newLLSSAProgForTarget(t, target)
+			pkg, err := NewPackage(prog, ssapkg, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			const barrier = `asm sideeffect "", "=r,0"`
+			for _, name := range []string{"AssertNilDeref", "ordinary"} {
+				ir := pkg.Module().NamedFunction(llvmgen.PkgRuntime + "." + name).String()
+				want := name == "AssertNilDeref" && target.GOARCH != "wasm"
+				if strings.Contains(ir, barrier) != want {
+					t.Fatalf("unexpected LTO condition barrier for %s:\n%s", name, ir)
+				}
+				if want {
+					for _, line := range strings.Split(ir, "\n") {
+						if strings.Contains(line, barrier) {
+							result := strings.TrimSpace(strings.Split(line, " = ")[0])
+							if !strings.Contains(ir, "br i1 "+result+",") {
+								t.Fatalf("nil helper does not branch on the opaque condition:\n%s", ir)
+							}
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCompileRuntimeCallerPanicPCLineMetadata(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func inspect() {
+	recover()
+	runtime.Caller(0)
+}
+
+func owner() {
+	defer inspect()
+	defer deferredPanicLeaf()
+	panicLeaf()
+	repeatedPanicLeaf(nil, 0)
+	branchPanicLeaf(nil, 0, true)
+}
+
+func panicLeaf() {
+	var p *int
+//line panic_site.go:123
+	_ = *p
+}
+
+func deferredPanicLeaf() {
+	var p *int
+//line deferred_panic_site.go:234
+	_ = *p
+}
+
+func repeatedPanicLeaf(p *[1]int, i int) int {
+//line repeated_panic_site.go:345
+	return p[i] + p[i]
+}
+
+func branchPanicLeaf(p *[1]int, i int, cond bool) int {
+//line branch_panic_site.go:456
+	if cond { return p[i] }; return p[i]
+}
+
+//go:noinline
+func pinnedPanicSite() {
+	var p *int
+//line non_recover_site.go:321
+	_ = *p
+}
+`)
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, want := range []string{
+		`!"example.com/foo.panicLeaf"`, `!"panic_site.go"`, `i32 123`,
+		`!"example.com/foo.deferredPanicLeaf"`, `!"deferred_panic_site.go"`, `i32 234`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("recover-visible nil dereference is missing panic-site metadata %q:\n%s", want, ir)
+		}
+	}
+	countPCLine := func(symbol, file string, line int) (count int) {
+		want := fmt.Sprintf(`!"%s", !"%s", i32 %d`, symbol, file, line)
+		for _, row := range strings.Split(ir, "\n") {
+			if strings.Contains(row, `!{i32 1, i64 `) && strings.Contains(row, want) {
+				count++
+			}
+		}
+		return count
+	}
+	// Source and cold blocks retain independent anchors because the backend
+	// can reorder them, but every range for one source line shares one row.
+	if got := countPCLine("example.com/foo.repeatedPanicLeaf", "repeated_panic_site.go", 345); got != 1 {
+		t.Fatalf("repeated panic line produced %d metadata records, want 1:\n%s", got, ir)
+	}
+	if got := countPCLine("example.com/foo.branchPanicLeaf", "branch_panic_site.go", 456); got != 1 {
+		t.Fatalf("branch panic line produced %d metadata records, want 1:\n%s", got, ir)
+	}
+	for name, want := range map[string]int{"repeatedPanicLeaf": 3, "branchPanicLeaf": 4} {
+		body := pkg.Module().NamedFunction("example.com/foo." + name).String()
+		if got := strings.Count(body, ".pushsection llgo_pcline"); got != want {
+			t.Fatalf("%s has %d machine-code anchors, want %d:\n%s", name, got, want, body)
+		}
+	}
+	if strings.Contains(ir, `!"non_recover_site.go"`) {
+		t.Fatalf("ordinary pinned function unexpectedly received implicit panic-site metadata:\n%s", ir)
+	}
+}
+
+func TestCompileRuntimeCallerStorePanicPCLineMetadataOnNativeTargets(t *testing.T) {
+	const source = `package foo
+import "runtime"
+
+func inspect() {
+	recover()
+	runtime.Caller(0)
+}
+
+func owner() {
+	defer inspect()
+	storePanicLeaf(nil)
+	branchStorePanicLeaf(nil, true)
+}
+
+func storePanicLeaf(p *int) {
+//line store_panic_site.go:167
+	*p = 1
+}
+
+func branchStorePanicLeaf(p *int, branch bool) {
+	if branch {
+//line shared_store_panic.go:267
+		*p = 1
+	} else {
+//line shared_store_panic.go:267
+		*p = 2
+	}
+}
+`
+	for _, test := range []struct {
+		goos   string
+		goarch string
+	}{
+		{goos: "linux", goarch: "amd64"},
+		{goos: "linux", goarch: "arm64"},
+		{goos: "linux", goarch: "386"},
+		{goos: "darwin", goarch: "amd64"},
+		{goos: "darwin", goarch: "arm64"},
+		{goos: "windows", goarch: "amd64"},
+		{goos: "windows", goarch: "arm64"},
+		{goos: "windows", goarch: "386"},
+	} {
+		t.Run(test.goos+"/"+test.goarch, func(t *testing.T) {
+			ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", source)
+			prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: test.goos, GOARCH: test.goarch})
+			prog.EnableFuncInfoMetadata(true)
+			prog.EnableFuncInfoSites(true)
+			pkg, err := NewPackage(prog, ssapkg, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ir := pkg.Module().String()
+			got := false
+			for _, row := range strings.Split(ir, "\n") {
+				if strings.Contains(row, `!{i32 1, i64 `) &&
+					strings.Contains(row, `!"example.com/foo.storePanicLeaf", !"store_panic_site.go", i32 167`) {
+					got = true
+					break
+				}
+			}
+			if !got {
+				t.Fatalf("store panic-site metadata is missing for %s:\n%s", test.goos, ir)
+			}
+			sharedRows := 0
+			for _, row := range strings.Split(ir, "\n") {
+				if strings.Contains(row, `!{i32 1, i64 `) &&
+					strings.Contains(row, `!"example.com/foo.branchStorePanicLeaf", !"shared_store_panic.go", i32 267`) {
+					sharedRows++
+				}
+			}
+			if sharedRows != 1 {
+				t.Fatalf("branch stores have %d shared source rows, want 1:\n%s", sharedRows, ir)
+			}
+			body := pkg.Module().NamedFunction("example.com/foo.branchStorePanicLeaf").String()
+			if got := strings.Count(body, ".pushsection"); got != 2 {
+				t.Fatalf("branch stores have %d code-range anchors, want 2:\n%s", got, body)
+			}
+		})
+	}
+}
+
+func TestRuntimeCallerAnalysisEdgeCases(t *testing.T) {
+	callerCaches := NewCallerTracking()
+	if fnUsesRuntimeCaller(callerCaches, nil) {
+		t.Fatal("nil function should not use runtime caller metadata")
+	}
+	if fnUsesRuntimeCaller(callerCaches, &ssa.Function{}) {
+		t.Fatal("function without a package should not use runtime caller metadata")
+	}
+	if runtimeCallerFuncSet(callerCaches, nil) != nil {
+		t.Fatal("nil package should have no runtime caller set")
+	}
+	if recoverPanicSiteFuncSet(callerCaches, nil) != nil {
+		t.Fatal("nil package should have no recover panic-site set")
+	}
+	emptySignature := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	if candidates := newRecoverPanicCandidateIndex(nil).compatible(emptySignature); candidates != nil {
+		t.Fatal("empty recover panic candidate index should have no compatible functions")
+	}
+	if fnHasDirectRuntimeCaller(nil) {
+		t.Fatal("nil function should not have direct runtime caller use")
+	}
+	if functionBelongsToPackage(nil, nil) {
+		t.Fatal("nil function/package should not belong to a package")
+	}
+	if typeBelongsToPackage(types.Typ[types.Int], nil) {
+		t.Fatal("types should not belong to a nil package")
+	}
+	if isRuntimeCallerLookupFunc(nil) {
+		t.Fatal("nil function should not be a runtime caller lookup")
+	}
+	called := false
+	forEachCall(nil, func(*ssa.CallCommon) {
+		called = true
+	})
+	if called {
+		t.Fatal("forEachCall should ignore nil functions")
+	}
+
+	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+type I interface { Call() }
+type J interface { Call() }
+type T struct{}
+
+func target() { runtime.Caller(0) }
+func plain() {}
+func call(fn func()) { fn() }
+func callRuntime() { call(target) }
+func (T) Call() { runtime.Caller(0) }
+func viaStatic() { var i I = T{}; i.Call() }
+func viaChange(j J) { var i I = j; i.Call() }
+func viaParam(i I) { i.Call() }
+func passInterface() { var i I = T{}; viaParam(i) }
+`)
+	analysis := newRuntimeCallerAnalysis(ssapkg)
+	if analysis.fnMayReachRuntimeCaller(nil) {
+		t.Fatal("nil function should not reach runtime caller metadata")
+	}
+	if targets, ok := analysis.functionValueTargets(ssapkg.Func("callRuntime"), ssapkg.Func("target")); !ok || !targets[ssapkg.Func("target")] {
+		t.Fatal("static function value should resolve to its target")
+	}
+	if _, ok := analysis.functionValueTargets(ssapkg.Func("target"), nil); ok {
+		t.Fatal("nil function value should be unresolved")
+	}
+	if _, ok := analysis.functionParamTargets(ssapkg.Func("call"), 99); ok {
+		t.Fatal("out-of-range function argument should be unresolved")
+	}
+	callFn := ssapkg.Func("call")
+	callParam := callFn.Params[0]
+	callParams := callFn.Params
+	callFn.Params = nil
+	if _, ok := analysis.functionValueTargets(callFn, callParam); ok {
+		t.Fatal("function parameter missing from Params should be unresolved")
+	}
+	callFn.Params = callParams
+
+	iface := ssapkg.Pkg.Scope().Lookup("I").Type().Underlying().(*types.Interface)
+	method := iface.Method(0)
+	if !analysis.fnMayReachRuntimeCaller(ssapkg.Func("viaStatic")) {
+		t.Fatal("static interface dispatch should reach runtime caller metadata")
+	}
+	if !analysis.fnMayReachRuntimeCaller(ssapkg.Func("viaChange")) {
+		t.Fatal("changed interface dispatch should conservatively reach runtime caller metadata")
+	}
+	if targets, ok := analysis.interfaceMethodTargets(ssapkg.Func("viaParam"), ssapkg.Func("viaParam").Params[0], method); !ok || len(targets) == 0 {
+		t.Fatal("interface parameter callsites should resolve concrete method targets")
+	}
+	analysis.callsites[ssapkg.Func("viaParam")] = []*ssa.CallCommon{{}}
+	if _, ok := analysis.interfaceMethodTargets(ssapkg.Func("viaParam"), ssapkg.Func("viaParam").Params[0], method); ok {
+		t.Fatal("out-of-range interface argument should be unresolved")
+	}
+	if _, ok := analysis.interfaceMethodTargets(ssapkg.Func("viaStatic"), nil, method); ok {
+		t.Fatal("nil interface receiver should be unresolved")
+	}
+	if _, ok := analysis.staticInterfaceMethodTargets(&ssa.ChangeInterface{}, method); ok {
+		t.Fatal("empty interface conversion should be unresolved")
+	}
+	viaParam := ssapkg.Func("viaParam")
+	interfaceParam := viaParam.Params[0]
+	interfaceParams := viaParam.Params
+	viaParam.Params = nil
+	if _, ok := analysis.interfaceMethodTargets(viaParam, interfaceParam, method); ok {
+		t.Fatal("interface parameter missing from Params should be unresolved")
+	}
+	viaParam.Params = interfaceParams
+	if _, ok := analysis.methodTargetsForType(nil, nil); ok {
+		t.Fatal("nil method lookup should be unresolved")
+	}
+	other := types.NewFunc(token.NoPos, ssapkg.Pkg, "Other", nil)
+	if _, ok := analysis.methodTargetsForType(ssapkg.Type("T").Type(), other); ok {
+		t.Fatal("missing interface method should be unresolved")
+	}
+	if idx, ok := parameterIndex(ssapkg.Func("target"), nil); ok || idx != 0 {
+		t.Fatal("nil parameter should not be found")
+	}
+
+	methodOnlyPkg, _ := buildCallerFrameSSAPackage(t, "example.com/methodonly", `package methodonly
+import "runtime"
+
+type T struct{}
+func (T) Call() { runtime.Caller(0) }
+var _ = T{}
+`)
+	methodOnlySet := runtimeCallerFuncSet(NewCallerTracking(), methodOnlyPkg)
+	if methodOnlySet == nil {
+		t.Fatal("a method calling runtime.Caller must be tracked (slog.(*Logger).Info escaped exactly this way)")
+	}
+	foundMethod := false
+	for fn := range methodOnlySet {
+		if fn.Name() == "Call" {
+			foundMethod = true
+		}
+	}
+	if !foundMethod {
+		t.Fatal("method-only runtime caller set should contain the method itself")
+	}
+}
+
+func TestCallerFrameTrackingEligibility(t *testing.T) {
+	if (&context{}).shouldTrackCallerFrames() {
+		t.Fatal("missing compiler state should not track caller frames")
+	}
+	var nilContext *context
+	if nilContext.shouldTrackCallerFrames() {
+		t.Fatal("nil context should not track caller frames")
+	}
+
+	tests := []struct {
+		name       string
+		pkgPath    string
+		track      bool
+		targetName string
+		goarch     string
+		want       bool
+	}{
+		{name: "enabled user package", pkgPath: "example.com/foo", track: true, want: true},
+		{name: "disabled flag", pkgPath: "example.com/foo", want: false},
+		{name: "named target", pkgPath: "example.com/foo", track: true, targetName: "esp32", want: false},
+		{name: "wasm", pkgPath: "example.com/foo", track: true, goarch: "wasm", want: true},
+		{name: "stdlib", pkgPath: "fmt", track: true, want: true},
+		{name: "runtime", pkgPath: "runtime", track: true, want: false},
+		{name: "llgo runtime", pkgPath: llvmgen.PkgRuntime, track: true, want: false},
+		{name: "llgo runtime internal", pkgPath: "github.com/xgo-dev/llgo/runtime/internal/foo", track: true, want: false},
+		{name: "command line package", pkgPath: "command-line-arguments", track: true, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ssapkg, _ := buildCallerFrameSSAPackage(t, tt.pkgPath, `package foo
+import "runtime"
+func f() { runtime.Caller(0) }
+`)
+			prog := llvmgen.NewProgram(nil)
+			if tt.targetName != "" {
+				prog.Target().Target = tt.targetName
+			}
+			if tt.goarch != "" {
+				prog.Target().GOARCH = tt.goarch
+			}
+			pkg := prog.NewPackage("foo", tt.pkgPath)
+			fn := pkg.NewFunc("f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
+			goFn := ssapkg.Func("f")
+			ctx := &context{
+				prog:               prog,
+				pkg:                pkg,
+				fn:                 fn,
+				goFn:               goFn,
+				trackCallerFrames:  tt.track,
+				runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(), ssapkg),
+			}
+			if got := ctx.shouldTrackCallerFrames(); got != tt.want {
+				t.Fatalf("shouldTrackCallerFrames() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+
+	// Tracking applies uniformly; only the runtime core is excluded.
+	if !canTrackCallerFramesForPackage("net/http") {
+		t.Fatal("stdlib packages must be trackable like any other code")
+	}
+	if canTrackCallerFramesForPackage("runtime") ||
+		canTrackCallerFramesForPackage(llvmgen.PkgRuntime) ||
+		canTrackCallerFramesForPackage("github.com/xgo-dev/llgo/runtime/internal/lib") {
+		t.Fatal("runtime core must stay untracked")
+	}
+}
+
+func TestRuntimeFrameNameNormalization(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "command-line-arguments.main", want: "main.main"},
+		{in: "example.com/foo.f$1", want: "example.com/foo.f.func1"},
+		{in: "example.com/foo.f", want: "example.com/foo.f"},
+		{in: "example.com/foo.f$", want: "example.com/foo.f$"},
+		{in: "example.com/foo.f$inner", want: "example.com/foo.f$inner"},
+	}
+	for _, tt := range tests {
+		if got := runtimeFrameName(tt.in); got != tt.want {
+			t.Fatalf("runtimeFrameName(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+
+	if got := (*context)(nil).runtimeCallerFrameName(); got != "" {
+		t.Fatalf("nil context runtimeCallerFrameName() = %q, want empty", got)
+	}
+	if got := (&context{}).runtimeCallerFrameName(); got != "" {
+		t.Fatalf("empty context runtimeCallerFrameName() = %q, want empty", got)
+	}
+	prog := newLLSSAProg(t)
+	pkg := prog.NewPackage("main", "command-line-arguments")
+	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	ctx := &context{fn: pkg.NewFuncEx("command-line-arguments.f$1", sig, llvmgen.GoDecl, false, false)}
+	if got, want := ctx.runtimeCallerFrameName(), "main.f.func1"; got != want {
+		t.Fatalf("fallback runtimeCallerFrameName() = %q, want %q", got, want)
+	}
+}
+
+func TestCompileRuntimeCallerFrameInstrumentation(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime/debug"
+
+func f() {
+	_ = debug.Stack()
+}
+`)
+	prog := newLLSSAProg(t)
+	pkg, _, err := NewPackageExWithEmbedMetaOptions(
+		prog, nil, nil, nil, ssapkg, files, nil, false, Options{ShadowStack: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, want := range []string{
+		"RecordCallerLocation",
+		`c"example.com/foo.f`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("compiled caller-frame IR missing %q:\n%s", want, ir)
+		}
+	}
+	for _, old := range []string{"PushCallerFrame", "SetCallerLine", "PopCallerFrame"} {
+		if strings.Contains(ir, old) {
+			t.Fatalf("compiled caller-frame IR still contains old %q instrumentation:\n%s", old, ir)
+		}
+	}
+}
+
+func TestCompileRuntimeCallerPCLineMetadata(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+	leaf()
+}
+
+func leaf() {}
+`)
+	prog := newLLSSAProg(t)
+	prog.Target().GOOS = "linux"
+	prog.Target().GOARCH = "amd64"
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, want := range []string{
+		`!llgo.pcline = !{!`,
+		`!"example.com/foo.top"`,
+		`!"caller_frame_compile.go"`,
+		"__llgo_pcsite_",
+		"${:uid}",
+		`.pushsection llgo_pcline,\22awo\22,@progbits`,
+		`.quad __llgo_pcsite_`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing pcline metadata %s:\n%s", want, ir)
+		}
+	}
+	for _, line := range strings.Split(ir, "\n") {
+		if strings.Contains(line, "!llgo.pcline") || strings.Contains(line, `!"example.com/foo.top"`) {
+			if strings.Contains(line, `ptr @`) {
+				t.Fatalf("pcline metadata should use symbol strings, not function pointers:\n%s", line)
+			}
+		}
+	}
+}
+
+func TestCompileRuntimeCallerPCLineMetadata32Bit(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "386"})
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, want := range []string{
+		`.p2align 2`,
+		`.long __llgo_pcsite_`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("missing 32-bit pcline asm %q:\n%s", want, ir)
+		}
+	}
+}
+
+func TestCompileRuntimeCallerPCLineUsesLocalAnchor(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	func() {
+		runtime.Caller(0)
+	}()
+}
+`)
+	prog := newLLSSAProg(t)
+	prog.Target().GOOS = "linux"
+	prog.Target().GOARCH = "amd64"
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, `!"example.com/foo.top$1"`) {
+		t.Fatalf("metadata should keep the original Go symbol name:\n%s", ir)
+	}
+	found := false
+	for _, line := range strings.Split(ir, "\n") {
+		if strings.Contains(line, `.pushsection llgo_pcline`) {
+			found = true
+			if !strings.Contains(line, `__llgo_pcsite_`) || strings.Contains(line, `example.com/foo.top`) {
+				t.Fatalf("pcline section should use its local PC label as the SHF_LINK_ORDER anchor:\n%s", line)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("missing pcline section:\n%s", ir)
+	}
+}
+
+func TestRuntimeCallerInstrumentationEdgeCases(t *testing.T) {
+	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	pkg := prog.NewPackage("foo", "example.com/foo")
+	fn := pkg.NewFunc("example.com/foo.top", llvmgen.NoArgsNoRet, llvmgen.GoDecl)
+	ctx := &context{
+		prog:               prog,
+		pkg:                pkg,
+		fn:                 fn,
+		goFn:               ssapkg.Func("top"),
+		fset:               token.NewFileSet(),
+		trackCallerFrames:  true,
+		runtimeCallerFuncs: runtimeCallerFuncSet(NewCallerTracking(), ssapkg),
+	}
+	var b llvmgen.Builder
+	ctx.pushCallerLocationFrame(b, nil)
+	ctx.recordRuntimeLocation(b, token.NoPos, "RecordCallerLocation")
+	ctx.emitPCLineLabel(b, token.NoPos)
+	ctx.popCallerLocationFrame(b)
+
+	if pos := (&context{}).funcInfoPosition(nil); pos.IsValid() {
+		t.Fatal("nil function should have no funcinfo position")
+	}
+	if canEmitPCLineLabelsForTarget(nil) {
+		t.Fatal("nil target should not emit pc-line labels")
+	}
+	if canEmitPCLineLabelsForTarget(&llvmgen.Target{GOOS: "linux", GOARCH: "wasm"}) {
+		t.Fatal("wasm target should not emit pc-line labels")
+	}
+	if canEmitPCLineLabelsForTarget(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64", Target: "esp32"}) {
+		t.Fatal("named target should not emit pc-line labels")
+	}
+	if got, want := asmQuoteSymbol(`a\b"c$d`), `"a\\b\"c$$d"`; got != want {
+		t.Fatalf("asmQuoteSymbol() = %q, want %q", got, want)
+	}
+}
+
+func TestCompileRuntimeCallerPCLineMetadataSitesDisabled(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProg(t)
+	prog.Target().GOOS = "linux"
+	prog.Target().GOARCH = "amd64"
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(false)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	// Funcinfo metadata still flows...
+	if !strings.Contains(ir, llvmgen.FuncInfoMetadataName) {
+		t.Fatalf("sites disabled should keep funcinfo metadata:\n%s", ir)
+	}
+	// ...but no pc-line site labels are emitted.
+	for _, bad := range []string{"__llgo_pcsite_", ".pushsection llgo_pcline", "!llgo.pcline"} {
+		if strings.Contains(ir, bad) {
+			t.Fatalf("sites disabled should not emit pc-line sites, found %q:\n%s", bad, ir)
+		}
+	}
+}
+
+func TestCompileRuntimeCallerPCLineMetadataOnDarwin(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProg(t)
+	prog.Target().GOOS = "darwin"
+	prog.Target().GOARCH = "arm64"
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, want := range []string{
+		`!llgo.pcline`,
+		"__llgo_pcsite_",
+		`.pushsection __DATA,__llgo_pcl`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("darwin should emit Mach-O pc-site labels, missing %q:\n%s", want, ir)
+		}
+	}
+	if strings.Contains(ir, `.pushsection llgo_pcline`) {
+		t.Fatalf("darwin must not use the ELF pcline section syntax:\n%s", ir)
+	}
+}
+
+func TestCompileRuntimeCallerPCLineMetadataOnWindows(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProg(t)
+	prog.Target().GOOS = "windows"
+	prog.Target().GOARCH = "arm64"
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, want := range []string{
+		`!llgo.pcline`,
+		"__llgo_pcsite_",
+		`.pushsection .llgopcl$$m,\22dr\22,associative,__llgo_pcsite_`,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("windows should emit associative COFF pc-site labels, missing %q:\n%s", want, ir)
+		}
+	}
+	for _, bad := range []string{`.pushsection llgo_pcline`, `.pushsection __DATA,__llgo_pcl`} {
+		if strings.Contains(ir, bad) {
+			t.Fatalf("windows must not use a non-COFF pcline section, found %q:\n%s", bad, ir)
+		}
+	}
+}
+
+func TestCompileRuntimeCallerPCLineMetadataOnWindows386(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func top() {
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProgForTarget(t, &llvmgen.Target{GOOS: "windows", GOARCH: "386"})
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, want := range []string{
+		`.pushsection .llgopcl$$m,\22dr\22,associative,__llgo_pcsite_`,
+		`.long __llgo_pcsite_`,
+		`.long 0\0A.quad `,
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("windows/386 pc-site metadata missing %q:\n%s", want, ir)
+		}
+	}
+}
+
+func TestCompileRuntimeCallerFrameUsesGoNameForLinkname(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "command-line-arguments", `package main
+import "runtime"
+
+func renamedPC() uintptr {
+	pc, _, _, _ := runtime.Caller(0)
+	return pc
+}
+`)
+	prog := newLLSSAProg(t)
+	prog.SetLinkname("command-line-arguments.renamedPC", "main.renamedPCSymbol")
+	pkg, _, err := NewPackageExWithEmbedMetaOptions(
+		prog, nil, nil, nil, ssapkg, files, nil, false, Options{ShadowStack: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, `c"main.renamedPC"`) {
+		t.Fatalf("compiled caller-frame IR missing source function name:\n%s", ir)
+	}
+	if strings.Contains(ir, `c"main.renamedPCSymbol"`) {
+		t.Fatalf("compiled caller-frame IR used linkname target as runtime function name:\n%s", ir)
+	}
+}
+
+func TestCompileRuntimeCallerFrameInstrumentationSkipped(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func f() {
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProg(t)
+	prog.Target().Target = "esp32"
+	pkg, err := NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ir := pkg.Module().String(); strings.Contains(ir, "RecordCallerLocation") || strings.Contains(ir, "RecordPanicLocation") {
+		t.Fatalf("target builds should not emit caller location tracking:\n%s", ir)
+	}
+
+	ssapkg, files = buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+func f() {}
+`)
+	prog = newLLSSAProg(t)
+	pkg, err = NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ir := pkg.Module().String(); strings.Contains(ir, "RecordCallerLocation") || strings.Contains(ir, "RecordPanicLocation") {
+		t.Fatalf("packages without runtime stack APIs should not emit caller location tracking:\n%s", ir)
+	}
+
+	ssapkg, files = buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+func f() { _ = runtime.FuncForPC(0) }
+`)
+	prog = newLLSSAProg(t)
+	prog.Target().GOOS = "linux"
+	prog.Target().GOARCH = "amd64"
+	prog.EnableFuncInfoMetadata(true)
+	prog.EnableFuncInfoSites(true)
+	pkg, err = NewPackage(prog, ssapkg, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	for _, bad := range []string{"RecordCallerLocation", "RecordPanicLocation", "PushCallerLocationFrame", `!llgo.pcline`} {
+		if strings.Contains(ir, bad) {
+			t.Fatalf("FuncForPC-only packages should not emit caller frame tracking %q:\n%s", bad, ir)
+		}
+	}
+	if !strings.Contains(ir, `!llgo.funcinfo = !{!`) {
+		t.Fatalf("FuncForPC-only packages should still emit funcinfo metadata:\n%s", ir)
+	}
+}
+
+func TestCompileRuntimeCallerLocationOnlyForRuntimePaths(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+import "runtime"
+
+func helper() {}
+
+func f() {
+	helper()
+	runtime.Caller(0)
+}
+`)
+	prog := newLLSSAProg(t)
+	pkg, _, err := NewPackageExWithEmbedMetaOptions(
+		prog, nil, nil, nil, ssapkg, files, nil, false, Options{ShadowStack: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir := pkg.Module().String()
+	if !strings.Contains(ir, "RecordCallerLocation") {
+		t.Fatalf("runtime.Caller should record caller location:\n%s", ir)
+	}
+	if strings.Contains(ir, "SetCallerLine") || strings.Contains(ir, "PushCallerFrame") {
+		t.Fatalf("caller location tracking should not emit old TLS instrumentation:\n%s", ir)
+	}
+}
+
+func TestDebuggerCallerFramesAreOptIn(t *testing.T) {
+	ssapkg, files := buildCallerFrameSSAPackage(t, "example.com/foo", `package foo
+func helper() {}
+func f() { helper() }
+`)
+	for _, enabled := range []bool{false, true} {
+		prog := newLLSSAProg(t)
+		pkg, _, err := NewPackageExWithEmbedMetaOptions(
+			prog, nil, nil, nil, ssapkg, files, nil, false,
+			Options{ShadowStack: true, DebuggerFrames: enabled},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ir := pkg.Module().String()
+		start := strings.Index(ir, `define void @"example.com/foo.f"`)
+		if start < 0 {
+			t.Fatal("missing test function")
+		}
+		ir = ir[start : start+strings.Index(ir[start:], "\n}")+2]
+		for _, symbol := range []string{"PushCallerLocationFrame", "PopCallerLocationFrame", "RecordPanicLocation", "SetWasmCallerFrameBase", "llvm.frameaddress"} {
+			if strings.Contains(ir, symbol) != enabled {
+				t.Fatalf("DebuggerFrames=%v: unexpected presence of %s:\n%s", enabled, symbol, ir)
+			}
+		}
+	}
+}
+
+// importerFunc adapts a lookup function to types.Importer.
+type importerFunc func(string) (*types.Package, error)
+
+func (f importerFunc) Import(path string) (*types.Package, error) { return f(path) }
+
+// buildCallerFrameSSAProgram builds dep and root packages with bodies in a
+// single SSA program, so cross-package analysis (runtimeCallerFuncSet
+// criterion 2) can consult the callee package's own base set.
+func buildCallerFrameSSAProgram(t *testing.T, depPath, depSrc, rootPath, rootSrc string) (dep, root *ssa.Package) {
+	t.Helper()
+	fset := token.NewFileSet()
+	parse := func(name, src string) *ast.File {
+		file, err := parser.ParseFile(fset, name, src, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return file
+	}
+	depFile := parse("dep.go", depSrc)
+	rootFile := parse("root.go", rootSrc)
+	base := packages.NewImporter(fset)
+	prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
+	created := map[*types.Package]bool{}
+	var createDeps func(p *types.Package)
+	createDeps = func(p *types.Package) {
+		if created[p] {
+			return
+		}
+		created[p] = true
+		for _, imp := range p.Imports() {
+			createDeps(imp)
+		}
+		prog.CreatePackage(p, nil, nil, true)
+	}
+	check := func(path string, file *ast.File, imp types.Importer) (*types.Package, *types.Info) {
+		info := &types.Info{
+			Types:      map[ast.Expr]types.TypeAndValue{},
+			Defs:       map[*ast.Ident]types.Object{},
+			Uses:       map[*ast.Ident]types.Object{},
+			Implicits:  map[ast.Node]types.Object{},
+			Scopes:     map[ast.Node]*types.Scope{},
+			Selections: map[*ast.SelectorExpr]*types.Selection{},
+			Instances:  map[*ast.Ident]types.Instance{},
+		}
+		pkg := types.NewPackage(path, file.Name.Name)
+		if err := types.NewChecker(&types.Config{Importer: imp}, fset, pkg, info).Files([]*ast.File{file}); err != nil {
+			t.Fatal(err)
+		}
+		return pkg, info
+	}
+	depPkgT, depInfo := check(depPath, depFile, base)
+	for _, p := range depPkgT.Imports() {
+		createDeps(p)
+	}
+	depSSA := prog.CreatePackage(depPkgT, []*ast.File{depFile}, depInfo, true)
+	created[depPkgT] = true
+	rootImp := importerFunc(func(path string) (*types.Package, error) {
+		if path == depPath {
+			return depPkgT, nil
+		}
+		return base.Import(path)
+	})
+	rootPkgT, rootInfo := check(rootPath, rootFile, rootImp)
+	for _, p := range rootPkgT.Imports() {
+		createDeps(p)
+	}
+	rootSSA := prog.CreatePackage(rootPkgT, []*ast.File{rootFile}, rootInfo, true)
+	prog.Build()
+	return depSSA, rootSSA
+}
+
+// Criterion 2: calling another package's pc-consuming function makes the
+// caller trackable — decided by that package's analysis, not by name.
+func TestRuntimeCallerFuncSetCrossPackage(t *testing.T) {
+	depSSA, rootSSA := buildCallerFrameSSAProgram(t,
+		"example.com/dep", `package dep
+
+import "runtime"
+
+func Where() bool {
+	_, _, _, ok := runtime.Caller(0)
+	return ok
+}
+
+func Quiet() int { return 1 }
+`,
+		"example.com/root", `package root
+
+import "example.com/dep"
+
+func Logs() bool { return dep.Where() }
+
+func Plain() int { return dep.Quiet() }
+`)
+	crossCaches := NewCallerTracking()
+	if !runtimeCallerBaseSet(crossCaches, depSSA)[depSSA.Func("Where")] {
+		t.Fatal("dep.Where must be in its own package's base set")
+	}
+	set := runtimeCallerFuncSet(crossCaches, rootSSA)
+	if !set[rootSSA.Func("Logs")] {
+		t.Fatal("caller of a pc-consuming function must be tracked (criterion 2)")
+	}
+	if set[rootSSA.Func("Plain")] {
+		t.Fatal("caller of a quiet function must not be tracked")
+	}
+}
+
+// Criteria 3 and 4: program-unique frames (main.main, init) and
+// //go:noinline functions are pinned; plain helpers are not.
+func TestRuntimeCallerFuncSetPinnedFrames(t *testing.T) {
+	ssapkg, _ := buildCallerFrameSSAPackage(t, "example.com/cmd", `package main
+
+func main() { helper(); pinned() }
+
+func init() { helper() }
+
+//go:noinline
+func pinned() {}
+
+func helper() {}
+`)
+	set := runtimeCallerFuncSet(NewCallerTracking(), ssapkg)
+	for _, name := range []string{"main", "init", "pinned"} {
+		if !set[ssapkg.Func(name)] {
+			t.Fatalf("%s must be pinned in the tracking set", name)
+		}
+	}
+	if set[ssapkg.Func("helper")] {
+		t.Fatal("plain helper must not be tracked")
+	}
+}
+
+// Anonymous function display names follow gc's reporting convention; linker
+// symbols are untouched.
+func TestFuncInfoDisplayName(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"main.main", "main.main"},
+		{"main.main$2", "main.main.func2"},
+		{"other/path.f", "other/path.f"},
+		{"example.com/lib.f$1", "example.com/lib.f.func1"},
+		{"plain.f$x", "plain.f$x"},
+	}
+	for _, c := range cases {
+		if got := funcInfoDisplayName(c.in); got != c.want {
+			t.Fatalf("funcInfoDisplayName(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// //line directive filenames follow gc's spelling: relative directives
+// stay relative to the declaring file's directory, empty directives report
+// "??", absolute ones and directive-free positions pass through.
+func TestDirectiveFilename(t *testing.T) {
+	fset := token.NewFileSet()
+	src := "package p\nfunc D() {}\n//line /abs/dir/renamed.go:10\nfunc A() {}\n//line rel.go:20\nfunc B() {}\n//line :30\nfunc C() {}\n"
+	file, err := parser.ParseFile(fset, "/work/pkg/orig.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(src, "\n")
+	sourceLine := func(_ string, line int) (string, bool) {
+		if line <= 0 || line > len(lines) {
+			return "", false
+		}
+		return lines[line-1], true
+	}
+	pos := func(i int) token.Pos { return file.Decls[i].Pos() }
+	cases := []struct {
+		pos  token.Pos
+		want string
+	}{
+		{pos(0), "/work/pkg/orig.go"},
+		{pos(1), "/abs/dir/renamed.go"},
+		{pos(2), "rel.go"},
+		{pos(3), "??"},
+	}
+	for i, c := range cases {
+		adjusted := fset.Position(c.pos).Filename
+		if c.want == "rel.go" {
+			// The package loader hands cl an absolute expansion; emulate it.
+			adjusted = "/work/pkg/rel.go"
+		}
+		if got := directiveFilename(fset, c.pos, adjusted, sourceLine); got != c.want {
+			t.Fatalf("case %d: directiveFilename(%q) = %q, want %q", i, adjusted, got, c.want)
+		}
+	}
+	if got := directiveFilename(fset, token.NoPos, "x.go", nil); got != "x.go" {
+		t.Fatal("NoPos must pass through")
+	}
+	if got := directiveFilename(nil, pos(0), "x.go", nil); got != "x.go" {
+		t.Fatal("nil fset must pass through")
+	}
+}
+func TestDirectiveFilenameWindowsRootedSlash(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows filepath semantics")
+	}
+	fset := token.NewFileSet()
+	src := "package p\n//line /foo/bar.go:123\nfunc F() {}\n"
+	file, err := parser.ParseFile(fset, `C:\work\pkg\orig.go`, src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pos := file.Decls[0].Pos()
+	adjusted := fset.Position(pos).Filename
+	lines := strings.Split(src, "\n")
+	sourceLine := func(_ string, line int) (string, bool) {
+		if line <= 0 || line > len(lines) {
+			return "", false
+		}
+		return lines[line-1], true
+	}
+	got := runtimeSourceFilename(
+		&llvmgen.Target{GOOS: "windows"},
+		directiveFilename(fset, pos, adjusted, sourceLine),
+	)
+	if want := "/foo/bar.go"; got != want {
+		t.Fatalf("directiveFilename(%q) = %q, want %q", adjusted, got, want)
+	}
+}
+
+func TestPrecedingLineDirectiveFilename(t *testing.T) {
+	pos := token.Position{Filename: "source.go", Line: 4}
+	tests := []struct {
+		name         string
+		pos          token.Position
+		lines        map[int]string
+		available    bool
+		wantFilename string
+		wantOK       bool
+	}{
+		{name: "nil source reader", pos: pos},
+		{name: "empty source filename", pos: token.Position{Line: 4}, available: true},
+		{name: "first source line", pos: token.Position{Filename: "source.go", Line: 1}, available: true},
+		{name: "source unavailable", pos: pos, available: true},
+		{name: "no directive", pos: pos, available: true, lines: map[int]string{3: "// ordinary comment", 2: "package p", 1: ""}},
+		{name: "malformed directive", pos: pos, available: true, lines: map[int]string{3: "//line bad", 2: "package p", 1: ""}},
+		{name: "previous filename", pos: pos, available: true, lines: map[int]string{3: "//line :12:3"}},
+		{name: "empty filename", pos: pos, available: true, lines: map[int]string{3: "//line :12"}, wantFilename: "??", wantOK: true},
+		{name: "CRLF directive", pos: pos, available: true, lines: map[int]string{3: "//line rel.go:12\r"}, wantFilename: "rel.go", wantOK: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var sourceLine func(string, int) (string, bool)
+			if test.available {
+				sourceLine = func(filename string, line int) (string, bool) {
+					text, ok := test.lines[line]
+					return text, ok
+				}
+			}
+			got, ok := precedingLineDirectiveFilename(test.pos, sourceLine)
+			if got != test.wantFilename || ok != test.wantOK {
+				t.Fatalf("precedingLineDirectiveFilename() = (%q, %v), want (%q, %v)", got, ok, test.wantFilename, test.wantOK)
+			}
+		})
+	}
+}
+
+func TestParseLineDirectiveFilename(t *testing.T) {
+	tests := []struct {
+		text         string
+		wantFilename string
+		wantPrevious bool
+		wantOK       bool
+	}{
+		{"rel.go:20", "rel.go", false, true},
+		{"c:/foo/bar.go:987", "c:/foo/bar.go", false, true},
+		{"foo.go:12:3", "foo.go", false, true},
+		{":30", "", false, true},
+		{":30:4", "", true, true},
+		{"bad", "", false, false},
+		{"foo.go:0", "", false, false},
+		{"foo.go:1:0", "", false, false},
+		{"foo.go:0:1", "", false, false},
+		{"foo.go:1073741825:1", "", false, false},
+		{"foo.go:not-a-line", "", false, false},
+	}
+	for _, test := range tests {
+		filename, previous, ok := parseLineDirectiveFilename(test.text)
+		if filename != test.wantFilename || previous != test.wantPrevious || ok != test.wantOK {
+			t.Errorf("parseLineDirectiveFilename(%q) = (%q, %v, %v), want (%q, %v, %v)",
+				test.text, filename, previous, ok,
+				test.wantFilename, test.wantPrevious, test.wantOK)
+		}
+	}
+}
+
+func TestRuntimeSourceFilename(t *testing.T) {
+	windows := &llvmgen.Target{GOOS: "windows"}
+	linux := &llvmgen.Target{GOOS: "linux"}
+	const native = `C:\work\pkg\main.go`
+	if got, want := runtimeSourceFilename(windows, native), "C:/work/pkg/main.go"; got != want {
+		t.Fatalf("Windows runtime filename = %q, want %q", got, want)
+	}
+	if got := runtimeSourceFilename(linux, native); got != native {
+		t.Fatalf("Unix runtime filename = %q, want unchanged %q", got, native)
+	}
+	if got := runtimeSourceFilename(nil, native); got != native {
+		t.Fatalf("nil-target runtime filename = %q, want unchanged %q", got, native)
+	}
+}

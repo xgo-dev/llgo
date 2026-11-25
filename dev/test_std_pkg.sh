@@ -58,8 +58,8 @@ for input_pkg in "$@"; do
 	echo "==> host: ./dev/llgo.sh test -timeout=$timeout $test_pkg"
 	./dev/llgo.sh test -timeout="$timeout" "$test_pkg"
 
-	echo "==> host: go run ./chore/check_std_symbols -pkg $std_pkg"
-	go run ./chore/check_std_symbols -pkg "$std_pkg"
+	echo "==> host: go run ./cmd/chore/check_std_symbols -pkg $std_pkg"
+	go run ./cmd/chore/check_std_symbols -pkg "$std_pkg"
 
 	log_dir="$(mktemp -d)"
 	pids=()

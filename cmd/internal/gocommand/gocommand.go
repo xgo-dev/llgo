@@ -27,9 +27,9 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/internal/gotool"
-	"github.com/xgo-dev/llgo/internal/build"
-	"github.com/xgo-dev/llgo/internal/env"
-	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/env"
+	"github.com/xgo-dev/llgo/cmd/compiler/mockable"
 	"github.com/xgo-dev/llgo/target"
 )
 

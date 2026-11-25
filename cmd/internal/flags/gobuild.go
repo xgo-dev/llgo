@@ -18,8 +18,8 @@ package flags
 
 import (
 	"github.com/xgo-dev/llgo/cmd/internal/base"
-	"github.com/xgo-dev/llgo/internal/build"
-	"github.com/xgo-dev/llgo/internal/goflags"
+	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/goflags"
 )
 
 // CaptureGoBuildFlags registers the Go build flags that LLGo forwards to

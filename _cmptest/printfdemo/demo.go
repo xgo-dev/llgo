@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/xgo-dev/llgo/xtool/nm"
+	"github.com/xgo-dev/llgo/cmd/xtool/nm"
 )
 
 func main() {

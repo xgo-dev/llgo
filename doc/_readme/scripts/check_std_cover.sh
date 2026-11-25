@@ -13,7 +13,7 @@ go_list() {
   fi
 }
 
-module_path="$(go_list -m)"
+module_path="$(GOWORK=off go_list -m)"
 
 packages=()
 if [[ $# -eq 0 ]]; then
@@ -94,7 +94,7 @@ check_command=()
 if [[ -n "${CHECK_STD_SYMBOLS:-}" ]]; then
   check_command+=("${CHECK_STD_SYMBOLS}")
 else
-  check_command+=(go run ./chore/check_std_symbols)
+  check_command+=(go run ./cmd/chore/check_std_symbols)
 fi
 if [[ -n "${LLGO_TEST_MODFILE:-}" ]]; then
   args+=("-modfile" "${LLGO_TEST_MODFILE}")

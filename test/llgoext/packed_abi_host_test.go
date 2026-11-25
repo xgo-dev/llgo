@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xgo-dev/llgo/internal/cabi"
-	"github.com/xgo-dev/llgo/internal/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/cabi"
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llvm"
 )
 

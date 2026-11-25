@@ -1,0 +1,568 @@
+package cl
+
+import (
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/xgo-dev/llgo/directive"
+	"github.com/xgo-dev/llgo/cmd/compiler/env"
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+)
+
+func TestLinknameParsersAgree(t *testing.T) {
+	for _, line := range []string{
+		"//go:linkname\tF\tllvm.fshl.i8",
+		"//llgo:link\tF\tllvm.fshl.i8",
+		"// llgo:link F\tllvm.fshl.i8",
+	} {
+		t.Run(line, func(t *testing.T) {
+			prog := llvmgen.NewProgram(nil)
+			defer prog.Dispose()
+			ctx := &context{prog: prog}
+			if got := ctx.initLinkname(line, false, func(name string, _ bool) (string, bool, bool) {
+				return "legacy.F", false, name == "F"
+			}); got != hasLinkname {
+				t.Fatalf("legacy parser returned %d", got)
+			}
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "p.go", "package p\nimport _ \"unsafe\"\n"+line+"\nfunc F() {}", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ParsePkgSyntax(prog, fset, types.NewPackage("p", "p"), []*ast.File{file}); err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"legacy.F", "p.F"} {
+				if got, ok := prog.Linkname(name); !ok || got != "llvm.fshl.i8" {
+					t.Fatalf("%s linkname = (%q, %v)", name, got, ok)
+				}
+			}
+		})
+	}
+}
+
+func TestReplaceGoNameRuntimeBranch(t *testing.T) {
+	const sym = "runtime.memmove"
+	got := replaceGoName(sym, len("runtime"))
+	want := env.LLGoRuntimePkg + "/internal/runtime.memmove"
+	if got != want {
+		t.Fatalf("replaceGoName(%q)=%q, want %q", sym, got, want)
+	}
+}
+
+func TestTypeBackgroundAndParsePkgSyntaxCoverage(t *testing.T) {
+	callConvBg := func(doc *ast.CommentGroup) string {
+		res, err := directive.ParseTypeCallConv(doc)
+		if err != nil {
+			t.Fatalf("ParseTypeCallConv(%v) error: %v", doc, err)
+		}
+		return res.CallConv.String()
+	}
+
+	if got := callConvBg(nil); got != "" {
+		t.Fatalf("typeCallConv(nil)=%q, want empty", got)
+	}
+
+	// Deprecated //llgo:type forms still resolve to the same background.
+	doc1 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:type C"}}}
+	if got := callConvBg(doc1); got != "C" {
+		t.Fatalf("typeCallConv(//llgo:type C)=%q, want C", got)
+	}
+	doc2 := &ast.CommentGroup{List: []*ast.Comment{{Text: "// llgo:type C"}}}
+	if got := callConvBg(doc2); got != "C" {
+		t.Fatalf("typeCallConv(// llgo:type C)=%q, want C", got)
+	}
+	doc3 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:type stdcall"}}}
+	if got := callConvBg(doc3); got != "stdcall" {
+		t.Fatalf("typeCallConv(//llgo:type stdcall)=%q, want stdcall", got)
+	}
+
+	// New directives resolve to the matching background.
+	doc4 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:cdecl"}}}
+	if got := callConvBg(doc4); got != "C" {
+		t.Fatalf("typeCallConv(//llgo:cdecl)=%q, want C", got)
+	}
+	doc5 := &ast.CommentGroup{List: []*ast.Comment{{Text: "// llgo:stdcall"}}}
+	if got := callConvBg(doc5); got != "stdcall" {
+		t.Fatalf("typeCallConv(// llgo:stdcall)=%q, want stdcall", got)
+	}
+
+	// A //llgo:type with an unrelated argument is not a calling-convention
+	// directive and leaves the background unset.
+	doc6 := &ast.CommentGroup{List: []*ast.Comment{{Text: "//llgo:type Python"}}}
+	if got := callConvBg(doc6); got != "" {
+		t.Fatalf("typeCallConv(//llgo:type Python)=%q, want empty", got)
+	}
+
+	src := `package p
+//llgo:cdecl
+type A int
+type (
+	B int
+	C int
+)
+
+//go:nointerface
+func (A) Hidden() {}
+
+//go:other
+//go:nointerface
+func (A) StackedHidden() {}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile failed: %v", err)
+	}
+	prog := llvmgen.NewProgram(nil)
+	pkg := types.NewPackage("example.com/p", "p")
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &context{prog: prog}
+	ctx.processNoInterfaceByDoc(nil, "example.com/p.NilDoc")
+	ctx.processNoInterfaceByDoc(&ast.CommentGroup{List: []*ast.Comment{
+		{Text: "// not a directive"},
+		{Text: "//go:nointerface"},
+	}}, "example.com/p.NonDirectiveStops")
+
+	if !prog.PackageSyntaxParsed(pkg) {
+		t.Fatal("package syntax was not marked as parsed")
+	}
+	badFile, err := parser.ParseFile(fset, "bad.go", "package p\n//llgointernal:tls\nfunc Bad() {}\n", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{badFile}); err != nil {
+		t.Fatalf("already parsed package was scanned again: %v", err)
+	}
+}
+
+func TestParsePkgSyntaxReportsLocalityErrors(t *testing.T) {
+	prog := llvmgen.NewProgram(nil)
+	if err := ParsePkgSyntax(prog, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name  string
+		src   string
+		want  string
+		allow bool
+	}{
+		{
+			name: "external package",
+			src:  "package p\n//llgointernal:tls\nvar value int\n",
+			want: "only allowed in the Go standard library",
+		},
+		{
+			name:  "function body",
+			src:   "package p\nfunc f() {\n//llgointernal:gls\nvar value int\n_ = value\n}\n",
+			want:  "package-level var",
+			allow: true,
+		},
+		{
+			name:  "package var",
+			src:   "package p\n//llgointernal:tls extra\nvar Value int\n",
+			want:  "does not accept arguments",
+			allow: true,
+		},
+		{
+			name:  "non-var declaration",
+			src:   "package p\n//llgointernal:gls\nconst Value = 1\n",
+			want:  "package-level var",
+			allow: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "p.go", test.src, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pkg := types.NewPackage("example.com/"+strings.ReplaceAll(test.name, " ", "-"), "p")
+			err = ParsePkgSyntaxWithOptions(llvmgen.NewProgram(nil), fset, pkg, []*ast.File{file}, Options{AllowInternalDirectives: test.allow})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ParsePkgSyntax error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestPkgSymInfoAddSymAndInitLinknamesCoverage(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "p.go")
+	src := "package p\n\n//go:linkname Foo c_foo\nfunc Foo()\n"
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, srcPath, src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile failed: %v", err)
+	}
+
+	var fnPos token.Pos
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "Foo" {
+			fnPos = fn.Name.Pos()
+			break
+		}
+	}
+	if fnPos == token.NoPos {
+		t.Fatalf("failed to find Foo position")
+	}
+
+	syms := newPkgSymInfo()
+	syms.addSym(fset, fnPos, "example.com/p.Foo", "Foo", false)
+
+	tf := fset.File(file.Pos())
+	syms.addSym(fset, tf.LineStart(2), "example.com/p.Skip", "Skip", false)
+	if _, ok := syms.syms["Skip"]; ok {
+		t.Fatalf("symbol with line<=2 should be skipped")
+	}
+
+	// cover os.ReadFile error branch inside addSym.
+	ff := fset.AddFile(filepath.Join(dir, "missing.go"), -1, 100)
+	ff.SetLines([]int{0, 10, 20, 30, 40, 50})
+	syms.addSym(fset, ff.LineStart(4), "example.com/p.Miss", "Miss", false)
+	if _, ok := syms.syms["Miss"]; !ok {
+		t.Fatalf("symbol should still be recorded when file read fails")
+	}
+
+	prog := llvmgen.NewProgram(nil)
+	ctx := &context{prog: prog}
+	syms.initLinknames(ctx)
+	if got, ok := prog.Linkname("example.com/p.Foo"); !ok || got != "c_foo" {
+		t.Fatalf("linkname = (%q,%v), want (%q,%v)", got, ok, "c_foo", true)
+	}
+}
+
+func TestAstAndTypesFuncNameCoverage(t *testing.T) {
+	full, inPkg, ok := astFuncName("example.com/p", &ast.FuncDecl{Name: &ast.Ident{Name: "F"}}, nil)
+	if !ok || full != "example.com/p.F" || inPkg != "F" {
+		t.Fatalf("astFuncName(func)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.F", "F")
+	}
+
+	ptrRecv := &ast.FuncDecl{
+		Name: &ast.Ident{Name: "M"},
+		Recv: &ast.FieldList{List: []*ast.Field{
+			{Type: &ast.StarExpr{X: &ast.ParenExpr{X: &ast.Ident{Name: "T"}}}},
+		}},
+	}
+	full, inPkg, ok = astFuncName("example.com/p", ptrRecv, nil)
+	if !ok || full != "example.com/p.(*T).M" || inPkg != "(*T).M" {
+		t.Fatalf("astFuncName(method ptr)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.(*T).M", "(*T).M")
+	}
+
+	pkg := types.NewPackage("example.com/p", "p")
+	tObj := types.NewTypeName(token.NoPos, pkg, "T", nil)
+	named := types.NewNamed(tObj, types.NewStruct(nil, nil), nil)
+
+	methodPtr := types.NewFunc(token.NoPos, pkg, "M", types.NewSignature(
+		types.NewVar(token.NoPos, pkg, "", types.NewPointer(named)), nil, nil, false,
+	))
+	full, inPkg = typesFuncName(pkg.Path(), methodPtr)
+	if full != "example.com/p.(*T).M" || inPkg != "(*T).M" {
+		t.Fatalf("typesFuncName(method ptr)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.(*T).M", "(*T).M")
+	}
+
+	methodVal := types.NewFunc(token.NoPos, pkg, "N", types.NewSignature(
+		types.NewVar(token.NoPos, pkg, "", named), nil, nil, false,
+	))
+	full, inPkg = typesFuncName(pkg.Path(), methodVal)
+	if full != "example.com/p.T.N" || inPkg != "T.N" {
+		t.Fatalf("typesFuncName(method val)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.T.N", "T.N")
+	}
+
+	fn := types.NewFunc(token.NoPos, pkg, "Top", types.NewSignature(nil, nil, nil, false))
+	full, inPkg = typesFuncName(pkg.Path(), fn)
+	if full != "example.com/p.Top" || inPkg != "Top" {
+		t.Fatalf("typesFuncName(func)=(%q,%q), want (%q,%q)", full, inPkg, "example.com/p.Top", "Top")
+	}
+}
+
+func TestDeclarationFuncNameWithoutObject(t *testing.T) {
+	pkg := types.NewPackage("example.com/p", "p")
+	tObj := types.NewTypeName(token.NoPos, pkg, "T", nil)
+	named := types.NewNamed(tObj, types.NewStruct(nil, nil), nil)
+	aliasObj := types.NewTypeName(token.NoPos, pkg, "Alias", nil)
+	alias := types.NewAlias(aliasObj, types.NewPointer(named))
+	decl := &ast.FuncDecl{
+		Name: ast.NewIdent("M"),
+		Recv: &ast.FieldList{List: []*ast.Field{{Type: ast.NewIdent("Alias")}}},
+	}
+	recv := types.NewVar(token.NoPos, pkg, "", alias)
+	if got, want := declarationFuncName(pkg.Path(), decl, nil, recv), "example.com/p.(*T).M"; got != want {
+		t.Fatalf("declarationFuncName without object = %q, want %q", got, want)
+	}
+	decl.Recv = nil
+	if got, want := declarationFuncName(pkg.Path(), decl, nil, nil), "example.com/p.M"; got != want {
+		t.Fatalf("declarationFuncName without receiver = %q, want %q", got, want)
+	}
+}
+
+func TestParsePkgSyntaxSkipsInvalidMethodReceivers(t *testing.T) {
+	for _, receiver := range []string{"bufio.Reader", "*bufio.Reader", "**T", "[]T", "map[int]T"} {
+		t.Run(receiver, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "invalid.go", "package p\n//export invalid_receiver\nfunc (b "+receiver+") M() {}", parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			prog := llvmgen.NewProgram(nil)
+			defer prog.Dispose()
+			pkg := types.NewPackage("example.com/p", "p")
+			if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, []*ast.File{file}, Options{ExportRename: true}); err != nil {
+				t.Fatal(err)
+			}
+			if !prog.PackageSyntaxParsed(pkg) {
+				t.Fatal("package syntax was not marked parsed")
+			}
+			// Both entry points collect metadata before lowering declarations.
+			for _, preloaded := range []bool{false, true} {
+				ctx := &context{prog: prog, options: Options{PreloadedSyntax: preloaded, ExportRename: true}}
+				ctx.initFiles(pkg.Path(), []*ast.File{file}, false)
+			}
+			if prog.HasLinknameTarget("invalid_receiver") {
+				t.Fatal("invalid receiver collected export/linkname metadata")
+			}
+		})
+	}
+}
+
+func TestAstFuncNameRejectsInvalidReceivers(t *testing.T) {
+	for _, fields := range [][]*ast.Field{
+		nil,
+		{{Type: ast.NewIdent("T")}, {Type: ast.NewIdent("T")}},
+		{{Type: &ast.BadExpr{}}},
+	} {
+		decl := &ast.FuncDecl{Name: ast.NewIdent("M"), Recv: &ast.FieldList{List: fields}}
+		if full, inPkg, ok := astFuncName("p", decl, nil); ok || full != "" || inPkg != "" {
+			t.Fatalf("invalid receiver returned (%q, %q, %v)", full, inPkg, ok)
+		}
+	}
+}
+
+func TestParsePkgSyntaxCollectsLinknames(t *testing.T) {
+	cases := []struct {
+		name      string
+		directive string
+		want      string
+	}{
+		{name: "go-linkname", directive: "//go:linkname Sigsetjmp C.sigsetjmp\nfunc Sigsetjmp()\n", want: "C.sigsetjmp"},
+		{name: "go-linkname-after", directive: "func Sigsetjmp()\n//go:linkname Sigsetjmp C.sigsetjmp\n", want: "C.sigsetjmp"},
+		{name: "llgo-linkname", directive: "//llgo:link Sigsetjmp C.sigsetjmp\nfunc Sigsetjmp()\n", want: "C.sigsetjmp"},
+		{name: "llgo-linkname-spaced", directive: "// llgo:link Sigsetjmp C.sigsetjmp\nfunc Sigsetjmp()\n", want: "C.sigsetjmp"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			src := "package runtime\nimport _ \"unsafe\"\n" + tt.directive
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "runtime.go", src, parser.ParseComments)
+			if err != nil {
+				t.Fatalf("ParseFile failed: %v", err)
+			}
+			prog := llvmgen.NewProgram(nil)
+			pkg := types.NewPackage(llvmgen.PkgRuntime, "runtime")
+			if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := prog.Linkname(llvmgen.PkgRuntime + ".Sigsetjmp"); !ok || got != tt.want {
+				t.Fatalf("pre-collected linkname = (%q,%v), want (%q,%v)", got, ok, tt.want, true)
+			}
+		})
+	}
+	prog := llvmgen.NewProgram(nil)
+	collectDeclarationDirectives(prog, nil, &ast.CommentGroup{List: []*ast.Comment{{Text: "//go:linkname Other C.other"}}}, llvmgen.PkgRuntime+".Sigsetjmp", "Sigsetjmp", token.NoPos)
+	if _, ok := prog.Linkname(llvmgen.PkgRuntime + ".Sigsetjmp"); ok {
+		t.Fatal("mismatched linkname was collected")
+	}
+
+	crossSrc := []string{
+		"package p\nimport _ \"unsafe\"\nfunc main() {}\n//go:linkname alias C.alias\n",
+		"package p\nfunc alias()\n",
+	}
+	crossFset := token.NewFileSet()
+	var crossFiles []*ast.File
+	for i, src := range crossSrc {
+		file, err := parser.ParseFile(crossFset, "cross"+string(rune('0'+i))+".go", src, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		crossFiles = append(crossFiles, file)
+	}
+	prog = llvmgen.NewProgram(nil)
+	crossPkg := types.NewPackage("example.com/p", "p")
+	crossPkg.Scope().Insert(types.NewFunc(token.NoPos, crossPkg, "alias", types.NewSignature(nil, nil, nil, false)))
+	if err := ParsePkgSyntax(prog, crossFset, crossPkg, crossFiles); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := prog.Linkname("example.com/p.alias"); !ok || got != "C.alias" {
+		t.Fatalf("cross-file linkname = (%q,%v), want (C.alias,true)", got, ok)
+	}
+}
+
+func TestParsePkgSyntaxCollectsClosureEnvDirectives(t *testing.T) {
+	const src = `package p
+//go:linkname env C.old
+//llgo:env
+//go:linkname env C.new
+func env() {}
+
+// llgo:env
+func spaced() {}
+
+func plain() {}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := llvmgen.NewProgram(nil)
+	pkg := types.NewPackage("example.com/p", "p")
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+	if link, ok := prog.Linkname("example.com/p.env"); !ok || link != "C.new" {
+		t.Fatalf("combined declaration linkname = (%q, %v), want (C.new, true)", link, ok)
+	}
+	want := map[string]bool{"env": true, "spaced": true, "plain": false}
+	for _, node := range file.Decls {
+		decl := node.(*ast.FuncDecl)
+		fullName, _, ok := astFuncName(pkg.Path(), decl, nil)
+		if !ok {
+			t.Fatalf("astFuncName(%s) rejected valid declaration", decl.Name.Name)
+		}
+		got := prog.HasClosureEnvDirective(fset, fullName, decl.Pos())
+		if got != want[decl.Name.Name] {
+			t.Fatalf("HasClosureEnvDirective(%s) = %v, want %v", decl.Name.Name, got, want[decl.Name.Name])
+		}
+	}
+	if prog.HasClosureEnvDirective(fset, "example.com/p.missing", token.NoPos) {
+		t.Fatal("missing declaration unexpectedly has cached directives")
+	}
+}
+
+func TestParsePkgSyntaxCollectsWasmImportDirectives(t *testing.T) {
+	const src = `package p
+//go:wasmimport old_module old_name
+//go:wasmimport wasi_snapshot_preview1 fd_read
+func fdRead()
+
+//go:wasmimport ignored_for_variable ignored
+var value int
+
+//go:wasmimport ignored_older valid
+//go:wasmimport malformed
+func malformed()
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := llvmgen.NewProgram(nil)
+	pkg := types.NewPackage("example.com/p", "p")
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+	module, name, ok := prog.WasmImport("example.com/p.fdRead")
+	if !ok || module != "wasi_snapshot_preview1" || name != "fd_read" {
+		t.Fatalf("WasmImport(fdRead) = (%q, %q, %v), want (wasi_snapshot_preview1, fd_read, true)", module, name, ok)
+	}
+	for _, symbol := range []string{"value", "malformed"} {
+		if module, name, ok := prog.WasmImport("example.com/p." + symbol); ok {
+			t.Fatalf("WasmImport(%s) = (%q, %q, true), want no import", symbol, module, name)
+		}
+	}
+}
+
+func TestCollectDeclarationDirectivesIgnoresOtherDirectives(t *testing.T) {
+	prog := llvmgen.NewProgram(nil)
+	doc := &ast.CommentGroup{List: []*ast.Comment{
+		{Text: "//go:noinline"},
+		{Text: "//llgointernal:tls"},
+	}}
+	const fullName = "example.com/p.Value"
+	collectDeclarationDirectives(prog, nil, doc, fullName, "Value", token.NoPos)
+	if _, ok := prog.Linkname(fullName); ok {
+		t.Fatal("non-link directives installed a linkname")
+	}
+}
+
+func TestBoolToUint8InvalidArgs(t *testing.T) {
+	ctx := &context{}
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("boolToUint8 should panic on invalid arguments")
+		}
+		if msg := r.(string); !strings.Contains(msg, "invalid arguments") {
+			t.Fatalf("panic = %q, want invalid arguments", msg)
+		}
+	}()
+	_ = ctx.boolToUint8(nil, []llvmgen.Expr{})
+}
+
+func TestNativeEmbeddedFieldPositions(t *testing.T) {
+	const source = `package p
+import "sync"
+type Plain struct{}
+type Generic[A any] struct{}
+type Pair[A, B any] struct{}
+//llgo:cdecl
+type A struct{ Plain }
+//llgo:cdecl
+type B struct{ *Plain }
+//llgo:cdecl
+type C struct{ sync.Mutex }
+//llgo:cdecl
+type D struct{ *sync.Mutex }
+//llgo:cdecl
+type E struct{ Generic[int] }
+//llgo:cdecl
+type F struct{ Pair[int, string] }
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", source, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prog := llvmgen.NewProgram(nil)
+	defer prog.Dispose()
+	pkg := types.NewPackage("p", "p")
+	if err := ParsePkgSyntax(prog, fset, pkg, []*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+	info := &types.Info{Defs: make(map[*ast.Ident]types.Object)}
+	conf := &types.Config{Importer: importer.Default()}
+	if err := types.NewChecker(conf, fset, pkg, info).Files([]*ast.File{file}); err != nil {
+		t.Fatal(err)
+	}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.TYPE {
+			continue
+		}
+		spec := gen.Specs[0].(*ast.TypeSpec)
+		st := spec.Type.(*ast.StructType)
+		if len(st.Fields.List) == 0 {
+			continue
+		}
+		field := info.Defs[spec.Name].Type().Underlying().(*types.Struct).Field(0)
+		if got := embeddedStructFieldPos(st.Fields.List[0].Type); got != field.Pos() {
+			t.Errorf("%s: field position %v, want %v", spec.Name, got, field.Pos())
+		}
+	}
+}

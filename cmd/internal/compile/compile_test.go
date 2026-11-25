@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/internal/compat"
-	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/cmd/compiler/mockable"
 )
 
 func TestCompilerManifestAndRegistration(t *testing.T) {

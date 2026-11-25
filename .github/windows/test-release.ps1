@@ -34,7 +34,7 @@ if ($metadata.goos -ne 'windows' -or $metadata.goarch -ne $GoArch -or (@($metada
 $commit = (& git rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or $metadata.commit -ne $commit) { throw 'The release belongs to a different commit' }
 
-$pins = Get-Content -Raw (Join-Path $PSScriptRoot '../../internal/crosscompile/espressif.json') | ConvertFrom-Json
+$pins = Get-Content -Raw (Join-Path $PSScriptRoot '../../cmd/compiler/crosscompile/espressif.json') | ConvertFrom-Json
 $target = @{ amd64 = 'x86_64-w64-mingw32'; arm64 = 'aarch64-w64-mingw32'; '386' = 'i686-w64-mingw32' }[$GoArch]
 $payload = $pins.payloads.$target
 $bundle = Join-Path $releaseRoot "crosscompile/$($payload.asset)"

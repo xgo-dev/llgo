@@ -17,11 +17,11 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/xgo-dev/llgo/internal/crosscompile/compile/libc"
-	"github.com/xgo-dev/llgo/internal/crosscompile/compile/rtlib"
-	internalenv "github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/cmd/compiler/crosscompile/compile/libc"
+	"github.com/xgo-dev/llgo/cmd/compiler/crosscompile/compile/rtlib"
+	internalenv "github.com/xgo-dev/llgo/cmd/compiler/env"
 	"github.com/xgo-dev/llgo/target"
-	llvmenv "github.com/xgo-dev/llgo/xtool/env/llvm"
+	llvmenv "github.com/xgo-dev/llgo/cmd/xtool/env/llvm"
 )
 
 // Keep ordinary Go-only queries on the forwarding path, without inspecting

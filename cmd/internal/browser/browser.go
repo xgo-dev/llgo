@@ -41,10 +41,10 @@ import (
 	"time"
 
 	"github.com/xgo-dev/llgo/cmd/internal/wasmdecoder"
-	"github.com/xgo-dev/llgo/internal/browserdebug"
-	"github.com/xgo-dev/llgo/internal/debugabi"
-	"github.com/xgo-dev/llgo/internal/env"
-	"github.com/xgo-dev/llgo/internal/wasmdebug"
+	"github.com/xgo-dev/llgo/cmd/compiler/browserdebug"
+	"github.com/xgo-dev/llgo/cmd/compiler/debugabi"
+	"github.com/xgo-dev/llgo/cmd/compiler/env"
+	"github.com/xgo-dev/llgo/cmd/compiler/wasmdebug"
 )
 
 const MinimumChromeMajor = 123

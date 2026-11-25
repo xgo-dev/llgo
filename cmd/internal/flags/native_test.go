@@ -24,8 +24,8 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/internal/base"
-	"github.com/xgo-dev/llgo/internal/build"
-	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 )
 
 func TestExecFlagQuotedWords(t *testing.T) {

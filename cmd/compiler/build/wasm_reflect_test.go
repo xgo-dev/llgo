@@ -1,0 +1,354 @@
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package build
+
+import (
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"testing"
+
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"golang.org/x/tools/go/packages"
+	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
+)
+
+func TestConfigureWasmReflectBridges(t *testing.T) {
+	tests := []struct {
+		name     string
+		target   *llvmgen.Target
+		src      string
+		expected bool
+	}{
+		{
+			"reachable WASI reflection",
+			&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
+			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
+			true,
+		},
+		{
+			"dead WASI reflection",
+			&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
+			`package main; import "reflect"; func dead(v reflect.Value) { v.Call(nil) }; func main() {}`,
+			false,
+		},
+		{
+			"fmt reflection metadata does not require bridges",
+			&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"},
+			`package main; import "fmt"; func main() { _ = fmt.Sprintf("%v", 1) }`,
+			false,
+		},
+		{
+			"GoJS reflection uses typed bridges",
+			&llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
+			true,
+		},
+		{
+			"Emscripten Memory32 reflection uses typed bridges",
+			&llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j32", WasmProvider: "emscripten"},
+			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
+			true,
+		},
+		{
+			"Emscripten Memory64 reflection uses typed bridges",
+			&llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", WasmProvider: "emscripten"},
+			`package main; import "reflect"; func main() { reflect.ValueOf(func() {}).Call(nil) }`,
+			true,
+		},
+		{
+			"dead JavaScript reflection does not require bridges",
+			&llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "emscripten"},
+			`package main; import "reflect"; func dead(v reflect.Value) { v.Call(nil) }; func main() {}`,
+			false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, test.src)
+			prog := llvmgen.NewProgram(test.target)
+			defer prog.Dispose()
+			ctx := &context{
+				prog:    prog,
+				progSSA: pkg.Prog,
+				initial: []*packages.Package{nil, {}, {Types: types.NewPackage("example.com/missing", "missing")}, {Types: pkg.Pkg}},
+			}
+			configureWasmReflectBridges(ctx)
+			if got := test.target.WasmReflectBridges; got != test.expected {
+				t.Fatalf("WasmReflectBridges = %v, want %v", got, test.expected)
+			}
+		})
+	}
+
+	configureWasmReflectBridges(nil)
+	if roots := wasmReflectRoots(nil); roots != nil {
+		t.Fatalf("wasmReflectRoots(nil) = %v", roots)
+	}
+}
+
+func TestConfigureWasmFuncInfoEntries(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    *llvmgen.Target
+		buildMode BuildMode
+		src       string
+		want      bool
+	}{
+		{
+			name:      "plain executable",
+			target:    &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			buildMode: BuildModeExe,
+			src:       `package main; func main() {}`,
+		},
+		{
+			name:      "reachable FuncForPC",
+			target:    &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			buildMode: BuildModeExe,
+			src:       `package main; import "runtime"; func main() { _ = runtime.FuncForPC(0) }`,
+			want:      true,
+		},
+		{
+			name:      "dead FuncForPC",
+			target:    &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			buildMode: BuildModeExe,
+			src:       `package main; import "runtime"; func dead() { _ = runtime.FuncForPC(0) }; func main() {}`,
+		},
+		{
+			name:      "wasm library",
+			target:    &llvmgen.Target{GOOS: "js", GOARCH: "wasm", WasmProvider: "gojs"},
+			buildMode: BuildModeCArchive,
+			src:       `package main; func main() {}`,
+			want:      true,
+		},
+		{
+			name:      "native",
+			target:    &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"},
+			buildMode: BuildModeExe,
+			src:       `package main; import "runtime"; func main() { _ = runtime.FuncForPC(0) }`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, test.src)
+			prog := llvmgen.NewProgram(test.target)
+			defer prog.Dispose()
+			ctx := &context{
+				prog:      prog,
+				progSSA:   pkg.Prog,
+				initial:   []*packages.Package{{Types: pkg.Pkg}},
+				buildConf: &Config{BuildMode: test.buildMode},
+			}
+			configureWasmFuncInfoEntries(ctx)
+			if got := test.target.WasmFuncInfoEntries; got != test.want {
+				t.Fatalf("WasmFuncInfoEntries = %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	configureWasmFuncInfoEntries(nil)
+	if programUsesRuntimeFuncForPC(nil, nil) || isRuntimeFuncForPC(nil) {
+		t.Fatal("nil program unexpectedly requires Wasm function entries")
+	}
+	withFuncForPC := buildWasmReflectTestProgram(t, `package p; import "runtime"; func f() { _ = runtime.FuncForPC(0) }`)
+	if !programUsesRuntimeFuncForPC(withFuncForPC.Prog, nil) {
+		t.Fatal("whole-program scan did not find runtime.FuncForPC")
+	}
+	withoutFuncForPC := buildWasmReflectTestProgram(t, `package p; func f() {}`)
+	if programUsesRuntimeFuncForPC(withoutFuncForPC.Prog, nil) {
+		t.Fatal("whole-program scan found an absent runtime.FuncForPC")
+	}
+}
+
+func TestConfigureWasmProgramAnalysisShared(t *testing.T) {
+	pkg := buildWasmReflectTestProgram(t, `package main
+import (
+	"reflect"
+	"runtime"
+)
+func main() {
+	reflect.ValueOf(func() {}).Call(nil)
+	_ = runtime.FuncForPC(0)
+}`)
+	target := &llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"}
+	prog := llvmgen.NewProgram(target)
+	defer prog.Dispose()
+	ctx := &context{
+		prog:      prog,
+		progSSA:   pkg.Prog,
+		initial:   []*packages.Package{{Types: pkg.Pkg}},
+		buildConf: &Config{BuildMode: BuildModeExe},
+	}
+
+	configureWasmReflectBridges(ctx)
+	analysis := ctx.wasmProgramUse
+	if analysis == nil {
+		t.Fatal("reflection configuration did not analyze the WebAssembly program")
+	}
+	configureWasmFuncInfoEntries(ctx)
+	if ctx.wasmProgramUse != analysis {
+		t.Fatal("reflection bridges and function metadata used different program analyses")
+	}
+	if !target.WasmReflectBridges || !target.WasmFuncInfoEntries {
+		t.Fatalf("WebAssembly features = bridges %v, function entries %v", target.WasmReflectBridges, target.WasmFuncInfoEntries)
+	}
+}
+
+func TestProgramUsesWasmReflectBridges(t *testing.T) {
+	if use := analyzeWasmInitialUse(nil, nil); use.rooted || len(use.all) != 0 {
+		t.Fatalf("nil initial analysis = %+v", use)
+	}
+	if programUsesWasmReflectBridges(nil, nil) {
+		t.Fatal("nil program may not require reflection bridges")
+	}
+	if isWasmReflectBridgeCall(nil, false) {
+		t.Fatal("nil call may not be a reflection bridge")
+	}
+	if got := ssaFunctionPackagePath(nil); got != "" {
+		t.Fatalf("nil function package path = %q", got)
+	}
+	if got := ssaFunctionPackagePath(new(ssa.Function)); got != "" {
+		t.Fatalf("synthetic function package path = %q", got)
+	}
+	tests := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"no reflection", `package p; func f() int { return 1 }`, false},
+		{"metadata only", `package p; import "reflect"; func f() reflect.Type { return reflect.TypeOf(1) }`, false},
+		{"method value", `package p; import "reflect"; func f(v reflect.Value) any { return v.Method(0).Interface() }`, true},
+		{"named method value", `package p; import "reflect"; func f(v reflect.Value) any { return v.MethodByName("M").Interface() }`, true},
+		{"type method metadata", `package p; import "reflect"; func f(t reflect.Type) reflect.Method { return t.Method(0) }`, false},
+		{"named type method metadata", `package p; import "reflect"; func f(t reflect.Type) (reflect.Method, bool) { return t.MethodByName("M") }`, false},
+		{"value call", `package p; import "reflect"; func f(v reflect.Value) { v.Call(nil) }`, true},
+		{"call slice", `package p; import "reflect"; func f(v reflect.Value) { v.CallSlice(nil) }`, true},
+		{"make func", `package p; import "reflect"; func f(t reflect.Type, fn func([]reflect.Value) []reflect.Value) { reflect.MakeFunc(t, fn) }`, true},
+		{"sequence", `package p; import "reflect"; func f(v reflect.Value) { _ = v.Seq() }`, true},
+		{"sequence two", `package p; import "reflect"; func f(v reflect.Value) { _ = v.Seq2() }`, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, test.src)
+			if got := programUsesWasmReflectBridges(pkg.Prog, nil); got != test.want {
+				t.Fatalf("programUsesWasmReflectBridges() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestProgramUsesWasmReflectBridgesReachability(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"dead call", `package main; import "reflect"; func dead(v reflect.Value) { v.Call(nil) }; func main() {}`, false},
+		{"dead method value", `package main; import "reflect"; func dead(v reflect.Value) any { return v.Method(0).Interface() }; func main() {}`, false},
+		{"method value invocation", `package main; import "reflect"; type T int; func (t T) Add(x int) int { return int(t)+x }; func main() { reflect.ValueOf(T(40)).MethodByName("Add").Interface().(func(int) int)(2) }`, true},
+		{"bound method lookup", `package main; import "reflect"; func main() { lookup := reflect.Value{}.MethodByName; _ = lookup("M") }`, true},
+		{"interface method lookup", `package main; import "reflect"; type lookup interface { Method(int) reflect.Value }; func main() { var v lookup = reflect.Value{}; _ = v.Method(0) }`, true},
+		{"interface alias method lookup", `package main; import "reflect"; type V = reflect.Value; type lookup interface { Method(int) V }; type T int; func (t T) Add(x int) int { return int(t)+x }; func main() { var v lookup = reflect.ValueOf(T(40)); _ = v.Method(0).Interface().(func(int) int)(2) }`, true},
+		{"interface alias named method lookup", `package main; import "reflect"; type V = reflect.Value; type lookup interface { MethodByName(string) V }; type T int; func (t T) Add(x int) int { return int(t)+x }; func main() { var v lookup = reflect.ValueOf(T(40)); _ = v.MethodByName("Add").Interface().(func(int) int)(2) }`, true},
+		{"interface alias type method metadata", `package main; import "reflect"; type M = reflect.Method; type lookup interface { Method(int) M }; func main() { var t lookup = reflect.TypeOf(0); _ = t.Method(0) }`, false},
+		{"bound type method metadata", `package main; import "reflect"; func main() { lookup := reflect.TypeOf(0).Method; _ = lookup(0) }`, false},
+		{"named type method metadata", `package main; import "reflect"; func main() { _, _ = reflect.TypeOf(0).MethodByName("M") }`, false},
+		{"reachable call", `package main; import "reflect"; func live(v reflect.Value) { v.Call(nil) }; func main() { live(reflect.Value{}) }`, true},
+		{"function value call", `package main; import "reflect"; var call = reflect.Value.Call; func main() { call(reflect.Value{}, nil) }`, true},
+		{"bound method call", `package main; import "reflect"; func main() { call := reflect.Value{}.Call; call(nil) }`, true},
+		{"function value make func", `package main; import "reflect"; var makeFunc = reflect.MakeFunc; func main() { makeFunc(reflect.TypeOf(func() {}), func([]reflect.Value) []reflect.Value { return nil }) }`, true},
+		{"function value sequence", `package main; import "reflect"; var sequence = reflect.Value.Seq; func main() { _ = sequence(reflect.ValueOf(1)) }`, true},
+		{"interface call", `package main; import "reflect"; type caller interface { Call([]reflect.Value) []reflect.Value }; func main() { var call caller = reflect.Value{}; call.Call(nil) }`, true},
+		{"unrelated bound method", `package main; type value int; func (value) M() {}; func main() { var v value; call := v.M; call() }`, false},
+		{"unrelated reflect bound method", `package main; import "reflect"; func main() { typ := reflect.TypeOf(0); name := typ.String; _ = name() }`, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, test.src)
+			roots := []*ssa.Function{pkg.Func("init"), pkg.Func("main")}
+			if got := programUsesWasmReflectBridges(pkg.Prog, roots); got != test.want {
+				t.Fatalf("reachable programUsesWasmReflectBridges() = %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	if programMayCallWasmReflectBridgeIndirectly(nil, false) {
+		t.Fatal("nil reachable set may not require bridges")
+	}
+}
+
+func TestWasmReflectNativeFuncAdapters(t *testing.T) {
+	const prefix = `package main; import "reflect"
+type Plain = func(int) int
+type Alias = Plain
+type Native Plain
+type Indirect = Native
+type Generic[T any] func(T) T
+type Record struct{ F Indirect }
+var v reflect.Value
+func main() { `
+	for _, tc := range []struct {
+		decl, expr string
+		want       bool
+	}{
+		{"Alias", `v.Set(v)`, true},
+		{"Alias", `v.Convert(v.Type())`, true},
+		{"Alias", `_, _ = reflect.TypeAssert[func(Plain) Plain](v)`, true},
+		{"Alias", `_, _ = reflect.TypeAssert[int](v)`, false},
+		{"Alias", `_ = v.Kind()`, false},
+		{"Native", `reflect.ValueOf(Native(nil)).Convert(v.Type())`, true},
+		{"Native", `reflect.ValueOf(Record{}).Field(0).Convert(v.Type())`, true},
+		{"Generic", `reflect.ValueOf(Generic[int](nil)).Convert(v.Type())`, true},
+		{"Native", `reflect.ValueOf(0).Convert(v.Type())`, false},
+		{"Record", `reflect.ValueOf(Record{}).Convert(v.Type())`, false},
+	} {
+		t.Run(tc.decl+"/"+tc.expr, func(t *testing.T) {
+			pkg := buildWasmReflectTestProgram(t, prefix+tc.expr+"}")
+			use := analyzeWasmProgramUse(pkg.Prog, []*ssa.Function{pkg.Func("main")})
+			prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProvider: "wasi"})
+			defer prog.Dispose()
+			if use.usesWasmReflectBridges(prog) {
+				t.Fatal("ordinary Go value operation enabled bridges")
+			}
+			prog.SetNativeTypeDecl(pkg.Pkg, tc.decl, llvmgen.CDecl)
+			if got := use.usesWasmReflectBridges(prog); got != tc.want {
+				t.Errorf("bridges = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func buildWasmReflectTestProgram(t *testing.T, src string) *ssa.Package {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := types.NewPackage("example.com/"+file.Name.Name, file.Name.Name)
+	pkg, _, err := ssautil.BuildPackage(
+		&types.Config{Importer: importer.Default()}, fset,
+		checked, []*ast.File{file},
+		ssa.SanityCheckFunctions|ssa.InstantiateGenerics,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pkg
+}

@@ -29,9 +29,9 @@ import (
 	"github.com/xgo-dev/llgo/cmd/internal/browser"
 	"github.com/xgo-dev/llgo/cmd/internal/gdb"
 	"github.com/xgo-dev/llgo/cmd/internal/lldb"
-	"github.com/xgo-dev/llgo/internal/build"
-	"github.com/xgo-dev/llgo/internal/env"
-	"github.com/xgo-dev/llgo/internal/shellparse"
+	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/env"
+	"github.com/xgo-dev/llgo/cmd/compiler/shellparse"
 	"github.com/xgo-dev/llgo/target"
 )
 

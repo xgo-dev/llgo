@@ -30,7 +30,7 @@ local_checkout_root() {
 install_local_checkout() {
     local root="$1"
     printf 'Installing llgo from local source...\n'
-    (cd "$root" && go install ./cmd/llgo)
+    (cd "$root/cmd" && go install ./llgo)
     if [[ -n "${GITHUB_ENV:-}" ]]; then
         printf 'LLGO_ROOT=%s\n' "$(windows_native_path "$root")" >>"$GITHUB_ENV"
     fi

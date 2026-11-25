@@ -10,31 +10,29 @@ skip whole-program frontend and LLVM re-materialization on cache hits.
 ## Target Module Graph (`golang.org/x/tools`-Aligned)
 
 ```text
-github.com/xgo-dev/llgo              (root go.mod — low Go baseline: go 1.20)
+github.com/xgo-dev/llgo              (root go.mod — strict Go baseline: go 1.20, zero external deps, zero replace)
 ├── directive/                       Pure-Go //llgo:* and //go:* directive parsing & semantics
 ├── target/                          Pure-Go target triple, arch, and config model
 ├── types/                           Pure-Go semantic, physical layout, GC, and ABI type engine (self-contained model + go/types lowering)
-│   └── typeutil/                    (planned) type-map helpers (mirrors x/tools/go/types/typeutil)
+│   └── typeutil/                    Pure-Go type-map helpers (mirrors x/tools/go/types/typeutil)
 ├── ssa/                             Pure-Go mid-level SSA IR & verifier (mirrors x/tools/go/ssa core; omits ssautil wrapper)
-├── exportdata/                      (planned) compact binary codec for types.Package, PackageSummary,
-│                                    LinkSnapshot & PCLN (mirrors x/tools/go/gcexportdata)
-├── analysis/                        (planned) modular pure-Go analysis passes (mirrors x/tools/go/analysis)
+├── exportdata/                      Compact binary codec for types.Package, PackageMeta, LinkSnapshot, Depfile & PCLN
+├── analysis/                        Modular pure-Go analysis passes (mirrors x/tools/go/analysis)
 │   ├── callgraph/                   Call graph / RTA over llgo/ssa + exportdata
 │   ├── escape/                      Per-package & whole-program escape summaries
 │   ├── deadcode/                    Go-side reachability & DCE
 │   └── inline/                      Cross-package inlining summaries
-└── runtime/go.mod                   (existing separate module, go 1.20, unchanged)
+└── runtime/go.mod                   (separate module, go 1.20)
 
-github.com/xgo-dev/llgo/cmd          (cmd/go.mod — latest Go toolchain, e.g. go 1.27+)
+github.com/xgo-dev/llgo/cmd          (cmd/go.mod — latest Go toolchain, go 1.27.0)
 ├── llgo/                            CLI entrypoint (`llgo`)
-├── llgen/                           IR generation tool
-└── internal/                        Compiler internals & CLI subcommands:
-    ├── build/                       Build driver, cache orchestration, linking
-    ├── cl/                          Go frontend adapter (go/types + x/tools/go/ssa → llgo/ssa)
-    ├── llvmgen/                     CGo/LLVM codegen backend (relocated from root ssa/ into internal/llvmgen/)
-    └── ...                          CABI, debuggers, binary tools, etc.
+├── internal/                        CLI subcommands & flag handling
+├── cl/                              Go frontend adapter (go/types + x/tools/go/ssa → llgo/ssa & LLVM)
+├── compiler/                        Compiler internals (build, llvmgen, cabi, crosscompile, env, packages, ...)
+├── xtool/                           LLVM/C toolchain bindings
+└── chore/                           Repository maintenance utilities
 
-go.work                              Coordinates `.`, `./cmd`, and `./runtime` in local dev & CI
+go.work                              Coordinates `.`, `./cmd`, `./runtime`, `./test`, `./dev`, `./benchmark`
 ```
 
 ### Package Taxonomy Mapping (`golang.org/x/tools` ↔ `llgo`)

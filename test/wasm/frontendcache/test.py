@@ -25,7 +25,7 @@ def main():
         output = args.output.resolve() if args.output else Path(temporary)
         output.mkdir(parents=True, exist_ok=True)
         fixture = output / "source"
-        shutil.copytree(ROOT / "internal/build/testdata/frontendcache", fixture)
+        shutil.copytree(ROOT / "cmd/compiler/build/testdata/frontendcache", fixture)
         report = []
         for profile in args.profile or PROFILES:
             target, runner = PROFILES[profile]

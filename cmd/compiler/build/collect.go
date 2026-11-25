@@ -1,0 +1,826 @@
+/*
+ * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package build
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/xgo-dev/llgo/cmd/compiler/env"
+	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/meta"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	gopackages "golang.org/x/tools/go/packages"
+)
+
+// collectFingerprint collects all inputs and generates fingerprint for a package.
+func (c *context) collectFingerprint(pkg *aPackage) error {
+	if pkg.Manifest != "" && pkg.Fingerprint != "" {
+		return nil
+	}
+	if c.fingerprinting == nil {
+		c.fingerprinting = make(map[string]bool)
+	}
+	if c.fingerprinting[pkg.ID] {
+		// Alternate runtime replacements can close a cycle after the complete
+		// SSA graph is registered. Such a cycle has no stable per-package key,
+		// so rebuild its members instead of reporting a false cache hit.
+		c.disablePackageCache(c.fingerprinting)
+		return nil
+	}
+	c.fingerprinting[pkg.ID] = true
+	defer delete(c.fingerprinting, pkg.ID)
+
+	m := newManifestBuilder()
+
+	// Env section
+	c.collectEnvInputs(m)
+
+	// Common section
+	c.collectCommonInputs(m)
+
+	// Package section
+	if err := c.collectPackageInputs(m, pkg); err != nil {
+		return err
+	}
+
+	// Dependency section
+	if err := c.collectDependencyInputs(m, pkg); err != nil {
+		return err
+	}
+
+	pkg.Manifest = m.Build()
+	pkg.Fingerprint = m.Fingerprint()
+	return nil
+}
+
+func (c *context) disablePackageCache(pkgs map[string]bool) {
+	if c.cacheDisabled == nil {
+		c.cacheDisabled = make(map[string]none, len(pkgs))
+	}
+	for id := range pkgs {
+		c.cacheDisabled[id] = none{}
+	}
+}
+
+func (c *context) packageCacheDisabled(id string) bool {
+	_, disabled := c.cacheDisabled[id]
+	return disabled
+}
+
+// collectEnvInputs collects environment-related inputs.
+func (c *context) collectEnvInputs(m *manifestBuilder) {
+	m.env.Goos = c.buildConf.Goos
+	m.env.Goarch = c.buildConf.Goarch
+	m.env.Go386 = c.buildConf.GO386
+	m.env.Goamd64 = c.buildConf.GOAMD64
+	m.env.Goarm = c.buildConf.GOARM
+	m.env.Goarm64 = c.buildConf.GOARM64
+	m.env.Goexperiment = c.buildConf.GOEXPERIMENT
+	m.env.SourceGoVersion = c.buildConf.sourceGoVersion
+	m.env.ToolTags = slices.Clone(c.buildConf.toolTags)
+	m.env.LlvmTriple = c.crossCompile.LLVMTarget
+	m.env.LlgoVersion = env.Version()
+	m.env.LlgoCompilerHash = c.buildConf.CompilerHash
+	m.env.GoVersion = c.sourceGoVersion()
+	m.env.LlvmVersion = c.getLLVMVersion()
+
+	// Environment variables that affect build
+	envVars := []string{
+		llgoTrace,
+		llgoOptimize,
+		llgoWasmRuntime,
+		llgoWasiThreads,
+		llgoWasmWorkers,
+		llgoStdioNobuf,
+		llgoFullRpath,
+	}
+	if c.buildConf.Goos == "js" && c.buildConf.Goarch == "wasm" {
+		// emcc consumes this for both LLVM IR codegen and linking. In
+		// particular, native Wasm SjLj objects cannot reuse JS SjLj objects.
+		envVars = append(envVars, "EMCC_CFLAGS")
+	}
+	for _, envVar := range envVars {
+		if v := os.Getenv(envVar); v != "" {
+			m.env.Vars = m.env.Vars.Add(envVar, v)
+		}
+	}
+	if effectivePCLNMode(c.buildConf) != PCLNNone {
+		// Record the effective value so equivalent spellings (unset, 1,
+		// true, on) share a cache entry.
+		m.env.Vars = m.env.Vars.Add(llgoFuncInfoSites, strconv.FormatBool(IsFuncInfoSitesEnabled()))
+	}
+}
+
+func (c *context) sourceGoVersion() string {
+	if c.goVersion != "" {
+		return c.goVersion
+	}
+	// Fallback for tests that construct a bare context. Production builds set
+	// goVersion from the source GOROOT before packages are fingerprinted.
+	return runtime.Version()
+}
+
+// collectCommonInputs collects common build configuration inputs.
+func (c *context) collectCommonInputs(m *manifestBuilder) {
+	// This decision changes cached LLVM call-site attributes, including when
+	// driven by environment or external-linker flags used only at final link.
+	m.common.DispatchInlineBudget = c.dispatchInlineBudgetEnabled()
+	m.common.EscapeAnalysisVersion = goescape.Version
+	if c.buildConf.Tags != "" {
+		m.common.BuildTags = strings.Split(c.buildConf.Tags, ",")
+	}
+	m.common.Target = c.buildConf.Target
+	m.common.WasmRuntimeFree = c.wasmRuntimeFree
+	m.common.TargetABI = c.crossCompile.TargetABI
+	m.common.WasmProfile = string(c.crossCompile.WasmProfile)
+	m.common.WasmProvider = string(c.crossCompile.WasmProvider)
+	if c.prog != nil && c.prog.Target() != nil {
+		m.common.WasmReflectBridges = c.prog.Target().WasmReflectBridges
+		m.common.WasmFuncInfoEntries = c.prog.Target().WasmFuncInfoEntries
+	}
+	m.common.PlatformABI = string(c.crossCompile.Toolchain.ABI)
+	m.common.ObjectFormat = string(c.crossCompile.Toolchain.ObjectFormat)
+	m.common.DriverFlavor = string(c.crossCompile.Toolchain.Driver)
+	m.common.LinkerFlavor = string(c.crossCompile.Toolchain.Linker)
+	m.common.TargetTriple = c.crossCompile.Toolchain.TargetTriple
+	m.common.CRTFlavor = string(c.crossCompile.Toolchain.CRT)
+	m.common.CXXRuntime = string(c.crossCompile.Toolchain.CXXRuntime)
+	m.common.SDKVersion = c.crossCompile.Toolchain.SDKVersion
+	m.common.CRTVersion = c.crossCompile.Toolchain.CRTVersion
+	m.common.ToolsetVersion = c.crossCompile.Toolchain.ToolsetVersion
+	m.common.GoGlobalDCE = c.buildConf.goGlobalDCEEnabled()
+	// Original DCE inserts interface-visibility predicates into package IR.
+	// A non-DCE link cannot resolve those predicates from a cached archive.
+	m.common.DeadcodeDrop = c.buildConf.deadcodeDropEnabled()
+	m.common.EnableLTOPlugin = c.buildConf.LTOPlugin.Enabled()
+	m.common.EmitDWARF = shouldEmitDebugInfo(c.buildConf, &c.crossCompile)
+	m.common.EmitCodeView = shouldEmitCodeView(c.buildConf, &c.crossCompile)
+	m.common.PCLNMode = effectivePCLNMode(c.buildConf).String()
+	m.common.DisableBoundsChecks = c.buildConf.DisableBoundsChecks
+	m.common.SaturatingFloatToInt = c.buildConf.SaturatingFloatToInt
+	m.common.LocalContext = c.prog != nil && c.prog.NeedsLocalContext()
+
+	// Compiler configuration
+	if c.crossCompile.CC != "" {
+		m.common.CC = c.crossCompile.CC
+	}
+	if len(c.crossCompile.CCArgs) > 0 {
+		m.common.CCArgs = slices.Clone(c.crossCompile.CCArgs)
+	}
+	m.common.CCIdentity = c.crossCompile.CCIdentity
+	if c.crossCompile.CXX != "" {
+		m.common.CXX = c.crossCompile.CXX
+	}
+	if len(c.crossCompile.CXXArgs) > 0 {
+		m.common.CXXArgs = slices.Clone(c.crossCompile.CXXArgs)
+	}
+	m.common.CXXIdentity = c.crossCompile.CXXIdentity
+	if len(c.crossCompile.CCFLAGS) > 0 {
+		m.common.CCFlags = append([]string(nil), c.crossCompile.CCFLAGS...)
+	}
+	if len(c.crossCompile.CFLAGS) > 0 {
+		m.common.CFlags = append([]string(nil), c.crossCompile.CFLAGS...)
+	}
+	if len(c.crossCompile.LDFLAGS) > 0 {
+		m.common.LDFlags = append([]string(nil), c.crossCompile.LDFLAGS...)
+	}
+	if c.crossCompile.Linker != "" {
+		m.common.Linker = c.crossCompile.Linker
+	}
+	if len(c.crossCompile.LinkerArgs) > 0 {
+		m.common.LinkerArgs = slices.Clone(c.crossCompile.LinkerArgs)
+	}
+	m.common.LinkerIdentity = c.crossCompile.LinkerIdentity
+
+	// Extra files from target configuration
+	if len(c.crossCompile.ExtraFiles) > 0 {
+		extraList, err := digestFiles(c.crossCompile.ExtraFiles)
+		if err == nil && len(extraList) > 0 {
+			m.common.ExtraFiles = extraList
+		}
+	}
+}
+
+// Appended source-patch files are selected after go list and therefore are not
+// present in GoFiles. Their source bodies must participate in cache keys too.
+func packageGoSourceInputs(p *packages.Package, sourcePatches []string) []string {
+	files := slices.Clone(p.GoFiles)
+	for _, file := range sourcePatches {
+		if !slices.Contains(files, file) {
+			files = append(files, file)
+		}
+	}
+	return files
+}
+
+// collectPackageInputs collects package-specific inputs.
+func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error {
+	p := pkg.Package
+
+	m.pkg.PkgPath = p.PkgPath
+	m.pkg.PkgID = p.ID
+	m.pkg.GoVersion = c.buildConf.GoVersion
+	if m.pkg.GoVersion == "" && p.Module != nil {
+		m.pkg.GoVersion = p.Module.GoVersion
+	}
+	if c.frontend != nil {
+		m.pkg.FrontendInputs = c.frontend.keys[p.ID]
+	}
+	m.pkg.DeadInits = slices.Clone(c.frontendOptions.UnusedGlobalInits.CacheKeys(pkg.SSA))
+	if pkg.AltPkg != nil && c.progSSA != nil {
+		m.pkg.DeadInits = append(m.pkg.DeadInits, c.frontendOptions.UnusedGlobalInits.CacheKeys(c.progSSA.Package(pkg.AltPkg.Types))...)
+		slices.Sort(m.pkg.DeadInits)
+	}
+	if p.PkgPath == llvmgen.PkgRuntime {
+		// Only the runtime embeds this setting; goroutine callers have a
+		// configuration-independent ABI. Match SetPthreadStackSize in Build.
+		m.pkg.PthreadStackSize = max(0, c.buildConf.PthreadStackSize)
+	}
+
+	// Go source files
+	goFilesList, err := digestFilesWithOverlay(packageGoSourceInputs(p, c.patchFiles[p.PkgPath]), c.buildConf.Overlay)
+	if err != nil {
+		return fmt.Errorf("digest go files: %w", err)
+	}
+	m.pkg.GoFiles = goFilesList
+
+	embedFiles, err := digestEmbedFiles(p.EmbedFiles)
+	if err != nil {
+		return fmt.Errorf("digest embed files: %w", err)
+	}
+	m.pkg.EmbedFiles = embedFiles
+
+	// Alt package files (if any)
+	if pkg.AltPkg != nil {
+		altPath := pkg.AltPkg.Package.PkgPath
+		altList, err := digestFilesWithOverlay(packageGoSourceInputs(pkg.AltPkg.Package, c.patchFiles[altPath]), c.buildConf.Overlay)
+		if err != nil {
+			return fmt.Errorf("digest alt go files: %w", err)
+		}
+		m.pkg.AltGoFiles = altList
+		altEmbedFiles, err := digestEmbedFiles(pkg.AltPkg.Package.EmbedFiles)
+		if err != nil {
+			return fmt.Errorf("digest alt embed files: %w", err)
+		}
+		m.pkg.AltEmbedFiles = altEmbedFiles
+	}
+
+	// Other files (C, assembly, etc.)
+	otherFiles := append([]string{}, p.OtherFiles...)
+	sfiles, err := pkgSFiles(c, p)
+	if err != nil {
+		return fmt.Errorf("list sfiles: %w", err)
+	}
+	otherFiles = append(otherFiles, sfiles...)
+	if len(otherFiles) > 0 {
+		otherList, err := digestFilesWithOverlay(otherFiles, c.buildConf.Overlay)
+		if err != nil {
+			return fmt.Errorf("digest other files: %w", err)
+		}
+		m.pkg.OtherFiles = otherList
+	}
+
+	// ModeGen returns the in-memory Go LLVM module before C/C++/assembly
+	// LLGoFiles are compiled or archived, so it must not require the target
+	// native compiler merely to fingerprint unused link inputs.
+	if c.mode != ModeGen {
+		llgoInputs, err := llgoPkgFileInputs(c, p)
+		if err != nil {
+			return fmt.Errorf("list LLGoFiles: %w", err)
+		}
+		llgoInputs = append([]llgoFileInput(nil), llgoInputs...)
+		if pkg.AltPkg != nil {
+			altInputs, err := llgoPkgFileInputs(c, pkg.AltPkg.Package)
+			if err != nil {
+				return fmt.Errorf("list alternate LLGoFiles: %w", err)
+			}
+			llgoInputs = append(llgoInputs, altInputs...)
+		}
+		llgoFiles, err := digestLLGoFileInputs(c, llgoInputs, c.buildConf.Overlay)
+		if err != nil {
+			return fmt.Errorf("digest LLGoFiles: %w", err)
+		}
+		m.pkg.LLGoFiles = llgoFiles
+	}
+
+	// Rewrite vars
+	if len(pkg.rewriteVars) > 0 {
+		rewrites := make(map[string]string, len(pkg.rewriteVars))
+		for k, v := range pkg.rewriteVars {
+			rewrites[k] = v
+		}
+		m.pkg.RewriteVars = m.pkg.RewriteVars.AddMap(rewrites)
+	}
+
+	// Add metadata fields if available (for cache saving)
+	// (LINK_ARGS/NEED_RT/NEED_PY_INIT are appended later in saveToCache)
+
+	return nil
+}
+
+// collectDependencyInputs adds dependency fingerprints/versions into manifest.
+func (c *context) collectDependencyInputs(m *manifestBuilder, pkg *aPackage) error {
+	for _, dep := range effectiveDependencies(pkg) {
+		depEntry, err := c.dependencyFingerprint(dep)
+		if err != nil {
+			return err
+		}
+		m.deps = append(m.deps, depEntry)
+	}
+
+	return nil
+}
+
+func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error) {
+	entry := depEntry{ID: dep.ID}
+	if c.frontend != nil {
+		loaded := c.pkgByID[dep.ID]
+		if loaded == nil {
+			loaded = &aPackage{Package: dep}
+		}
+		key, err := c.frontend.inputKey(loaded)
+		if err != nil {
+			return entry, err
+		}
+		// Source closure + this dependency's context-specific initializer plan is
+		// complete without recursively hashing archive keys through replacement
+		// cycles. The common target/feature policy is in every parent manifest.
+		plans := append([]string{}, c.frontendOptions.UnusedGlobalInits.CacheKeys(loaded.SSA)...)
+		if loaded.AltPkg != nil {
+			plans = append(plans, c.frontendOptions.UnusedGlobalInits.CacheKeys(c.progSSA.Package(loaded.AltPkg.Types))...)
+		}
+		slices.Sort(plans)
+		entry.Fingerprint = frontendDigest([]byte(key + fmt.Sprint(plans)))
+		return entry, nil
+	}
+	if v := moduleVersion(dep.Module); v != "" {
+		entry.Version = v
+		return entry, nil
+	}
+
+	if c.pkgByID != nil {
+		if aDep, ok := c.pkgByID[dep.ID]; ok {
+			if aDep.Fingerprint == "" {
+				if err := c.collectFingerprint(aDep); err != nil {
+					return entry, fmt.Errorf("collect fingerprint for %s: %w", dep.ID, err)
+				}
+			}
+			entry.Fingerprint = aDep.Fingerprint
+			return entry, nil
+		}
+	}
+
+	temp := &aPackage{Package: dep}
+	if err := c.collectFingerprint(temp); err != nil {
+		return entry, fmt.Errorf("collect fingerprint for %s: %w", dep.ID, err)
+	}
+	entry.Fingerprint = temp.Fingerprint
+	return entry, nil
+}
+
+func moduleVersion(mod *gopackages.Module) string {
+	if mod == nil {
+		return ""
+	}
+	if mod.Replace != nil {
+		// replace to local path (Version empty) should not use version for fingerprint
+		if mod.Replace.Version != "" {
+			return mod.Replace.Version
+		}
+		return ""
+	}
+	return mod.Version
+}
+
+// getLLVMVersion returns the cached LLVM version or detects it.
+func (c *context) getLLVMVersion() string {
+	if c.llvmVersion != "" {
+		return c.llvmVersion
+	}
+	c.llvmVersion = detectLLVMVersion(c)
+	return c.llvmVersion
+}
+
+// detectLLVMVersion detects LLVM version from clang --version.
+func detectLLVMVersion(ctx *context) string {
+	// Get compiler path from cross compile config
+	cc := ctx.crossCompile.CC
+	if cc == "" {
+		cc = "clang"
+	}
+	versionCmd := exec.Command(cc, "--version")
+	ctx.commands.configure(versionCmd)
+	output, err := versionCmd.Output()
+	if err != nil {
+		return ""
+	}
+	line := string(output)
+	if idx := strings.IndexByte(line, '\n'); idx >= 0 {
+		line = line[:idx]
+	}
+	return strings.TrimSpace(line)
+}
+
+// targetTriple returns the target triple for cache directory.
+func (c *context) targetTriple() string {
+	return targetTriple(
+		c.buildConf.Goos,
+		c.buildConf.Goarch,
+		c.crossCompile.LLVMTarget,
+		c.crossCompile.TargetABI,
+	)
+}
+
+// targetTriple returns the target triple string for cache directory
+func targetTriple(goos, goarch, llvmTarget, targetABI string) string {
+	triple := llvmTarget
+	if triple == "" {
+		triple = fmt.Sprintf("%s-%s", goarch, goos)
+	}
+	if targetABI != "" {
+		triple = triple + "-" + targetABI
+	}
+	return triple
+}
+
+// ensureCacheManager creates cacheManager if not exists.
+func (c *context) ensureCacheManager() *cacheManager {
+	if c.cacheManager == nil {
+		c.cacheManager = newCacheManager()
+	}
+	return c.cacheManager
+}
+
+// tryLoadFromCache attempts to load a package from cache.
+// Returns true if cache hit, false otherwise.
+func (c *context) tryLoadFromCache(pkg *aPackage) bool {
+	if pkg.CacheHit {
+		return true
+	}
+	if !cacheEnabled() {
+		return false
+	}
+	if c.packageCacheDisabled(pkg.ID) {
+		return false
+	}
+
+	// Main packages are intentionally not written to the build cache because
+	// each executable's entry module is linked against the current main archive.
+	// Do not load stale main archives that may exist from older cache layouts.
+	if pkg.Name == "main" {
+		return false
+	}
+
+	// Skip cache when force rebuild is enabled
+	if c.buildConf.ForceRebuild {
+		return false
+	}
+
+	if pkg.Fingerprint == "" {
+		return false
+	}
+
+	cm := c.ensureCacheManager()
+	paths := cm.PackagePaths(c.targetTriple(), pkg.PkgPath, pkg.Fingerprint)
+
+	// Check if archive file exists
+	if _, err := os.Stat(paths.Archive); err != nil {
+		return false
+	}
+
+	// Read metadata from manifest
+	content, err := readManifest(paths.Manifest)
+	if err != nil {
+		return false
+	}
+	var pkgMeta *meta.PackageMeta
+	if c.buildConf.packageMetaEnabled() {
+		pkgMeta, err = readMeta(paths.Meta)
+		if err != nil {
+			return false
+		}
+	}
+
+	// Parse metadata from manifest [Package] section (INI format)
+	meta, err := parseManifestMetadata(content)
+	if err != nil {
+		return false
+	}
+
+	// Use the .a archive directly for linking (no extraction needed)
+	pkg.ArchiveFile = paths.Archive
+	pkg.LinkArgs = meta.LinkArgs
+	pkg.NeedRt = meta.NeedRt
+	pkg.NeedPyInit = meta.NeedPyInit
+	pkg.Meta = pkgMeta
+	if pkg.linkSnapshot == nil {
+		if snap, err := c.readLinkSnapshotSidecar(paths.LinkSnap); err == nil && snap != nil {
+			pkg.linkSnapshot = snap
+		}
+	}
+	if pkg.exportMeta == nil {
+		if em, err := c.readExportMetaSidecar(paths.Export); err == nil && em != nil {
+			pkg.exportMeta = em
+		}
+	}
+	pkg.CacheHit = true
+
+	return true
+}
+
+// parseManifestMetadata extracts metadata from manifest content.
+// It supports the new YAML format and falls back to the legacy INI layout for
+// backward compatibility with existing cache entries.
+func parseManifestMetadata(content string) (*cacheArchiveMetadata, error) {
+	meta := &cacheArchiveMetadata{}
+	if data, err := decodeManifest(content); err == nil {
+		if data.Metadata != nil {
+			meta.LinkArgs = append([]string(nil), data.Metadata.LinkArgs...)
+			meta.NeedRt = data.Metadata.NeedRt
+			meta.NeedPyInit = data.Metadata.NeedPyInit
+		}
+		return meta, nil
+	}
+
+	return parseManifestMetadataLegacy(content, meta)
+}
+
+func parseManifestMetadataLegacy(content string, meta *cacheArchiveMetadata) (*cacheArchiveMetadata, error) {
+	// Find Package section
+	idx := strings.Index(content, "[Package]\n")
+	if idx == -1 {
+		return meta, nil
+	}
+
+	// Extract Package section content (until next section or end)
+	pkgSection := content[idx+len("[Package]\n"):]
+	if nextIdx := strings.Index(pkgSection, "\n["); nextIdx != -1 {
+		pkgSection = pkgSection[:nextIdx]
+	}
+
+	// Parse key-value pairs in Package section
+	lines := strings.Split(pkgSection, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " = ", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key, value := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+
+		switch key {
+		case "LINK_ARGS":
+			if value != "" {
+				meta.LinkArgs = strings.Fields(value)
+			}
+		case "NEED_RT":
+			meta.NeedRt = value == "true"
+		case "NEED_PY_INIT":
+			meta.NeedPyInit = value == "true"
+		}
+	}
+
+	return meta, nil
+}
+
+// cacheArchiveMetadata holds metadata about a cached archive.
+type cacheArchiveMetadata struct {
+	LinkArgs   []string
+	NeedRt     bool
+	NeedPyInit bool
+}
+
+// saveToCache saves a built package to cache.
+func (c *context) saveToCache(pkg *aPackage) error {
+	if !cacheEnabled() {
+		return nil
+	}
+	if c.packageCacheDisabled(pkg.ID) {
+		return nil
+	}
+
+	if pkg.Fingerprint == "" || pkg.Manifest == "" {
+		return nil
+	}
+
+	// Don't cache main packages
+	if pkg.Name == "main" {
+		return nil
+	}
+
+	cm := c.ensureCacheManager()
+	paths := cm.PackagePaths(c.targetTriple(), pkg.PkgPath, pkg.Fingerprint)
+
+	// Ensure directory exists
+	if err := cm.EnsureDir(paths); err != nil {
+		return err
+	}
+
+	// If ArchiveFile is already set (from normalizeToArchive), copy it to cache
+	if pkg.ArchiveFile != "" {
+		if err := copyFileAtomic(pkg.ArchiveFile, paths.Archive); err != nil {
+			return err
+		}
+	} else if len(pkg.ObjFiles) > 0 {
+		// Otherwise, create archive from object files
+		if err := c.createArchiveFile(paths.Archive, pkg.ObjFiles); err != nil {
+			return err
+		}
+	} else {
+		return nil
+	}
+
+	if c.buildConf.packageMetaEnabled() {
+		if err := writeMeta(paths.Meta, pkg.Meta); err != nil {
+			return err
+		}
+	}
+
+	// Append metadata to existing manifest (pkg.Manifest was built in collectFingerprint).
+	manifestContent := pkg.Manifest
+	if manifestContent == "" {
+		return fmt.Errorf("package %s missing manifest for fingerprint %s", pkg.PkgPath, pkg.Fingerprint)
+	}
+
+	data, err := decodeManifest(manifestContent)
+	if err != nil {
+		return fmt.Errorf("decode manifest: %w", err)
+	}
+
+	meta := &manifestMetadata{
+		LinkArgs:   append([]string(nil), pkg.LinkArgs...),
+		NeedRt:     pkg.NeedRt,
+		NeedPyInit: pkg.NeedPyInit,
+	}
+	if len(meta.LinkArgs) == 0 && !meta.NeedRt && !meta.NeedPyInit {
+		data.Metadata = nil
+	} else {
+		data.Metadata = meta
+	}
+
+	manifestWithMeta, err := buildManifestYAML(data)
+	if err != nil {
+		return err
+	}
+
+	// Write manifest with metadata
+	if err := writeManifest(paths.Manifest, manifestWithMeta); err != nil {
+		return err
+	}
+
+	// Persist binary LinkSnapshot sidecar so warm cache hits skip cl.NewPackageEx
+	// and LLVM context allocation completely.
+	if pkg.linkSnapshot == nil && pkg.LPkg != nil {
+		c.snapshotBackendPackage(pkg)
+	}
+	if pkg.linkSnapshot != nil {
+		_ = c.writeLinkSnapshotSidecar(paths.LinkSnap, pkg)
+	}
+	// Persist compact binary exportdata.PackageMeta sidecar for pure-Go
+	// incremental analysis (callgraph, escape, deadcode, inline).
+	if pkg.SSA != nil {
+		_ = c.writeExportMetaSidecar(paths.Export, pkg)
+	}
+
+	// Link a cache miss from the same stable archive path used by a cache hit.
+	// Darwin records this path in its N_OSO debug map.
+	pkg.ArchiveFile = paths.Archive
+	return nil
+}
+
+// copyFileAtomic copies src to dst using a temp file for atomicity.
+func copyFileAtomic(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	same, err := sameFilePath(src, dst)
+	if err != nil {
+		return err
+	}
+	if same {
+		return nil
+	}
+
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".tmp-*")
+	if err != nil {
+		in.Close()
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			tmp.Close()
+			os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := io.Copy(tmp, in); err != nil {
+		in.Close()
+		return err
+	}
+	if err := in.Close(); err != nil {
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	if err := replaceFile(tmpName, dst); err != nil {
+		return err
+	}
+
+	cleanup = false
+	return nil
+}
+
+func sameFilePath(a, b string) (bool, error) {
+	absA, err := filepath.Abs(a)
+	if err != nil {
+		return false, err
+	}
+	absB, err := filepath.Abs(b)
+	if err != nil {
+		return false, err
+	}
+	if absA == absB {
+		return true, nil
+	}
+	fa, err := os.Stat(absA)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	fb, err := os.Stat(absB)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return os.SameFile(fa, fb), nil
+}
+
+func replaceFile(src, dst string) error {
+	err := os.Rename(src, dst)
+	if err == nil {
+		return nil
+	}
+	info, statErr := os.Lstat(dst)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return os.Rename(src, dst)
+		}
+		return err
+	}
+	// os.Remove deletes an empty directory. Keep the original rename error so
+	// callers cannot replace a directory with a regular file.
+	if info.IsDir() {
+		return err
+	}
+	// Windows cannot replace a destination that still has an open handle, and
+	// some antivirus scanners keep one briefly after Close. Remove then retry.
+	if rmErr := os.Remove(dst); rmErr != nil && !os.IsNotExist(rmErr) {
+		return err
+	}
+	if err2 := os.Rename(src, dst); err2 != nil {
+		return err
+	}
+	return nil
+}

@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/internal/base"
-	"github.com/xgo-dev/llgo/internal/build"
-	"github.com/xgo-dev/llgo/internal/env"
-	"github.com/xgo-dev/llgo/internal/mockable"
-	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/env"
+	"github.com/xgo-dev/llgo/cmd/compiler/mockable"
+	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 )
 
 // Cmd implements the compiler action used by GOROOT/test. Its option names

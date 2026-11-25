@@ -139,7 +139,7 @@ jobs:
           # The base compiler may still require #2828's external linker. Install
           # its dependency without changing PATH or the head compiler's tools.
           base="$GITHUB_WORKSPACE/.benchmark/base-source"
-          if [[ -f "$base/internal/build/darwin_linker.go" ]]; then
+          if [[ -f "$base/cmd/compiler/build/darwin_linker.go" ]]; then
             (
               LLGO_INSTALLER_LIBRARY_ONLY=1 source "$base/install.sh"
               install_macos_lld

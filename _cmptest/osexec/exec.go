@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/xgo-dev/llgo/xtool/env/llvm"
+	"github.com/xgo-dev/llgo/cmd/xtool/env/llvm"
 )
 
 func main() {

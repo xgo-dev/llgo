@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/internal/browser"
-	"github.com/xgo-dev/llgo/internal/debugabi"
-	"github.com/xgo-dev/llgo/internal/wasmdebug"
+	"github.com/xgo-dev/llgo/cmd/compiler/debugabi"
+	"github.com/xgo-dev/llgo/cmd/compiler/wasmdebug"
 	"github.com/xgo-dev/llgo/target"
 )
 
