@@ -89,7 +89,7 @@ run_llgo_timer_samples() {
 
 (
   cd "$source_root"
-  bench_pkgs=(./cmd/compiler/clang ./cmd/compiler/build/funcinfo)
+  bench_pkgs=(./internal/clang ./internal/build/funcinfo)
   if [[ -d cmd/compiler/clang ]]; then
     bench_pkgs=(./cmd/compiler/clang ./cmd/compiler/build/funcinfo)
   fi
