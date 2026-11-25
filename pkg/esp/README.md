@@ -21,6 +21,8 @@ usable from Go with hours-scale effort instead of a porting project:
 | `pkg/esp/lpcore` | `ulp_lp_core.h` + `lp_core_mailbox.h` (ulp component) | LP (low-power) coprocessor: load an LP program into LP RAM (32 KiB ceiling + the project's own reservation), run/stop with any of the six wakeup sources, single-word mailbox send/receive; the LP core keeps running through HP deep sleep (deep-sleep entry stays in the app's own glue) |
 | `pkg/esp/opus` | `opus.h` (managed component `78/esp-opus`, vanilla upstream Opus compiled fixed-point `-DFIXED_POINT=1 -DDISABLE_FLOAT_API`) | S16 PCM ↔ Opus packets: encoder (application, bitrate, complexity, frame-duration ctls; lookahead query) and decoder (duration read off the packet, packet-loss concealment on a nil frame); synchronous C-glue calls behind a generation-tagged handle table - no mailbox, no task; negative OPUS_* errors pass through named, binding-side refusals live in the 0x79xx segment |
 | `pkg/esp/wakenet` | ESP-SR WakeNet (`model_path.h`, `esp_wn_iface.h`, `esp_wn_models.h`) | Wake-word detection: model-partition enumeration, one engine instance (wn9_hilexin by default), the audio path (I2S RX or a test source) and the 3–6.4 ms/frame detect loop kept entirely on the glue's own FreeRTOS task, detections and task errors as a bounded event ring Go polls, sticky `Detected()`, per-call timing stats |
+| `pkg/esp/touch` | `driver/touch_sens.h` (touch hardware v3, `esp_driver_touch_sens`) | touch sensor controller: single-instance bring-up (Init→Config→Start lifecycle), 14 channels mapped onto GPIO6..19, channel data + hardware benchmark reads, active-threshold events (ISR callbacks → static ring → Go poll), benchmark recalibration, calibration flow documented on the package |
+| `pkg/esp/temp` | `driver/temperature_sensor.h` (`esp_driver_tsens`) | built-in temperature sensor (±1 °C): install/start/read/stop/uninstall lifecycle, range-span config, float reading carried across the boundary as integer milli-degrees |
 
 ## Package template
 
@@ -106,6 +108,8 @@ packages' meanings:
 
 | Segment | Package | Values |
 |---------|---------|--------|
+| `0x72xx` | `temp` | `ErrNotInstalled` (`0x7201`, the glue's refusal for calls before Install) |
+| `0x73xx` | `touch` | `ErrNotInit` (`0x7301`, the glue's refusal for calls before Init) |
 | `0x76xx` | `bt` | `ErrGlueABI`, `ErrNotReady`, `ErrBusy` (`0x7700+` = the A2DP domain; `0x7800+` reserved for HFP) |
 | `0x7Bxx` | `ble` | `ErrTimeout`, `ErrNotReady`, `ErrUnsupported`, `ErrBadUUID`, `ErrBadValue`, `ErrBusy`, `ErrBadProperty`, `ErrNotFound`, `ErrTooLong` |
 | `0x7C01` | `esperr` | the meta error (a wrapper with no pipeline code) |
