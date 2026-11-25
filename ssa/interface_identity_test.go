@@ -135,6 +135,26 @@ func testChangeTypeNamedInterfaceIdentity(t *testing.T, target *Target) {
 	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
+	emptyType := types.NewInterfaceType(nil, nil).Complete()
+	for i, pair := range [][2]types.Type{{src, emptyType}, {emptyType, dst}} {
+		fn := pkg.NewFunc(fmt.Sprintf("Unknown%d", i), types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewVar(token.NoPos, nil, "value", pair[0])),
+			types.NewTuple(types.NewVar(token.NoPos, nil, "", pair[1])), false), GoDecl)
+		b := fn.MakeBody(1)
+		converted := b.ChangeInterface(prog.Type(pair[1], GoDecl), fn.Param(0))
+		if !types.Identical(converted.RawType(), pair[1]) {
+			t.Fatalf("unknown conversion type = %v, want %v", converted.RawType(), pair[1])
+		}
+		b.Return(converted)
+		b.EndBuild()
+		ir := fn.impl.String()
+		if i == 0 && (!strings.Contains(ir, "IfaceType") || strings.Contains(ir, "NewItab")) {
+			t.Fatalf("non-empty to empty conversion must retain the dynamic type without an itab:\n%s", ir)
+		}
+		if i == 1 && !strings.Contains(ir, "NewItab") {
+			t.Fatalf("unknown empty to non-empty conversion must build the destination itab:\n%s", ir)
+		}
+	}
 	concrete := types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "Concrete", nil), types.Typ[types.Int], nil)
 	recv := types.NewVar(token.NoPos, pkgTypes, "", types.NewPointer(concrete))
 	concrete.AddMethod(types.NewFunc(token.NoPos, pkgTypes, "M", types.NewSignatureType(recv, nil, nil, nil, nil, false)))

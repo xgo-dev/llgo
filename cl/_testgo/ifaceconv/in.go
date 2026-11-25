@@ -129,26 +129,28 @@ func main() {
 // CHECK: store %main.C1 zeroinitializer, ptr [[C1_DATA]]
 // CHECK: [[C1_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[C1_DATA]], 1
 // CHECK: [[C1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C1_IFACE]])
-// CHECK: [[C1_IS_I0:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.I0, ptr [[C1_TYPE]])
+// CHECK: [[C1_IS_I0:%.*]] = icmp ne ptr [[C1_TYPE]], null
 // CHECK: br i1 [[C1_IS_I0]], label %{{.*}}, label %{{.*}}
 // CHECK: [[C1_I1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C1_IFACE]])
 // CHECK: [[C1_IS_I1:%.*]] = icmp ne ptr [[C1_I1_TYPE]], null
 // CHECK: br i1 [[C1_IS_I1]], label %{{.*}}, label %{{.*}}
 // CHECK: [[C1_I2_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C1_IFACE]])
-// CHECK: [[C1_IS_I2:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.I2, ptr [[C1_I2_TYPE]])
+// CHECK: [[C1_ASSERT_I2:%.*]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.AssertIface"(ptr @_llgo_main.I2, ptr [[C1_I2_TYPE]], ptr @"_llgo_ifaceassert${{.*}}")
+// CHECK: [[C1_IS_I2:%.*]] = extractvalue { ptr, i1 } [[C1_ASSERT_I2]], 1
 // CHECK: br i1 [[C1_IS_I2]], label %{{.*}}, label %{{.*}}
 // C2 follows the same assertion pipeline, including its positive I2 test.
 // CHECK: [[C2_DATA:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 0)
 // CHECK: store %main.C2 zeroinitializer, ptr [[C2_DATA]]
 // CHECK: [[C2_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[C2_DATA]], 1
 // CHECK: [[C2_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C2_IFACE]])
-// CHECK: [[C2_IS_I0:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.I0, ptr [[C2_TYPE]])
+// CHECK: [[C2_IS_I0:%.*]] = icmp ne ptr [[C2_TYPE]], null
 // CHECK: br i1 [[C2_IS_I0]], label %{{.*}}, label %{{.*}}
 // CHECK: [[C2_I1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C2_IFACE]])
 // CHECK: [[C2_IS_I1:%.*]] = icmp ne ptr [[C2_I1_TYPE]], null
 // CHECK: br i1 [[C2_IS_I1]], label %{{.*}}, label %{{.*}}
 // CHECK: [[C2_I2_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C2_IFACE]])
-// CHECK: [[C2_IS_I2:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.I2, ptr [[C2_I2_TYPE]])
+// CHECK: [[C2_ASSERT_I2:%.*]] = call { ptr, i1 } @"{{.*}}/runtime/internal/runtime.AssertIface"(ptr @_llgo_main.I2, ptr [[C2_I2_TYPE]], ptr @"_llgo_ifaceassert${{.*}}")
+// CHECK: [[C2_IS_I2:%.*]] = extractvalue { ptr, i1 } [[C2_ASSERT_I2]], 1
 // CHECK: br i1 [[C2_IS_I2]], label %{{.*}}, label %{{.*}}
 // The known I1-to-empty conversion uses C1 directly, while equality's
 // dynamic I1-to-empty path still reads the source interface type.
@@ -170,8 +172,8 @@ func main() {
 // CHECK: ret void
 // The successful C2-to-I2 assertion preserves C2's payload under a target itab.
 // CHECK: extractvalue %"{{.*}}iface" [[C2_IFACE]], 1
+// CHECK: [[C2_TARGET_ITAB:%.*]] = extractvalue { ptr, i1 } [[C2_ASSERT_I2]], 0
 // CHECK: [[C2_I2_PAYLOAD:%.*]] = extractvalue %"{{.*}}iface" [[C2_IFACE]], 1
-// CHECK: [[C2_TARGET_ITAB:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.NewItab"(ptr @_llgo_main.I2, ptr [[C2_I2_TYPE]])
 // CHECK: [[C2_TARGET_IFACE_0:%.*]] = insertvalue %"{{.*}}iface" undef, ptr [[C2_TARGET_ITAB]], 0
 // CHECK: [[C2_TARGET_IFACE:%.*]] = insertvalue %"{{.*}}iface" [[C2_TARGET_IFACE_0]], ptr [[C2_I2_PAYLOAD]], 1
 // CHECK: insertvalue { %"{{.*}}iface", i1 } %{{.*}}, i1 true, 1

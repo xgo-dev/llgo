@@ -1087,11 +1087,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # SIMD/LTO took 33 minutes on a cold cache; keeping it with the
-        # command and caller regressions exhausted the 60-minute job limit.
+        # Give WASI and JavaScript SIMD/LTO cold builds separate runners
+        # and independent 60-minute job budgets.
         # Optimization and stdlib links need fresh disks after the runtime
         # and debug fixtures on the 17-GiB ephemeral runner image.
-        suite: [runtime, workers, test-command, simd, stdlib, optimization]
+        suite: [runtime, workers, test-command, simd-wasi, simd, stdlib, optimization]
     # Keep these matrices outside the smaller Qiniu runner template.
     runs-on: ubuntu-24.04
     steps:
@@ -1133,17 +1133,17 @@ jobs:
         with:
           # Profile/LTO caches nearly fill the 17-GiB runner.
           # Cache archives need another payload copy during post-job save.
-          cache: ${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' && matrix.suite != 'simd' }}
+          cache: ${{ matrix.suite != 'runtime' && matrix.suite != 'optimization' && !startsWith(matrix.suite, 'simd') }}
 
       - name: Cache LLGo builds and WebAssembly toolchains
         uses: ./.github/actions/setup-llgo-cache
         with:
-          build-cache-mode: ${{ matrix.suite == 'simd' && 'off' || ((matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite') }}
+          build-cache-mode: ${{ startsWith(matrix.suite, 'simd') && 'off' || ((matrix.suite == 'runtime' || matrix.suite == 'optimization') && 'restore' || 'readwrite') }}
           build-cache-scope: wasm-${{ matrix.suite }}
           # These suites need only WASI or Emscripten, not a shared snapshot
           # containing other targets' downloaded toolchains.
-          crosscompile-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization' || matrix.suite == 'simd') && 'off' || 'readwrite' }}
-          wasmer-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'simd') && 'restore' || ((matrix.suite != 'workers' && matrix.suite != 'optimization') && 'readwrite' || 'off') }}
+          crosscompile-cache-mode: ${{ (matrix.suite == 'runtime' || matrix.suite == 'optimization' || startsWith(matrix.suite, 'simd')) && 'off' || 'readwrite' }}
+          wasmer-cache-mode: ${{ (matrix.suite == 'runtime' || startsWith(matrix.suite, 'simd')) && 'restore' || ((matrix.suite != 'workers' && matrix.suite != 'optimization') && 'readwrite' || 'off') }}
 
       - name: Install Wasmer for W32
         if: matrix.suite != 'workers' && matrix.suite != 'optimization'
@@ -1286,7 +1286,7 @@ jobs:
         run: dev/test_wasm_workers.sh
 
       - name: Test SIMD behavior on WebAssembly
-        if: matrix.suite == 'simd'
+        if: matrix.suite == 'simd-wasi'
         shell: bash
         env:
           GOEXPERIMENT: simd

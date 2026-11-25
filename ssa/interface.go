@@ -793,9 +793,6 @@ func (b Builder) knownInterfaceConcreteType(value llvm.Value) types.Type {
 		case llvm.BitCast:
 			return visit(value.Operand(0), seen)
 		case llvm.Select:
-			if value.OperandsCount() != 3 {
-				return nil
-			}
 			left := visit(value.Operand(1), seen)
 			right := visit(value.Operand(2), seen)
 			if left != nil && right != nil && types.Identical(left, right) {
