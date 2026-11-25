@@ -69,7 +69,7 @@ func TestESPQEMUSelection(t *testing.T) {
 }
 
 func TestESPQEMUPinsMatchCI(t *testing.T) {
-	script, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "install-esp-qemu.sh"))
+	script, err := os.ReadFile(filepath.Join("..", "..", "..", ".github", "workflows", "install-esp-qemu.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}

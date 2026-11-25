@@ -22,7 +22,7 @@ func TestWasmGCSegmentBoundariesAndSweep(t *testing.T) {
 		"gcStateFromByteIn": true, "gcStateOfIn": true, "gcSetStateIn": true,
 		"gcMarkFreeIn": true, "gcUnmarkIn": true, "gcFindHeadIn": true, "gcFindNextIn": true, "sweep": true}
 	for _, name := range []string{"segments.go", "segment_lookup.go", "gc_tinygo.go"} {
-		file, err := parser.ParseFile(fset, filepath.Join("..", "..", "runtime", "internal", "runtime", "tinygogc", name), nil, 0)
+		file, err := parser.ParseFile(fset, filepath.Join("..", "..", "..", "runtime", "internal", "runtime", "tinygogc", name), nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -20,7 +20,7 @@ import (
 // not end-to-end Wasm collections, and are deliberately not pass/fail limits.
 func TestWasmGCHeadCacheWorkloads(t *testing.T) {
 	fset := token.NewFileSet()
-	dir := filepath.Join("..", "..", "runtime", "internal", "runtime", "tinygogc")
+	dir := filepath.Join("..", "..", "..", "runtime", "internal", "runtime", "tinygogc")
 	functions := map[string]bool{
 		"gcFindHead": true, "gcFindHeadForMark": true,
 		"gcStateByteOfIn": true, "gcStateFromByteIn": true, "gcStateOf": true,

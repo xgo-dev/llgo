@@ -14,7 +14,7 @@ import (
 )
 
 func TestCrossPackageInlineWithCachedDependency(t *testing.T) {
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}

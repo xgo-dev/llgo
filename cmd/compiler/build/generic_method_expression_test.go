@@ -17,7 +17,7 @@ func TestGenericMethodExpressionWrapperIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}

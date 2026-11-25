@@ -362,7 +362,7 @@ func TestGoJSLoaderJavaScript(t *testing.T) {
 	if err != nil {
 		t.Skip("node is required")
 	}
-	loader, err := filepath.Abs(filepath.Join("..", "..", "targets", goJSLoaderScriptName))
+	loader, err := filepath.Abs(filepath.Join("..", "..", "..", "targets", goJSLoaderScriptName))
 	if err != nil {
 		t.Fatal(err)
 	}

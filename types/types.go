@@ -33,6 +33,7 @@ import (
 	"fmt"
 	gotypes "go/types"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -302,6 +303,10 @@ func writeTypeString(typ Type, qf Qualifier) string {
 		buf.WriteString("func")
 		WriteSignature(&buf, t, qf)
 		return buf.String()
+	case *Struct:
+		return writeStructString(t, qf)
+	case *Interface:
+		return writeInterfaceString(t, qf)
 	case *Union:
 		var b strings.Builder
 		for i, term := range t.terms {
@@ -446,7 +451,7 @@ var Typ = []*Basic{
 	Complex64:      {kind: Complex64, info: IsComplex, name: "complex64", goType: gotypes.Typ[gotypes.Complex64]},
 	Complex128:     {kind: Complex128, info: IsComplex, name: "complex128", goType: gotypes.Typ[gotypes.Complex128]},
 	String:         {kind: String, info: IsString, name: "string", goType: gotypes.Typ[gotypes.String]},
-	UnsafePointer:  {kind: UnsafePointer, name: "unsafe.Pointer", goType: gotypes.Typ[gotypes.UnsafePointer]},
+	UnsafePointer:  {kind: UnsafePointer, name: "Pointer", goType: gotypes.Typ[gotypes.UnsafePointer]},
 	UntypedBool:    {kind: UntypedBool, info: IsBoolean | IsUntyped, name: "untyped bool", goType: gotypes.Typ[gotypes.UntypedBool]},
 	UntypedInt:     {kind: UntypedInt, info: IsInteger | IsUntyped, name: "untyped int", goType: gotypes.Typ[gotypes.UntypedInt]},
 	UntypedRune:    {kind: UntypedRune, info: IsInteger | IsUntyped, name: "untyped rune", goType: gotypes.Typ[gotypes.UntypedRune]},
@@ -469,7 +474,12 @@ func (b *Basic) ContainsHostLayout() bool { return false }
 func (b *Basic) ContainsSIMDStorage() bool { return false }
 func (b *Basic) SIMDTagIndex() int        { return -1 }
 func (b *Basic) SIMDVec() *SIMDVec        { return nil }
-func (b *Basic) String() string          { return b.name }
+func (b *Basic) String() string {
+	if b.kind == UnsafePointer {
+		return "unsafe.Pointer"
+	}
+	return b.name
+}
 
 // Pointer represents a typed pointer with an explicit GC/ownership PtrKind.
 type Pointer struct {
@@ -536,7 +546,12 @@ func (t *Tuple) Len() int {
 
 func (t *Tuple) At(i int) *Var           { return t.vars[i] }
 func (t *Tuple) Underlying() Type        { return t }
-func (t *Tuple) goTypeRef() gotypes.Type { return t.goType }
+func (t *Tuple) goTypeRef() gotypes.Type {
+	if t == nil {
+		return nil
+	}
+	return t.goType
+}
 func (t *Tuple) llTypeMarker()           {}
 func (t *Tuple) IsHostLayoutMarker() bool { return false }
 func (t *Tuple) HasHostLayout() bool      { return false }
@@ -587,6 +602,7 @@ func (t *Tuple) String() string {
 //   - CDecl / Stdcall / Fastcall / Wasm: C variadic (...)
 //   - Py: Python variadic
 type Signature struct {
+	ctx            *Context
 	callConv       CallConv
 	recv           *Var
 	recvTypeParams *TypeParamList
@@ -1011,9 +1027,13 @@ func (t *Interface) ContainsSIMDStorage() bool { return false }
 func (t *Interface) SIMDTagIndex() int        { return -1 }
 func (t *Interface) SIMDVec() *SIMDVec        { return nil }
 func (t *Interface) String() string {
+	return writeInterfaceString(t, nil)
+}
+
+func writeInterfaceString(t *Interface, qf Qualifier) string {
 	t.resolve()
 	if t.Empty() {
-		return "any"
+		return "interface{}"
 	}
 	var b strings.Builder
 	b.WriteString("interface{")
@@ -1025,7 +1045,9 @@ func (t *Interface) String() string {
 		first = false
 		b.WriteString(m.name)
 		if sig := m.Signature(); sig != nil {
-			b.WriteString(strings.TrimPrefix(sig.String(), "func"))
+			var buf bytes.Buffer
+			WriteSignature(&buf, sig, qf)
+			b.WriteString(buf.String())
 		}
 	}
 	for _, e := range t.embeddeds {
@@ -1033,7 +1055,7 @@ func (t *Interface) String() string {
 			b.WriteString("; ")
 		}
 		first = false
-		b.WriteString(TypeString(e, nil))
+		b.WriteString(writeTypeString(e, qf))
 	}
 	if first && len(t.methods) > 0 {
 		for i, m := range t.methods {
@@ -1042,7 +1064,9 @@ func (t *Interface) String() string {
 			}
 			b.WriteString(m.name)
 			if sig := m.Signature(); sig != nil {
-				b.WriteString(strings.TrimPrefix(sig.String(), "func"))
+				var buf bytes.Buffer
+				WriteSignature(&buf, sig, qf)
+				b.WriteString(buf.String())
 			}
 		}
 	}
@@ -1207,6 +1231,10 @@ func (s *Struct) HasPtrData() bool {
 	return false
 }
 func (s *Struct) String() string {
+	return writeStructString(s, nil)
+}
+
+func writeStructString(s *Struct, qf Qualifier) string {
 	if len(s.fields) == 0 {
 		return "struct{}"
 	}
@@ -1216,12 +1244,16 @@ func (s *Struct) String() string {
 		if i > 0 {
 			b.WriteString("; ")
 		}
-		if f.name != "" {
+		if !f.embedded && f.name != "" {
 			b.WriteString(f.name)
 			b.WriteByte(' ')
 		}
 		if f.typ != nil {
-			b.WriteString(f.typ.String())
+			b.WriteString(writeTypeString(f.typ, qf))
+		}
+		if tag := s.Tag(i); tag != "" {
+			b.WriteByte(' ')
+			b.WriteString(strconv.Quote(tag))
 		}
 	}
 	b.WriteByte('}')

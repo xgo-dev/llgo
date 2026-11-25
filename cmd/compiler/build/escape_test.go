@@ -35,7 +35,7 @@ func TestEscapeCrossPackageCacheAndWorkers(t *testing.T) {
 		cacheRootFunc = func() string { return os.Getenv(prefix + "CACHE") }
 		t.Setenv(llgoBuildCache, "1")
 		t.Setenv(llgoEscapeCache, "1")
-		root, err := filepath.Abs(filepath.Join("..", ".."))
+		root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 		if err != nil {
 			t.Fatal(err)
 		}

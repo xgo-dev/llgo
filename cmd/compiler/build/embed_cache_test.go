@@ -264,7 +264,7 @@ func Value() string {
 
 func isolateEmbedBuildCache(t *testing.T) {
 	t.Helper()
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}

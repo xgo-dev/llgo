@@ -550,7 +550,7 @@ func TestConcurrentDeadcodeBuildsUseIndependentWorkerContexts(t *testing.T) {
 	if !buildenv.Dev {
 		t.Skip("deadcode drop requires a development build")
 	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +595,7 @@ func TestDeadcodeBuildColdAndHotPackageCache(t *testing.T) {
 	if !buildenv.Dev {
 		t.Skip("deadcode drop requires a development build")
 	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,7 +652,7 @@ func TestDeadcodeBuildColdAndHotPackageCache(t *testing.T) {
 }
 
 func TestGenericLocalTypeColdAndHotPackageCache(t *testing.T) {
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}

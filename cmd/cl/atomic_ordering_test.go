@@ -92,7 +92,7 @@ func TestAtomicStoreUnorderedInvalidArity(t *testing.T) {
 }
 
 func TestBaremetalItabPointersDoNotRequireLibatomic(t *testing.T) {
-	runtimeDir := filepath.Join("..", "runtime", "internal", "runtime")
+	runtimeDir := filepath.Join("..", "..", "runtime", "internal", "runtime")
 	ctx := gobuild.Default
 	ctx.GOOS, ctx.GOARCH = "linux", "arm"
 	ctx.BuildTags = []string{"llgo", "baremetal", "esp32c3", "tinygo.riscv32"}

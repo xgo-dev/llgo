@@ -13,7 +13,7 @@ import (
 // A re-exported constant must follow the parser's source view on both cache
 // misses and hits, including a change to only the runtime source patch.
 func TestRuntimeCompilerPackageCache(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestRuntimeCompilerPackageCache(t *testing.T) {
 // larger go/build and go/importer dependency graph once under a non-gc runtime
 // identity, where accidentally selecting a backend from runtime.Compiler fails.
 func TestRuntimeCompilerToolchainPackages(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}

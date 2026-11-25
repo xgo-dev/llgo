@@ -1160,4 +1160,106 @@ type GoFn func(int32) int32
 	if types.Identical(goPtr, cPtr) || types.AssignableTo(goPtr, cPtr) {
 		t.Fatal("GoPtr and CPtr should NOT be Identical or AssignableTo each other")
 	}
+
+	// Nil *Tuple (empty parameter/result list) must not panic in Identical or predicates.
+	emptyTuple := types.NewTuple() // (*types.Tuple)(nil)
+	oneInt := types.NewTuple(types.NewParam(0, nil, "", types.Typ[types.Int64]))
+	sigNoParams := types.NewSignatureType(nil, nil, nil, emptyTuple, oneInt, false)
+	sigOneParam := types.NewSignatureType(nil, nil, nil, oneInt, oneInt, false)
+	if types.Identical(emptyTuple, oneInt) || types.Identical(oneInt, emptyTuple) {
+		t.Fatal("nil *Tuple should not be Identical to non-empty *Tuple")
+	}
+	if !types.Identical(emptyTuple, emptyTuple) {
+		t.Fatal("nil *Tuple should be Identical to itself")
+	}
+	if types.Identical(sigNoParams, sigOneParam) || types.Identical(sigOneParam, sigNoParams) {
+		t.Fatal("signatures with nil vs non-nil params should not be Identical")
+	}
+
+	// go/types parity for UnsafePointer Name/String, empty Interface, embedded Struct fields with qf,
+	// deterministic Scope child ordering, and generic TypeName / Signature Instantiate context identity.
+	if got := types.Typ[types.UnsafePointer].Name(); got != "Pointer" {
+		t.Fatalf("UnsafePointer.Name() = %q, want %q", got, "Pointer")
+	}
+	if got := types.Typ[types.UnsafePointer].String(); got != "unsafe.Pointer" {
+		t.Fatalf("UnsafePointer.String() = %q, want %q", got, "unsafe.Pointer")
+	}
+	if got := types.NewInterfaceType(nil, nil).Complete().String(); got != "interface{}" {
+		t.Fatalf("empty Interface.String() = %q, want %q", got, "interface{}")
+	}
+	embedSrc := `package main
+type T struct{}
+type W struct{ m int; *T }
+type Set[E comparable] map[E]struct{}
+func New[E comparable]() Set[E] { return nil }
+func (s Set[E]) Insert(E) Set[E] { return s }
+func (s Set[E]) Diff() Set[E] { r := New[E](); return r.Insert(*new(E)) }
+func Scope1() int { type L int; return int(L(1)) }
+func Scope2() int { type L int; return int(L(2)) }
+type Future[A any] interface{ Then(func(A)) }
+func Async[A any]() Future[A] { return nil }
+func UseAsync() Future[T] { return Async[T]() }
+`
+	fset2 := token.NewFileSet()
+	f2, err := parser.ParseFile(fset2, "parity.go", embedSrc, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info2 := &types.Info{
+		Types:     make(map[ast.Expr]types.TypeAndValue),
+		Defs:      make(map[*ast.Ident]types.Object),
+		Uses:      make(map[*ast.Ident]types.Object),
+		Instances: make(map[*ast.Ident]types.Instance),
+		Scopes:    make(map[ast.Node]*types.Scope),
+	}
+	pkg2, err := (&types.Config{}).Check("example.com/parity", fset2, []*ast.File{f2}, info2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wUnder := pkg2.Scope().Lookup("W").Type().Underlying()
+	qfMain := func(p *types.Package) string { return p.Name() }
+	if got := types.TypeString(wUnder, qfMain); got != "struct{m int; *main.T}" {
+		t.Fatalf("TypeString(W.Underlying, qf) = %q, want %q", got, "struct{m int; *main.T}")
+	}
+	// Generic TypeName must retain origin *Named (not an instantiation Set[E]).
+	setNamed := pkg2.Scope().Lookup("Set").Type().(*types.Named)
+	if setNamed.TypeArgs().Len() != 0 || setNamed.Origin() != setNamed {
+		t.Fatalf("Set TypeName.Type() hijacked by instantiation: args=%v origin=%v", setNamed.TypeArgs(), setNamed.Origin())
+	}
+	setAny, err := types.Instantiate(nil, setNamed, []types.Type{types.Universe.Lookup("any").Type()}, true)
+	if err != nil || types.NewMethodSet(setAny).Lookup(nil, "Insert") == nil {
+		t.Fatalf("Instantiate(Set[any]) missing Insert method: %v err=%v", setAny, err)
+	}
+	// Instantiating a generic function signature with a separate Context must preserve package/object identity.
+	tNamed := pkg2.Scope().Lookup("T").Type().(*types.Named)
+	asyncSig := pkg2.Scope().Lookup("Async").(*types.Func).Signature()
+	instSig, err := types.Instantiate(types.NewContext(), asyncSig, []types.Type{tNamed}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instRet := instSig.(*types.Signature).Results().At(0).Type().(*types.Named)
+	wantRet := pkg2.Scope().Lookup("UseAsync").(*types.Func).Signature().Results().At(0).Type().(*types.Named)
+	if instRet.Obj() != wantRet.Obj() || instRet.Obj().Pkg() != pkg2 || !types.Identical(instRet, wantRet) {
+		t.Fatalf("Instantiate(Signature) lost object/package identity: inst=%p/%p want=%p/%p identical=%v",
+			instRet.Obj(), instRet.Obj().Pkg(), wantRet.Obj(), wantRet.Obj().Pkg(), types.Identical(instRet, wantRet))
+	}
+	// Scope child order must match go/types deterministically (Scope1 before Scope2 inside file scope).
+	s1Scope := pkg2.Scope().Lookup("Scope1").(*types.Func).Scope()
+	s2Scope := pkg2.Scope().Lookup("Scope2").(*types.Func).Scope()
+	fileScope := pkg2.Scope().Child(0)
+	if s1Scope.Parent() != fileScope || s2Scope.Parent() != fileScope {
+		t.Fatalf("unexpected parent scope for Scope1/Scope2: %p / %p vs fileScope %p", s1Scope.Parent(), s2Scope.Parent(), fileScope)
+	}
+	idx1, idx2 := -1, -1
+	for i := 0; i < fileScope.NumChildren(); i++ {
+		switch fileScope.Child(i) {
+		case s1Scope:
+			idx1 = i
+		case s2Scope:
+			idx2 = i
+		}
+	}
+	if idx1 < 0 || idx2 < 0 || idx1 >= idx2 {
+		t.Fatalf("non-deterministic Scope child ordering: Scope1=%d Scope2=%d", idx1, idx2)
+	}
 }

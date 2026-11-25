@@ -762,7 +762,7 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 			hasCallConv: effOverride,
 			goType:      t,
 		}
-		if tn.typ == nil {
+		if tn.typ == nil && !hasOverride && (aObj == nil || aObj.Type() == t) {
 			tn.typ = a
 		}
 		if !hasOverride {
@@ -944,7 +944,8 @@ func (c *Context) fromGoNamedShellLocked(gt *gotypes.Named, cc CallConv, hasOver
 		simdTagIndex:  -1,
 		goType:        gt,
 	}
-	if tn.typ == nil {
+	orig := gt.Origin()
+	if tn.typ == nil && !hasOverride && (orig == nil || orig == gt) && (gt.Obj() == nil || gt.Obj().Type() == gt) {
 		tn.typ = n
 	}
 
@@ -952,6 +953,9 @@ func (c *Context) fromGoNamedShellLocked(gt *gotypes.Named, cc CallConv, hasOver
 		c.goNamed[gt] = n
 	}
 	c.goTypes[goTypeCacheKey{typ: gt, cc: cc, hasOverride: hasOverride}] = n
+	if !hasOverride && orig != nil && orig != gt {
+		n.origin = c.fromGoNamedShellLocked(orig, Go, false)
+	}
 	return n
 }
 
@@ -1039,6 +1043,7 @@ func (c *Context) fromGoTupleWithKindLocked(gt *gotypes.Tuple, kind VarKind) *Tu
 
 func (c *Context) fromGoSignatureLocked(gt *gotypes.Signature, cc CallConv) *Signature {
 	sig := &Signature{
+		ctx:      c,
 		callConv: cc,
 		variadic: gt.Variadic(),
 		goType:   gt,
@@ -1355,17 +1360,55 @@ func (c *Context) fromGoScopeLocked(gs *gotypes.Scope) *Scope {
 		return cached
 	}
 	var parent *Scope
-	if gs.Parent() != nil {
-		parent = c.fromGoScopeLocked(gs.Parent())
+	if gp := gs.Parent(); gp != nil {
+		parent = c.fromGoScopeLocked(gp)
+		if gp != gotypes.Universe {
+			c.lowerGoScopeChildrenLocked(gp, parent)
+			if cached, ok := c.goScopes[gs]; ok {
+				return cached
+			}
+		}
 	}
 	s := NewScope(parent, gs.Pos(), gs.End(), "")
 	c.goScopes[gs] = s
+	c.populateGoScopeObjectsLocked(gs, s)
+	return s
+}
+
+func (c *Context) lowerGoScopeChildrenLocked(gp *gotypes.Scope, parent *Scope) {
+	n := gp.NumChildren()
+	if n == 0 {
+		return
+	}
+	var created []*gotypes.Scope
+	for i := 0; i < n; i++ {
+		gc := gp.Child(i)
+		if _, ok := c.goScopes[gc]; ok {
+			continue
+		}
+		cs := NewScope(parent, gc.Pos(), gc.End(), "")
+		c.goScopes[gc] = cs
+		created = append(created, gc)
+	}
+	for _, gc := range created {
+		c.populateGoScopeObjectsLocked(gc, c.goScopes[gc])
+	}
+}
+
+func (c *Context) lowerGoScopeTreeLocked(gs *gotypes.Scope, s *Scope) {
+	c.lowerGoScopeChildrenLocked(gs, s)
+	for i := 0; i < gs.NumChildren(); i++ {
+		gc := gs.Child(i)
+		c.lowerGoScopeTreeLocked(gc, c.goScopes[gc])
+	}
+}
+
+func (c *Context) populateGoScopeObjectsLocked(gs *gotypes.Scope, s *Scope) {
 	for _, name := range gs.Names() {
 		if obj := c.fromGoObjectLocked(gs.Lookup(name)); obj != nil {
 			s.Insert(obj)
 		}
 	}
-	return s
 }
 
 func (c *Context) fromGoSelectionLocked(gs *gotypes.Selection) *Selection {
@@ -1424,12 +1467,9 @@ func (c *Context) populateFromGoPackage(dstPkg *Package, goPkg *gotypes.Package,
 				pkg.scope = c.fromGoScopeLocked(gs)
 			} else {
 				c.goScopes[gs] = pkg.scope
-				for _, name := range gs.Names() {
-					if obj := c.fromGoObjectLocked(gs.Lookup(name)); obj != nil {
-						pkg.scope.Insert(obj)
-					}
-				}
+				c.populateGoScopeObjectsLocked(gs, pkg.scope)
 			}
+			c.lowerGoScopeTreeLocked(gs, pkg.scope)
 		}
 		if imps := goPkg.Imports(); len(imps) > 0 {
 			pkg.imports = make([]*Package, len(imps))

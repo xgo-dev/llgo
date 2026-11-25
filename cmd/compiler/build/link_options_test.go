@@ -313,7 +313,7 @@ func TestTargetDWARFDoesNotChangeLoadableELF(t *testing.T) {
 	if out, err := exec.Command(target.CC, compileArgs...).CombinedOutput(); err != nil {
 		t.Fatalf("compile Cortex-M DWARF fixture: %v\n%s", err, out)
 	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}

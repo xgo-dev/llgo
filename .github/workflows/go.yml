@@ -456,7 +456,7 @@ jobs:
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverprofile=coverage-dev-globaldce-unit.txt \
             -run '^TestDevLTOGlobalDCE' \
-            ./internal/llvmgen ./internal/build ./cmd/compiler/crosscompile ./cmd/internal/flags ./internal/cabi
+            ./cmd/compiler/llvmgen ./cmd/compiler/build ./cmd/compiler/crosscompile ./cmd/internal/flags ./cmd/compiler/cabi
           go tool cover -func=coverage-dev-globaldce-unit.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \

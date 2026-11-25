@@ -49,7 +49,7 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	up := types.Typ[types.UnsafePointer]
 
 	anyT := types.NewInterfaceType(nil, nil).Complete()
-	if !anyT.Empty() || anyT.IsComparable() || !anyT.IsMethodSet() || anyT.IsImplicit() || anyT.String() != "any" || !anyT.HasPtrData() {
+	if !anyT.Empty() || anyT.IsComparable() || !anyT.IsMethodSet() || anyT.IsImplicit() || anyT.String() != "interface{}" || !anyT.HasPtrData() {
 		t.Fatalf("empty interface = %+v", anyT)
 	}
 	sl := types.NewSlice(i32)

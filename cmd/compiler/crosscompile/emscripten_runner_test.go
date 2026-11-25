@@ -29,7 +29,7 @@ func TestEmscriptenRunnersForwardProgramArguments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("node is required to test the Emscripten runners: %v", err)
 	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestEmscriptenRunnerModelsBrowserForRawGoJS(t *testing.T) {
 	if err != nil {
 		t.Fatalf("node is required to test the Emscripten runner: %v", err)
 	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestEmscriptenRunnersConsumeExitStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("node is required to test the Emscripten runners: %v", err)
 	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestEmscriptenRunnerReportsInstantiationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("node is required to test the Emscripten runner: %v", err)
 	}
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}

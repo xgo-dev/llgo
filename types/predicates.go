@@ -63,6 +63,9 @@ func hasLLGoSemanticExtSeen(t Type, seen map[Type]bool) bool {
 	case *Chan:
 		return hasLLGoSemanticExtSeen(u.elem, markSeen(seen, u))
 	case *Tuple:
+		if u == nil {
+			return false
+		}
 		next := markSeen(seen, u)
 		for i := 0; i < u.Len(); i++ {
 			if hasLLGoSemanticExtSeen(u.At(i).typ, next) {

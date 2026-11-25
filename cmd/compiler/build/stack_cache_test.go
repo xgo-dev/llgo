@@ -118,7 +118,7 @@ func checkStackCacheRuntimeConstant(t *testing.T, pkg Package, size int64) {
 }
 
 func TestPthreadStackSizePackageCache(t *testing.T) {
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}

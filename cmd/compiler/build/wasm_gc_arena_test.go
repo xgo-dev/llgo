@@ -19,7 +19,7 @@ func TestWasmGCArenaCapacity(t *testing.T) {
 	var source bytes.Buffer
 	source.WriteString(gcArenaTestSource)
 	for _, name := range []string{"gc_segment_wasi_threads.go", "gc_wasm.go", "segments.go", "segment_lookup.go", "gc_tinygo.go"} {
-		file, err := parser.ParseFile(fset, filepath.Join("..", "..", "runtime", "internal", "runtime", "tinygogc", name), nil, 0)
+		file, err := parser.ParseFile(fset, filepath.Join("..", "..", "..", "runtime", "internal", "runtime", "tinygogc", name), nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -11,7 +11,7 @@ import (
 // Compile the real implementations: zero-value tests also pass when AllocZ
 // redundantly clears GC_malloc's already-zeroed memory.
 func TestNativeZeroAllocationIR(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}

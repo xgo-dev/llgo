@@ -379,6 +379,25 @@ func Instantiate(ctxt *Context, orig Type, targs []Type, validate bool) (Type, e
 		if o.obj != nil && o.obj.pkg != nil {
 			ownerCtx = o.obj.pkg.ctx
 		}
+	case *Signature:
+		ownerCtx = o.ctx
+	}
+	if ownerCtx == nil {
+		for _, a := range targs {
+			switch ta := Unalias(a).(type) {
+			case *Named:
+				if ta.ctx != nil {
+					ownerCtx = ta.ctx
+				}
+			case *Signature:
+				if ta.ctx != nil {
+					ownerCtx = ta.ctx
+				}
+			}
+			if ownerCtx != nil {
+				break
+			}
+		}
 	}
 	switch orig.(type) {
 	case *Named, *Alias, *Signature:

@@ -339,7 +339,7 @@ func TestCgoGCCAndLLGoClangLayout(t *testing.T) {
 func TestRuntimeCTypeLLVMLayout(t *testing.T) {
 	for _, target := range cLayoutTargets() {
 		t.Run(target.triple, func(t *testing.T) {
-			dir := filepath.Join("..", "..", "runtime", "internal", "clite")
+			dir := filepath.Join("..", "..", "..", "runtime", "internal", "clite")
 			ctx := gobuild.Default
 			ctx.GOOS = target.os
 			ctx.GOARCH = target.arch

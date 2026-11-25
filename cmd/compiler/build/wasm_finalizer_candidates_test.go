@@ -19,7 +19,7 @@ import (
 // conservative collection of objects belonging to the running test itself.
 func TestWasmFinalizerCandidates(t *testing.T) {
 	fset := token.NewFileSet()
-	path := filepath.Join("..", "..", "runtime", "internal", "runtime", "tinygogc", "finalizer.go")
+	path := filepath.Join("..", "..", "..", "runtime", "internal", "runtime", "tinygogc", "finalizer.go")
 	file, err := parser.ParseFile(fset, path, nil, 0)
 	if err != nil {
 		t.Fatal(err)
