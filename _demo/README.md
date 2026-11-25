@@ -13,6 +13,7 @@ exercises one capability plus its emulator gate.
 | [`esp-idf-bt`](esp-idf-bt/) | Smallest classic-Bluetooth program: BTDM bring-up, SPP, and the A2DP sink data path. | esp-emu with the vendored Bumble classic peer |
 | [`esp-idf-lpcore`](esp-idf-lpcore/) | Smallest LP-coprocessor program: HP/LP mailbox echo, LP-timer deep-sleep wake. | real board for the wake path (esp-emu models the LP RAM but not an executing LP hart) |
 | [`esp-idf-lockcore`](esp-idf-lockcore/) | `runtime.LockCore` pins the llgo scheduler task to an HP core. | esp-emu for the pinning contract, real board for the timing |
+| [`esp-idf-opus`](esp-idf-opus/) | Does the Opus codec work end to end? Fixed-point encode→decode roundtrip gated on SNR (39.3 dB at 48 kHz music / 13.4 dB at 16 kHz voip, per-segment gates), packet-loss concealment, the encoder ctls, and the codec's lookahead-aligned compare. | esp-emu, fully self-contained (no peer) |
 
 Choosing:
 
@@ -44,9 +45,9 @@ Nothing in that shape is per-demo boilerplate to maintain:
   [`common/make-artifact.sh`](common/make-artifact.sh). What differs between
   demos is a four-line
   [`artifact.conf`](esp-idf-ble/idfproj/host/artifact.conf) - the glue set, the
-  GC window, optional diagnostics - plus an optional `post-sync.sh` hook for a
-  demo that patches a template it just copied (`esp-idf-all` does, for the
-  codec's MCLK pin).
+  GC window, optional diagnostics - plus an optional `post-sync.sh` hook for
+  demo-specific build-time tweaks (esp-idf-all keeps one, for optional
+  stage-tracing prints; nothing patches a synced glue).
 - **One scaffold.** The IDF project shell (`CMakeLists.txt`, `app_main.c`,
   `llgo_dram.ld`, `llgo_syms.S`, `partitions.csv`) is identical across demos,
   so [`common/`](common/) holds the single copy and `make-artifact.sh` writes a

@@ -15,8 +15,10 @@
 #   - ble_glue.c: a checked-in copy of pkg/esp/ble/glue/ble_glue_bluedroid.c
 #     with this firmware's local patches (shared-stack bring-up next to the
 #     classic host, plus the BLE pairing flow). See its file header.
-#   - a2dp_glue.c is synced at build time but patched (MCLK on GPIO52); see
-#     host/make-artifact.sh.
+#
+# All other glues (bt_glue.c, a2dp_glue.c included) are synced unmodified
+# from pkg/esp/*/glue at build time; the A2DP path's codec MCLK is the
+# A2DPConfig.MCLKPin field in goapp, not a build-time patch.
 #
 # WHOLE_ARCHIVE is required: llgo_out.o is the LAST item on the link line,
 # and the ESP-IDF link has no --start-group, so each component archive is

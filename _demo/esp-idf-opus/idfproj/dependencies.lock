@@ -1,0 +1,20 @@
+dependencies:
+  78/esp-opus:
+    component_hash: 8182b733f071d7bfe1e837f4c9f8649a63e4c937177f089e65772880c02f2e17
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.0.5
+  idf:
+    source:
+      type: idf
+    version: 6.3.0
+direct_dependencies:
+- 78/esp-opus
+manifest_hash: 556bf11d9bd656e988c8b55c8635063e30c8b2f02831ebba110bcbe2b267190d
+target: esp32s31
+version: 3.0.0

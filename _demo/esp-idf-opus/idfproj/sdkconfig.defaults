@@ -1,0 +1,42 @@
+# llgo runs its scheduler loop on the FreeRTOS main task; 8 KiB covers it.
+# The probe's own deep C calls (opus encode/decode) do NOT run on this stack
+# - the main goroutine runs on a fiber stack from the GC heap, sized by
+# -goroutine-stack-size in host/artifact.conf (4x = 64 KiB for the main
+# fiber). See that file and the package docs for the stack rules.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# llgo's esp32s31 clock gate assumes a 240 MHz CPU (baremetalCpuMHz in
+# runtime/internal/runtime/z_clock_freq_esp32s31.go). Keep the IDF frequency
+# matched so cycle-domain deadlines (time.Sleep, timers) read true seconds.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# The llgo fiber scheduler swaps the task's SP out of the FreeRTOS task stack
+# onto GC-heap-allocated fiber stacks on every scheduling point. That is
+# exactly what the stack guards look for: the ASSIST_DEBUG hardware guard
+# panics as soon as SP leaves the task's registered bounds, and the canary
+# checker runs on every context switch. Disable both - llgo guards its own
+# stacks with a canary + SP bound at every cooperative swap
+# (_wrap/context_riscv32.c), so fiber overflows stay detected inside the Go
+# runtime itself.
+CONFIG_ESP_SYSTEM_HW_STACK_GUARD=n
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_NONE=y
+
+# External PSRAM: the S31 die defaults to octal mode at 200 MHz. malloc may
+# serve from it, but allocations that must be DMA-visible or touched by IDF
+# internals stay internal, hence the 32 KiB reserve below. The opus states
+# ride the tinygogc malloc wrap into the GC heap (static window first, PSRAM
+# segments after), not directly into the IDF allocator.
+CONFIG_SPIRAM=y
+# Also boot on boards with no PSRAM fitted: IDF then reports zero SPIRAM and
+# llgo keeps the Go heap in its static window.
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MEMTEST=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+
+# App partition: 3.9375 MiB of the 4 MB flash (see partitions.csv) - the
+# fixed-point codec is a few hundred KiB of code.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

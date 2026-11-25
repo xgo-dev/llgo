@@ -406,11 +406,11 @@ int32_t bt_a2dp_teardown(void)
 
 /* ---- control plane (called from Go, one-shot esp_* calls) ---- */
 
-int32_t llgo_bt_a2dp_enable(int32_t bclk, int32_t ws, int32_t dout,
+int32_t llgo_bt_a2dp_enable(int32_t mclk, int32_t bclk, int32_t ws, int32_t dout,
                             int32_t dma_desc, int32_t dma_frames)
 {
 #if !CONFIG_BT_A2DP_ENABLE
-    (void)bclk; (void)ws; (void)dout; (void)dma_desc; (void)dma_frames;
+    (void)mclk; (void)bclk; (void)ws; (void)dout; (void)dma_desc; (void)dma_frames;
     return ESP_ERR_NOT_SUPPORTED; /* firmware built without the profile */
 #else
     if (!s_ready) {
@@ -447,7 +447,9 @@ int32_t llgo_bt_a2dp_enable(int32_t bclk, int32_t ws, int32_t dout,
         .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
             I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
+            /* mclk <= 0 is the Go layer's "no master clock" (the A2DPConfig
+             * zero value); GPIO0 cannot select MCLK (boot-strapping pin). */
+            .mclk = (mclk > 0) ? (gpio_num_t)mclk : I2S_GPIO_UNUSED,
             .bclk = (gpio_num_t)bclk,
             .ws = (gpio_num_t)ws,
             .dout = (gpio_num_t)dout,

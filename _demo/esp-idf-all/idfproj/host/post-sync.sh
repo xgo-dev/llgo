@@ -2,24 +2,9 @@
 # after the glue sync (the pipeline's working directory is the demo root and
 # $MAIN points at the main component).
 #
-# The a2dp glue needs the codec's MCLK pin, which the package template leaves
-# unused: A2DPConfig has no MCLK field yet (a recorded pkg/esp/bt capability
-# gap). Patch it here and assert the patch point, so a drifted upstream
-# template fails loudly instead of building a codec that answers every
-# register write and stays silent forever.
-
-python3 - "$MAIN/a2dp_glue.c" <<'PYEOF'
-import sys
-path = sys.argv[1]
-src = open(path).read()
-old = ".mclk = I2S_GPIO_UNUSED,"
-new = (".mclk = (gpio_num_t)52,"
-       " /* esp-idf-all local patch: the board's ES8311 needs MCLK;"
-       " stock glue leaves it unused */")
-assert src.count(old) == 1, "a2dp glue template drifted: MCLK patch point not found"
-open(path, 'w').write(src.replace(old, new, 1))
-print("a2dp_glue.c: MCLK patch applied (GPIO52)")
-PYEOF
+# The A2DP glue needs no local patching anymore: the codec's MCLK pin (GPIO52,
+# the ES8311's system clock) is the A2DPConfig.MCLKPin field now, and the
+# synced a2dp_glue.c drives it from the config.
 
 # Optional stage tracing inside the classic-stack bring-up: LLGO_BT_TRACE=1
 # prints a line around each blocking C call, to locate a hang.

@@ -15,8 +15,7 @@ loopback). Heap watermarks with a DMA-block metric print at every stage.
    second `esp_bluedroid_init` would fail). Init order bt → ble is the
    firmware's contract.
 3. `bt.A2DPEnable` — the A2DP sink's decoded-PCM I2S pipeline on
-   BCLK=53 / WS=55 / DOUT=56, MCLK=52 (one-line local `a2dp_glue.c` patch;
-   `A2DPConfig` has no MCLK field yet — recorded as a pkg/esp/bt gap).
+   BCLK=53 / WS=55 / DOUT=56, MCLK=52 via the `A2DPConfig.MCLKPin` field.
 4. WiFi soft AP `llgo-ap` / `llgoappass`, channel 6, 192.168.4.1, DHCP
    server; an HTTP server on port 8000 answers `GET /` with `llgo-ap-ok`.
 5. ES8311 codec init over I2C (0x18) with the audited register sequence,
@@ -221,8 +220,9 @@ the budget, and the periodic ledger line is the fastest way to see it go.
   auto-confirmed, AUTH_CMPL tracked, stale bonds removed; plus the two
   `llgo_ble_security` / `llgo_ble_conn_sec` passthroughs and the 15-30 ms
   HID link parameters). See the file header for the exact delta.
-- `idfproj/main/a2dp_glue.c` — synced at build time with the one-line MCLK
-  patch (assert-guarded in `host/make-artifact.sh`).
+- `idfproj/main/a2dp_glue.c` — a verbatim build-time copy of the
+  `pkg/esp/bt/glue/bt_glue_a2dp.c` template; the codec's MCLK (GPIO52) is
+  the `A2DPConfig.MCLKPin` field in goapp, not a build-time patch.
 - All other glues (`wifi net bt i2c i2s gpio`) are verbatim build-time
   copies of the `pkg/esp/*/glue` templates.
 - `idfproj/host/llgo_syms.S` — llgo runtime symbol providers (40 KiB GC

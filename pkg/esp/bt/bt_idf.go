@@ -50,7 +50,7 @@ func sppRead(handle uint32, dst *uint8, cap int32) int32
 // ---- A2DP sink (audio profile) ----
 
 //go:linkname a2dpEnable C.llgo_bt_a2dp_enable
-func a2dpEnable(bclk, ws, dout, dmaDesc, dmaFrames int32) int32
+func a2dpEnable(mclk, bclk, ws, dout, dmaDesc, dmaFrames int32) int32
 
 //go:linkname a2dpDisable C.llgo_bt_a2dp_disable
 func a2dpDisable() int32

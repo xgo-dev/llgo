@@ -6,13 +6,15 @@ import (
 )
 
 // A2DP sink: the board's codec wiring (ESP32-S31-Function-CoreBoard-1,
-// schematic-verified). MCLK (GPIO52) is NOT an A2DPConfig field yet - the
-// firmware's a2dp_glue.c copy carries a one-line local patch driving it.
+// schematic-verified). MCLK (GPIO52) goes through the A2DPConfig.MCLKPin
+// field - the ES8311 needs it; zero/negative would leave the codec's PLL
+// without its system clock.
 const (
 	a2dpName = "llgo-audio"
 	bclkPin  = 53 // I2S SCLK -> ES8311 SCLK
 	wsPin    = 55 // I2S LRCK -> ES8311 LRCK
 	doutPin  = 56 // I2S DSDIN -> ES8311 DSDIN (DAC data)
+	mclkPin  = 52 // I2S MCLK -> ES8311 MCLK (256 x fs)
 
 	dmaDescNum  = 12 // ~139 ms of jitter absorber at 44.1 kHz
 	dmaFrameNum = 511
@@ -43,14 +45,14 @@ func a2dpInit() {
 		return
 	}
 	if err := bt.A2DPEnable(bt.A2DPConfig{
-		BclkPin: bclkPin, WsPin: wsPin, DoutPin: doutPin,
+		BclkPin: bclkPin, WsPin: wsPin, DoutPin: doutPin, MCLKPin: mclkPin,
 		DmaDescNum: dmaDescNum, DmaFrameNum: dmaFrameNum,
 	}); err != nil {
 		println("[go] a2dp FAIL enable err =", errText(err))
 		return
 	}
 	println("[go] a2dp enable ok bclk =", bclkPin, "ws =", wsPin, "dout =", doutPin,
-		"dma =", dmaDescNum, "x", dmaFrameNum)
+		"mclk =", mclkPin, "dma =", dmaDescNum, "x", dmaFrameNum)
 	heapLedger("a2dp-init")
 }
 

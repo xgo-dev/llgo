@@ -210,8 +210,11 @@ const (
 
 // glueABIVersion is the contract version this Go package expects from the
 // glue (llgo_bt_glue_abi). Bump both sides together when a signature or
-// mailbox kind changes.
-const glueABIVersion = 1
+// mailbox kind changes - version 2 is the A2DP enable call gaining its MCLK
+// parameter (a stale glue would silently drop the codec's master clock,
+// the one wiring failure that answers every register write and stays
+// silent).
+const glueABIVersion = 2
 
 // ---- events ----
 //
@@ -919,10 +922,16 @@ func (c *SPPConn) drain() {
 type A2DPConfig struct {
 	// BclkPin, WsPin, DoutPin are the GPIO numbers of the I2S standard-mode
 	// TX bit clock, word select and data-out pins (the DAC/codec side).
-	// MCLK is not driven; DIN is unused.
+	// DIN is unused.
 	BclkPin int
 	WsPin   int
 	DoutPin int
+	// MCLKPin is the master-clock GPIO for codecs that need a fixed
+	// system clock (every ES8311 board does). Zero or negative leaves MCLK
+	// undriven - the pre-MCLK behavior - so the zero-value config keeps
+	// working unchanged; GPIO0 cannot select MCLK (it is a boot-strapping
+	// pin, and 0 is the unset value).
+	MCLKPin int
 	// DmaDescNum and DmaFrameNum size the TX DMA ring (descriptors x frames
 	// of one stereo S16 sample) - the jitter absorber between the BT clock
 	// feeding PCM and the local audio clock consuming it. Zero picks the
@@ -946,7 +955,11 @@ func A2DPEnable(cfg A2DPConfig) error {
 	if !Ready() {
 		return ErrNotReady
 	}
-	return errOf(a2dpEnable(int32(cfg.BclkPin), int32(cfg.WsPin),
+	mclk := cfg.MCLKPin
+	if mclk <= 0 {
+		mclk = -1 // the glue's unused-pin value
+	}
+	return errOf(a2dpEnable(int32(mclk), int32(cfg.BclkPin), int32(cfg.WsPin),
 		int32(cfg.DoutPin), int32(cfg.DmaDescNum), int32(cfg.DmaFrameNum)))
 }
 

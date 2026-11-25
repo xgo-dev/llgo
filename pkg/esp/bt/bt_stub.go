@@ -42,8 +42,8 @@ func sppRead(handle uint32, dst *uint8, cap int32) int32 {
 	return 0
 }
 
-func a2dpEnable(bclk, ws, dout, dmaDesc, dmaFrames int32) int32 {
-	_, _, _, _, _ = bclk, ws, dout, dmaDesc, dmaFrames
+func a2dpEnable(mclk, bclk, ws, dout, dmaDesc, dmaFrames int32) int32 {
+	_, _, _, _, _, _ = mclk, bclk, ws, dout, dmaDesc, dmaFrames
 	return codeUnsupport
 }
 func a2dpDisable() int32               { return codeUnsupport }

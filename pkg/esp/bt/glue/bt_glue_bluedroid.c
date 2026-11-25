@@ -82,7 +82,7 @@ extern int32_t bt_a2dp_teardown(void);
 /* Glue contract version: the Go package checks llgo_bt_glue_abi before any
  * control call and refuses a mismatch (BT_ERR_GLUE_ABI). Bump together with
  * bt.go's glueABIVersion when a signature or a mailbox kind changes. */
-#define LLGO_BT_GLUE_ABI 1
+#define LLGO_BT_GLUE_ABI 2
 
 /* ---- ctrl ring ---- */
 
