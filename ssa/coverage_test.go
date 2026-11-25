@@ -6,44 +6,44 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/target"
-	lltypes "github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 	pkg := NewPackage("example.com/cov", "cov", target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	i64 := lltypes.Typ[lltypes.Int64]
-	boolT := lltypes.Typ[lltypes.Bool]
-	ptrI64 := lltypes.NewPointerWithKind(i64, lltypes.GoPtr)
-	cPtr := lltypes.NewPointerWithKind(i64, lltypes.CPtr)
-	cFuncSig := lltypes.NewSignatureWithCallConv(
+	i64 := types.Typ[types.Int64]
+	boolT := types.Typ[types.Bool]
+	ptrI64 := types.NewPointerWithKind(i64, types.GoPtr)
+	cPtr := types.NewPointerWithKind(i64, types.CPtr)
+	cFuncSig := types.NewSignatureWithCallConv(
 		nil,
-		lltypes.NewTuple(lltypes.NewParam(0, nil, "a", i64)),
+		types.NewTuple(types.NewParam(0, nil, "a", i64)),
 		nil,
 		false,
-		lltypes.CDecl,
+		types.CDecl,
 	)
-	cFuncPtr := lltypes.NewPointerWithKind(cFuncSig, lltypes.CPtr)
-	doMeth := lltypes.NewFunc(0, nil, "Do", lltypes.NewSignature(
+	cFuncPtr := types.NewPointerWithKind(cFuncSig, types.CPtr)
+	doMeth := types.NewFunc(0, nil, "Do", types.NewSignature(
 		nil,
-		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
-		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+		types.NewTuple(types.NewParam(0, nil, "", i64)),
+		types.NewTuple(types.NewParam(0, nil, "", i64)),
 		false,
 	))
-	ifaceT := lltypes.NewInterfaceType([]*lltypes.Func{doMeth}, nil)
+	ifaceT := types.NewInterfaceType([]*types.Func{doMeth}, nil)
 
 	g := pkg.NewGlobal("cov.G", ptrI64)
 	if g == nil || !g.HasPtrData {
 		t.Fatalf("NewGlobal(ptrI64) = %+v", g)
 	}
 
-	sig := lltypes.NewSignature(
-		lltypes.NewParam(0, nil, "r", ptrI64),
-		lltypes.NewTuple(
-			lltypes.NewParam(0, nil, "cond", boolT),
-			lltypes.NewParam(0, nil, "iface", ifaceT),
-			lltypes.NewParam(0, nil, "cfn", cFuncPtr),
+	sig := types.NewSignature(
+		types.NewParam(0, nil, "r", ptrI64),
+		types.NewTuple(
+			types.NewParam(0, nil, "cond", boolT),
+			types.NewParam(0, nil, "iface", ifaceT),
+			types.NewParam(0, nil, "cfn", cFuncPtr),
 		),
-		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+		types.NewTuple(types.NewParam(0, nil, "", i64)),
 		false,
 	)
 	fn := pkg.NewFunction("cov.Run", sig)
@@ -66,10 +66,10 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 	b.GCRoot(alloc, false)
 	b.KeepAlive(alloc)
 	_ = b.PtrCast(alloc, cPtr)
-	clos := b.MakeClosure(lltypes.NewSignature(nil, nil, nil, false), "cov.cb", alloc)
-	_ = b.CallDirect("cov.helper", lltypes.Go, i64, loaded)
+	clos := b.MakeClosure(types.NewSignature(nil, nil, nil, false), "cov.cb", alloc)
+	_ = b.CallDirect("cov.helper", types.Go, i64, loaded)
 	_ = b.CallClosure(clos, nil)
-	_ = b.CallCFunc(fn.Params[3], lltypes.CDecl, nil, loaded)
+	_ = b.CallCFunc(fn.Params[3], types.CDecl, nil, loaded)
 	_ = b.CallInterface(fn.Params[2], "Do", 0, i64, loaded)
 	b.Defer(clos, false)
 	b.Defer(clos, true)
@@ -160,7 +160,7 @@ func TestBuilderAndInstrFormattingAndVerify(t *testing.T) {
 		t.Fatal("VerifyFunction(nil) succeeded")
 	}
 	badPkg := NewPackage("bad", "bad", target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	badFn := badPkg.NewFunction("bad.EmptyBlock", lltypes.NewSignature(nil, nil, nil, false))
+	badFn := badPkg.NewFunction("bad.EmptyBlock", types.NewSignature(nil, nil, nil, false))
 	_ = badFn.NewBasicBlock("empty")
 	if err := VerifyFunction(badFn); err == nil {
 		t.Fatal("VerifyFunction accepted empty block")

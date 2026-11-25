@@ -19,7 +19,7 @@ package ssa
 import (
 	"fmt"
 
-	lltypes "github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 // VerifyPackage checks structural, CFG, calling-convention, and GC-safety
@@ -199,8 +199,8 @@ func verifyInstr(fn *Function, blk *BasicBlock, ins Instruction, blkSet map[*Bas
 		if dstType == nil {
 			return fmt.Errorf("ssa: %s.%s: write barrier destination has nil type", fn.Name, blk.Label)
 		}
-		ptr, ok := dstType.Underlying().(*lltypes.Pointer)
-		if !ok || ptr.Kind() != lltypes.GoPtr {
+		ptr, ok := dstType.Underlying().(*types.Pointer)
+		if !ok || ptr.Kind() != types.GoPtr {
 			return fmt.Errorf("ssa: %s.%s: write barrier destination %s must be a GoPtr", fn.Name, blk.Label, dstType)
 		}
 	case *CallClosure:
@@ -208,7 +208,7 @@ func verifyInstr(fn *Function, blk *BasicBlock, ins Instruction, blkSet map[*Bas
 		if cloType == nil {
 			return fmt.Errorf("ssa: %s.%s: call.closure callee has nil type", fn.Name, blk.Label)
 		}
-		sig, ok := cloType.Underlying().(*lltypes.Signature)
+		sig, ok := cloType.Underlying().(*types.Signature)
 		if !ok || !sig.IsClosure() {
 			return fmt.Errorf("ssa: %s.%s: call.closure callee %s is not a Closure", fn.Name, blk.Label, cloType)
 		}

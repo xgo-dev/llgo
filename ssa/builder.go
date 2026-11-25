@@ -21,7 +21,7 @@ import (
 	"go/token"
 
 	"github.com/xgo-dev/llgo/target"
-	lltypes "github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 // NewPackage creates a new pure-Go IR Package for spec.
@@ -38,7 +38,7 @@ func NewPackage(path, name string, spec target.Spec) *Package {
 }
 
 // NewGlobal adds and returns a package-level Global.
-func (p *Package) NewGlobal(name string, typ lltypes.Type) *Global {
+func (p *Package) NewGlobal(name string, typ types.Type) *Global {
 	g := &Global{
 		Name:       name,
 		Type:       typ,
@@ -49,7 +49,7 @@ func (p *Package) NewGlobal(name string, typ lltypes.Type) *Global {
 }
 
 // NewFunction adds and returns a Function with formal parameters derived from sig.
-func (p *Package) NewFunction(name string, sig *lltypes.Signature) *Function {
+func (p *Package) NewFunction(name string, sig *types.Signature) *Function {
 	fn := &Function{
 		Pkg:    p,
 		Name:   name,
@@ -119,25 +119,25 @@ func (b *Builder) emit(ins Instruction) {
 	b.blk.Instrs = append(b.blk.Instrs, ins)
 }
 
-func (b *Builder) Const(typ lltypes.Type, lit string) *Const {
+func (b *Builder) Const(typ types.Type, lit string) *Const {
 	return &Const{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, Literal: lit}
 }
 
-func (b *Builder) Phi(typ lltypes.Type, edges ...PhiEdge) *Phi {
+func (b *Builder) Phi(typ types.Type, edges ...PhiEdge) *Phi {
 	ins := &Phi{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, Edges: edges}
 	b.emit(ins)
 	return ins
 }
 
-func (b *Builder) BinOp(op token.Token, typ lltypes.Type, x, y Value) *BinOp {
+func (b *Builder) BinOp(op token.Token, typ types.Type, x, y Value) *BinOp {
 	ins := &BinOp{baseValue: baseValue{id: b.fn.allocID(), typ: typ}, Op: op, X: x, Y: y}
 	b.emit(ins)
 	return ins
 }
 
-func (b *Builder) Alloc(elem lltypes.Type, heap, noScan bool) *Alloc {
+func (b *Builder) Alloc(elem types.Type, heap, noScan bool) *Alloc {
 	ins := &Alloc{
-		baseValue: baseValue{id: b.fn.allocID(), typ: lltypes.NewPointerWithKind(elem, lltypes.GoPtr)},
+		baseValue: baseValue{id: b.fn.allocID(), typ: types.NewPointerWithKind(elem, types.GoPtr)},
 		Elem:      elem,
 		Heap:      heap,
 		NoScan:    noScan,
@@ -146,7 +146,7 @@ func (b *Builder) Alloc(elem lltypes.Type, heap, noScan bool) *Alloc {
 	return ins
 }
 
-func (b *Builder) Load(addr Value, elem lltypes.Type) *Load {
+func (b *Builder) Load(addr Value, elem types.Type) *Load {
 	ins := &Load{baseValue: baseValue{id: b.fn.allocID(), typ: elem}, Addr: addr}
 	b.emit(ins)
 	return ins
@@ -182,16 +182,16 @@ func (b *Builder) KeepAlive(val Value) *KeepAlive {
 	return ins
 }
 
-func (b *Builder) PtrCast(x Value, targetPtr *lltypes.Pointer) *PtrCast {
+func (b *Builder) PtrCast(x Value, targetPtr *types.Pointer) *PtrCast {
 	ins := &PtrCast{baseValue: baseValue{id: b.fn.allocID(), typ: targetPtr}, X: x}
 	b.emit(ins)
 	return ins
 }
 
-func (b *Builder) MakeClosure(sig *lltypes.Signature, fnName string, env Value) *MakeClosure {
+func (b *Builder) MakeClosure(sig *types.Signature, fnName string, env Value) *MakeClosure {
 	cloSig := sig
 	if sig != nil && !sig.IsClosure() {
-		cloSig = sig.WithCallConv(lltypes.Go)
+		cloSig = sig.WithCallConv(types.Go)
 	}
 	ins := &MakeClosure{
 		baseValue: baseValue{id: b.fn.allocID(), typ: cloSig},
@@ -202,7 +202,7 @@ func (b *Builder) MakeClosure(sig *lltypes.Signature, fnName string, env Value) 
 	return ins
 }
 
-func (b *Builder) CallDirect(callee string, cc lltypes.CallConv, ret lltypes.Type, args ...Value) *CallDirect {
+func (b *Builder) CallDirect(callee string, cc types.CallConv, ret types.Type, args ...Value) *CallDirect {
 	ins := &CallDirect{
 		baseValue: baseValue{id: b.fn.allocID(), typ: ret},
 		Callee:    callee,
@@ -213,7 +213,7 @@ func (b *Builder) CallDirect(callee string, cc lltypes.CallConv, ret lltypes.Typ
 	return ins
 }
 
-func (b *Builder) CallClosure(closure Value, ret lltypes.Type, args ...Value) *CallClosure {
+func (b *Builder) CallClosure(closure Value, ret types.Type, args ...Value) *CallClosure {
 	ins := &CallClosure{
 		baseValue: baseValue{id: b.fn.allocID(), typ: ret},
 		Closure:   closure,
@@ -223,7 +223,7 @@ func (b *Builder) CallClosure(closure Value, ret lltypes.Type, args ...Value) *C
 	return ins
 }
 
-func (b *Builder) CallCFunc(callee Value, cc lltypes.CallConv, ret lltypes.Type, args ...Value) *CallCFunc {
+func (b *Builder) CallCFunc(callee Value, cc types.CallConv, ret types.Type, args ...Value) *CallCFunc {
 	ins := &CallCFunc{
 		baseValue: baseValue{id: b.fn.allocID(), typ: ret},
 		Callee:    callee,
@@ -234,7 +234,7 @@ func (b *Builder) CallCFunc(callee Value, cc lltypes.CallConv, ret lltypes.Type,
 	return ins
 }
 
-func (b *Builder) CallInterface(iface Value, method string, methodIndex int, ret lltypes.Type, args ...Value) *CallInterface {
+func (b *Builder) CallInterface(iface Value, method string, methodIndex int, ret types.Type, args ...Value) *CallInterface {
 	ins := &CallInterface{
 		baseValue:   baseValue{id: b.fn.allocID(), typ: ret},
 		Iface:       iface,

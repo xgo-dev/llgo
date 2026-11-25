@@ -38,7 +38,7 @@ import (
 
 	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/target"
-	lltypes "github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 // ValueID uniquely identifies an SSA value within a Function.
@@ -60,7 +60,7 @@ type Package struct {
 type Global struct {
 	Name       string
 	LinkName   string
-	Type       lltypes.Type
+	Type       types.Type
 	Locality   directive.Locality
 	Constant   bool
 	LinkOnce   bool
@@ -73,7 +73,7 @@ type Function struct {
 	Pkg        *Package
 	Name       string
 	LinkName   string
-	Sig        *lltypes.Signature
+	Sig        *types.Signature
 	Params     []*Parameter
 	Blocks     []*BasicBlock
 	LinkOnce   bool
@@ -116,7 +116,7 @@ func (b *BasicBlock) Terminator() Terminator {
 // GlobalRef, or value-producing Instruction).
 type Value interface {
 	ID() ValueID
-	Type() lltypes.Type
+	Type() types.Type
 	Name() string
 	valMarker()
 }
@@ -154,13 +154,13 @@ func (*baseInstr) instrMarker() {}
 
 type baseValue struct {
 	id  ValueID
-	typ lltypes.Type
+	typ types.Type
 }
 
-func (v *baseValue) ID() ValueID        { return v.id }
-func (v *baseValue) Type() lltypes.Type { return v.typ }
-func (v *baseValue) Name() string       { return fmt.Sprintf("v%d", v.id) }
-func (*baseValue) valMarker()           {}
+func (v *baseValue) ID() ValueID      { return v.id }
+func (v *baseValue) Type() types.Type { return v.typ }
+func (v *baseValue) Name() string     { return fmt.Sprintf("v%d", v.id) }
+func (*baseValue) valMarker()         {}
 
 // Parameter is a formal function parameter.
 type Parameter struct {
@@ -275,7 +275,7 @@ func (i *PtrCast) String() string {
 type Alloc struct {
 	baseInstr
 	baseValue
-	Elem   lltypes.Type
+	Elem   types.Type
 	Heap   bool
 	NoScan bool
 	Align  int64
@@ -448,7 +448,7 @@ type CallDirect struct {
 	baseInstr
 	baseValue
 	Callee   string
-	CallConv lltypes.CallConv
+	CallConv types.CallConv
 	Args     []Value
 }
 
@@ -479,7 +479,7 @@ type CallCFunc struct {
 	baseInstr
 	baseValue
 	Callee   Value
-	CallConv lltypes.CallConv
+	CallConv types.CallConv
 	Args     []Value
 }
 

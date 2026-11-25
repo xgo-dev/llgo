@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/target"
-	lltypes "github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 func TestBuildVerifyAndSummarizeIR(t *testing.T) {
@@ -15,19 +15,19 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 	pkg := NewPackage("example.com/demo", "demo", spec)
 	pkg.Exports["example.com/demo.Entry"] = "demo_entry"
 
-	i64 := lltypes.Typ[lltypes.Int64]
-	goPtrI64 := lltypes.NewPointerWithKind(i64, lltypes.GoPtr)
-	cPtrI64 := lltypes.NewPointerWithKind(i64, lltypes.CPtr)
-	cbSig := lltypes.NewSignature(
+	i64 := types.Typ[types.Int64]
+	goPtrI64 := types.NewPointerWithKind(i64, types.GoPtr)
+	cPtrI64 := types.NewPointerWithKind(i64, types.CPtr)
+	cbSig := types.NewSignature(
 		nil,
-		lltypes.NewTuple(lltypes.NewParam(0, nil, "x", i64)),
-		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+		types.NewTuple(types.NewParam(0, nil, "x", i64)),
+		types.NewTuple(types.NewParam(0, nil, "", i64)),
 		false,
 	)
-	entrySig := lltypes.NewSignature(
+	entrySig := types.NewSignature(
 		nil,
-		lltypes.NewTuple(lltypes.NewParam(0, nil, "n", i64)),
-		lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+		types.NewTuple(types.NewParam(0, nil, "n", i64)),
+		types.NewTuple(types.NewParam(0, nil, "", i64)),
 		false,
 	)
 
@@ -47,9 +47,9 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 	// First-class closure construction and call
 	clo := b.MakeClosure(cbSig, "example.com/demo.helper", nil)
 	res := b.CallClosure(clo, i64, fn.Params[0])
-	_ = b.CallDirect("C.puts", lltypes.CDecl, nil)
-	readMeth := lltypes.NewFunc(0, nil, "Read", lltypes.NewSignature(nil, nil, lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)), false))
-	_ = b.CallInterface(b.Const(lltypes.NewInterfaceType([]*lltypes.Func{readMeth}, nil), "iface"), "Read", 0, i64)
+	_ = b.CallDirect("C.puts", types.CDecl, nil)
+	readMeth := types.NewFunc(0, nil, "Read", types.NewSignature(nil, nil, types.NewTuple(types.NewParam(0, nil, "", i64)), false))
+	_ = b.CallInterface(b.Const(types.NewInterfaceType([]*types.Func{readMeth}, nil), "iface"), "Read", 0, i64)
 	b.KeepAlive(cell)
 	b.Return(res)
 
@@ -85,10 +85,10 @@ func TestBuildVerifyAndSummarizeIR(t *testing.T) {
 
 func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 	spec := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	i64 := lltypes.Typ[lltypes.Int64]
-	goPtr := lltypes.NewPointerWithKind(i64, lltypes.GoPtr)
-	cPtr := lltypes.NewPointerWithKind(i64, lltypes.CPtr)
-	voidSig := lltypes.NewSignature(nil, nil, nil, false)
+	i64 := types.Typ[types.Int64]
+	goPtr := types.NewPointerWithKind(i64, types.GoPtr)
+	cPtr := types.NewPointerWithKind(i64, types.CPtr)
+	voidSig := types.NewSignature(nil, nil, nil, false)
 
 	t.Run("noscan on pointer type", func(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
@@ -117,7 +117,7 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 		pkg := NewPackage("p", "p", spec)
 		fn := pkg.NewFunction("p.f", voidSig)
 		b := NewBuilder(fn.NewBasicBlock("entry"))
-		voidCall := b.CallDirect("C.nop", lltypes.CDecl, nil)
+		voidCall := b.CallDirect("C.nop", types.CDecl, nil)
 		b.WriteBarrier(voidCall, b.Const(i64, "0"), BarrierStore)
 		b.Return()
 		if err := VerifyPackage(pkg); err == nil || !strings.Contains(err.Error(), "untyped operand") {
@@ -145,15 +145,15 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 	})
 
 	t.Run("valid diamond phi passes", func(t *testing.T) {
-		boolT := lltypes.Typ[lltypes.Bool]
-		sig := lltypes.NewSignature(
+		boolT := types.Typ[types.Bool]
+		sig := types.NewSignature(
 			nil,
-			lltypes.NewTuple(
-				lltypes.NewParam(0, nil, "cond", boolT),
-				lltypes.NewParam(0, nil, "a", i64),
-				lltypes.NewParam(0, nil, "b", i64),
+			types.NewTuple(
+				types.NewParam(0, nil, "cond", boolT),
+				types.NewParam(0, nil, "a", i64),
+				types.NewParam(0, nil, "b", i64),
 			),
-			lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+			types.NewTuple(types.NewParam(0, nil, "", i64)),
 			false,
 		)
 		pkg := NewPackage("p", "p", spec)
@@ -175,10 +175,10 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 	})
 
 	t.Run("phi referencing foreign function block and param rejected", func(t *testing.T) {
-		sig := lltypes.NewSignature(
+		sig := types.NewSignature(
 			nil,
-			lltypes.NewTuple(lltypes.NewParam(0, nil, "x", i64)),
-			lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+			types.NewTuple(types.NewParam(0, nil, "x", i64)),
+			types.NewTuple(types.NewParam(0, nil, "", i64)),
 			false,
 		)
 		pkg := NewPackage("p", "p", spec)
@@ -226,10 +226,10 @@ func TestVerifyRejectsInvalidGCAndCFGRules(t *testing.T) {
 	})
 
 	t.Run("phi non-predecessor and placement rejected", func(t *testing.T) {
-		sig := lltypes.NewSignature(
+		sig := types.NewSignature(
 			nil,
-			lltypes.NewTuple(lltypes.NewParam(0, nil, "x", i64)),
-			lltypes.NewTuple(lltypes.NewParam(0, nil, "", i64)),
+			types.NewTuple(types.NewParam(0, nil, "x", i64)),
+			types.NewTuple(types.NewParam(0, nil, "", i64)),
 			false,
 		)
 		pkg := NewPackage("p", "p", spec)

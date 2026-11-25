@@ -27,32 +27,32 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/target"
-	lltypes "github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llgo/types"
 )
 
 func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	spec := target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"})
-	ctx := lltypes.NewContext(spec)
+	ctx := types.NewContext(spec)
 	if ctx.Spec().GOARCH != "amd64" {
 		t.Fatalf("Spec() = %+v", ctx.Spec())
 	}
 
 	// Interning & constructors.
-	i8 := ctx.Basic(lltypes.Int8)
-	i16 := ctx.Basic(lltypes.Int16)
-	i32 := ctx.Basic(lltypes.Int32)
-	i64 := ctx.Basic(lltypes.Int64)
-	u8 := ctx.Basic(lltypes.Uint8)
-	u16 := ctx.Basic(lltypes.Uint16)
-	u32 := ctx.Basic(lltypes.Uint32)
-	u64 := ctx.Basic(lltypes.Uint64)
-	f32 := ctx.Basic(lltypes.Float32)
-	f64 := ctx.Basic(lltypes.Float64)
-	c64 := ctx.Basic(lltypes.Complex64)
-	c128 := ctx.Basic(lltypes.Complex128)
-	str := ctx.Basic(lltypes.String)
-	up := ctx.Basic(lltypes.UnsafePointer)
-	_ = ctx.Basic(lltypes.BasicKind(999))
+	i8 := ctx.Basic(types.Int8)
+	i16 := ctx.Basic(types.Int16)
+	i32 := ctx.Basic(types.Int32)
+	i64 := ctx.Basic(types.Int64)
+	u8 := ctx.Basic(types.Uint8)
+	u16 := ctx.Basic(types.Uint16)
+	u32 := ctx.Basic(types.Uint32)
+	u64 := ctx.Basic(types.Uint64)
+	f32 := ctx.Basic(types.Float32)
+	f64 := ctx.Basic(types.Float64)
+	c64 := ctx.Basic(types.Complex64)
+	c128 := ctx.Basic(types.Complex128)
+	str := ctx.Basic(types.String)
+	up := ctx.Basic(types.UnsafePointer)
+	_ = ctx.Basic(types.BasicKind(999))
 
 	anyT := ctx.Any()
 	if !anyT.Empty() || !anyT.Comparable() || anyT.String() != "any" || !anyT.HasPtrData() {
@@ -66,10 +66,10 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	if ctx.Map(str, i64) != mp || mp.Key() != str || mp.Elem() != i64 || !mp.HasPtrData() || mp.String() != "map[string]int64" {
 		t.Fatalf("Map() = %v", mp)
 	}
-	ch1 := ctx.Chan(lltypes.SendRecv, i32)
-	ch2 := ctx.Chan(lltypes.SendOnly, i32)
-	ch3 := ctx.Chan(lltypes.RecvOnly, i32)
-	if ctx.Chan(lltypes.SendRecv, i32) != ch1 || ch1.Dir() != lltypes.SendRecv || ch1.Elem() != i32 ||
+	ch1 := ctx.Chan(types.SendRecv, i32)
+	ch2 := ctx.Chan(types.SendOnly, i32)
+	ch3 := ctx.Chan(types.RecvOnly, i32)
+	if ctx.Chan(types.SendRecv, i32) != ch1 || ch1.Dir() != types.SendRecv || ch1.Elem() != i32 ||
 		ch1.String() != "chan int32" || ch2.String() != "chan<- int32" || ch3.String() != "<-chan int32" {
 		t.Fatalf("Chan() = %v, %v, %v", ch1, ch2, ch3)
 	}
@@ -77,80 +77,80 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	if ctx.Array(i32, 4, false) != arr || arr.Elem() != i32 || arr.Len() != 4 || arr.NativeStorage() || arr.HasPtrData() || arr.String() != "[4]int32" {
 		t.Fatalf("Array() = %v", arr)
 	}
-	ptr := ctx.Pointer(i32, lltypes.GoPtr)
-	if ctx.Pointer(i32, lltypes.GoPtr) != ptr || ptr.Elem() != i32 || ptr.String() != "*int32" {
+	ptr := ctx.Pointer(i32, types.GoPtr)
+	if ctx.Pointer(i32, types.GoPtr) != ptr || ptr.Elem() != i32 || ptr.String() != "*int32" {
 		t.Fatalf("Pointer() = %v", ptr)
 	}
-	cptr := ctx.Pointer(i32, lltypes.CPtr)
-	if cptr.String() != "*c(int32)" || lltypes.GoPtr.String() != "go" || lltypes.UnsafePtr.String() != "unsafe" || lltypes.CPtr.String() != "c" || lltypes.PtrKind(99).String() == "" {
+	cptr := ctx.Pointer(i32, types.CPtr)
+	if cptr.String() != "*c(int32)" || types.GoPtr.String() != "go" || types.UnsafePtr.String() != "unsafe" || types.CPtr.String() != "c" || types.PtrKind(99).String() == "" {
 		t.Fatalf("PtrKind.String() failed: %s", cptr.String())
 	}
 
 	// CallConv String() and predicates.
-	for _, cc := range []lltypes.CallConv{lltypes.Go, lltypes.CDecl, lltypes.Stdcall, lltypes.Fastcall, lltypes.Py, lltypes.Wasm, lltypes.CallConv(99)} {
+	for _, cc := range []types.CallConv{types.Go, types.CDecl, types.Stdcall, types.Fastcall, types.Py, types.Wasm, types.CallConv(99)} {
 		if cc.String() == "" {
 			t.Fatalf("empty CallConv.String() for %d", cc)
 		}
 	}
 
 	// Tuple, Interface, Struct, Named, Alias, TypeParam, MethodSet, Identical.
-	pkg := lltypes.NewPackage("example.com/cov", "cov")
+	pkg := types.NewPackage("example.com/cov", "cov")
 	pkg.MarkComplete()
-	pkg.SetImports([]*lltypes.Package{lltypes.NewPackage("unsafe", "unsafe")})
+	pkg.SetImports([]*types.Package{types.NewPackage("unsafe", "unsafe")})
 	if pkg.GoPackage() != nil || pkg.Lookup("missing") != nil {
 		t.Fatal("unexpected Package defaults")
 	}
 
-	p0 := lltypes.NewParam(0, pkg, "x", i64)
-	p1 := lltypes.NewParam(0, pkg, "y", str)
-	tup := lltypes.NewTuple(p0, p1)
-	if tup.Len() != 2 || tup.At(0) != p0 || !tup.HasPtrData() || tup.String() == "" || lltypes.NewTuple() != nil {
+	p0 := types.NewParam(0, pkg, "x", i64)
+	p1 := types.NewParam(0, pkg, "y", str)
+	tup := types.NewTuple(p0, p1)
+	if tup.Len() != 2 || tup.At(0) != p0 || !tup.HasPtrData() || tup.String() == "" || types.NewTuple() != nil {
 		t.Fatalf("Tuple = %v", tup)
 	}
-	if (*lltypes.Tuple)(nil).Len() != 0 || (*lltypes.Tuple)(nil).HasPtrData() || (*lltypes.Tuple)(nil).String() != "()" {
+	if (*types.Tuple)(nil).Len() != 0 || (*types.Tuple)(nil).HasPtrData() || (*types.Tuple)(nil).String() != "()" {
 		t.Fatal("nil Tuple methods failed")
 	}
 
-	tpObj := lltypes.NewTypeName(0, pkg, "T", nil)
-	tp := lltypes.NewTypeParam(tpObj, anyT)
+	tpObj := types.NewTypeName(0, pkg, "T", nil)
+	tp := types.NewTypeParam(tpObj, anyT)
 	if tp.Obj() != tpObj || tp.Index() != 0 || tp.Constraint() != anyT || tp.Underlying() != anyT || !tp.HasPtrData() || tp.String() != "T" {
 		t.Fatalf("TypeParam = %v", tp)
 	}
 
-	namedObj := lltypes.NewTypeName(0, pkg, "Rec", nil)
-	st := lltypes.NewStruct([]*lltypes.Var{
-		lltypes.NewField(0, pkg, "A", i32, false),
-		lltypes.NewField(0, pkg, "B", ptr, true),
+	namedObj := types.NewTypeName(0, pkg, "Rec", nil)
+	st := types.NewStruct([]*types.Var{
+		types.NewField(0, pkg, "A", i32, false),
+		types.NewField(0, pkg, "B", ptr, true),
 	}, []string{"json:\"a\"", ""})
 	st.SetHostLayout(true)
 	st.SetNativeLayout(false)
 	if st.NumFields() != 2 || st.Field(0).Name() != "A" || st.Tag(0) != "json:\"a\"" || st.Tag(5) != "" || !st.HostLayout() || st.NativeLayout() || st.IsClosureStruct() || st.SIMDTagIndex() != -1 || !st.HasPtrData() || st.String() == "" {
 		t.Fatalf("Struct = %v", st)
 	}
-	if lltypes.NewStruct(nil, nil).String() != "struct{}" {
+	if types.NewStruct(nil, nil).String() != "struct{}" {
 		t.Fatal("empty struct string")
 	}
 
-	named := lltypes.NewNamed(namedObj, st, nil)
+	named := types.NewNamed(namedObj, st, nil)
 	named.SetUnderlying(st)
-	mSig := lltypes.NewSignatureType(
-		lltypes.NewParam(0, pkg, "r", named),
-		[]*lltypes.TypeParam{tp},
-		[]*lltypes.TypeParam{tp},
-		lltypes.NewTuple(lltypes.NewParam(0, pkg, "v", sl)),
-		lltypes.NewTuple(lltypes.NewParam(0, pkg, "", i64), lltypes.NewParam(0, pkg, "", str)),
+	mSig := types.NewSignatureType(
+		types.NewParam(0, pkg, "r", named),
+		[]*types.TypeParam{tp},
+		[]*types.TypeParam{tp},
+		types.NewTuple(types.NewParam(0, pkg, "v", sl)),
+		types.NewTuple(types.NewParam(0, pkg, "", i64), types.NewParam(0, pkg, "", str)),
 		true,
 	)
 	if !mSig.IsGoVariadic() || mSig.IsCVariadic() || mSig.IsPyVariadic() || mSig.TypeParams().Len() != 1 || mSig.RecvTypeParams().Len() != 1 || mSig.String() == "" {
 		t.Fatalf("Signature = %v", mSig)
 	}
-	mFn := lltypes.NewFunc(0, pkg, "Do", mSig)
-	mFn.SetFreeVars([]*lltypes.Var{p0})
+	mFn := types.NewFunc(0, pkg, "Do", mSig)
+	mFn.SetFreeVars([]*types.Var{p0})
 	if len(mFn.FreeVars()) != 1 || mFn.FreeVars()[0] != p0 {
 		t.Fatal("Func.FreeVars mismatch")
 	}
 	mFn.SetLinkName("cov.Do")
-	mFn.SetCallConv(lltypes.Go)
+	mFn.SetCallConv(types.Go)
 	mFn.SetExternal(false)
 	mFn.SetSkip(false)
 	mFn.SetPyList(false)
@@ -160,55 +160,55 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	}
 
 	// Alias & Unalias & go/types-compatible helpers (TypeString, ObjectString, RelativeTo, SizesFor, Universe, NewMethodSet, Complete).
-	aliasObj := lltypes.NewTypeName(0, pkg, "RecAlias", nil)
-	alias := lltypes.NewAlias(aliasObj, named)
-	if !aliasObj.IsAlias() || alias.Obj() != aliasObj || alias.Rhs() != named || alias.Origin() != alias || alias.Underlying() != st || !alias.HasPtrData() || lltypes.Unalias(alias) != named || alias.String() == "" {
+	aliasObj := types.NewTypeName(0, pkg, "RecAlias", nil)
+	alias := types.NewAlias(aliasObj, named)
+	if !aliasObj.IsAlias() || alias.Obj() != aliasObj || alias.Rhs() != named || alias.Origin() != alias || alias.Underlying() != st || !alias.HasPtrData() || types.Unalias(alias) != named || alias.String() == "" {
 		t.Fatalf("Alias = %v", alias)
 	}
-	if !lltypes.Identical(alias, named) {
+	if !types.Identical(alias, named) {
 		t.Fatal("alias should be identical to target")
 	}
-	qf := lltypes.RelativeTo(pkg)
-	if got := lltypes.TypeString(named, qf); got != "Rec" {
+	qf := types.RelativeTo(pkg)
+	if got := types.TypeString(named, qf); got != "Rec" {
 		t.Fatalf("TypeString(named, RelativeTo(pkg)) = %q, want Rec", got)
 	}
-	if got := lltypes.TypeString(lltypes.NewPointer(named), qf); got != "*Rec" {
+	if got := types.TypeString(types.NewPointer(named), qf); got != "*Rec" {
 		t.Fatalf("TypeString(*named, qf) = %q", got)
 	}
-	_ = lltypes.TypeString(alias, qf)
-	_ = lltypes.TypeString(sl, qf)
-	_ = lltypes.TypeString(arr, qf)
-	_ = lltypes.TypeString(mp, qf)
-	_ = lltypes.TypeString(ch1, qf)
-	_ = lltypes.TypeString(ch2, qf)
-	_ = lltypes.TypeString(ch3, qf)
-	_ = lltypes.TypeString(cptr, qf)
-	_ = lltypes.ObjectString(mFn, qf)
-	_ = lltypes.ObjectString(namedObj, qf)
-	_ = lltypes.ObjectString(aliasObj, qf)
-	_ = lltypes.ObjectString(p0, qf)
-	_ = lltypes.ObjectString(nil, qf)
+	_ = types.TypeString(alias, qf)
+	_ = types.TypeString(sl, qf)
+	_ = types.TypeString(arr, qf)
+	_ = types.TypeString(mp, qf)
+	_ = types.TypeString(ch1, qf)
+	_ = types.TypeString(ch2, qf)
+	_ = types.TypeString(ch3, qf)
+	_ = types.TypeString(cptr, qf)
+	_ = types.ObjectString(mFn, qf)
+	_ = types.ObjectString(namedObj, qf)
+	_ = types.ObjectString(aliasObj, qf)
+	_ = types.ObjectString(p0, qf)
+	_ = types.ObjectString(nil, qf)
 
-	if sz := lltypes.SizesFor("llgo", "amd64"); sz == nil || sz.Sizeof(i64) != 8 || sz.Alignof(i64) != 8 || len(sz.Offsetsof([]*lltypes.Var{p0, p1})) != 2 {
+	if sz := types.SizesFor("llgo", "amd64"); sz == nil || sz.Sizeof(i64) != 8 || sz.Alignof(i64) != 8 || len(sz.Offsetsof([]*types.Var{p0, p1})) != 2 {
 		t.Fatalf("SizesFor(llgo, amd64) failed")
 	}
-	if lltypes.SizesFor("unknown", "amd64") != nil {
+	if types.SizesFor("unknown", "amd64") != nil {
 		t.Fatal("SizesFor(unknown) should be nil")
 	}
-	if lltypes.Universe.Lookup("error") == nil || lltypes.Universe.Lookup("any") == nil || lltypes.Universe.Lookup("byte") == nil || lltypes.Universe.Lookup("len") == nil {
+	if types.Universe.Lookup("error") == nil || types.Universe.Lookup("any") == nil || types.Universe.Lookup("byte") == nil || types.Universe.Lookup("len") == nil {
 		t.Fatal("Universe missing predeclared objects")
 	}
 
 	// Synthetic MethodSet on Named, *Named, Interface (plus NewInterface & Complete).
-	iface := lltypes.NewInterfaceType([]*lltypes.Func{mFn}, []lltypes.Type{anyT}).Complete()
-	_ = lltypes.NewInterface([]*lltypes.Func{mFn}, []*lltypes.Named{named}).Complete()
+	iface := types.NewInterfaceType([]*types.Func{mFn}, []types.Type{anyT}).Complete()
+	_ = types.NewInterface([]*types.Func{mFn}, []*types.Named{named}).Complete()
 	if iface.NumMethods() != 1 || iface.Method(0) != mFn || iface.NumEmbeddeds() != 1 || iface.EmbeddedType(0) != anyT || iface.Empty() || iface.String() == "" {
 		t.Fatalf("Interface = %v", iface)
 	}
-	if lltypes.NewMethodSet(named).Len() != 1 {
+	if types.NewMethodSet(named).Len() != 1 {
 		t.Fatal("NewMethodSet(named) len != 1")
 	}
-	for _, recv := range []lltypes.Type{named, lltypes.NewPointer(named), iface} {
+	for _, recv := range []types.Type{named, types.NewPointer(named), iface} {
 		ms := ctx.MethodSet(recv)
 		if ms.Len() != 1 || ms.At(0).Obj() != mFn || ms.Lookup(pkg, "Do") == nil || ms.Lookup(pkg, "Nope") != nil {
 			t.Fatalf("MethodSet(%s) = len %d", recv, ms.Len())
@@ -222,14 +222,14 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	}
 
 	// Objects, Scope, Const, PkgName, Label.
-	sc := lltypes.NewScope(pkg.Scope(), token.NoPos, token.NoPos, "block")
-	cObj := lltypes.NewConst(0, pkg, "K", i64, constant.MakeInt64(7))
-	vObj := lltypes.NewVar(0, pkg, "v", i64)
+	sc := types.NewScope(pkg.Scope(), token.NoPos, token.NoPos, "block")
+	cObj := types.NewConst(0, pkg, "K", i64, constant.MakeInt64(7))
+	vObj := types.NewVar(0, pkg, "v", i64)
 	vObj.SetLinkName("C.v")
 	vObj.SetExternal(true)
-	pnObj := lltypes.NewPkgName(0, pkg, "u", pkg.Imports()[0])
-	lblObj := lltypes.NewLabel(0, pkg, "L")
-	for _, o := range []lltypes.Object{mFn, cObj, vObj, namedObj, pnObj, lblObj} {
+	pnObj := types.NewPkgName(0, pkg, "u", pkg.Imports()[0])
+	lblObj := types.NewLabel(0, pkg, "L")
+	for _, o := range []types.Object{mFn, cObj, vObj, namedObj, pnObj, lblObj} {
 		sc.Insert(o)
 		_ = o.Parent()
 		_ = o.Pos()
@@ -247,50 +247,50 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	}
 
 	// EqualName across all basic & composite types.
-	for _, typ := range []lltypes.Type{
-		ctx.Basic(lltypes.Bool), i8, i16, i32, i64, u8, u16, u32, u64,
-		ctx.Basic(lltypes.Int), ctx.Basic(lltypes.Uintptr),
+	for _, typ := range []types.Type{
+		ctx.Basic(types.Bool), i8, i16, i32, i64, u8, u16, u32, u64,
+		ctx.Basic(types.Int), ctx.Basic(types.Uintptr),
 		f32, f64, c64, c128, str, up,
 		ptr, ch1, sl, mp, mSig, anyT, iface,
-		lltypes.NewStruct(nil, nil),
-		lltypes.NewStruct([]*lltypes.Var{lltypes.NewField(0, nil, "a", i32, false)}, nil),
-		lltypes.NewStruct([]*lltypes.Var{lltypes.NewField(0, nil, "a", sl, false)}, nil),
-		lltypes.NewArray(i32, 3),
-		lltypes.NewArray(sl, 3),
-		ctx.SIMDVec(lltypes.Int32, 4, false),
+		types.NewStruct(nil, nil),
+		types.NewStruct([]*types.Var{types.NewField(0, nil, "a", i32, false)}, nil),
+		types.NewStruct([]*types.Var{types.NewField(0, nil, "a", sl, false)}, nil),
+		types.NewArray(i32, 3),
+		types.NewArray(sl, 3),
+		ctx.SIMDVec(types.Int32, 4, false),
 		nil,
 	} {
 		_ = ctx.EqualName(typ)
 		_ = ctx.Layout(typ)
-		_, _, _ = lltypes.DataKindOf(typ, false)
-		_, _, _ = lltypes.DataKindOf(typ, true)
+		_, _, _ = types.DataKindOf(typ, false)
+		_, _, _ = types.DataKindOf(typ, true)
 	}
 	// 32-bit EqualName for int.
-	ctx32 := lltypes.NewContext(target.Spec{GOOS: "linux", GOARCH: "386"})
-	if ctx32.EqualName(ctx32.Basic(lltypes.Int)) != "memequal32" {
+	ctx32 := types.NewContext(target.Spec{GOOS: "linux", GOARCH: "386"})
+	if ctx32.EqualName(ctx32.Basic(types.Int)) != "memequal32" {
 		t.Fatal("32-bit int EqualName != memequal32")
 	}
-	if dk, _, depth := lltypes.DataKindOf(lltypes.NewArray(f32, 1), false); dk != lltypes.DataBitCast || depth != 1 {
+	if dk, _, depth := types.DataKindOf(types.NewArray(f32, 1), false); dk != types.DataBitCast || depth != 1 {
 		t.Fatalf("DataKindOf([1]float32) = (%v, %d)", dk, depth)
 	}
-	if dk, _, _ := lltypes.DataKindOf(f64, true); dk != lltypes.DataIndirect {
+	if dk, _, _ := types.DataKindOf(f64, true); dk != types.DataIndirect {
 		t.Fatalf("DataKindOf(float64, 32bit) = %v", dk)
 	}
-	if dk, _, _ := lltypes.DataKindOf(up, false); dk != lltypes.DataPointer {
+	if dk, _, _ := types.DataKindOf(up, false); dk != types.DataPointer {
 		t.Fatalf("DataKindOf(unsafe.Pointer) = %v", dk)
 	}
 
 	// Identical across composite kinds.
-	if !lltypes.Identical(sl, lltypes.NewSlice(i32)) ||
-		!lltypes.Identical(arr, lltypes.NewArray(i32, 4)) ||
-		!lltypes.Identical(mp, lltypes.NewMap(str, i64)) ||
-		!lltypes.Identical(ch1, lltypes.NewChan(lltypes.SendRecv, i32)) ||
-		!lltypes.Identical(tup, lltypes.NewTuple(p0, p1)) ||
-		!lltypes.Identical(iface, lltypes.NewInterfaceType([]*lltypes.Func{mFn}, []lltypes.Type{anyT})) ||
-		!lltypes.Identical(ctx.SIMDVec(lltypes.Int32, 4, false), lltypes.NewSIMDVec(i32, 4, false)) ||
-		!lltypes.Identical(tp, tp) ||
-		lltypes.Identical(i32, nil) ||
-		lltypes.Identical(i32, i64) {
+	if !types.Identical(sl, types.NewSlice(i32)) ||
+		!types.Identical(arr, types.NewArray(i32, 4)) ||
+		!types.Identical(mp, types.NewMap(str, i64)) ||
+		!types.Identical(ch1, types.NewChan(types.SendRecv, i32)) ||
+		!types.Identical(tup, types.NewTuple(p0, p1)) ||
+		!types.Identical(iface, types.NewInterfaceType([]*types.Func{mFn}, []types.Type{anyT})) ||
+		!types.Identical(ctx.SIMDVec(types.Int32, 4, false), types.NewSIMDVec(i32, 4, false)) ||
+		!types.Identical(tp, tp) ||
+		types.Identical(i32, nil) ||
+		types.Identical(i32, i64) {
 		t.Fatal("Identical checks failed")
 	}
 
@@ -300,17 +300,17 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	_ = ctx.HostFieldLayout(i64)
 	_ = ctx.HostFieldLayout(arr)
 	_ = ctx.HostFieldLayout(mSig)
-	_ = ctx.HostFieldLayout(lltypes.NewSignatureWithCallConv(nil, nil, nil, false, lltypes.CDecl))
+	_ = ctx.HostFieldLayout(types.NewSignatureWithCallConv(nil, nil, nil, false, types.CDecl))
 	_ = ctx.HostFieldLayout(named)
 	_ = ctx.HostFieldLayout(nil)
-	_ = ctx.HostBasicLayout(lltypes.BasicKind(999))
+	_ = ctx.HostBasicLayout(types.BasicKind(999))
 	_ = ctx.SIMDAlignment(99)
 
 	goSig := gotypes.NewSignatureType(nil, nil, nil, nil, nil, false)
-	if sig := ctx.FromGoWithCallConv(goSig, lltypes.Stdcall).(*lltypes.Signature); sig.CallConv() != lltypes.Stdcall {
+	if sig := ctx.FromGoWithCallConv(goSig, types.Stdcall).(*types.Signature); sig.CallConv() != types.Stdcall {
 		t.Fatalf("FromGoWithCallConv = %v", sig)
 	}
-	if ctx.FromGo(nil) != nil || ctx.FromGoWithCallConv(nil, lltypes.CDecl) != nil || ctx.FromGoObject(nil) != nil {
+	if ctx.FromGo(nil) != nil || ctx.FromGoWithCallConv(nil, types.CDecl) != nil || ctx.FromGoObject(nil) != nil {
 		t.Fatal("nil FromGo should return nil")
 	}
 	goPkg := gotypes.NewPackage("p", "p")
@@ -331,41 +331,41 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	sf := ctx.StructFromGoFields([]*gotypes.Var{
 		gotypes.NewField(0, goPkg, "fn", goSig, false),
 	}, true)
-	if !sf.NativeLayout() || sf.Field(0).Type().(*lltypes.Signature).CallConv() != lltypes.CDecl {
+	if !sf.NativeLayout() || sf.Field(0).Type().(*types.Signature).CallConv() != types.CDecl {
 		t.Fatalf("StructFromGoFields native = %v", sf)
 	}
 
 	// Overflow edge cases in AggregateLayout & GCBitmap.
-	if p, _ := lltypes.AggregateLayout(2, func(i int) lltypes.LayoutPair {
+	if p, _ := types.AggregateLayout(2, func(i int) types.LayoutPair {
 		if i == 0 {
-			return lltypes.LayoutPair{Size: math.MaxInt64, Align: 1}
+			return types.LayoutPair{Size: math.MaxInt64, Align: 1}
 		}
-		return lltypes.LayoutPair{Size: 0, Align: 1}
+		return types.LayoutPair{Size: 0, Align: 1}
 	}, true); p.Size != -1 {
 		t.Fatalf("AggregateLayout tail overflow = %+v", p)
 	}
-	if lltypes.GCBitmap(nil, 8, 8) != nil || lltypes.GCBitmap([]int64{-1, 100}, 8, 8) == nil {
+	if types.GCBitmap(nil, 8, 8) != nil || types.GCBitmap([]int64{-1, 100}, 8, 8) == nil {
 		t.Fatal("GCBitmap edge case failed")
 	}
 }
 
 func TestCoverageFuncABITargetsAndSIMDShapes(t *testing.T) {
 	// PassMode.String
-	for _, m := range []lltypes.PassMode{lltypes.PassIgnore, lltypes.PassDirect, lltypes.PassIndirect, lltypes.PassCoerce, lltypes.PassExpand} {
+	for _, m := range []types.PassMode{types.PassIgnore, types.PassDirect, types.PassIndirect, types.PassCoerce, types.PassExpand} {
 		if m.String() == "" {
 			t.Fatalf("empty PassMode.String(%d)", m)
 		}
 	}
 
-	smallSt := lltypes.NewStruct([]*lltypes.Var{
-		lltypes.NewField(0, nil, "a", lltypes.Typ[lltypes.Int32], false),
-		lltypes.NewField(0, nil, "b", lltypes.Typ[lltypes.Int32], false),
+	smallSt := types.NewStruct([]*types.Var{
+		types.NewField(0, nil, "a", types.Typ[types.Int32], false),
+		types.NewField(0, nil, "b", types.Typ[types.Int32], false),
 	}, nil)
-	bigSt := lltypes.NewStruct([]*lltypes.Var{
-		lltypes.NewField(0, nil, "a", lltypes.NewArray(lltypes.Typ[lltypes.Int64], 4), false),
+	bigSt := types.NewStruct([]*types.Var{
+		types.NewField(0, nil, "a", types.NewArray(types.Typ[types.Int64], 4), false),
 	}, nil)
-	hfaArr := lltypes.NewArray(lltypes.Typ[lltypes.Float64], 3)
-	emptySt := lltypes.NewStruct(nil, nil)
+	hfaArr := types.NewArray(types.Typ[types.Float64], 3)
+	emptySt := types.NewStruct(nil, nil)
 
 	for _, spec := range []target.Spec{
 		{GOOS: "linux", GOARCH: "amd64"},
@@ -376,23 +376,23 @@ func TestCoverageFuncABITargetsAndSIMDShapes(t *testing.T) {
 		{GOOS: "linux", GOARCH: "riscv64"},
 		{GOOS: "linux", GOARCH: "riscv32"},
 	} {
-		ctx := lltypes.NewContext(spec)
-		for _, cc := range []lltypes.CallConv{lltypes.Go, lltypes.CDecl} {
-			sig := lltypes.NewSignatureWithCallConv(
-				lltypes.NewParam(0, nil, "r", lltypes.NewPointer(smallSt)),
-				lltypes.NewTuple(
-					lltypes.NewParam(0, nil, "z", emptySt),
-					lltypes.NewParam(0, nil, "s", smallSt),
-					lltypes.NewParam(0, nil, "b", bigSt),
-					lltypes.NewParam(0, nil, "h", hfaArr),
-					lltypes.NewParam(0, nil, "i8", lltypes.Typ[lltypes.Int8]),
-					lltypes.NewParam(0, nil, "u8", lltypes.Typ[lltypes.Uint8]),
-					lltypes.NewParam(0, nil, "i32", lltypes.Typ[lltypes.Int32]),
-					lltypes.NewParam(0, nil, "p", ctx.Pointer(lltypes.Typ[lltypes.Int8], lltypes.CPtr)),
+		ctx := types.NewContext(spec)
+		for _, cc := range []types.CallConv{types.Go, types.CDecl} {
+			sig := types.NewSignatureWithCallConv(
+				types.NewParam(0, nil, "r", types.NewPointer(smallSt)),
+				types.NewTuple(
+					types.NewParam(0, nil, "z", emptySt),
+					types.NewParam(0, nil, "s", smallSt),
+					types.NewParam(0, nil, "b", bigSt),
+					types.NewParam(0, nil, "h", hfaArr),
+					types.NewParam(0, nil, "i8", types.Typ[types.Int8]),
+					types.NewParam(0, nil, "u8", types.Typ[types.Uint8]),
+					types.NewParam(0, nil, "i32", types.Typ[types.Int32]),
+					types.NewParam(0, nil, "p", ctx.Pointer(types.Typ[types.Int8], types.CPtr)),
 				),
-				lltypes.NewTuple(
-					lltypes.NewParam(0, nil, "", smallSt),
-					lltypes.NewParam(0, nil, "", bigSt),
+				types.NewTuple(
+					types.NewParam(0, nil, "", smallSt),
+					types.NewParam(0, nil, "", bigSt),
 				),
 				false,
 				cc,
@@ -402,11 +402,11 @@ func TestCoverageFuncABITargetsAndSIMDShapes(t *testing.T) {
 				t.Fatalf("FuncABI(%s, %s) failed", spec.GOARCH, cc)
 			}
 			// Zero-return & single-return variants.
-			_ = ctx.FuncABI(lltypes.NewSignatureWithCallConv(nil, nil, nil, false, cc))
-			_ = ctx.FuncABI(lltypes.NewSignatureWithCallConv(nil, nil, lltypes.NewTuple(lltypes.NewParam(0, nil, "", smallSt)), false, cc))
+			_ = ctx.FuncABI(types.NewSignatureWithCallConv(nil, nil, nil, false, cc))
+			_ = ctx.FuncABI(types.NewSignatureWithCallConv(nil, nil, types.NewTuple(types.NewParam(0, nil, "", smallSt)), false, cc))
 		}
 	}
-	if lltypes.ClassifyFuncABI(target.Spec{}, nil, nil) != nil {
+	if types.ClassifyFuncABI(target.Spec{}, nil, nil) != nil {
 		t.Fatal("ClassifyFuncABI(nil) != nil")
 	}
 
@@ -426,22 +426,22 @@ func TestCoverageFuncABITargetsAndSIMDShapes(t *testing.T) {
 		gotypes.NewField(0, spkg, "_", v512, false),
 		gotypes.NewField(0, spkg, "x", gotypes.NewArray(gotypes.Typ[gotypes.Int64], 8), false),
 	}, nil), nil)
-	if _, ok := lltypes.SIMDNumericShape(numVec); !ok {
+	if _, ok := types.SIMDNumericShape(numVec); !ok {
 		t.Fatal("SIMDNumericShape(Float32x4) = false")
 	}
-	if _, ok := lltypes.SIMDMaskShape(maskVec); !ok {
+	if _, ok := types.SIMDMaskShape(maskVec); !ok {
 		t.Fatal("SIMDMaskShape(Mask64x8) = false")
 	}
-	if _, ok := lltypes.SIMDMaskShape(numVec); ok {
+	if _, ok := types.SIMDMaskShape(numVec); ok {
 		t.Fatal("SIMDMaskShape accepted Float32x4")
 	}
-	if _, ok := lltypes.SIMDNumericShape(maskVec); ok {
+	if _, ok := types.SIMDNumericShape(maskVec); ok {
 		t.Fatal("SIMDNumericShape accepted Mask64x8")
 	}
-	if !lltypes.ContainsVectorStorage(gotypes.NewArray(numVec, 2)) || lltypes.ContainsVectorStorage(nil) {
+	if !types.ContainsVectorStorage(gotypes.NewArray(numVec, 2)) || types.ContainsVectorStorage(nil) {
 		t.Fatal("ContainsVectorStorage failed")
 	}
-	if lltypes.TypeContainsSIMDStorage(nil) || lltypes.TypeContainsHostLayout(nil) || lltypes.TypeIsHostLayoutMarker(nil) {
+	if types.TypeContainsSIMDStorage(nil) || types.TypeContainsHostLayout(nil) || types.TypeIsHostLayoutMarker(nil) {
 		t.Fatal("nil TypeContains helpers should be false")
 	}
 
@@ -458,7 +458,7 @@ func F() int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := lltypes.NewContext(target.Spec{GOOS: "linux", GOARCH: "amd64"})
+	ctx := types.NewContext(target.Spec{GOOS: "linux", GOARCH: "amd64"})
 	_, info, err := ctx.Check("lazy", fset, []*ast.File{f}, &gotypes.Config{Importer: importer.Default()})
 	if err != nil {
 		t.Fatal(err)
@@ -475,7 +475,7 @@ func F() int {
 		_ = tv.HasOk()
 		_ = tv.IsBuiltin()
 	}
-	if (*lltypes.Info)(nil).TypeOf(nil) != nil || (*lltypes.Info)(nil).ObjectOf(nil) != nil || (*lltypes.Info)(nil).GoInfo() != nil {
+	if (*types.Info)(nil).TypeOf(nil) != nil || (*types.Info)(nil).ObjectOf(nil) != nil || (*types.Info)(nil).GoInfo() != nil {
 		t.Fatal("nil Info methods failed")
 	}
 }
