@@ -53,6 +53,7 @@ func TestBDWGCAllocationPolicy(t *testing.T) {
 	}
 	run("100")
 	run("100", "host-disabled")
+	run("100", "lazy-zero")
 	for _, test := range []struct{ input, want string }{
 		{"off", "-1"}, {"-2", "-1"}, {"0", "0"}, {"25", "25"},
 		{"", "100"}, {"bad", "100"}, {"2147483648", "100"},
