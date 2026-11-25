@@ -1438,3 +1438,53 @@ func TestCompaction(t *testing.T) {
 		t.Fatalf("hashtriemap regression: %v\n%s", err, output)
 	}
 }
+
+// TestDriverPatchOverlayForRuntime pins the //llgo:driver contract: marked
+// runtime patch files join the Go driver's -overlay view under their
+// z_llgo_patch_ name (so user code calling a patch-added runtime API
+// type-checks against the source toolchain's export view), unmarked and
+// tag-mismatched files stay out of it, and the delivered list lets the
+// caller drop those files from the LLGo-only llgoFiles list.
+func TestDriverPatchOverlayForRuntime(t *testing.T) {
+	dir := t.TempDir()
+	goroot := t.TempDir()
+	patchDir := filepath.Join(dir, "_patch", "runtime")
+	if err := os.MkdirAll(patchDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, src string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(patchDir, name), []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("lockcore.go", "package runtime\n\n//llgo:driver\nfunc LockCore(id int) error {\n\tpanic(\"unimplemented\")\n}\n")
+	write("private.go", "package runtime\n\nfunc hiddenRuntimeHelper() {}\n")
+	write("idfonly.go", "//go:build llgo.idf\n\npackage runtime\n\n//llgo:driver\nfunc lockCoreIdfOnly() {}\n")
+
+	entries, delivered, err := driverPatchOverlayForRuntime(dir, goroot, sourcePatchBuildContext{
+		goos:       "linux",
+		goarch:     "arm",
+		targetTags: []string{"llgo", "baremetal"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("driver entries = %v, want exactly the marked, tag-matching file", entries)
+	}
+	target := filepath.Join(goroot, "src", "runtime", "z_llgo_patch_lockcore.go")
+	file, ok := entries[target]
+	if !ok {
+		t.Fatalf("entry %s missing; got %v", target, entries)
+	}
+	if file.BackingFile != filepath.Join(patchDir, "lockcore.go") {
+		t.Fatalf("backing file = %s, want the patch source", file.BackingFile)
+	}
+	if !strings.Contains(string(file.Contents), "//line "+filepath.ToSlash(filepath.Join(patchDir, "lockcore.go"))) {
+		t.Fatalf("contents lost the //line injection: %q", file.Contents)
+	}
+	if len(delivered) != 1 || delivered[0] != file.BackingFile {
+		t.Fatalf("delivered = %v, want [%s]", delivered, file.BackingFile)
+	}
+}

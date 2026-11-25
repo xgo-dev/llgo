@@ -1,0 +1,29 @@
+# llgo runs its scheduler and package init on the FreeRTOS main task; give it
+# headroom (the fiber stacks themselves come from the llgo GC heap).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# llgo's esp32s31 clock gate assumes a 240 MHz CPU (baremetalCpuMHz in
+# runtime/internal/runtime/z_clock_freq_esp32s31.go). Keep the IDF frequency
+# matched so cycle-domain deadlines (time.Sleep, timers) read true seconds.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# The llgo fiber scheduler swaps the task's SP out of the FreeRTOS task stack
+# onto GC-heap-allocated fiber stacks on every scheduling point. That is
+# exactly what the stack guards look for: the ASSIST_DEBUG hardware guard
+# panics as soon as SP leaves the task's registered bounds, and the canary
+# checker runs on every context switch. Disable both - llgo guards its own
+# stacks with a canary + SP bound at every cooperative swap
+# (_wrap/context_riscv32.c), so fiber overflows stay detected inside the Go
+# runtime itself.
+CONFIG_ESP_SYSTEM_HW_STACK_GUARD=n
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_NONE=y
+
+# App partition: 3.9375 MiB of the 4 MB flash (see partitions.csv).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Deliberately absent: CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1 (and any other pin
+# of the main task). The probe boots on the CPU0 default precisely so that
+# runtime.LockCore(1) has a real move to perform - a build-time pin to core 1
+# would turn the demo into a no-op on both cores.

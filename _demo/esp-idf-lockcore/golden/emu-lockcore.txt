@@ -1,0 +1,36 @@
+# Golden for the core-affinity probe ([go] lockcore ...) of
+# _demo/esp-idf-lockcore, captured from an acceptance run (esp-emu, esp32s31,
+# espressif/idf:latest = v6.3.0 firmware, --console uart0).
+#
+# Scope: every [go] lockcore line the probe prints. The [c] lines (app_main's
+# own reports) are not part of the golden.
+#
+# Everything is exact; there are no floaters. The values this golden pins:
+#
+#   start pin=0 core=0        the scheduler task boots on the CPU0 default
+#                             (sdkconfig.defaults sets no main-task affinity,
+#                             so LockCore(1) below performs a real move)
+#   pin1 ok / after1 pin=1    LockCore(1) reports success and the kernel's own
+#     core=1                  getter (xTaskGetCoreID) reads the new pin; the
+#                             executing core (esp_cpu_get_core_id via the demo
+#                             glue) confirms the task physically migrated to
+#                             HP core 1 after a vTaskDelay scheduling point
+#   pin0 ok / after0 pin=0    the pin is a switch: back to core 0, verified
+#     core=0                  the same way
+#   range9 err runtime error: LockCore(9) is refused on the Go side without
+#     runtime.LockCore:       touching the kernel (the S31 has two HP cores);
+#     core id out of range    the message is errorString's, which prepends the
+#                             fixed "runtime error: " prefix
+#
+# Regression check (the console is a USB-serial stream, so its lines end in
+# CR/LF: strip the CR before comparing):
+#   grep -E '^\[go\] lockcore' <emu log> | tr -d '\r' \
+#     | diff - <this file, comments excluded>
+[go] lockcore: start pin=0 core=0
+[go] lockcore: pin1 ok
+[go] lockcore: after1 pin=1 core=1
+[go] lockcore: pin0 ok
+[go] lockcore: after0 pin=0 core=0
+[go] lockcore: range9 err runtime error: runtime.LockCore: core id out of range
+[go] lockcore PASS
+[go] lockcore done

@@ -762,6 +762,35 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	goBuildFlags = append(goBuildFlags, loaderFlags...)
 	ownsOverlay := conf.sourceOverlayFile == ""
+	// Resolve the source toolchain before the overlay is materialized: the
+	// driver-visible runtime patches (//llgo:driver) join conf.SourceOverlay
+	// and must be part of this one materialization. The result is reused for
+	// the patch wiring below, so both views select identical files.
+	sourceGo, err := resolveSourceGoConfig(commandEnv{dir: dir, environ: withEnv(commands.environ, "GOOS="+conf.Goos, "GOARCH="+conf.Goarch)}, conf.GOEXPERIMENT, goBuildFlags...)
+	if err != nil {
+		return nil, err
+	}
+	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
+	driverPatchFiles, driverDelivered, err := driverPatchOverlayForRuntime(env.LLGoRuntimeDir(), sourceGo.GOROOT, sourcePatchBuildContext{
+		goos:       conf.Goos,
+		goarch:     conf.Goarch,
+		goversion:  sourceGo.GOVERSION,
+		toolTags:   sourceGo.toolTags,
+		buildFlags: goBuildFlags,
+		targetTags: export.BuildTags,
+		cgoEnabled: &sourceCgoEnabled,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(driverPatchFiles) != 0 {
+		if conf.SourceOverlay == nil {
+			conf.SourceOverlay = make(map[string]SourceOverlayFile, len(driverPatchFiles))
+		}
+		for name, file := range driverPatchFiles {
+			conf.SourceOverlay[name] = file
+		}
+	}
 	overlayFile, err := prepareSourceOverlay(conf)
 	if err != nil {
 		return nil, err
@@ -876,10 +905,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if conf.GoFlagsParsed {
 		cfg.Env = withEnv(cfg.Env, "GOFLAGS= ")
 	}
-	sourceGo, err := resolveSourceGoConfig(commandEnv{dir: cfg.Dir, environ: cfg.Env}, conf.GOEXPERIMENT, cfg.BuildFlags...)
-	if err != nil {
-		return nil, err
-	}
 	sourcePatchGOROOT, sourcePatchGoVersion := sourceGo.GOROOT, sourceGo.GOVERSION
 	conf.GOEXPERIMENT = sourceGo.GOEXPERIMENT
 	conf.sourceGoVersion = sourceGo.GOVERSION
@@ -897,7 +922,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	commands.environ = sourceGo.apply(commands.environ)
 	var llgoFiles map[string][]string
-	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
 		goos:       conf.Goos,
 		goarch:     conf.Goarch,
@@ -915,6 +939,23 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	dedup.SetLLGoFiles(llgoFiles)
+
+	// Patch files marked //llgo:driver were already folded into the driver's
+	// -overlay view before it materialized (see the sourceGo hoist above);
+	// the driver delivers them to the parser through CompiledGoFiles, so the
+	// LLGo-only llgoFiles list must not repeat them - a second copy would
+	// redeclare the declarations.
+	if len(driverDelivered) != 0 {
+		if files := llgoFiles["runtime"]; len(files) != 0 {
+			kept := files[:0]
+			for _, file := range files {
+				if !slices.Contains(driverDelivered, file) {
+					kept = append(kept, file)
+				}
+			}
+			llgoFiles["runtime"] = kept
+		}
+	}
 	cfg.ParseFile = func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
 		if data, ok := conf.Overlay[filename]; ok {
 			src = data

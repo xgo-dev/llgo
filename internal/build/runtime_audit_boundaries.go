@@ -114,6 +114,11 @@ C.clock_gettime_nsec_np`,
 		``,
 	},
 	{"C.esp_fill_random", "ESP-IDF esp_hw_support hardware TRNG (esp_random.h), resolved at the IDF link", ""},
+	{
+		`C.xTaskGetCurrentTaskHandle C.xTaskGetCoreID C.llgoLockCore`,
+		"ESP-IDF FreeRTOS task core-affinity surface: the kernel getters, plus llgoLockCore - a weak runtime default (not provided) that a firmware overrides with a strong core-pin implementation, e.g. _demo/esp-idf-lockcore/main/lockcore_glue.c (the IDF kernel has no runtime setter)",
+		"runtime/internal/runtime/_wrap/lockcore_idf.c",
+	},
 	{"stdcall.GetSystemDirectoryA", "Windows kernel32; stdcall on 386, native Windows ABI on amd64/arm64", ""},
 	{"C.__sigsetjmp C.sigsetjmp C.siglongjmp", "target libc; returns-twice and target SigjmpBuf layout", "ssa/eh.go"},
 	{

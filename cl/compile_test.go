@@ -201,6 +201,10 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/time_tick",
 				"./_testgo/time_stop",
 				"./_testgo/time_gckeep",
+				// The ESP32 classic chip has two cores and no pinning facility is
+				// wired up for it, so LockCore reports an explicit refusal here;
+				// the single-core always-locked golden belongs to the RV32 targets.
+				"./_testgo/lockcore",
 				// The xtensa Sleep stub returns immediately, so timing-dependent
 				// output (ordering and relative durations) cannot match the golden.
 				"./_testgo/timesleep",
@@ -410,6 +414,9 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 		// translation crashes clang on darwin/arm64 (same preexisting failure as
 		// internal/build's TestTest). The embed emulator suites run it.
 		"./_testgo/gosched",
+		// lockcore imports "runtime" like gosched above; the embed emulator
+		// suites run it against the baremetal backends.
+		"./_testgo/lockcore",
 	}
 	cltest.RunAndTestFromDir(t, "", "./_testgo", ignore)
 }

@@ -642,6 +642,10 @@ func TestS31ReflectSmoke(t *testing.T) {
 		// today (see the ignore list in compile_test.go).
 		{pkg: "./_testgo/time_wall", golden: true},
 		{pkg: "./_testgo/mutexstarve", golden: true},
+		// lockcore pins the runtime.LockCore contract on the RV32 baremetal
+		// targets: single-hart scheduler, every id trivially succeeds (the
+		// esp32s31-idf FreeRTOS pin has its own demo, _demo/esp-idf-lockcore).
+		{pkg: "./_testgo/lockcore", golden: true},
 		// Too close to the C3 IRAM ceiling to keep running there once the
 		// vendored memmove/division shims landed; the 512 KiB S31 SRAM has
 		// room, so the Value.Convert coverage stays on a baremetal target.
