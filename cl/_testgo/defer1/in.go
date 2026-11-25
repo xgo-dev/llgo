@@ -12,10 +12,11 @@ package main
 // CHECK-NEXT: ret i1 [[F_RESULT]]
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
+// CHECK: [[DEFER_SLOT:%.*]] = call ptr @"{{.*}}ThreadDeferSlot"()
+// CHECK-NEXT: [[PREV_DEFER:%.*]] = load ptr, ptr [[DEFER_SLOT]]
 // CHECK: [[FRAME:%.*]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
-// CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
+// CHECK: store ptr [[FRAME]], ptr [[DEFER_SLOT]]
 // CHECK: [[FLAGS:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 1
 // CHECK: [[HEAD:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 5
 // True branch: capture s, then bye, as distinct nodes and flag bits.
@@ -109,8 +110,9 @@ func main() {
 // zLoopJoin preserves the former nextblock regression exactly: an empty range
 // before and after registration must not let block[0] movement bypass cleanup.
 // CHECK-LABEL: define void @main.zLoopJoin(){{.*}} {
+// CHECK: [[LOOP_SLOT:%[0-9]+]] = call ptr @"{{.*}}ThreadDeferSlot"()
 // CHECK: [[LOOP_FRAME:%[0-9]+]] = alloca %"{{.*}}Defer", align 8
-// CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[LOOP_FRAME]])
+// CHECK: store ptr [[LOOP_FRAME]], ptr [[LOOP_SLOT]]
 // CHECK: [[LOOP_FLAGS:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[LOOP_FRAME]], i32 0, i32 1
 // CHECK: [[FIRST_INDEX:%[0-9]+]] = phi i64
 // CHECK: [[OLD_LOOP_FLAGS:%[0-9]+]] = load i64, ptr [[LOOP_FLAGS]]
