@@ -12,16 +12,16 @@
  *   4. detect on real content: the "Hi, Lexin" utterance (samples/hilexin.h,
  *      the same bytes the upstream test app feeds) goes through detect until
  *      the word triggers - avg/max per-call time over that run
- *   5. what detect reports AFTER a detection (does the engine stay in the
- *      verified state, or return to no-detect on its own) - this decides how
- *      a re-arming loop must work, because clean() is known to crash
- *      (wakenet9_quantized model_clean -> dl_convq_queue_bzero on a NULL
- *      queue, S31 + esp-sr 2.6.2 + IDF 6.3, reproduced under esp-emu; the
- *      upstream test app never calls clean)
- *   6. whether clean() survives on a FRESH engine (before any detection)
- *   7. destroy + deinit + the heap bill
+ *   5. what detect reports AFTER a detection: whether the engine re-arms
+ *      itself (it does - state back to 0 within a few frames) or needs the
+ *      clean() call (it must not get one: model_clean crashes on this
+ *      combination - dl_convq_queue_bzero on a NULL queue, on a fresh engine
+ *      and after a detection alike; S31 + esp-sr 2.6.2 + IDF 6.3, reproduced
+ *      under esp-emu; the upstream test app never calls clean, which is why
+ *      upstream CI never sees it)
+ *   6. destroy + deinit + the heap bill
  *
- * No audio hardware: stages 4-6 feed static buffers, exactly like the
+ * No audio hardware: stages 4/5 feed static buffers, exactly like the
  * upstream wakenet test app. A failure here points at esp-sr/IDF/chip; a
  * pass moves the question to the llgo binding (../idfproj + pkg/esp/wakenet).
  */
@@ -227,11 +227,15 @@ void app_main(void)
         memset(e2.buffer, 0, e2.chunk_bytes);
         e2.wn->detect(e2.md, e2.buffer);
     }
-    printf("[c] testing clean() on the fresh engine...\n");
-    e2.wn->clean(e2.md);
-    printf("[c] clean ok on fresh engine\n");
-
-    /* 7. teardown + the heap bill */
+    /* 6. clean() is off the table, on evidence: model_clean crashes on this
+     * combination (S31, esp-sr 2.6.2, IDF 6.3) - dl_convq_queue_bzero on a
+     * NULL queue - both after a detection AND on a fresh engine that has
+     * never detected (the earlier probe run is in the csmoke emu log; the
+     * upstream test app never calls clean, which is why upstream CI never
+     * sees it). What makes it survivable: the engine re-arms itself - the
+     * post-detection probe above showed the state back at 0 within a few
+     * frames - so nothing needs clean. The llgo glue uses an edge trigger
+     * and never calls it. */
     engine_destroy(&e2);
     esp_srmodel_deinit(models);
     heap_print("closed");

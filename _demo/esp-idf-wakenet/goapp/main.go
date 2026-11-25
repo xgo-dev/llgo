@@ -80,10 +80,11 @@ func main() {
 	detections := 0
 	errors := 0
 	overflows := 0
-	lastStats := int32(nowMs())
-	lastHeap := lastStats
+	started := int32(nowMs())
+	lastStats := started
+	lastHeap := started
 
-	for now := int32(nowMs()); now-lastStats < runMs; now = int32(nowMs()) {
+	for now := int32(nowMs()); now-started < runMs; now = int32(nowMs()) {
 		select {
 		case ev, ok := <-events:
 			if !ok {

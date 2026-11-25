@@ -6,23 +6,33 @@
 // # Why the audio path lives in C
 //
 // WakeNet detect is a synchronous recomputation that costs 3-6.4 ms per call
-// (wn9 ~3 ms, the S31's official wn10@3ch measurement 6.4 ms) and runs once
-// per 32 ms audio chunk - roughly thirty heavy C calls per second. The llgo
-// fiber scheduler is single-task cooperative state: a detect called from a
-// goroutine would freeze the whole Go world for its full duration, every
-// chunk, forever. So the glue (glue/wakenet_glue.c) owns the pipeline:
+// (wn9 ~1.5 ms avg / 2.2 ms max measured on S31, the official wn10@3ch
+// measurement 6.4 ms) and runs once per 32 ms audio chunk - roughly thirty
+// heavy C calls per second. Worse, the engine's compute path executes the
+// S31's PIE (SIMD coprocessor) instructions, and PIE exists on core 1 only:
+// the FreeRTOS port migrates any task that executes one on core 0, and the
+// migration path validates the task TCB's recorded stack pointer - which for
+// the llgo scheduler task is a swapped-out fiber stack in the GC heap,
+// outside its FreeRTOS stack bounds, and the kernel aborts. So the glue
+// (glue/wakenet_glue.c) owns the whole pipeline on its own session task,
+// pinned to core 1:
 //
-//	I2S RX 16 kHz 16-bit mono (DMA descriptor ring) - or a built-in test
-//	  source replaying an injected PCM array
-//	-> the glue's own FreeRTOS task feeds one chunk to wakenet detect
-//	-> detections and task errors land in a bounded static event ring
-//	-> Go polls the ring (microseconds per record) and reads counters
+//	Init (scheduler task): config, model-partition mmap, optional I2S RX
+//	  setup - no PIE anywhere - then the session task starts and the
+//	  scheduler task waits (bounded) for its engine-ready sign
+//	session task (core 1): engine create, then the loop - I2S RX 16 kHz
+//	  16-bit mono (DMA descriptor ring) or a built-in test source replaying
+//	  an injected PCM array -> one chunk -> detect (timed) -> detections
+//	  and task errors into a bounded static event ring
+//	Go polls the ring (microseconds per record) and reads counters
 //
-// The task allocates nothing in its loop (the chunk buffer is one allocation
-// at Init, the ring is static), and it is pinned to CPU1 so it never competes
-// with the scheduler task. A pure-WakeNet instance costs ~16 KB internal RAM
-// and ~330 KB PSRAM (the weights load to PSRAM; the model itself is mmap'ed
-// from flash) - the numbers that make it fitable next to a WiFi+TLS stack.
+// detect never crosses from Go, and the scheduler task never executes a PIE
+// instruction. The session task allocates nothing in its loop (the chunk
+// buffer is one allocation at create, the ring is static). A pure-WakeNet
+// instance costs ~21 KB internal RAM + the 12 KiB session-task stack, and
+// ~320 KB PSRAM (weights, DET_MODE_95; the model itself is mmap'ed from
+// flash) - measured on S31 under esp-emu; the numbers that make it fitable
+// next to a WiFi+TLS stack.
 //
 // # Usage
 //
@@ -64,11 +74,12 @@
 //
 // # Init is a one-shot blocking call
 //
-// Init enumerates the model partition, resolves the model name, and creates
-// the engine - the create decompresses the model weights once (hundreds of
-// milliseconds, undocumented by Espressif for wn9) and runs on the scheduler
-// task, like ble.Init and wifi.Setup. That is the only heavy synchronous call
-// that crosses from Go; detect never does.
+// Init enumerates the model partition, resolves the model name, and waits
+// (bounded) while the session task creates the engine - the create
+// decompresses the model weights once (26 ms measured for wn9 on S31 under
+// esp-emu; undocumented by Espressif) and runs on core 1, where the PIE
+// coprocessor lives. The wait is the same class of one-shot lifecycle freeze
+// as ble.Init and wifi.Setup. Detect never crosses from Go.
 //
 // # Error model
 //
@@ -211,9 +222,10 @@ const (
 	EvNone EventKind = 0
 
 	// EvDetected reports one wake-word detection. Code carries the engine's
-	// wakenet_state (1 = WAKENET_DETECTED). The glue re-arms the engine
-	// (clean) and rewinds the test source after every detection, so the next
-	// utterance triggers a fresh event.
+	// wakenet_state (1 = WAKENET_DETECTED). The engine re-arms itself within
+	// a few frames (measured: back to no-detect without any caller action;
+	// the glue never calls clean - it crashes on this esp-sr build), so the
+	// next utterance triggers a fresh event.
 	EvDetected EventKind = 1
 
 	// EvError reports a failure inside the audio path: Code carries the
@@ -273,6 +285,7 @@ var (
 	session   bool // Init done, Close not yet
 	running   bool // Start done, Stop not yet
 	shutdown  bool // Close done; retires the poller
+	opened    bool // Init reached the glue (legalizes Close on a failed Init)
 	modelName string
 	chunkN    int32
 	rateHz    int32
@@ -280,12 +293,18 @@ var (
 )
 
 // Init resolves and loads the wake-word model. It enumerates the "model"
-// partition (mmap), resolves the model name, creates the engine (weights to
-// PSRAM), allocates the detect buffer, and - for SourceI2S - brings up the
-// RX channel (not enabled until Start). It blocks for the duration of the
-// model create, a one-shot lifecycle freeze like ble.Init (see the package
-// docs). The resolved name and the engine's chunk size and sample rate stay
-// queryable through ModelName/ChunkSamples/SampleRate.
+// partition (mmap), resolves the model name, brings up the optional I2S RX
+// channel (not enabled until Start), then starts the glue's session task and
+// waits (bounded) while it creates the engine - the create runs on the
+// session task, never on the scheduler task, because wn9's compute path
+// executes PIE instructions and PIE exists on core 1 only (see the package
+// docs). The blocking here is that bounded wait, a one-shot lifecycle freeze
+// like ble.Init (26 ms measured for wn9 on S31). The resolved name and the
+// engine's chunk size and sample rate stay queryable through
+// ModelName/ChunkSamples/SampleRate.
+//
+// A failed Init leaves only Close legal: the glue holds the session task and
+// the model mapping until Close releases them.
 //
 // Errors: ErrBadValue for a config this package refuses before crossing into
 // C, ErrNotFound for a model (or partition) that is not there, ErrNotFound
@@ -320,18 +339,21 @@ func Init(cfg ModelConfig) error {
 		namePtr = &b[0]
 		nameLen = int32(len(b))
 	}
-	var chunk, rate int32
-	var nameBuf [MaxModelName + 1]byte
-	var nameN int32
 	src := int32(cfg.Source)
-	if e := espErr(wnInit(namePtr, nameLen, src, int32(cfg.BCLK), int32(cfg.WS),
-		int32(cfg.DIN), milli, &chunk, &rate, &nameBuf[0],
-		int32(len(nameBuf)), &nameN)); e != nil {
+	e := espErr(wnInit(namePtr, nameLen, src, int32(cfg.BCLK), int32(cfg.WS),
+		int32(cfg.DIN), milli))
+	// The glue holds state after any real call (the session task, the model
+	// mapping) - only Close may release it. The stub tag 0x7F00 means the
+	// call never reached a glue at all, so there is nothing to close.
+	if esperr.Code(e) != codeUnsupported {
+		opened = true
+	}
+	if e != nil {
 		return e
 	}
-	modelName = string(nameBuf[:nameN])
-	chunkN = chunk
-	rateHz = rate
+	var nameBuf [MaxModelName + 1]byte
+	modelName = string(nameBuf[:wnModelName(&nameBuf[0], int32(len(nameBuf)))])
+	wnChunk(&chunkN, &rateHz)
 	eventsCh = make(chan Event, EventQueueLen)
 	session = true
 	shutdown = false
@@ -349,13 +371,13 @@ func ChunkSamples() int32 { return chunkN }
 // SampleRate returns the engine's sample rate in Hz (16000; 0 before Init).
 func SampleRate() int32 { return rateHz }
 
-// Start launches the glue's audio + detect task: it captures chunks, runs
+// Start resumes the session task's audio loop: it captures chunks, runs
 // detect on each, posts detections and errors to the event ring, and
-// accumulates the Stats counters (all reset here). Start returns as soon as
-// the task exists - its own failures arrive as EvError events, not as a
-// return code. Errors: ErrNotReady before Init, ErrInvalidState while
-// already running, the raw esp_err when the I2S channel refuses to enable or
-// FreeRTOS refuses the task.
+// accumulates the Stats counters (the task resets them on this transition).
+// Start returns as soon as the loop is marked running - the loop's own
+// failures arrive as EvError events, not as a return code. Errors:
+// ErrNotReady before Init, ErrInvalidState while already running,
+// esperr.ErrClosed after Close.
 func Start() error {
 	if shutdown {
 		return esperr.ErrClosed
@@ -374,9 +396,9 @@ func Start() error {
 	return nil
 }
 
-// Stop halts the audio + detect task. Cooperative: the task notices at its
-// loop top and self-deletes within one chunk period, never mid-C-call, so
-// the engine's state stays consistent for a re-Start. Events already in
+// Stop parks the session task's audio loop. Cooperative: the loop notices
+// at its top and stops capturing within one chunk period, never mid-C-call,
+// so the engine's state stays consistent for a re-Start. Events already in
 // flight stay readable. Errors: ErrNotReady before Init, ErrInvalidState
 // when the engine is not running, esperr.ErrClosed after Close.
 func Stop() error {
@@ -421,25 +443,30 @@ func Stats() (frames int32, avgDetectUs int32, maxDetectUs int32) {
 	return frames, avgDetectUs, maxDetectUs
 }
 
-// Close tears the engine down: stops the task and waits (bounded) for its
-// exit acknowledgment, then releases the I2S channel, the engine, the model
-// partition mapping and the buffers. The Events channel closes when the
-// poller's final pass drains; the package returns to the un-init state, and
-// a fresh Init may follow. Errors: esperr.ErrClosed for a second Close,
-// ErrInvalidState for a Close of an engine never opened, ErrTimeout when the
-// detect task ignored its exit for three seconds (nothing was freed; see
-// ErrTimeout), the raw esp_err for driver failures.
+// Close tears the engine down: the session task exits (waited for, bounded),
+// then the I2S channel, the engine, the model partition mapping and the
+// buffers are released. The Events channel closes when the poller's final
+// pass drains; the package returns to the un-init state, and a fresh Init
+// may follow. Close is legal even after a failed Init - the glue holds its
+// session task until Close. Errors: esperr.ErrClosed for a second Close,
+// ErrInvalidState for a Close of an engine never opened (Init never reached
+// the glue), ErrTimeout when the session task ignored its exit for three
+// seconds (nothing was freed; see ErrTimeout), the raw esp_err for driver
+// failures.
 func Close() error {
 	if shutdown {
 		return esperr.ErrClosed
 	}
-	if !session {
+	// opened, not session: a failed Init still left state in the glue (the
+	// session task, at the least) that only Close may release.
+	if !opened {
 		return ErrInvalidState
 	}
 	running = false
 	e := espErr(wnClose())
 	shutdown = true
 	session = false
+	opened = false
 	modelName = ""
 	chunkN = 0
 	rateHz = 0

@@ -14,12 +14,17 @@ import "time"
 const errUnsupported = codeUnsupported // 0x7F00, the family's stub tag
 
 func wnInit(model *uint8, modelLen int32, source int32, bclk int32, ws int32,
-	din int32, thresholdMilli int32, chunkSamples *int32, sampleRate *int32,
-	nameOut *uint8, nameCap int32, nameLen *int32) int32 {
-	_, _, _, _, _, _, _, _, _, _, _, _ = model, modelLen, source, bclk, ws, din,
-		thresholdMilli, chunkSamples, sampleRate, nameOut, nameCap, nameLen
+	din int32, thresholdMilli int32) int32 {
+	_, _, _, _, _, _, _ = model, modelLen, source, bclk, ws, din, thresholdMilli
 	return errUnsupported
 }
+
+func wnChunk(chunkSamples *int32, sampleRate *int32) int32 {
+	_, _ = chunkSamples, sampleRate
+	return errUnsupported
+}
+
+func wnModelName(out *uint8, cap int32) int32 { _, _ = out, cap; return 0 }
 
 func wnStart() int32 { return errUnsupported }
 func wnStop() int32  { return errUnsupported }

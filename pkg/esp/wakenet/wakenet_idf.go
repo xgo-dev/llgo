@@ -12,8 +12,13 @@ import _ "unsafe" // for go:linkname
 
 //go:linkname wnInit C.llgo_wakenet_init
 func wnInit(model *uint8, modelLen int32, source int32, bclk int32, ws int32,
-	din int32, thresholdMilli int32, chunkSamples *int32, sampleRate *int32,
-	nameOut *uint8, nameCap int32, nameLen *int32) int32
+	din int32, thresholdMilli int32) int32
+
+//go:linkname wnChunk C.llgo_wakenet_chunk
+func wnChunk(chunkSamples *int32, sampleRate *int32) int32
+
+//go:linkname wnModelName C.llgo_wakenet_model_name
+func wnModelName(out *uint8, cap int32) int32
 
 //go:linkname wnStart C.llgo_wakenet_start
 func wnStart() int32
