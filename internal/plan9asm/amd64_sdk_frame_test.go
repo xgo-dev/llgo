@@ -212,3 +212,52 @@ func TestTranslateAMD64SDKABI0FrameLeaseRevocation(t *testing.T) {
 		})
 	}
 }
+
+func TestBindAMD64FrameGuards(t *testing.T) {
+	pkg, directory := amd64SDKFrameFixture(t)
+	resolve := ResolveSymFunc(pkg.PkgPath)
+	goPkg := extplan9asm.GoPackage{Path: pkg.PkgPath, Types: pkg.Types, Syntax: pkg.Syntax}
+	physSrc := []byte("TEXT ·Copy(SB),4,$16-24\nMOVQ $1, 0(SP)\nRET\n")
+
+	// Non-amd64 returns nil immediately.
+	if sigs, finish, err := bindAMD64Frame(pkg, physSrc, "copy_amd64.s", "linux", "arm64", TranslateOptions{}, goPkg, "", resolve); err != nil || sigs != nil || finish != nil {
+		t.Fatalf("non-amd64 bindAMD64Frame = %v, finish=%t, %v", sigs, finish != nil, err)
+	}
+	// Parse error.
+	if _, _, err := bindAMD64Frame(pkg, []byte("TEXT ·Copy(SB),4,$bad\n"), "copy_amd64.s", "linux", "amd64", TranslateOptions{}, goPkg, "", resolve); err == nil {
+		t.Fatal("expected parse error from bindAMD64Frame")
+	}
+	// Missing assembly file in package.
+	if _, _, err := bindAMD64Frame(pkg, physSrc, "does_not_exist.s", "linux", "amd64", TranslateOptions{}, goPkg, "", resolve); err == nil {
+		t.Fatal("expected missing assembly file error")
+	}
+	// Non-existent overlay parent directory.
+	if _, _, err := bindAMD64Frame(pkg, physSrc, "copy_amd64.s", "linux", "amd64", TranslateOptions{
+		Overlay: map[string][]byte{filepath.Join(directory, "missing-subdir", "x.go"): []byte("package x\n")},
+	}, goPkg, "", resolve); !errors.Is(err, extplan9asm.ErrProbeNeedsContext) {
+		t.Fatalf("expected ErrProbeNeedsContext for missing overlay dir, got %v", err)
+	}
+	// Non-existent GOROOT.
+	if _, _, err := bindAMD64Frame(pkg, physSrc, "copy_amd64.s", "linux", "amd64", TranslateOptions{
+		GOROOT: filepath.Join(directory, "no-such-goroot"),
+	}, goPkg, "", resolve); err == nil {
+		t.Fatal("expected error for non-existent GOROOT")
+	}
+	// Missing go binary in fake GOROOT triggers env query failure when GOPATH/GOMODCACHE/GOCACHE are absent.
+	fakeRoot := t.TempDir()
+	if _, _, err := bindAMD64Frame(pkg, physSrc, "copy_amd64.s", "linux", "amd64", TranslateOptions{
+		GOROOT:      fakeRoot,
+		Environment: []string{"PATH="},
+	}, goPkg, "", resolve); err == nil {
+		t.Fatal("expected error when go env fails with fake GOROOT")
+	}
+	// Real GOROOT default (empty opt.GOROOT) exercises runtime.GOROOT() fallback and fails cleanly on fake source.
+	if _, finish, err := bindAMD64Frame(pkg, physSrc, "copy_amd64.s", "linux", "amd64", TranslateOptions{
+		GOAMD64: "v1",
+	}, goPkg, "x86_64-unknown-linux-gnu", resolve); err == nil {
+		if finish != nil {
+			_ = finish()
+		}
+		t.Fatal("expected error binding synthetic physSrc against fixture Go files")
+	}
+}

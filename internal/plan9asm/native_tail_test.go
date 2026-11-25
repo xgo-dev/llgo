@@ -289,3 +289,89 @@ func TestNativeTailTransferRejectsSpecialTargetRegisters(t *testing.T) {
 		})
 	}
 }
+
+func TestNativeTailInternalGuards(t *testing.T) {
+	pkg := mustTestPackage(t, "example.com/tail", "package tail\nvar NotAFunc int\nfunc Enter(target, context uintptr)\n")
+	resolve := ResolveSymFunc(pkg.PkgPath)
+
+	// Non-arm64 / unsupported target returns cleanly.
+	if sigs, only, err := nativeTailSignatures(pkg, []byte(nativeTailFixture), resolve, "linux", "amd64"); err != nil || only || len(sigs) != 0 {
+		t.Fatalf("nativeTailSignatures(amd64) = %v, %v, %v", sigs, only, err)
+	}
+	// Parse error in nativeTailSignatures.
+	if _, _, err := nativeTailSignatures(pkg, []byte("TEXT ·Enter(SB), NOSPLIT, $bad\n"), resolve, "linux", "arm64"); err == nil {
+		t.Fatal("expected parse error from nativeTailSignatures")
+	}
+	// Foreign package prefix and non-func declaration stay non-physical.
+	mixed := "TEXT other·Fn(SB), NOSPLIT|NOFRAME, $0-0\nJMP (R0)\nTEXT ·NotAFunc(SB), NOSPLIT|NOFRAME, $0-0\nJMP (R0)\n"
+	if sigs, only, err := nativeTailSignatures(pkg, []byte(mixed), resolve, "linux", "arm64"); err != nil || only || len(sigs) != 0 {
+		t.Fatalf("nativeTailSignatures(mixed) = %v, %v, %v", sigs, only, err)
+	}
+
+	// declareNativeTailEntries: placeholder global replacement, defined-data conflict, and conflicting LLVM function.
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	sig := asm.FuncSig{Name: "example.com/tail.Enter", Args: []asm.LLVMType{asm.Ptr, asm.I64}, Ret: asm.Void}
+	sigsMap := map[string]asm.FuncSig{sig.Name: sig}
+	{
+		mod := ctx.NewModule("placeholder")
+		defer mod.Dispose()
+		ph := llvm.AddGlobal(mod, ctx.Int8Type(), sig.Name)
+		ph.SetLinkage(llvm.ExternalLinkage)
+		tr := &asm.GoModuleTranslation{Module: mod, Signatures: map[string]asm.FuncSig{}}
+		if err := declareNativeTailEntries(tr, sigsMap, []byte(nativeTailFixture), resolve); err != nil {
+			t.Fatalf("declareNativeTailEntries(placeholder): %v", err)
+		}
+		if mod.NamedFunction(sig.Name).IsNil() {
+			t.Fatal("expected callable entry replacing declaration placeholder")
+		}
+	}
+	{
+		mod := ctx.NewModule("defined_conflict")
+		defer mod.Dispose()
+		g := llvm.AddGlobal(mod, ctx.Int8Type(), sig.Name)
+		g.SetInitializer(llvm.ConstInt(ctx.Int8Type(), 1, false))
+		tr := &asm.GoModuleTranslation{Module: mod, Signatures: map[string]asm.FuncSig{}}
+		if err := declareNativeTailEntries(tr, sigsMap, []byte(nativeTailFixture), resolve); err == nil {
+			t.Fatal("expected conflict error against defined global")
+		}
+	}
+	{
+		mod := ctx.NewModule("fn_conflict")
+		defer mod.Dispose()
+		llvm.AddFunction(mod, sig.Name, llvm.FunctionType(ctx.Int64Type(), nil, false))
+		tr := &asm.GoModuleTranslation{Module: mod, Signatures: map[string]asm.FuncSig{}}
+		if err := declareNativeTailEntries(tr, sigsMap, []byte(nativeTailFixture), resolve); err == nil {
+			t.Fatal("expected conflict error against mismatched LLVM function")
+		}
+	}
+	{
+		mod := ctx.NewModule("parse_err")
+		defer mod.Dispose()
+		tr := &asm.GoModuleTranslation{Module: mod, Signatures: map[string]asm.FuncSig{}}
+		if err := declareNativeTailEntries(tr, sigsMap, []byte("TEXT ·Enter(SB), NOSPLIT, $bad\n"), resolve); err == nil {
+			t.Fatal("expected parse error from declareNativeTailEntries")
+		}
+	}
+
+	// lowerNativeTailTransfers: parse error and missing Go declaration.
+	{
+		mod := ctx.NewModule("lower_guards")
+		defer mod.Dispose()
+		if err := lowerNativeTailTransfers(mod, []byte("TEXT ·Enter(SB), NOSPLIT, $bad\n"), nil, resolve, "linux", "arm64", false, nil); err == nil {
+			t.Fatal("expected parse error from lowerNativeTailTransfers")
+		}
+		llvm.AddFunction(mod, sig.Name, llvm.FunctionType(ctx.VoidType(), nil, false))
+		if err := lowerNativeTailTransfers(mod, []byte(nativeTailFixture), map[string]asm.FuncSig{}, resolve, "linux", "arm64", false, sigsMap); err == nil {
+			t.Fatal("expected missing Go declaration error")
+		}
+		if err := replaceNativeTailEntry(mod, sig, "linux", "ret\n"); err == nil {
+			t.Fatal("expected missing/mismatched typed LLVM entry error")
+		}
+	}
+
+	// validateNativeTailTransfer with fewer than 2 instructions.
+	if _, err := validateNativeTailTransfer(asm.Func{Instrs: []asm.Instr{{Op: asm.OpTEXT}}}, sig); err == nil {
+		t.Fatal("expected error for function with < 2 instructions")
+	}
+}
