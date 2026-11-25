@@ -77,31 +77,6 @@ func needsWasmRuntimeScheduler(ctx *context) bool {
 		ctx.crossCompile.WasmProfile == crosscompile.WasmProfileJ64
 }
 
-func usesNativeBDWGC(ctx *context) bool {
-	if ctx == nil || ctx.buildConf == nil {
-		return false
-	}
-	conf := ctx.buildConf
-	if isWasmTarget(conf.Goos) || conf.Goarch == "wasm" {
-		return false
-	}
-	for _, tag := range splitSourcePatchBuildTags(conf.Tags) {
-		if tag == "nogc" || tag == "baremetal" {
-			return false
-		}
-	}
-	var buildFlags []string
-	if ctx.conf != nil {
-		buildFlags = ctx.conf.BuildFlags
-	}
-	for _, tag := range sourcePatchBuildTags(buildFlags, ctx.crossCompile.BuildTags) {
-		if tag == "nogc" || tag == "baremetal" {
-			return false
-		}
-	}
-	return true
-}
-
 // genMainModule generates the main entry module for an llgo program.
 //
 // The module contains argc/argv globals and, for executable build modes,
@@ -171,9 +146,9 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	}
 
 	wasmRuntimeScheduler := needsWasmRuntimeScheduler(ctx)
-	var gcMarkersInit llssa.Function
-	if cfg.rtInit && usesNativeBDWGC(ctx) {
-		gcMarkersInit = declareNoArgFunc(mainPkg, "llgo_gc_init_markers")
+	var gcInit llssa.Function
+	if cfg.rtInit {
+		gcInit = declareNoArgFunc(mainPkg, rtPkgPath+".InitGC")
 	}
 	var rtInit llssa.Function
 	if cfg.rtInit || wasmRuntimeScheduler {
@@ -219,7 +194,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		if ctx.buildConf.BuildMode == BuildModeCShared && ctx.buildConf.Goos == "linux" {
 			initArraySection = ".init_array"
 		}
-		inits := []llssa.Function{godebugInit, pyInit, gcMarkersInit, rtInit, abiInit, runtimeStub}
+		inits := []llssa.Function{godebugInit, pyInit, gcInit, rtInit, abiInit, runtimeStub}
 		// Windows already enables this during runtime initialization because
 		// callbacks in ordinary executables also enter from foreign threads.
 		// Other platforms enable it at startup when linked C exports exist.
@@ -273,22 +248,22 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 			newSignature([]types.Type{types.Typ[types.Int]}, nil), llssa.GoDecl)
 	}
 	entryFn := defineEntryFunction(ctx, mainPkg, argcVar, argvVar, argvValueType, entryFunctions{
-		godebugInit:   godebugInit,
-		runtimeStub:   runtimeStub,
-		mainInit:      mainInit,
-		mainMain:      mainMain,
-		wasmRunMain:   wasmRunMain,
-		startPCLN:     startPCLN,
-		pyInit:        pyInit,
-		pyFinalize:    pyFinalize,
-		gcMarkersInit: gcMarkersInit,
-		rtInit:        rtInit,
-		callbackInit:  callbackInit,
-		processExit:   processExit,
-		stdioFlush:    stdioFlush,
-		coverageExit:  coverageExit,
-		abiInit:       abiInit,
-		packageInits:  packageInits,
+		godebugInit:  godebugInit,
+		runtimeStub:  runtimeStub,
+		mainInit:     mainInit,
+		mainMain:     mainMain,
+		wasmRunMain:  wasmRunMain,
+		startPCLN:    startPCLN,
+		pyInit:       pyInit,
+		pyFinalize:   pyFinalize,
+		gcInit:       gcInit,
+		rtInit:       rtInit,
+		callbackInit: callbackInit,
+		processExit:  processExit,
+		stdioFlush:   stdioFlush,
+		coverageExit: coverageExit,
+		abiInit:      abiInit,
+		packageInits: packageInits,
 	})
 
 	if needStart(ctx) && !ctx.crossCompile.WasmRuntime.RunMainTask {
@@ -504,22 +479,22 @@ func filterAbiSymbol(abiInit int, sym *llssa.AbiSymbol) bool {
 }
 
 type entryFunctions struct {
-	godebugInit   llssa.Function
-	runtimeStub   llssa.Function
-	mainInit      llssa.Function
-	mainMain      llssa.Function
-	wasmRunMain   llssa.Function
-	startPCLN     llssa.Function
-	pyInit        llssa.Function
-	pyFinalize    llssa.Function
-	gcMarkersInit llssa.Function
-	rtInit        llssa.Function
-	callbackInit  llssa.Function
-	processExit   llssa.Function
-	stdioFlush    llssa.Function
-	coverageExit  llssa.Function
-	abiInit       llssa.Function
-	packageInits  []llssa.Function
+	godebugInit  llssa.Function
+	runtimeStub  llssa.Function
+	mainInit     llssa.Function
+	mainMain     llssa.Function
+	wasmRunMain  llssa.Function
+	startPCLN    llssa.Function
+	pyInit       llssa.Function
+	pyFinalize   llssa.Function
+	gcInit       llssa.Function
+	rtInit       llssa.Function
+	callbackInit llssa.Function
+	processExit  llssa.Function
+	stdioFlush   llssa.Function
+	coverageExit llssa.Function
+	abiInit      llssa.Function
+	packageInits []llssa.Function
 }
 
 // defineEntryFunction creates the program's entry function. The name is
@@ -609,8 +584,8 @@ func emitRuntimeMainBody(b llssa.Builder, fns entryFunctions) {
 	if fns.pyInit != nil {
 		b.Call(fns.pyInit.Expr)
 	}
-	if fns.gcMarkersInit != nil {
-		b.Call(fns.gcMarkersInit.Expr)
+	if fns.gcInit != nil {
+		b.Call(fns.gcInit.Expr)
 	}
 	if fns.rtInit != nil {
 		b.Call(fns.rtInit.Expr)

@@ -2973,7 +2973,7 @@ func dceEntryRootCandidates(pkgs []Package, needRuntime bool) []string {
 	slices.Sort(exports)
 	roots = append(roots, exports...)
 	if needRuntime {
-		roots = append(roots, llssa.PkgRuntime+".init")
+		roots = append(roots, llssa.PkgRuntime+".InitGC", llssa.PkgRuntime+".init")
 	}
 	return roots
 }

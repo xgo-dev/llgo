@@ -945,36 +945,27 @@ func TestGenMainModuleWASIThreadsInstallsLocalContextWithoutUserLocality(t *test
 	)
 }
 
-func TestGenMainModuleBDWGCMarkersInit(t *testing.T) {
+func TestGenMainModuleGCInit(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")
-	if usesNativeBDWGC(nil) || usesNativeBDWGC(&context{}) {
-		t.Fatal("usesNativeBDWGC must return false for nil context or buildConf")
-	}
 	for _, tc := range []struct {
 		name       string
 		goos, arch string
 		mode       BuildMode
 		tags       string
-		buildFlags []string
-		targetTags []string
 		rtInit     bool
-		want       bool
 	}{
-		{"linux-exe", "linux", "amd64", BuildModeExe, "", nil, nil, true, true},
-		{"darwin-exe", "darwin", "arm64", BuildModeExe, "", nil, nil, true, true},
-		{"windows-exe", "windows", "arm64", BuildModeExe, "", nil, nil, true, true},
-		{"linux-cshared", "linux", "amd64", BuildModeCShared, "", nil, nil, true, true},
-		{"darwin-carchive", "darwin", "arm64", BuildModeCArchive, "", nil, nil, true, true},
-		{"windows-cshared", "windows", "arm64", BuildModeCShared, "", nil, nil, true, true},
-		{"linux-allthreads", "linux", "amd64", BuildModeExe, "llgo.allthreads", nil, nil, true, true},
-		{"nogc", "linux", "amd64", BuildModeExe, "nogc", nil, nil, true, false},
-		{"nogc-buildflag", "linux", "amd64", BuildModeExe, "", []string{"-tags=nogc"}, nil, true, false},
-		{"baremetal-tag", "linux", "arm", BuildModeExe, "baremetal", nil, nil, true, false},
-		{"baremetal-target", "linux", "arm", BuildModeExe, "", nil, []string{"baremetal"}, true, false},
-		{"wasip1", "wasip1", "wasm", BuildModeExe, "", nil, nil, true, false},
-		{"js-wasm", "js", "wasm", BuildModeExe, "", nil, nil, true, false},
-		{"no-rtinit", "linux", "amd64", BuildModeExe, "", nil, nil, false, false},
+		{"linux-exe", "linux", "amd64", BuildModeExe, "", true},
+		{"darwin-exe", "darwin", "arm64", BuildModeExe, "", true},
+		{"windows-exe", "windows", "arm64", BuildModeExe, "", true},
+		{"linux-cshared", "linux", "amd64", BuildModeCShared, "", true},
+		{"darwin-carchive", "darwin", "arm64", BuildModeCArchive, "", true},
+		{"windows-cshared", "windows", "arm64", BuildModeCShared, "", true},
+		{"nogc", "linux", "amd64", BuildModeExe, "nogc", true},
+		{"baremetal", "linux", "arm", BuildModeExe, "baremetal", true},
+		{"wasip1", "wasip1", "wasm", BuildModeExe, "", true},
+		{"js-wasm", "js", "wasm", BuildModeExe, "", true},
+		{"no-rtinit", "linux", "amd64", BuildModeExe, "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := &context{
@@ -985,21 +976,18 @@ func TestGenMainModuleBDWGCMarkersInit(t *testing.T) {
 					Goarch:    tc.arch,
 					Tags:      tc.tags,
 				},
-				crossCompile: crosscompile.Export{BuildTags: tc.targetTags},
-			}
-			if len(tc.buildFlags) != 0 {
-				ctx.conf = &packages.Config{BuildFlags: tc.buildFlags}
 			}
 			defer ctx.prog.Dispose()
 			pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
 			ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: tc.rtInit}).LPkg.String()
-			got := strings.Contains(ir, "call void @llgo_gc_init_markers()")
-			if got != tc.want {
-				t.Fatalf("llgo_gc_init_markers emitted = %v, want %v:\n%s", got, tc.want, ir)
+			wantCall := `call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.InitGC"()`
+			got := strings.Contains(ir, wantCall)
+			if got != tc.rtInit {
+				t.Fatalf("runtime.InitGC emitted = %v, want %v:\n%s", got, tc.rtInit, ir)
 			}
-			if tc.want {
+			if tc.rtInit {
 				assertInOrder(t, ir,
-					"call void @llgo_gc_init_markers()",
+					wantCall,
 					`call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.init"()`,
 				)
 			}

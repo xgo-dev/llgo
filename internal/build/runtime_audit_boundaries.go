@@ -168,8 +168,8 @@ C.llgo_windows_fault_pcbuf`,
 	{
 		`C.llgo_maxprocs`,
 		"LLGo platform CPU query",
-		`runtime/internal/lib/runtime/_wrap/runtime.c
-runtime/internal/lib/runtime/_wrap/runtime_windows.c`,
+		`runtime/internal/runtime/_wrap/maxprocs_unix.c
+runtime/internal/runtime/_wrap/maxprocs_windows.c`,
 	},
 	{
 		`C.llgo_mem_readable`,

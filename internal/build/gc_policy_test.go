@@ -4,7 +4,6 @@ package build
 
 import (
 	stdctx "context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,64 +62,6 @@ func TestBDWGCAllocationPolicy(t *testing.T) {
 			run(test.input, test.want)
 		})
 	}
-
-	runMarkers := func(overrides map[string]string) (parallel, cpus int) {
-		t.Helper()
-		ctx, cancel := stdctx.WithTimeout(stdctx.Background(), time.Minute)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, output, "markers")
-		var env []string
-		for _, kv := range os.Environ() {
-			key, _, _ := strings.Cut(kv, "=")
-			if strings.EqualFold(key, "GOMAXPROCS") ||
-				strings.EqualFold(key, "GC_MARKERS") ||
-				strings.EqualFold(key, "GC_NPROCS") {
-				continue
-			}
-			env = append(env, kv)
-		}
-		for k, v := range overrides {
-			env = append(env, k+"="+v)
-		}
-		cmd.Env = env
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("BDWGC markers %v: %v\n%s", overrides, err, out)
-		}
-		if _, err := fmt.Sscanf(strings.TrimSpace(string(out)), "parallel=%d cpus=%d", &parallel, &cpus); err != nil {
-			t.Fatalf("parse BDWGC markers output %q: %v", string(out), err)
-		}
-		return parallel, cpus
-	}
-
-	t.Run("markers/GOMAXPROCS=1", func(t *testing.T) {
-		if parallel, _ := runMarkers(map[string]string{"GOMAXPROCS": "1"}); parallel != 0 {
-			t.Fatalf("GOMAXPROCS=1: GC_get_parallel() = %d, want 0", parallel)
-		}
-	})
-	t.Run("markers/GOMAXPROCS=2", func(t *testing.T) {
-		parallel, cpus := runMarkers(map[string]string{"GOMAXPROCS": "2"})
-		if parallel > 1 {
-			t.Fatalf("GOMAXPROCS=2: GC_get_parallel() = %d, want <= 1 (cpus=%d)", parallel, cpus)
-		}
-		if defaultParallel, _ := runMarkers(nil); defaultParallel >= 2 && parallel != 1 {
-			t.Fatalf("GOMAXPROCS=2: GC_get_parallel() = %d, want 1 (default=%d, cpus=%d)", parallel, defaultParallel, cpus)
-		}
-	})
-	t.Run("markers/GC_MARKERS_overrides_GOMAXPROCS", func(t *testing.T) {
-		want, _ := runMarkers(map[string]string{"GC_MARKERS": "2"})
-		got, _ := runMarkers(map[string]string{"GOMAXPROCS": "1", "GC_MARKERS": "2"})
-		if got != want {
-			t.Fatalf("GOMAXPROCS=1 GC_MARKERS=2: GC_get_parallel() = %d, want %d", got, want)
-		}
-	})
-	t.Run("markers/GC_NPROCS_overrides_GOMAXPROCS", func(t *testing.T) {
-		want, _ := runMarkers(map[string]string{"GC_NPROCS": "2"})
-		got, _ := runMarkers(map[string]string{"GOMAXPROCS": "1", "GC_NPROCS": "2"})
-		if got != want {
-			t.Fatalf("GOMAXPROCS=1 GC_NPROCS=2: GC_get_parallel() = %d, want %d", got, want)
-		}
-	})
 }
 
 func TestBDWGCMarkersEndToEnd(t *testing.T) {
@@ -145,8 +86,48 @@ import _ "unsafe"
 //go:linkname gcGetParallel C.GC_get_parallel
 func gcGetParallel() int32
 
+//go:linkname initGC github.com/xgo-dev/llgo/runtime/internal/runtime.InitGC
+func initGC()
+
+//go:linkname parseGOMAXPROCS github.com/xgo-dev/llgo/runtime/internal/runtime.ParseGOMAXPROCS
+func parseGOMAXPROCS(string) int
+
+//go:linkname targetBDWGCMarkers github.com/xgo-dev/llgo/runtime/internal/runtime.targetBDWGCMarkers
+func targetBDWGCMarkers(gomaxprocs string, gcMarkersSet bool, gcNprocs string, cpuCount int) int
+
+func check(ok bool, msg string) {
+	if !ok {
+		panic(msg)
+	}
+}
+
 func main() {
-	println(gcGetParallel())
+	// Calling InitGC after GC_init must be a safe no-op.
+	initGC()
+
+	// Exercise Go parser & policy edge cases inside the compiled runtime.
+	check(parseGOMAXPROCS("") == 0, "empty")
+	check(parseGOMAXPROCS("0") == 0, "zero")
+	check(parseGOMAXPROCS("-1") == 0, "neg")
+	check(parseGOMAXPROCS("+4") == 0, "plus")
+	check(parseGOMAXPROCS(" 4") == 0, "lead-space")
+	check(parseGOMAXPROCS("4 ") == 0, "trail-space")
+	check(parseGOMAXPROCS("bad") == 0, "alpha")
+	check(parseGOMAXPROCS("2147483648") == 0, "overflow")
+	check(parseGOMAXPROCS("1") == 1, "one")
+	check(parseGOMAXPROCS("4") == 4, "four")
+	check(parseGOMAXPROCS("2147483647") == 2147483647, "maxint32")
+
+	check(targetBDWGCMarkers("", false, "", 16) == 0, "unset")
+	check(targetBDWGCMarkers("1", false, "", 16) == 1, "g1")
+	check(targetBDWGCMarkers("4", true, "", 16) == 0, "gc-markers-set")
+	check(targetBDWGCMarkers("4", false, "", 16) == 4, "gc-nprocs-empty")
+	check(targetBDWGCMarkers("64", false, "", 16) == 16, "clamped")
+	check(targetBDWGCMarkers("4", false, "8", 16) == 0, "gc-nprocs-set")
+	check(targetBDWGCMarkers("0", false, "", 16) == 0, "g0")
+	check(targetBDWGCMarkers("bad", false, "", 16) == 0, "gbad")
+
+	println("parallel=", gcGetParallel())
 }
 `), 0o600); err != nil {
 		t.Fatal(err)
@@ -183,17 +164,44 @@ func main() {
 		if err != nil {
 			t.Fatalf("run markers probe %v: %v\n%s", overrides, err, out)
 		}
-		val, err := strconv.Atoi(strings.TrimSpace(string(out)))
-		if err != nil {
-			t.Fatalf("parse markers probe output %q: %v", string(out), err)
+		for _, line := range strings.Split(string(out), "\n") {
+			if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "parallel="); ok {
+				val, err := strconv.Atoi(strings.TrimSpace(rest))
+				if err != nil {
+					t.Fatalf("parse markers probe line %q: %v", line, err)
+				}
+				return val
+			}
 		}
-		return val
+		t.Fatalf("missing parallel= line in markers probe output %q", string(out))
+		return 0
 	}
+	def := runProbe(nil)
 	if got := runProbe(map[string]string{"GOMAXPROCS": "1"}); got != 0 {
-		t.Fatalf("compiled LLGo binary with GOMAXPROCS=1: GC_get_parallel() = %d, want 0", got)
+		t.Fatalf("GOMAXPROCS=1: GC_get_parallel() = %d, want 0", got)
 	}
-	want := runProbe(map[string]string{"GC_MARKERS": "2"})
-	if got := runProbe(map[string]string{"GOMAXPROCS": "1", "GC_MARKERS": "2"}); got != want {
-		t.Fatalf("compiled LLGo binary with GOMAXPROCS=1 GC_MARKERS=2: GC_get_parallel() = %d, want %d", got, want)
+	if got := runProbe(map[string]string{"GOMAXPROCS": "2"}); got > 1 || (def >= 2 && got != 1) {
+		t.Fatalf("GOMAXPROCS=2: GC_get_parallel() = %d (default=%d)", got, def)
+	}
+	if got := runProbe(map[string]string{"GOMAXPROCS": "99999"}); got > def {
+		t.Fatalf("GOMAXPROCS=99999: GC_get_parallel() = %d, want <= default %d", got, def)
+	}
+	if got := runProbe(map[string]string{"GOMAXPROCS": "bad"}); got != def {
+		t.Fatalf("GOMAXPROCS=bad: GC_get_parallel() = %d, want default %d", got, def)
+	}
+	wantMarkers := runProbe(map[string]string{"GC_MARKERS": "2"})
+	if got := runProbe(map[string]string{"GOMAXPROCS": "1", "GC_MARKERS": "2"}); got != wantMarkers {
+		t.Fatalf("GOMAXPROCS=1 GC_MARKERS=2: GC_get_parallel() = %d, want %d", got, wantMarkers)
+	}
+	wantEmptyMarkers := runProbe(map[string]string{"GC_MARKERS": ""})
+	if got := runProbe(map[string]string{"GOMAXPROCS": "1", "GC_MARKERS": ""}); got != wantEmptyMarkers {
+		t.Fatalf("GOMAXPROCS=1 GC_MARKERS=\"\": GC_get_parallel() = %d, want %d", got, wantEmptyMarkers)
+	}
+	wantNprocs := runProbe(map[string]string{"GC_NPROCS": "2"})
+	if got := runProbe(map[string]string{"GOMAXPROCS": "1", "GC_NPROCS": "2"}); got != wantNprocs {
+		t.Fatalf("GOMAXPROCS=1 GC_NPROCS=2: GC_get_parallel() = %d, want %d", got, wantNprocs)
+	}
+	if got := runProbe(map[string]string{"GOMAXPROCS": "1", "GC_NPROCS": ""}); got != 0 {
+		t.Fatalf("GOMAXPROCS=1 GC_NPROCS=\"\": GC_get_parallel() = %d, want 0", got)
 	}
 }

@@ -1,21 +1,15 @@
 /* Native BDWGC pacing. No Go code or allocation runs under the collector lock. */
-#if defined(__linux__) && !defined(_GNU_SOURCE)
-#define _GNU_SOURCE 1
-#endif
 #if defined(_WIN32)
 #define _CRT_SECURE_NO_WARNINGS 1
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <sched.h>
-#include <unistd.h>
 #endif
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
-#include <string.h>
 #include <errno.h>
-#include <limits.h>
 #include <stdatomic.h>
 
 /* This stable prefix is deliberately smaller than GC_prof_stats_s. The API
@@ -39,93 +33,6 @@ extern void GC_set_disable_automatic_collection(int);
 extern int GC_get_disable_automatic_collection(void);
 extern uintptr_t GC_get_bytes_since_gc(void);
 extern void GC_gcollect(void);
-extern int GC_is_init_called(void);
-extern void GC_set_markers_count(unsigned);
-
-static unsigned llgo_gc_cpu_count(void)
-{
-#if defined(_WIN32)
-    DWORD_PTR mask = 0;
-    DWORD_PTR system_mask = 0;
-    if (GetProcessAffinityMask(GetCurrentProcess(), &mask, &system_mask)) {
-        unsigned count = 0;
-        while (mask != 0) {
-            count += (unsigned)(mask & 1u);
-            mask >>= 1;
-        }
-        if (count != 0)
-            return count;
-    }
-    SYSTEM_INFO info;
-    GetSystemInfo(&info);
-    return info.dwNumberOfProcessors == 0 ? 1u : (unsigned)info.dwNumberOfProcessors;
-#else
-#if defined(__linux__)
-    cpu_set_t set;
-    CPU_ZERO(&set);
-    if (sched_getaffinity(0, sizeof(set), &set) == 0) {
-        int count = CPU_COUNT(&set);
-        if (count > 0)
-            return (unsigned)count;
-    }
-#endif
-#if defined(_SC_NPROCESSORS_ONLN)
-    long n = sysconf(_SC_NPROCESSORS_ONLN);
-    return n > 0 ? (unsigned)n : 1u;
-#else
-    return 1u;
-#endif
-#endif
-}
-
-/* Match Go's GOMAXPROCS startup parser: strict positive ASCII int32 decimal. */
-static unsigned llgo_gc_parse_gomaxprocs(const char *value)
-{
-    if (value == NULL || value[0] == '\0')
-        return 0;
-    uint64_t n = 0;
-    for (const char *p = value; *p != '\0'; ++p) {
-        if (*p < '0' || *p > '9')
-            return 0;
-        n = n * 10u + (uint64_t)(*p - '0');
-        if (n > (uint64_t)INT32_MAX)
-            return 0;
-    }
-    return (unsigned)n;
-}
-
-/* Return the marker count to request before GC_init, or 0 to leave BDWGC's
- * default unchanged (e.g. when GC_MARKERS/GC_NPROCS is set or GOMAXPROCS is
- * unset/invalid). Never request more markers than available host CPUs. */
-static unsigned llgo_gc_target_markers(const char *gomaxprocs,
-                                       const char *gc_markers,
-                                       const char *gc_nprocs,
-                                       unsigned cpu_count)
-{
-    /* BDWGC checks GETENV("GC_MARKERS") != NULL (including an empty value,
-     * which triggers its own warning/default) and non-empty GC_NPROCS. */
-    if (gc_markers != NULL || (gc_nprocs != NULL && gc_nprocs[0] != '\0'))
-        return 0;
-    unsigned n = llgo_gc_parse_gomaxprocs(gomaxprocs);
-    if (n == 0)
-        return 0;
-    if (cpu_count > 0 && n > cpu_count)
-        n = cpu_count;
-    return n;
-}
-
-void llgo_gc_init_markers(void)
-{
-    if (GC_is_init_called())
-        return;
-    unsigned markers = llgo_gc_target_markers(
-        getenv("GOMAXPROCS"),
-        getenv("GC_MARKERS"),
-        getenv("GC_NPROCS"),
-        llgo_gc_cpu_count());
-    if (markers > 0)
-        GC_set_markers_count(markers);
-}
 
 static int32_t llgo_gc_percent = 100;
 static int32_t llgo_gc_budget_percent = 100;

@@ -39,6 +39,12 @@ type StackBase struct {
 //go:linkname Init C.GC_init
 func Init()
 
+//go:linkname IsInitCalled C.GC_is_init_called
+func IsInitCalled() c.Int
+
+//go:linkname SetMarkersCount C.GC_set_markers_count
+func SetMarkersCount(n uint32)
+
 //go:linkname AllowRegisterThreads C.GC_allow_register_threads
 func AllowRegisterThreads()
 
