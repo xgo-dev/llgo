@@ -1,0 +1,35 @@
+[go] espnow wifi setup ok
+[go] espnow wifi events ok
+[go] espnow wifi mode ok
+[go] espnow wifi start ok
+[go] espnow wifi ready (station started, unassociated)
+[go] espnow init ok
+[go] espnow protocol version = 2
+[go] espnow own sta mac = MAC
+[go] espnow add broadcast peer ok
+[go] espnow add broadcast peer again ok: ESP_ERR_ESPNOW_EXIST
+[go] espnow peer is known: bcast yes, stranger no
+[go] espnow peer count = 1 total, 0 encrypted
+[go] espnow add peer, encrypt without key ok: ESP_ERR_ESPNOW_ARG
+[go] espnow add encrypted peer ok
+[go] espnow set pmk ok
+[go] espnow rotate peer lmk ok
+[go] espnow peer count = 2 total, 1 encrypted
+[go] espnow delete stranger once ok
+[go] espnow delete stranger twice ok: ESP_ERR_ESPNOW_NOT_FOUND
+[go] espnow send to unknown peer ok: ESP_ERR_ESPNOW_NOT_FOUND
+[go] espnow send empty payload: ESP_ERR_INVALID_ARG
+[go] espnow send oversize payload: ESP_ERR_INVALID_ARG
+[go] espnow broadcast confirm: success
+[go] espnow burst 0 confirm: success
+[go] espnow burst 1 confirm: success
+[go] espnow burst 2 confirm: success
+[go] espnow dropped = 0
+[go] espnow set channel 6: ok
+[go] espnow deinit ok
+[go] espnow send after deinit ok: ESP_ERR_ESPNOW_NOT_INIT
+[go] espnow re-init ok
+[go] espnow re-add broadcast peer ok
+[go] espnow confirm after re-init: success
+[go] espnow PASS
+[go] espnow done

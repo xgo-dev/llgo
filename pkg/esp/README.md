@@ -21,9 +21,13 @@ usable from Go with hours-scale effort instead of a porting project:
 | `pkg/esp/lpcore` | `ulp_lp_core.h` + `lp_core_mailbox.h` (ulp component) | LP (low-power) coprocessor: load an LP program into LP RAM (32 KiB ceiling + the project's own reservation), run/stop with any of the six wakeup sources, single-word mailbox send/receive; the LP core keeps running through HP deep sleep (deep-sleep entry stays in the app's own glue) |
 | `pkg/esp/opus` | `opus.h` (managed component `78/esp-opus`, vanilla upstream Opus compiled fixed-point `-DFIXED_POINT=1 -DDISABLE_FLOAT_API`) | S16 PCM ↔ Opus packets: encoder (application, bitrate, complexity, frame-duration ctls; lookahead query) and decoder (duration read off the packet, packet-loss concealment on a nil frame); synchronous C-glue calls behind a generation-tagged handle table - no mailbox, no task; negative OPUS_* errors pass through named, binding-side refusals live in the 0x79xx segment |
 | `pkg/esp/wakenet` | ESP-SR WakeNet (`model_path.h`, `esp_wn_iface.h`, `esp_wn_models.h`) | Wake-word detection: model-partition enumeration, one engine instance (wn9_hilexin by default), the audio path (I2S RX or a test source) and the 3–6.4 ms/frame detect loop kept entirely on the glue's own FreeRTOS task, detections and task errors as a bounded event ring Go polls, sticky `Detected()`, per-call timing stats |
+
 | `pkg/esp/touch` | `driver/touch_sens.h` (touch hardware v3, `esp_driver_touch_sens`) | touch sensor controller: single-instance bring-up (Init→Config→Start lifecycle), 14 channels mapped onto GPIO6..19, channel data + hardware benchmark reads, active-threshold events (ISR callbacks → static ring → Go poll), benchmark recalibration, calibration flow documented on the package |
 | `pkg/esp/temp` | `driver/temperature_sensor.h` (`esp_driver_tsens`) | built-in temperature sensor (±1 °C): install/start/read/stop/uninstall lifecycle, range-span config, float reading carried across the boundary as integer milli-degrees |
 | `pkg/esp/nvs` | `nvs.h` + `nvs_flash.h` | non-volatile key-value store: namespaces as read-write handles, typed values (u8/i32/u64/string/blob), Delete/Commit, `Keys()` over the entry iterator, partition-wide `ReadStats()`; explicit-commit durability boundary, static-buffer capacity contract (0x75xx segment) |
+
+| `pkg/esp/espnow` | `esp_now.h` (inside the esp_wifi library; rides a started WiFi driver) | Espressif's connectionless low-latency MAC-layer protocol: bring-up over the wifi package's radio (STA/AP started, no association), peer list (add/delete/known/count, optional per-peer LMK encryption + PMK), `Send` with the driver's synchronous verdict + asynchronous `SendResult.Wait` confirmation per destination MAC, `Broadcast`, recv frames through a static ring + pump goroutine into `SetRecvHandler`, `SetChannel` for unassociated nodes, protocol-version and own-MAC queries |
+
 
 ## Package template
 
@@ -109,8 +113,12 @@ packages' meanings:
 
 | Segment | Package | Values |
 |---------|---------|--------|
+
 | `0x72xx` | `temp` | `ErrNotInstalled` (`0x7201`, the glue's refusal for calls before Install) |
 | `0x73xx` | `touch` | `ErrNotInit` (`0x7301`, the glue's refusal for calls before Init) |
+
+| `0x74xx` | `espnow` | `ErrGlueABI` (`0x7401`; `0x7402+` reserved) |
+
 | `0x76xx` | `bt` | `ErrGlueABI`, `ErrNotReady`, `ErrBusy` (`0x7700+` = the A2DP domain; `0x7800+` reserved for HFP) |
 | `0x7Bxx` | `ble` | `ErrTimeout`, `ErrNotReady`, `ErrUnsupported`, `ErrBadUUID`, `ErrBadValue`, `ErrBusy`, `ErrBadProperty`, `ErrNotFound`, `ErrTooLong` |
 | `0x7C01` | `esperr` | the meta error (a wrapper with no pipeline code) |
@@ -623,6 +631,110 @@ say: an unanswered connect attempt never times out there (the virtual
 controller does not model the controller-side connect-duration limit), and the
 host peer must advertise legacy-only, so extended advertising and its 1650-byte
 payloads are out of reach.
+
+## pkg/esp/espnow — Espressif's connectionless ESP-NOW protocol over a started WiFi driver
+
+`pkg/esp/espnow` exposes the esp_now stack (which lives inside the esp_wifi
+library and rides its driver): `Init` / `Deinit`, `SetChannel`, the peer
+list (`AddPeer(PeerConfig)` / `DeletePeer` / `PeerIsKnown` / `PeerCount`),
+sends (`Send(peer, data) (*SendResult, error)`, `Broadcast`), the receive
+side (`SetRecvHandler(func(from [6]uint8, data []byte))`) and the
+crypto entry points (`SetPMK`, `SetLMK`). `Version` reports the ESP-NOW
+protocol generation the firmware speaks; `OwnMAC(ifIdx)` returns the
+address a peer must add; `MACString` renders MACs; `Dropped` reports the
+ring's honest loss counter.
+
+**Bring-up order is the caller's contract.** esp_now needs the WiFi driver
+initialized AND started (station or soft-AP, unassociated is fine - that is
+the protocol's usual mode), but this package deliberately does not touch
+esp_wifi's lifecycle: pkg/esp/wifi owns the radio. The program runs
+`wifi.Setup() -> wifi.SetModeSTA() -> wifi.Start()` first and calls
+`espnow.Init()` after; `_demo/esp-idf-espnow` is the runnable example.
+`esp_now_init` before the driver runs reports ESP_ERR_ESPNOW_INTERNAL
+(0x306a) - Init surfaces it as any other driver error.
+
+**Callbacks → static ring → pump.** Both driver callbacks (frame received,
+send confirmed) fire on the WiFi task - the same no-callbacks-into-Go,
+no-malloc-in-callbacks discipline every async pkg/esp package follows (the
+WiFi task must never enter the llgo fiber scheduler, and llgo's --wrap
+redirects malloc/free to the lock-free tinygogc allocator that only the
+llgo task may enter). The glue memcpy's into a 16-slot static SPSC ring
+(16 × ~276 B ≈ 4.3 KiB .bss; slots hold the full 250-byte v1.0 payload),
+and a single pump goroutine - started once, when Init succeeds, never on a
+host build - drains it paced by `vTaskDelay(10)` = 100 ms quanta, the
+wifi package's exact cadence: drain, dispatch, `Gosched`, rest.
+Overflow drops the newest record and counts it; `Dropped()` reads the
+counter (there is no callback for overflow - the recv handler's signature
+carries frames, and a loss counter is the honest form).
+
+Event kinds (this package's own table, starting at 1 - never aliased with
+wifi's or ble's kinds; every pkg/esp event table belongs to its package):
+
+| kind | value | record | goes to |
+| --- | --- | --- | --- |
+| `EvRecv` | 1 | source MAC, RSSI in Aux, payload in the pump's staging window | `SetRecvHandler(from, data)` - data is a fresh copy per delivery |
+| `EvSendDone` | 2 | destination MAC, `esp_now_send_status_t` in Aux | the pending `SendResult` for that MAC (oldest first) |
+| `EvOverflow` | -1 | the ring dropped records | the `Dropped()` counter (no callback) |
+
+**Send splits into two verdicts, like the driver.** `esp_now_send` is
+synchronous and only queues the frame; the ACK-level outcome arrives later
+on the send callback. `Send` returns the driver's synchronous verdict as
+its error (`ESP_ERR_ESPNOW_NOT_FOUND` for an unregistered peer, `ARG` for
+a payload outside 1..MaxDataLen, `NO_MEM` when the driver's send queue is
+momentarily full, `IF`/`CHAN` for an interface/channel mismatch) and a
+`*SendResult` whose `Wait(timeoutMs)` resolves the asynchronous one
+(`(SendSuccess, nil)` / `(SendFail, nil)` / `(SendFail, ErrTimeout)`,
+bounds measured in 100 ms quanta). The callback carries no sequence id -
+only the destination MAC - so results resolve oldest-first per MAC (the
+driver serializes a peer's frames, so statuses arrive in send order).
+Resolve every result with a bounded Wait: a result whose callback never
+fires keeps its place at the head, and the next confirmation resolves it
+first - but a Wait that timed out leaves its channel in place, so the
+queue never mis-delivers into a Wait that already returned. A zero-value
+or nil result `Wait`s to `ErrTimeout` instead of hanging.
+
+**Peers and encryption.** `AddPeer` takes a `PeerConfig{MAC, Channel, If,
+Encrypt, LMK}` - the zero value beyond the MAC inherits the radio's state
+(the broadcast peer is exactly that). `Encrypt` without a non-zero LMK is
+refused client-side with ESP_ERR_ESPNOW_ARG (the driver would accept it
+and silently send plaintext). Encrypted peers consume the Kconfig
+`CONFIG_ESP_WIFI_ESPNOW_MAX_ENCRYPT_NUM` slots (the driver is the
+authority; a surplus reports ESP_ERR_ESPNOW_FULL); `SetPMK` arms the
+primary master key that protects the LMKs on the air, `SetLMK` rotates a
+peer's key. Key agreement/provisioning is out of scope. Not exposed (the
+driver has it; add when needed): per-peer PHY rate
+(`esp_now_set_peer_rate_config`), the v2.0 frame format (`Version`
+reports the generation; Send stays at the v1.0 250-byte ceiling so both
+generations receive), the switch-channel/remain-on-channel pair, wake
+window, user OUI.
+
+**Errors.** The family's esperr model: raw codes wrapped with names from
+`espnow.ErrName` (the shared esp_err family, the WiFi driver codes
+SetChannel can surface, and the whole ESP_ERR_ESPNOW segment 0x3065..0x306D).
+The package's own internal code is `0x7401` (`ErrGlueABI`, the
+stale-glue-template guard Init checks via `llgo_espnow_glue_abi`); the
+stub's `0x7F00` errUnsupported is the family-wide value.
+
+**Emulator fidelity (esp-emu 1.2.0, measured with a pure-C probe first,
+logs in the demo README).** The esp_now API surface is modeled: init,
+deinit, re-init, callback registration, peer management (including the
+EXIST/FULL/NOT_FOUND/ARG refusals and the encrypted-peer slot accounting),
+PMK/LMK calls, `esp_wifi_set_channel` while unassociated, and broadcast
+sends - `esp_now_send` queues them and the send callback fires with
+ESP_NOW_SEND_SUCCESS. What an emulator cannot do is OTA frames: two
+esp-emu instances do not hear each other (both sides of a two-instance
+broadcast run see their own sends confirmed and recv = 0), and there is no
+virtual ESP-NOW peer. The receive path and true delivery semantics
+(collision behavior, real RSSI, ACK outcomes for unicast to a live peer,
+encrypted frames over the air, range/rate) are hardware items - see the
+demo README's checklist. The demo probe runs the whole control plane
+through the binding under esp-emu; it does not pretend a frame was
+received.
+
+**Integration.** The main component needs
+`REQUIRES esp_wifi esp_netif esp_event nvs_flash` (the esp_now header
+ships in the esp_wifi component; the wifi glue brings NVS/netif/event-loop
+up before espnow.Init). `_demo/esp-idf-espnow` is the worked example.
 
 ## Adding a new peripheral
 
