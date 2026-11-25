@@ -84,7 +84,7 @@ func ApplyForPkg(base, current map[string][]byte, runtimeDir, goroot, pkgPath st
 	patchDir := filepath.Join(runtimeDir, "_patch", filepath.FromSlash(patchPath))
 	entries, err := os.ReadDir(patchDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if isMissingDir(patchDir, err) {
 			return false, current, nil, nil
 		}
 		return false, nil, nil, fmt.Errorf("read source patch dir %s: %w", pkgPath, err)
@@ -93,7 +93,7 @@ func ApplyForPkg(base, current map[string][]byte, runtimeDir, goroot, pkgPath st
 	srcDir := filepath.Join(goroot, "src", filepath.FromSlash(pkgPath))
 	srcEntries, err := os.ReadDir(srcDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if isMissingDir(srcDir, err) {
 			return false, current, nil, nil
 		}
 		if errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) {
@@ -284,6 +284,17 @@ func ApplyForPkg(base, current map[string][]byte, runtimeDir, goroot, pkgPath st
 		changed = true
 	}
 	return changed, out, files, nil
+}
+
+func isMissingDir(dir string, err error) bool {
+	if !os.IsNotExist(err) {
+		return false
+	}
+	// On Windows, os.ReadDir on a regular file fails with ERROR_PATH_NOT_FOUND,
+	// which os.IsNotExist matches. Treat the path as missing only if os.Stat
+	// also reports it does not exist.
+	_, statErr := os.Stat(dir)
+	return os.IsNotExist(statErr)
 }
 
 func matchTargetFile(buildCtx, filenameCtx build.Context, dir, name string) (bool, error) {

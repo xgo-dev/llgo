@@ -456,6 +456,9 @@ func Keep() string {
 	}
 	fileAsDir := filepath.Join(rtDir, "_patch", "notadir")
 	mustWrite(fileAsDir, "x")
+	if isMissingDir(fileAsDir, os.ErrNotExist) {
+		t.Fatal("isMissingDir treated existing regular file as missing")
+	}
 	if _, _, _, err := ApplyForPkg(nil, nil, rtDir, goroot, "notadir", ctx); err == nil {
 		t.Fatal("ApplyForPkg accepted non-directory patchDir")
 	}
