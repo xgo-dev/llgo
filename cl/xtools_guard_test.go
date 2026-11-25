@@ -346,7 +346,13 @@ func TestPureGoCoreDependencyIsolation(t *testing.T) {
 		"github.com/xgo-dev/llgo/directive",
 		"github.com/xgo-dev/llgo/target",
 		"github.com/xgo-dev/llgo/types",
+		"github.com/xgo-dev/llgo/types/typeutil",
 		"github.com/xgo-dev/llgo/ssa",
+		"github.com/xgo-dev/llgo/exportdata",
+		"github.com/xgo-dev/llgo/analysis/callgraph",
+		"github.com/xgo-dev/llgo/analysis/escape",
+		"github.com/xgo-dev/llgo/analysis/deadcode",
+		"github.com/xgo-dev/llgo/analysis/inline",
 	}
 	args := append([]string{"list", "-json"}, pkgs...)
 	out, err := exec.Command("go", args...).Output()
@@ -378,10 +384,13 @@ func TestPureGoCoreDependencyIsolation(t *testing.T) {
 				t.Errorf("%s must not depend on go/types", p.ImportPath)
 			}
 		}
-		if p.ImportPath == "github.com/xgo-dev/llgo/ssa" {
+		if p.ImportPath == "github.com/xgo-dev/llgo/ssa" ||
+			p.ImportPath == "github.com/xgo-dev/llgo/types/typeutil" ||
+			p.ImportPath == "github.com/xgo-dev/llgo/exportdata" ||
+			strings.HasPrefix(p.ImportPath, "github.com/xgo-dev/llgo/analysis/") {
 			for _, imp := range p.Imports {
 				if imp == "go/types" {
-					t.Errorf("llgo/ssa must not directly import go/types (use llgo/types)")
+					t.Errorf("%s must not directly import go/types (use llgo/types)", p.ImportPath)
 				}
 			}
 		}

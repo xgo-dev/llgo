@@ -858,8 +858,9 @@ func NewInterface(methods []*Func, embeddeds []*Named) *Interface {
 }
 
 func (t *Interface) resolve() {
-	if !t.resolved && t.ctx != nil && t.goIface != nil {
+	if t.ctx != nil && t.goIface != nil {
 		t.ctx.resolveInterface(t)
+		return
 	}
 	if !t.completed {
 		t.completeSynthetic()
@@ -1330,7 +1331,7 @@ func (n *Named) resolve() {
 }
 
 func (n *Named) resolveMethods() {
-	if n.methodsResolved || n.ctx == nil || n.goNamed == nil {
+	if n.ctx == nil || n.goNamed == nil {
 		return
 	}
 	n.ctx.resolveNamedMethods(n)
