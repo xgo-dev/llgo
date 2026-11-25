@@ -13,24 +13,15 @@
 //
 //	opus.go           public API, no build tag
 //	opus_idf.go       //go:build llgo.idf - bodyless //go:linkname externs
-//	opus_baremetal.go //go:build llgo && !llgo.idf - the same externs, for
-//	                 the no-IDF llgo build
-//	opus_stub.go      //go:build !llgo - host-build stubs (go vet/gopls)
+//	opus_stub.go      //go:build !llgo.idf - host-build stubs (go vet/gopls)
 //	glue/opus_glue.c  C glue: the codec handle table and the opus_* call
-//	                 translations, ESP_PLATFORM-guarded, with honest
-//	                 ESP_ERR_NOT_SUPPORTED stubs outside an IDF build
-//	csrc/             the vendored fixed-point Opus source plus
-//	                 csrc/llgo_opus.c, the same handle table without the
-//	                 ESP-IDF dependencies, for the baremetal build
+//	                  translations, ESP_PLATFORM-guarded, with honest
+//	                  ESP_ERR_NOT_SUPPORTED stubs outside an IDF build
 //
-// The two firmware builds reach the same llgo_opus_* ABI from different
-// sides: an ESP-IDF project registers the component dependency (78/esp-opus)
+// The consuming firmware registers the component dependency (78/esp-opus)
 // and copies glue/opus_glue.c into its main component next to the synced
 // glues of the other pkg/esp packages (integration way 1 in
-// pkg/esp/README.md); a baremetal llgo build (-target esp32s31) compiles
-// the vendored csrc/ sources itself through LLGoFiles, so the codec needs
-// no IDF component manager at all. Unlike ble/bt there is no mailbox and no
-// task here:
+// pkg/esp/README.md). Unlike ble/bt there is no mailbox and no task here:
 // Opus is a synchronous library, every call runs to completion on the
 // calling goroutine's own stack, so there are no callbacks that could race
 // the single-task llgo fiber scheduler.

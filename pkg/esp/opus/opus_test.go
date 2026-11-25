@@ -1,4 +1,4 @@
-//go:build !llgo
+//go:build !llgo.idf
 
 // Host-build tests. They exercise what a host build can exercise: the stub
 // path (no codec in this build), the argument validation the Go layer does
