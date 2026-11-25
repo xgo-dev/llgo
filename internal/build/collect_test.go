@@ -1659,3 +1659,36 @@ func TestDeadcodeDropCollectFingerprint(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectInputsUsesInvocationEnvAndTargetLDFlags(t *testing.T) {
+	t.Setenv("CFLAGS", "-DPROCESS_ONLY")
+	baseCtx := &context{
+		buildConf: &Config{Goos: "linux", Goarch: "amd64"},
+		commands:  commandEnv{environ: []string{"CFLAGS=-DINVOCATION_A"}},
+	}
+	otherEnvCtx := &context{
+		buildConf: &Config{Goos: "linux", Goarch: "amd64"},
+		commands:  commandEnv{environ: []string{"CFLAGS=-DINVOCATION_B"}},
+	}
+	m1, m2 := newManifestBuilder(), newManifestBuilder()
+	baseCtx.collectEnvInputs(m1)
+	otherEnvCtx.collectEnvInputs(m2)
+	if m1.Fingerprint() == m2.Fingerprint() {
+		t.Fatal("invocation CFLAGS change did not affect env fingerprint")
+	}
+
+	ld1Ctx := &context{
+		buildConf:    &Config{Goos: "js", Goarch: "wasm"},
+		crossCompile: crosscompile.Export{LDFLAGS: []string{"-sASYNCIFY=1"}},
+	}
+	ld2Ctx := &context{
+		buildConf:    &Config{Goos: "js", Goarch: "wasm"},
+		crossCompile: crosscompile.Export{LDFLAGS: nil},
+	}
+	cm1, cm2 := newManifestBuilder(), newManifestBuilder()
+	ld1Ctx.collectCommonInputs(cm1)
+	ld2Ctx.collectCommonInputs(cm2)
+	if cm1.Fingerprint() == cm2.Fingerprint() {
+		t.Fatal("target LDFLAGS change did not affect common fingerprint")
+	}
+}

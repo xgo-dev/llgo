@@ -2093,7 +2093,11 @@ type frameSymbolResult struct {
 	sym pcSymbol
 }
 
-const frameSymbolResultCacheSize = 4096
+const (
+	frameSymbolResultCacheWays = 4
+	frameSymbolResultCacheSets = 1024
+	frameSymbolResultCacheSize = frameSymbolResultCacheSets * frameSymbolResultCacheWays
+)
 
 var frameSymbolResultCache [frameSymbolResultCacheSize]*frameSymbolResult
 
@@ -2101,14 +2105,43 @@ var frameSymbolResultCache [frameSymbolResultCacheSize]*frameSymbolResult
 // null-ish slots or shadow-stack synthetic markers, never return addresses.
 const minLegalPC = 4096
 
+// frameSymbolCacheBase mixes upper PC bits so return addresses separated by
+// multiples of the set span (common with aligned functions or DLLs) do not
+// systematically alias, and selects a 4-way set so colliding frames within
+// the same stack walk stay resident instead of thrashing.
+func frameSymbolCacheBase(pc uintptr) uintptr {
+	h := (pc >> 2) ^ (pc >> 12) ^ (pc >> 22)
+	return (h & (frameSymbolResultCacheSets - 1)) * frameSymbolResultCacheWays
+}
+
+func lookupFrameSymbolCache(pc uintptr) *frameSymbolResult {
+	base := frameSymbolCacheBase(pc)
+	for way := uintptr(0); way < frameSymbolResultCacheWays; way++ {
+		if e := frameSymbolResultCache[base+way]; e != nil && e.pc == pc {
+			return e
+		}
+	}
+	return nil
+}
+
+func storeFrameSymbolCache(pc uintptr, sym pcSymbol) {
+	base := frameSymbolCacheBase(pc)
+	entry := &frameSymbolResult{pc: pc, sym: sym}
+	// Shift entries down within the 4-way set; each store is a single
+	// word-sized pointer write to an immutable heap node.
+	for way := uintptr(frameSymbolResultCacheWays - 1); way > 0; way-- {
+		frameSymbolResultCache[base+way] = frameSymbolResultCache[base+way-1]
+	}
+	frameSymbolResultCache[base] = entry
+}
+
 func frameSymbol(pc uintptr) pcSymbol {
 	if pc > minLegalPC {
-		i := (pc >> 2) & uintptr(len(frameSymbolResultCache)-1)
-		if e := frameSymbolResultCache[i]; e != nil && e.pc == pc {
+		if e := lookupFrameSymbolCache(pc); e != nil {
 			return e.sym
 		}
 		sym := frameSymbolUncached(pc)
-		frameSymbolResultCache[i] = &frameSymbolResult{pc: pc, sym: sym}
+		storeFrameSymbolCache(pc, sym)
 		return sym
 	}
 	return frameSymbolUncached(pc)

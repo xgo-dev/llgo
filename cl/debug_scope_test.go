@@ -47,13 +47,16 @@ func f(param int) (result int) {
 		}
 	}
 	check()
-	// Merge copies the package scope without changing each object's Parent.
-	// Globals must remain globals after that scope identity changes.
+	// Clone and Merge copy declarations into a new package scope without
+	// changing each object's Parent. Globals must remain globals after that
+	// scope identity changes.
 	before := pkg.Scope()
-	typepatch.Merge(pkg, types.NewPackage("original", "original"), nil, false)
-	if pkg.Scope() == before {
-		t.Fatal("Merge did not swap the package scope")
+	merged := typepatch.Clone(pkg)
+	typepatch.Merge(merged, types.NewPackage("original", "original"), nil, false)
+	if merged.Scope() == before {
+		t.Fatal("Clone+Merge did not create an independent package scope")
 	}
+	pkg = merged
 	check()
 	global := pkg.Scope().Lookup("global").(*types.Var)
 	if allocs := testing.AllocsPerRun(100, func() {

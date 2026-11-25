@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type macOSSDK struct {
@@ -144,18 +145,51 @@ func installedMacOSSDKs(preferred, developer, home string) []string {
 	return paths
 }
 
+type macOSSDKCacheKey struct {
+	developerDir string
+	home         string
+}
+
+var (
+	macOSSDKCacheMu sync.Mutex
+	macOSSDKCache   = map[macOSSDKCacheKey]macOSSDK{}
+)
+
 func getMacOSSDK() (macOSSDK, error) {
 	if explicit := os.Getenv("SDKROOT"); explicit != "" {
 		return selectMacOSSDK(explicit, "", nil)
 	}
+	xcrunPath, _ := exec.LookPath("xcrun")
+	xcodeSelectPath, _ := exec.LookPath("xcode-select")
+	cacheable := xcrunPath == "/usr/bin/xcrun" && (xcodeSelectPath == "" || xcodeSelectPath == "/usr/bin/xcode-select")
+	key := macOSSDKCacheKey{
+		developerDir: os.Getenv("DEVELOPER_DIR"),
+		home:         os.Getenv("HOME"),
+	}
+	if cacheable {
+		macOSSDKCacheMu.Lock()
+		if cached, ok := macOSSDKCache[key]; ok {
+			macOSSDKCacheMu.Unlock()
+			return cached, nil
+		}
+		macOSSDKCacheMu.Unlock()
+	}
+
 	output, _ := exec.Command("xcrun", "--sdk", "macosx", "--show-sdk-path").Output()
 	preferred := strings.TrimSpace(string(output))
-	return selectMacOSSDK("", preferred, func() []string {
-		developer := os.Getenv("DEVELOPER_DIR")
+	sdk, err := selectMacOSSDK("", preferred, func() []string {
+		developer := key.developerDir
 		if developer == "" {
 			out, _ := exec.Command("xcode-select", "-p").Output()
 			developer = strings.TrimSpace(string(out))
 		}
-		return installedMacOSSDKs(preferred, developer, os.Getenv("HOME"))
+		return installedMacOSSDKs(preferred, developer, key.home)
 	})
+
+	if cacheable && err == nil {
+		macOSSDKCacheMu.Lock()
+		macOSSDKCache[key] = sdk
+		macOSSDKCacheMu.Unlock()
+	}
+	return sdk, err
 }

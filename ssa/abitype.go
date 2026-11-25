@@ -983,9 +983,11 @@ func (p Package) InitAbiTypesFor(fname string, filter func(sym *AbiSymbol) bool)
 	prog := p.Prog
 	initFn := p.NewFunc(fname, NoArgsNoRet, CDecl)
 	b := initFn.MakeBody(1)
+	defer b.Dispose()
 	g := p.NewVarEx(PkgRuntime+".typelist", prog.Pointer(prog.Slice(prog.AbiTypePtr())))
 	b.Store(g.Expr, b.Load(p.getAbiTypesFor(fname, filter)))
 	b.Return()
+	b.EndBuild()
 	return initFn
 }
 

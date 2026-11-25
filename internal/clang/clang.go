@@ -230,17 +230,150 @@ func findLibrary(baseDir string, dirs []string, name string) string {
 	return ""
 }
 
+func lookupEnvSlice(environ []string, key string) (string, bool) {
+	if environ == nil {
+		return os.LookupEnv(key)
+	}
+	for i := len(environ) - 1; i >= 0; i-- {
+		k, v, ok := strings.Cut(environ[i], "=")
+		if !ok {
+			continue
+		}
+		if k == key || (runtime.GOOS == "windows" && strings.EqualFold(k, key)) {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+func (c *Cmd) lookupEnv(key string) (string, bool) {
+	return lookupEnvSlice(c.Env, key)
+}
+
+func (c *Cmd) getenv(key string) string {
+	v, _ := c.lookupEnv(key)
+	return v
+}
+
+// ResolveExecutable resolves a bare executable name against environ's PATH
+// (and PATHEXT on Windows) before os/exec.Command runs, because exec.Command
+// otherwise resolves bare names against the process-wide PATH prior to
+// applying cmd.Env.
+//
+// Matching Go 1.19+ os/exec.LookPath (CVE-2022-30580), executables found via
+// relative PATH entries return an error wrapping exec.ErrDot unless
+// GODEBUG=execerrdot=0 is set in environ (or the process environment when
+// GODEBUG is absent from environ), in which case relative PATH entries are
+// anchored to dir (or the process working directory when dir is empty) and
+// converted to absolute paths before execution.
+//
+// When environ is nil, has no PATH entry, or name already contains a path
+// separator, name is returned unchanged.
+func ResolveExecutable(name, dir string, environ []string) (string, error) {
+	if environ == nil || name == "" || strings.ContainsAny(name, `/\`) {
+		return name, nil
+	}
+	pathVal, hasPath := lookupEnvSlice(environ, "PATH")
+	if !hasPath {
+		return name, nil
+	}
+	pathExtVal, _ := lookupEnvSlice(environ, "PATHEXT")
+	allowRel := execErrDotDisabled(environ)
+	return lookupExecutableInPath(name, dir, pathVal, pathExtVal, allowRel)
+}
+
+func execErrDotDisabled(environ []string) bool {
+	godebug, ok := lookupEnvSlice(environ, "GODEBUG")
+	if !ok {
+		godebug = os.Getenv("GODEBUG")
+	}
+	disabled := false
+	for _, entry := range strings.Split(godebug, ",") {
+		k, v, hasEq := strings.Cut(entry, "=")
+		if hasEq && k == "execerrdot" {
+			disabled = v == "0"
+		}
+	}
+	return disabled
+}
+
+func lookupExecutableInPath(name, baseDir, pathEnv, pathExtEnv string, allowRel bool) (string, error) {
+	exts := []string{""}
+	if runtime.GOOS == "windows" {
+		exts = windowsPathExts(name, pathExtEnv)
+	}
+	for _, entry := range filepath.SplitList(pathEnv) {
+		if entry == "" {
+			continue
+		}
+		isRel := !filepath.IsAbs(entry)
+		dir := entry
+		if isRel {
+			if baseDir != "" {
+				dir = filepath.Join(baseDir, dir)
+			}
+			if abs, err := filepath.Abs(dir); err == nil {
+				dir = abs
+			}
+		}
+		for _, ext := range exts {
+			candidate := filepath.Join(dir, name+ext)
+			if isExecutableFile(candidate) {
+				if isRel && !allowRel {
+					return "", &exec.Error{Name: name, Err: exec.ErrDot}
+				}
+				return candidate, nil
+			}
+		}
+	}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
+}
+
+func windowsPathExts(name, pathExtEnv string) []string {
+	if pathExtEnv == "" {
+		pathExtEnv = ".COM;.EXE;.BAT;.CMD"
+	}
+	var exts []string
+	if filepath.Ext(name) != "" {
+		exts = append(exts, "")
+	}
+	for _, raw := range strings.Split(pathExtEnv, ";") {
+		if raw == "" {
+			continue
+		}
+		if raw[0] != '.' {
+			raw = "." + raw
+		}
+		exts = append(exts, raw)
+	}
+	if len(exts) == 0 {
+		return []string{""}
+	}
+	return exts
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode()&0o111 != 0
+}
+
 // mergeCompilerFlags merges environment CCFLAGS/CFLAGS with config flags.
 func (c *Cmd) mergeCompilerFlags() []string {
 	var flags []string
 
 	// Add environment CCFLAGS
-	if envCCFlags := os.Getenv("CCFLAGS"); envCCFlags != "" {
+	if envCCFlags := c.getenv("CCFLAGS"); envCCFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envCCFlags)...)
 	}
 
 	// Add environment CFLAGS
-	if envCFlags := os.Getenv("CFLAGS"); envCFlags != "" {
+	if envCFlags := c.getenv("CFLAGS"); envCFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envCFlags)...)
 	}
 
@@ -258,12 +391,12 @@ func (c *Cmd) mergeLinkerFlags() []string {
 	var flags []string
 
 	// Add environment CCFLAGS (for linker)
-	if envCCFlags := os.Getenv("CCFLAGS"); envCCFlags != "" {
+	if envCCFlags := c.getenv("CCFLAGS"); envCCFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envCCFlags)...)
 	}
 
 	// Add environment LDFLAGS
-	if envLDFlags := os.Getenv("LDFLAGS"); envLDFlags != "" {
+	if envLDFlags := c.getenv("LDFLAGS"); envLDFlags != "" {
 		flags = append(flags, safesplit.SplitPkgConfigFlags(envLDFlags)...)
 	}
 
@@ -290,7 +423,11 @@ func (c *Cmd) exec(args ...string) error {
 		defer os.Remove(responseFile)
 		args = []string{"@" + responseFile}
 	}
-	cmd := exec.Command(c.app, args...)
+	app, err := ResolveExecutable(c.app, c.Dir, c.Env)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(app, args...)
 	cmd.Dir = c.Dir
 	if c.Verbose {
 		fmt.Fprintf(os.Stderr, "%v\n", cmd)

@@ -21,6 +21,21 @@ func TestUncommonMethod(t *testing.T) {
 			t.Fatalf("method %d did not reference the original metadata", i)
 		}
 	}
+	all := table.uncommon.Methods()
+	if len(all) != 2 || &all[0] != &table.methods[0] || &all[1] != &table.methods[1] {
+		t.Fatalf("Methods() did not return a direct slice view over metadata")
+	}
+	table.uncommon.Xcount = 1
+	exported := table.uncommon.ExportedMethods()
+	if len(exported) != 1 || &exported[0] != &table.methods[0] {
+		t.Fatalf("ExportedMethods() did not return a direct slice view over metadata")
+	}
+	if allocs := testing.AllocsPerRun(100, func() {
+		_ = table.uncommon.Methods()
+		_ = table.uncommon.ExportedMethods()
+	}); allocs != 0 {
+		t.Fatalf("Methods()/ExportedMethods() allocated %v times per call, want 0", allocs)
+	}
 }
 
 func TestUncommonMethodBounds(t *testing.T) {

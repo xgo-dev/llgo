@@ -17,9 +17,6 @@ func TestNativeRuntimeTimerRemainsReplaceAltPackage(t *testing.T) {
 	if !llruntime.HasAltPkg("runtime") {
 		t.Fatal("runtime must remain an LLGo alt package")
 	}
-	if llruntime.HasAdditiveAltPkg("runtime") {
-		t.Fatal("runtime must remain replace-mode; additive mode would pull in the Go runtime sources")
-	}
 
 	runtimeDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "lib", "runtime")
 	runtimePatchDir := filepath.Join(env.LLGoRuntimeDir(), "_patch", "runtime")

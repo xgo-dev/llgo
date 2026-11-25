@@ -29,6 +29,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 var (
@@ -115,6 +116,7 @@ func runCmdEx(cmd *base.Command, args []string, mode build.Mode, goBuildFlags *b
 		conf.RunnerTimeout = runTimeout
 		conf.Exec = *runExec
 	}
+	llvm.SetupPath()
 	_, err = build.Do(args, conf)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

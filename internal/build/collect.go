@@ -72,7 +72,7 @@ func (c *context) collectFingerprint(pkg *aPackage) error {
 	}
 
 	pkg.Manifest = m.Build()
-	pkg.Fingerprint = m.Fingerprint()
+	pkg.Fingerprint = hashManifestContent(pkg.Manifest)
 	return nil
 }
 
@@ -116,14 +116,22 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 		llgoWasmWorkers,
 		llgoStdioNobuf,
 		llgoFullRpath,
+		"CCFLAGS",
+		"CFLAGS",
 	}
 	if c.buildConf.Goos == "js" && c.buildConf.Goarch == "wasm" {
 		// emcc consumes this for both LLVM IR codegen and linking. In
 		// particular, native Wasm SjLj objects cannot reuse JS SjLj objects.
 		envVars = append(envVars, "EMCC_CFLAGS")
 	}
+	lookupEnv := func(name string) string {
+		if c.commands.environ != nil {
+			return c.commands.lookup(name)
+		}
+		return os.Getenv(name)
+	}
 	for _, envVar := range envVars {
-		if v := os.Getenv(envVar); v != "" {
+		if v := lookupEnv(envVar); v != "" {
 			m.env.Vars = m.env.Vars.Add(envVar, v)
 		}
 	}

@@ -284,8 +284,10 @@ func registerCleanupPtr(ptr unsafe.Pointer, e *entry) {
 	}
 }
 
-// AddCleanupPtr attaches a cleanup function to ptr. Some time after ptr is no longer
-// reachable, the runtime will call cleanup().
+// AddCleanupPtr attaches an internal runtime cleanup callback to ptr.
+// On BDWGC this callback runs synchronously during finalization and MUST NOT
+// allocate, take locks that can collide with allocating callers, or invoke
+// arbitrary user code (use AddCancelableCleanupPtr for user cleanups).
 func AddCleanupPtr(ptr unsafe.Pointer, cleanup func()) (cancel func()) {
 	e := &entry{fn: cleanup}
 	registerCleanupPtr(ptr, e)

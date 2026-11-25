@@ -306,7 +306,7 @@ func plan9asmSigsForPkg(ctx *context, pkgPath string) (map[string]struct{}, erro
 		ctx.plan9asmSigs.Store(pkgPath, sigs)
 		return sigs, nil
 	}
-	if hasAltPkgForTarget(ctx.buildConf, pkgPath) && !llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, ctx.buildConf.Goarch) {
+	if hasAltPkgForTarget(ctx.buildConf, pkgPath) {
 		ctx.plan9asmSigs.Store(pkgPath, sigs)
 		return sigs, nil
 	}
@@ -413,9 +413,6 @@ func hasAltPkgForTarget(conf *Config, pkgPath string) bool {
 		// source patch adapts only host imports and the runtime event entry.
 		return false
 	}
-	if llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, conf.Goarch) {
-		return true
-	}
 	// When Plan9 asm translation is enabled, avoid also pulling in alt packages
 	// that provide the same symbols as pure-Go fallbacks.
 	if plan9asmEnabledByDefault(conf, pkgPath) && !plan9asmDisabledByEnv() {
@@ -435,7 +432,7 @@ func plan9asmEnabledByDefault(conf *Config, pkgPath string) bool {
 	if !archSupportsPlan9AsmDefaults(conf.Goarch) {
 		return false
 	}
-	return !llruntime.HasAltPkgForGOARCH(pkgPath, conf.Goarch) || llruntime.HasAdditiveAltPkgForGOARCH(pkgPath, conf.Goarch)
+	return !llruntime.HasAltPkgForGOARCH(pkgPath, conf.Goarch)
 }
 
 func pkgSFiles(ctx *context, pkg *packages.Package) ([]string, error) {

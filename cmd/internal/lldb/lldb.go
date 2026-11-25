@@ -33,6 +33,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/internal/base"
 	"github.com/xgo-dev/llgo/internal/debugabi"
 	"github.com/xgo-dev/llgo/internal/mockable"
+	"github.com/xgo-dev/llgo/xtool/env/llvm"
 )
 
 const minimumUpstreamLLDBVersion = 18
@@ -79,6 +80,7 @@ func run(configuredPath string, args []string, stdin io.Reader, stdout, stderr i
 	if len(args) == 0 {
 		return errors.New("llgo lldb: no executable specified")
 	}
+	llvm.SetupPath()
 
 	path, err := findLLDB(configuredPath)
 	if err != nil {

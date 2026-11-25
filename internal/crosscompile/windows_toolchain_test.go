@@ -3,8 +3,10 @@ package crosscompile
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -472,6 +474,73 @@ func TestProbeNativeTool(t *testing.T) {
 				t.Fatalf("error = %v, want substring %q", err, test.wantErr)
 			}
 		})
+	}
+}
+
+func TestProbeNativeToolResolvesFromInputEnvAndRelativePath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell scripts")
+	}
+	shadowDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shadowDir, "clang"), []byte("#!/bin/sh\nexit 97\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", shadowDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	goodScript := `#!/bin/sh
+case "$1" in
+-dumpmachine) echo "x86_64-pc-windows-msvc" ;;
+--version) echo "clang version 22.1.8" ;;
+*) exit 2 ;;
+esac
+`
+	goodDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(goodDir, "clang"), []byte(goodScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := toolIdentity{target: "x86_64-pc-windows-msvc", version: "clang version 22.1.8"}
+
+	// Absolute PATH entry in input.Environ must beat failing shadow in process PATH.
+	got, err := probeNativeTool([]string{"clang"}, NativeToolchainInput{
+		Dir:     t.TempDir(),
+		Environ: []string{"PATH=" + goodDir + string(os.PathListSeparator) + shadowDir},
+	})
+	if err != nil {
+		t.Fatalf("probeNativeTool with input.Environ PATH failed: %v", err)
+	}
+	if got != want {
+		t.Fatalf("probeNativeTool = %+v, want %+v", got, want)
+	}
+
+	// Relative PATH entry in input.Environ must be rejected with exec.ErrDot by
+	// default and report "resolve native tool" rather than "read target triple".
+	workDir := t.TempDir()
+	relBin := filepath.Join(workDir, "tool-bin")
+	if err := os.MkdirAll(relBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(relBin, "clang"), []byte(goodScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GODEBUG", "")
+	_, err = probeNativeTool([]string{"clang"}, NativeToolchainInput{
+		Dir:     workDir,
+		Environ: []string{"PATH=tool-bin"},
+	})
+	if err == nil || !errors.Is(err, exec.ErrDot) || !strings.Contains(err.Error(), `resolve native tool "clang"`) {
+		t.Fatalf("probeNativeTool(relative PATH without execerrdot=0) = %v, want resolve native tool wrapping exec.ErrDot", err)
+	}
+
+	// With GODEBUG=execerrdot=0 explicitly set, relative PATH anchors to input.Dir.
+	gotRel, err := probeNativeTool([]string{"clang"}, NativeToolchainInput{
+		Dir:     workDir,
+		Environ: []string{"PATH=tool-bin", "GODEBUG=execerrdot=0"},
+	})
+	if err != nil {
+		t.Fatalf("probeNativeTool with relative input.Environ PATH and execerrdot=0 failed: %v", err)
+	}
+	if gotRel != want {
+		t.Fatalf("probeNativeTool(relative PATH) = %+v, want %+v", gotRel, want)
 	}
 }
 

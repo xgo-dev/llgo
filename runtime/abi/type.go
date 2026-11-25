@@ -364,32 +364,27 @@ func (t *UncommonType) Method(i int) *Method {
 	return (*Method)(addChecked(methods, uintptr(i)*unsafe.Sizeof(Method{}), "0 <= i < t.Mcount"))
 }
 
+// Methods returns a view into t's method table without copying it.
+// Callers must treat the returned slice as read-only.
+// The table can be dynamically allocated; callers must keep its backing type
+// metadata alive for as long as they use the returned slice.
 func (t *UncommonType) Methods() []Method {
 	if t.Mcount == 0 {
 		return nil
 	}
 	methodsPtr := addChecked(unsafe.Pointer(t), uintptr(t.Moff), "t.mcount > 0")
-	methods := make([]Method, t.Mcount)
-	for i := 0; i < int(t.Mcount); i++ {
-		elemPtr := addChecked(methodsPtr, uintptr(i)*unsafe.Sizeof(Method{}), "accessing method element")
-		elem := (*Method)(elemPtr)
-		methods[i] = *elem
-	}
-	return methods
+	return unsafe.Slice((*Method)(methodsPtr), t.Mcount)
 }
 
+// ExportedMethods returns a view into the exported prefix of t's method table
+// without copying it. Callers must treat the returned slice as read-only and
+// keep the backing type metadata alive for as long as they use the slice.
 func (t *UncommonType) ExportedMethods() []Method {
 	if t.Xcount == 0 {
 		return nil
 	}
 	mthdsPtr := addChecked(unsafe.Pointer(t), uintptr(t.Moff), "t.xcount > 0")
-	mthds := make([]Method, t.Xcount)
-	for i := 0; i < int(t.Xcount); i++ {
-		elemPtr := addChecked(mthdsPtr, uintptr(i)*unsafe.Sizeof(Method{}), "accessing method element")
-		elem := (*Method)(elemPtr)
-		mthds[i] = *elem
-	}
-	return mthds
+	return unsafe.Slice((*Method)(mthdsPtr), t.Xcount)
 }
 
 // Imethod represents a method on an interface type
@@ -649,7 +644,11 @@ func (t *Type) NumMethod() int {
 		tt := (*InterfaceType)(unsafe.Pointer(t))
 		return len(tt.Methods)
 	}
-	return len(t.ExportedMethods())
+	ut := t.Uncommon()
+	if ut == nil {
+		return 0
+	}
+	return int(ut.Xcount)
 }
 
 func (t *Type) GcSlice(begin, end uintptr) []byte {

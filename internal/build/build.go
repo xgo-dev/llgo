@@ -71,6 +71,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/wasmworkers"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
+	xllvm "github.com/xgo-dev/llgo/xtool/env/llvm"
 	gllvm "github.com/xgo-dev/llvm"
 
 	llruntime "github.com/xgo-dev/llgo/runtime"
@@ -611,7 +612,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 			return nil, err
 		}
 	}
-	environ := os.Environ()
+	environ := withLLVMPath(os.Environ(), xllvm.New("").BinDir())
 	conf, err := resolveBuildConfig(inv.Config)
 	if err != nil {
 		return nil, err
@@ -769,7 +770,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		goBuildFlags = append(goBuildFlags, "-overlay="+overlayFile)
 	}
 	cfg := &packages.Config{
-		Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
+		Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule,
 		BuildFlags: goBuildFlags,
 		Dir:        dir,
 		Fset:       token.NewFileSet(),
@@ -877,7 +878,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	conf.sourceGoVersion = sourceGo.GOVERSION
 	conf.toolTags = slices.Clone(sourceGo.toolTags)
 	if slices.Contains(sourceGo.toolTags, "goexperiment.simd") && (conf.Goarch == "amd64" || conf.Goarch == "arm64" || conf.Goarch == "wasm") {
-		cfg.Mode &^= packages.NeedExportFile
 		dedup.SetRewrite(func(pkg *packages.Package) (bool, error) {
 			return rewritePortableSIMD(pkg, conf.Goarch)
 		})
@@ -2344,8 +2344,8 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 		return err
 	}
 	if pkg.ExportFile == "" {
-		// Source transforms do not consume gc export data. Use the LLGo
-		// fingerprint as the backend output identity in those metadata loads.
+		// Ordinary builds do not request gc export data (NeedExportFile).
+		// Derive the backend output identity from the LLGo cache fingerprint.
 		paths := ctx.ensureCacheManager().PackagePaths(ctx.targetTriple(), pkg.PkgPath, aPkg.Fingerprint)
 		if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
 			return err
@@ -3420,7 +3420,7 @@ func (c *context) archiver() string {
 	}
 	if c.crossCompile.Toolchain.ObjectFormat == crosscompile.ObjectFormatCOFF ||
 		c.buildConf.ltoEnabled() || c.buildConf.Goarch == "wasm" || strings.Contains(c.crossCompile.LLVMTarget, "wasm") {
-		if llvmAr, err := exec.LookPath("llvm-ar"); err == nil {
+		if llvmAr, err := c.commands.lookPath("llvm-ar"); err == nil {
 			return llvmAr
 		}
 	}
@@ -3440,7 +3440,7 @@ func (c *context) archiveMerger() (string, error) {
 	if llvmAr := siblingTool(c.crossCompile.CC, "llvm-ar"); llvmAr != "" {
 		return llvmAr, nil
 	}
-	if llvmAr, err := exec.LookPath("llvm-ar"); err == nil {
+	if llvmAr, err := c.commands.lookPath("llvm-ar"); err == nil {
 		return llvmAr, nil
 	}
 	return "", errors.New("llvm-ar is required to create a flat c-archive")
@@ -3454,14 +3454,14 @@ func (c *context) emscriptenArchiver() string {
 	if provider != crosscompile.WasmProviderGoJS && provider != crosscompile.WasmProviderEmscripten {
 		return ""
 	}
-	if cc, err := exec.LookPath(c.crossCompile.CC); err == nil {
+	if cc, err := c.commands.lookPath(c.crossCompile.CC); err == nil {
 		// LookPath handles the SDK's emar.bat via PATHEXT on Windows;
 		// siblingTool only handles native executables such as llvm-ar.exe.
-		if ar, err := exec.LookPath(filepath.Join(filepath.Dir(cc), "emar")); err == nil {
+		if ar, err := c.commands.lookPath(filepath.Join(filepath.Dir(cc), "emar")); err == nil {
 			return ar
 		}
 	}
-	if ar, err := exec.LookPath("emar"); err == nil {
+	if ar, err := c.commands.lookPath("emar"); err == nil {
 		return ar
 	}
 	return ""
@@ -3794,7 +3794,7 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 	applySizeOptimizationAttributes(ret.Module(), ctx.buildConf.OptLevel)
 	printCmds := ctx.shouldPrintCommands(verbose)
 	if ctx.mode != ModeGen {
-		if aPkg.AltPkg == nil || llruntime.HasAdditiveAltPkg(pkgPath) {
+		if aPkg.AltPkg == nil {
 			asmObjFiles, err := compilePkgSFiles(ctx, aPkg, pkg, printCmds)
 			if err != nil {
 				return err

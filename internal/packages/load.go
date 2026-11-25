@@ -213,11 +213,16 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	driverCfg.Mode = (origMode &^ (NeedTypes | NeedTypesSizes | NeedTypesInfo | NeedSyntax)) | NeedCompiledGoFiles | NeedImports | NeedName | NeedFiles
 	if origMode&(NeedEmbedPatterns|NeedEmbedFiles|NeedTypes|NeedTypesInfo|NeedSyntax) != 0 {
 		driverCfg.Mode |= NeedEmbedPatterns | NeedEmbedFiles
-		// A typed source transform owns compilation of the original source.
-		// Do not ask cmd/go to compile it into unused export data first: that
-		// would apply the other compiler's Midway before our initial check.
-		// Explicit export-data requests and ordinary loads keep their contract.
-		if dedup == nil || dedup.rewrite == nil {
+		// Callers that explicitly include NeedExportFile in origMode keep their
+		// contract (preserved in driverCfg.Mode above). Otherwise, only ask
+		// cmd/go to invoke gc (NeedExportFile) when diagnostic/compiler
+		// -gcflags are present in BuildFlags or GOFLAGS from cfg.Env/process
+		// env (e.g. "llgo tool compile -e/-std" or frontend diagnostic tests)
+		// and no typed rewrite owns the package source. Ordinary LLGo builds
+		// and debug -N/-l builds do not read gc export data.
+		// Note: persisted `go env -w GOFLAGS` is intentionally not queried via
+		// a subprocess here to avoid adding an extra `go env` spawn per load.
+		if (dedup == nil || dedup.rewrite == nil) && needsGCExportFlags(driverCfg.BuildFlags, driverCfg.Env) {
 			driverCfg.Mode |= NeedExportFile
 		}
 	}
@@ -269,6 +274,111 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	}
 
 	return initial, nil
+}
+
+func needsGCExportFlags(buildFlags, env []string) bool {
+	if gcFlagsRequireExport(buildFlags) {
+		return true
+	}
+	goflags := lookupEnv(env, "GOFLAGS")
+	if strings.TrimSpace(goflags) == "" {
+		return false
+	}
+	return gcFlagsRequireExport(splitGoFlags(goflags))
+}
+
+func lookupEnv(env []string, key string) string {
+	if env == nil {
+		return os.Getenv(key)
+	}
+	for i := len(env) - 1; i >= 0; i-- {
+		k, v, ok := strings.Cut(env[i], "=")
+		if !ok {
+			continue
+		}
+		if k == key || (runtime.GOOS == "windows" && strings.EqualFold(k, key)) {
+			return v
+		}
+	}
+	return ""
+}
+
+func splitGoFlags(s string) []string {
+	var fields []string
+	var cur strings.Builder
+	var quote rune
+	inToken := false
+	for _, r := range s {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			} else {
+				cur.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quote = r
+			inToken = true
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			if inToken {
+				fields = append(fields, cur.String())
+				cur.Reset()
+				inToken = false
+			}
+		default:
+			cur.WriteRune(r)
+			inToken = true
+		}
+	}
+	if inToken {
+		fields = append(fields, cur.String())
+	}
+	return fields
+}
+
+func gcFlagsRequireExport(flags []string) bool {
+	for i := 0; i < len(flags); i++ {
+		arg := flags[i]
+		var val string
+		if v, ok := strings.CutPrefix(arg, "-gcflags="); ok {
+			val = v
+		} else if v, ok := strings.CutPrefix(arg, "--gcflags="); ok {
+			val = v
+		} else if (arg == "-gcflags" || arg == "--gcflags") && i+1 < len(flags) {
+			i++
+			val = flags[i]
+		} else {
+			continue
+		}
+		// Strip a leading "pattern=" prefix only when the prefix is a package
+		// pattern (never starts with '-' and contains no spaces), so compiler
+		// flags like "-d=..." are preserved intact.
+		if prefix, rest, ok := strings.Cut(val, "="); ok && prefix != "" && !strings.HasPrefix(prefix, "-") && !strings.ContainsAny(prefix, " \t") {
+			val = rest
+		}
+		for _, tok := range splitGoFlags(val) {
+			if tok == "" || isNonExportGCFlag(tok) {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// isNonExportGCFlag reports compiler flags that LLGo handles natively (such as
+// debug optimization/inlining toggles -N and -l) and that never require host
+// gc export compilation.
+func isNonExportGCFlag(tok string) bool {
+	trimmed := strings.TrimPrefix(tok, "--")
+	if trimmed == tok {
+		trimmed = strings.TrimPrefix(tok, "-")
+	}
+	if trimmed == tok {
+		return false
+	}
+	name, _, _ := strings.Cut(trimmed, "=")
+	return name == "N" || name == "l"
 }
 
 // The metadata driver sees the original files, while LLGo also typechecks

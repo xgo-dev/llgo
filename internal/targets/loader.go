@@ -22,8 +22,23 @@ func NewLoader(targetsDir string) *Loader {
 	}
 }
 
+// validateTargetName rejects empty names and path-traversal segments.
+func validateTargetName(name string) error {
+	if name == "" || name == "." || name == ".." ||
+		filepath.IsAbs(name) ||
+		strings.ContainsAny(name, `/\`) ||
+		strings.Contains(name, "..") {
+		return fmt.Errorf("invalid target name %q", name)
+	}
+	return nil
+}
+
 // LoadRaw loads a raw configuration without resolving inheritance
 func (l *Loader) LoadRaw(name string) (*RawConfig, error) {
+	if err := validateTargetName(name); err != nil {
+		return nil, err
+	}
+
 	// Check cache first
 	if config, exists := l.cache[name]; exists {
 		return config, nil
@@ -55,12 +70,21 @@ func (l *Loader) LoadRaw(name string) (*RawConfig, error) {
 
 // Load loads a target configuration with inheritance resolved
 func (l *Loader) Load(name string) (*Config, error) {
+	return l.loadWithStack(name, make(map[string]bool))
+}
+
+func (l *Loader) loadWithStack(name string, visiting map[string]bool) (*Config, error) {
+	if visiting[name] {
+		return nil, fmt.Errorf("target inheritance cycle detected involving %q", name)
+	}
 	raw, err := l.LoadRaw(name)
 	if err != nil {
 		return nil, err
 	}
+	visiting[name] = true
+	defer delete(visiting, name)
 
-	return l.resolveInheritance(raw)
+	return l.resolveInheritance(raw, visiting)
 }
 
 // LoadAll loads all target configurations in the targets directory
@@ -90,7 +114,7 @@ func (l *Loader) LoadAll() (map[string]*Config, error) {
 }
 
 // resolveInheritance resolves inheritance chain for a configuration
-func (l *Loader) resolveInheritance(raw *RawConfig) (*Config, error) {
+func (l *Loader) resolveInheritance(raw *RawConfig, visiting map[string]bool) (*Config, error) {
 	if !raw.HasInheritance() {
 		// No inheritance, return as-is
 		return &raw.Config, nil
@@ -101,7 +125,7 @@ func (l *Loader) resolveInheritance(raw *RawConfig) (*Config, error) {
 
 	// Apply inheritance in order
 	for _, parentName := range raw.GetInherits() {
-		parent, err := l.Load(parentName)
+		parent, err := l.loadWithStack(parentName, visiting)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load parent config %s: %w", parentName, err)
 		}

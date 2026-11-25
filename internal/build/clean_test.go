@@ -61,20 +61,6 @@ func TestCleanMainPkgRemovesSidecars(t *testing.T) {
 
 func TestCleanPackageExportsAndListErrors(t *testing.T) {
 	dir := t.TempDir()
-	export := filepath.Join(dir, "package.a")
-	write := func(file string) {
-		t.Helper()
-		if err := os.WriteFile(file, []byte("artifact"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write(export + ".ll")
-	if err := cleanPkgs([]*packages.Package{{PkgPath: "example.com/p", ExportFile: export}, {PkgPath: "synthetic"}}, true); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(export + ".ll"); !os.IsNotExist(err) {
-		t.Fatal("did not remove the LLGo export artifact")
-	}
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/clean\ngo 1.24\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -141,5 +127,68 @@ func TestCleanMainAndDriverFailures(t *testing.T) {
 	t.Setenv("GOPACKAGESDRIVER", filepath.Join(dir, "missing-driver"))
 	if err := Clean(nil, &Config{}); err == nil {
 		t.Fatal("did not report driver failure")
+	}
+}
+
+func TestCleanRemovesCachedLLFilesForRootAndDependencies(t *testing.T) {
+	dir := t.TempDir()
+	cacheRoot := t.TempDir()
+	oldCacheRoot := cacheRootFunc
+	cacheRootFunc = func() string { return cacheRoot }
+	t.Cleanup(func() { cacheRootFunc = oldCacheRoot })
+
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/cleanll\ngo 1.24\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	depDir := filepath.Join(dir, "dep")
+	if err := os.MkdirAll(depDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(depDir, "dep.go"), []byte("package dep\nvar X = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nimport \"example.com/cleanll/dep\"\nfunc main(){ _ = dep.X }\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cm := newCacheManager()
+	rootPaths := cm.PackagePaths("arm64-darwin", "example.com/cleanll", "fp1")
+	depPaths := cm.PackagePaths("arm64-darwin", "example.com/cleanll/dep", "fp2")
+	for _, p := range []cachePaths{rootPaths, depPaths} {
+		if err := os.MkdirAll(p.Dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{p.Archive, p.Archive + ".backend.ll", p.Archive + ".backend-main.ll"} {
+			if err := os.WriteFile(f, []byte("data"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	t.Setenv("GOWORK", "off")
+	t.Setenv("GOENV", "off")
+	t.Setenv("GOFLAGS", "")
+
+	if err := Clean([]string{"."}, &Config{}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, p := range []cachePaths{rootPaths, depPaths} {
+		if _, err := os.Stat(p.Archive); err != nil {
+			t.Fatalf("Clean removed archive %s: %v", p.Archive, err)
+		}
+		for _, ll := range []string{p.Archive + ".backend.ll", p.Archive + ".backend-main.ll"} {
+			if _, err := os.Stat(ll); !os.IsNotExist(err) {
+				t.Fatalf("Clean left generated IR file %s (stat=%v)", ll, err)
+			}
+		}
 	}
 }

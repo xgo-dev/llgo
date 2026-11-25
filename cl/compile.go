@@ -31,7 +31,6 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/cl/blocks"
-	"github.com/xgo-dev/llgo/cl/ssawrap"
 	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
@@ -236,6 +235,7 @@ type context struct {
 	implicitDeferResults []llssa.Expr
 
 	patches          Patches
+	patchedPkgCache  map[*types.Package]bool
 	blkInfos         []blocks.Info
 	srcLines         map[string][]string
 	addrOfFieldAddrs map[token.Pos]none
@@ -244,9 +244,10 @@ type context struct {
 	phis      []func()
 	initAfter func()
 
-	state   pkgState
-	inCFunc bool
-	skipall bool
+	state              pkgState
+	inCFunc            bool
+	inIntrinsicWrapper bool
+	skipall            bool
 
 	cgoCalled  bool
 	cgoArgs    []llssa.Expr
@@ -566,9 +567,6 @@ func (p *context) elidedZeroSizedFreeVar(b llssa.Builder, freeVar *ssa.FreeVar) 
 }
 
 func isCgoExternSymbol(f *ssa.Function) bool {
-	if f.Synthetic == ssawrap.CallWrapper {
-		return false
-	}
 	name := f.Name()
 	return isCgoCfunc(name) || isCgoCmacro(name) || isCgoC2func(name)
 }
@@ -778,17 +776,8 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		return fn, nil, goFunc
 	}
 	isCgo := isCgoExternSymbol(f)
-	if (len(f.Blocks) != 0 || simdDecl) && p.prog.FuncInfoMetadataEnabled() && p.inlineImports[f] == 0 {
-		goName := fn.Name()
-		if pkgTypes != nil {
-			goName = funcName(pkgTypes, f, false)
-		}
-		pos := p.funcInfoPosition(f)
-		if p.prog.Target().GOOS == "windows" && isRecoverTransparentWrapper(f) {
-			pkg.EmitFuncInfoFlags(fn.Name(), funcInfoDisplayName(goName), pos.Filename, pos.Line, pos.Column, llssa.FuncInfoFlagWrapper)
-		} else {
-			pkg.EmitFuncInfo(fn.Name(), funcInfoDisplayName(goName), pos.Filename, pos.Line, pos.Column)
-		}
+	if (len(f.Blocks) != 0 || simdDecl) && p.inlineImports[f] == 0 {
+		p.emitFuncInfo(pkg, pkgTypes, f, fn)
 	}
 	if simdDecl {
 		// Keep the defining entry visible to external linkname aliases, while
@@ -940,6 +929,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			}
 			p.panicSitePos = token.NoPos
 			b.EndBuild()
+			b.Dispose()
 		})
 	}
 	return fn, nil, goFunc
@@ -1002,6 +992,22 @@ func (p *context) getFuncBodyPos(f *ssa.Function) token.Position {
 		}
 	}
 	return p.goProg.Fset.Position(f.Pos())
+}
+
+func (p *context) emitFuncInfo(pkg llssa.Package, pkgTypes *types.Package, f *ssa.Function, fn llssa.Function) {
+	if !p.prog.FuncInfoMetadataEnabled() {
+		return
+	}
+	goName := fn.Name()
+	if pkgTypes != nil {
+		goName = funcName(pkgTypes, f, false)
+	}
+	pos := p.funcInfoPosition(f)
+	if p.prog.Target().GOOS == "windows" && isRecoverTransparentWrapper(f) {
+		pkg.EmitFuncInfoFlags(fn.Name(), funcInfoDisplayName(goName), pos.Filename, pos.Line, pos.Column, llssa.FuncInfoFlagWrapper)
+	} else {
+		pkg.EmitFuncInfo(fn.Name(), funcInfoDisplayName(goName), pos.Filename, pos.Line, pos.Column)
+	}
 }
 
 func (p *context) funcInfoPosition(f *ssa.Function) token.Position {
@@ -1280,8 +1286,11 @@ func (p *context) compileBlock(b llssa.Builder, block *ssa.BasicBlock, n int, do
 			instrs = instrs[:last]
 		} else if p.state != pkgHasPatch {
 			// TODO(xsw): confirm pyMod don't need to call AfterInit
+			initFn := p.fn
 			p.initAfter = func() {
-				pkg.AfterInit(b, ret)
+				afterB := initFn.NewBuilder()
+				defer afterB.Dispose()
+				pkg.AfterInit(afterB, ret)
 			}
 		}
 	}
@@ -2721,7 +2730,7 @@ func (p *context) getLocalVariable(b llssa.Builder, fn *ssa.Function, v *types.V
 
 func (p *context) compileFunction(v *ssa.Function) (goFn llssa.Function, pyFn llssa.PyObjRef, kind int) {
 	// TODO(xsw) v.Pkg == nil: means auto generated function?
-	if v.Pkg == p.goPkg || v.Pkg == nil || v.Synthetic == ssawrap.CallWrapper {
+	if v.Pkg == p.goPkg || v.Pkg == nil {
 		// function in this package
 		goFn, pyFn, kind = p.compileFuncDecl(p.pkg, v)
 		if kind != ignoredFunc {
@@ -2743,21 +2752,15 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 				return b.Param(idx)
 			}
 		}
+	case wrapperParam:
+		return b.Param(v.index)
 	case *ssa.Function:
 		_, _, ftype := p.funcName(v)
-		original := v
 		if ftype == llvmIntrinsic || ftype == llgoInstr {
-			if fn := p.funcs[v]; fn != nil {
-				return fn.Expr
-			}
-			v = ssawrap.MakeCallWrapper(p.goProg, v)
-			p.markLinkOnce(v)
+			return p.compileIntrinsicWrapper(v).Expr
 		}
 		aFn, pyFn, _ := p.compileFunction(v)
 		if aFn != nil {
-			if v != original {
-				p.funcs[original] = aFn
-			}
 			return aFn.Expr
 		}
 		return pyFn.Expr
@@ -3044,6 +3047,10 @@ func (p *context) compileVArg(ret []llssa.Expr, b llssa.Builder, v ssa.Value) []
 		if llssa.HasNameValist(v.Parent().Signature) {
 			return ret
 		}
+	case wrapperParam:
+		if v.hasValist {
+			return ret
+		}
 	}
 	panic(fmt.Sprintf("compileVArg: unknown value - %T\n", v))
 }
@@ -3064,8 +3071,30 @@ func (p *context) compileValues(b llssa.Builder, vals []ssa.Value, hasVArg int) 
 
 // Patch is a patch of some package.
 type Patch struct {
-	Alt   *ssa.Package
-	Types *types.Package
+	Alt      *ssa.Package
+	Types    *types.Package
+	Prepared bool // true when typepatch.Merge and package rebinding completed upfront
+}
+
+// PreparePatch merges patch.Types with pkg.Pkg according to the //llgo:skip
+// and //llgo:skipall directives in files and rebinds pkg.Pkg and patch.Alt.Pkg
+// upfront. Calling PreparePatch serially before launching isolated package
+// workers keeps patched type scopes read-only during concurrent lowering.
+//
+// Scheduler invariant: any package sharing the same PkgPath whose ssa.Package
+// still has pkg.Pkg != patch.Types (such as a secondary test variant) will
+// re-run typepatch.Merge inside newPackageEx and must finish serially before
+// concurrent workers begin reading patch.Types.
+func PreparePatch(patch Patch, pkg *ssa.Package, files []*ast.File) Patch {
+	if patch.Prepared || patch.Alt == nil || patch.Types == nil || pkg == nil || pkg.Pkg == nil {
+		return patch
+	}
+	skips, skipall := collectPatchSkips(files)
+	typepatch.Merge(patch.Types, pkg.Pkg, skips, skipall)
+	pkg.Pkg = patch.Types
+	patch.Alt.Pkg = patch.Types
+	patch.Prepared = true
+	return patch
 }
 
 // Patches is patches of some packages.
@@ -3135,10 +3164,18 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 		options.CExportWrappers = false
 	}
 	patch, hasPatch := patches[pkgPath]
+	needsPatchMerge := false
 	if hasPatch {
 		pkgTypes = patch.Types
-		pkg.Pkg = pkgTypes
-		patch.Alt.Pkg = pkgTypes
+		// Secondary test variants sharing a PkgPath still have pkg.Pkg != patch.Types
+		// even after PreparePatch. Their re-merge mutates patch.Types and is only
+		// race-free because the build scheduler finishes all serial tasks in
+		// preparePackageGroup before launching worker goroutines.
+		needsPatchMerge = !patch.Prepared || pkg.Pkg != pkgTypes || patch.Alt.Pkg != pkgTypes
+		if needsPatchMerge {
+			pkg.Pkg = pkgTypes
+			patch.Alt.Pkg = pkgTypes
+		}
 	}
 	if !options.PreloadedSyntax {
 		if err = ParsePkgSyntaxWithOptions(prog, pkgProg.Fset, pkgTypes, files, options); err != nil {
@@ -3213,7 +3250,9 @@ func newPackageEx(prog llssa.Program, ct *CallerTracking, patches Patches, rewri
 
 	if hasPatch {
 		skips := ctx.skips
-		typepatch.Merge(pkgTypes, oldTypes, skips, ctx.skipall)
+		if needsPatchMerge {
+			typepatch.Merge(pkgTypes, oldTypes, skips, ctx.skipall)
+		}
 		ctx.skips = nil
 		ctx.state = pkgInPatch
 		if _, ok := skips["init"]; ok || ctx.skipall {
@@ -3318,6 +3357,17 @@ func (p *context) type_(typ types.Type, cc llssa.CallConv) llssa.Type {
 	return p.prog.Type(p.patchType(typ), cc)
 }
 
+func (p *context) isPatchedPkg(pkg *types.Package) bool {
+	if p.patchedPkgCache == nil {
+		p.patchedPkgCache = make(map[*types.Package]bool, len(p.patches))
+	} else if patched, ok := p.patchedPkgCache[pkg]; ok {
+		return patched
+	}
+	patched := typepatch.IsPatched(pkg)
+	p.patchedPkgCache[pkg] = patched
+	return patched
+}
+
 func (p *context) patchType(typ types.Type) (r types.Type) {
 	r, _ = p._patchType(typ)
 	return
@@ -3378,8 +3428,8 @@ func (p *context) _patchType(typ types.Type) (types.Type, bool) {
 			return t, true
 		}
 		o := typ.Obj()
-		if pkg := o.Pkg(); typepatch.IsPatched(pkg) {
-			if patch, ok := p.patches[pkg.Path()]; ok {
+		if pkg := o.Pkg(); pkg != nil {
+			if patch, ok := p.patches[pkg.Path()]; ok && pkg != patch.Types && p.isPatchedPkg(pkg) {
 				if obj := patch.Types.Scope().Lookup(o.Name()); obj != nil {
 					raw := p.prog.Type(instantiate(obj.Type(), typ), llssa.GoDecl).RawType()
 					return raw, typ != raw
