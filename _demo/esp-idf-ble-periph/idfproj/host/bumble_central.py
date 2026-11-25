@@ -322,6 +322,11 @@ async def main() -> int:
 
     print("[peer] PASS: scan, connect, discover, read, subscribe, write, echo, "
           "unsubscribe, disconnect", flush=True)
+    # Stay up briefly so the firmware's own teardown (Deinit) runs against a
+    # live controller - the same reason the peripheral-side peer script holds
+    # the transport open. A vanished HCI stream mid-teardown would leave the
+    # host waiting on a controller that is no longer listening.
+    await asyncio.sleep(5)
     print("[peer] done", flush=True)
     return 0
 

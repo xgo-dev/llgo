@@ -429,7 +429,10 @@ static portMUX_TYPE s_gatts_mux = portMUX_INITIALIZER_UNLOCKED;
  * static: the service and characteristic definition arrays, and the UUID
  * storage the definitions point into. */
 static struct ble_gatt_svc_def s_gatt_defs[BW_GSVC_MAX + 1];
-static struct ble_gatt_chr_def s_gatt_chrs[BW_GCHR_MAX + 1];
+/* One zeroed terminator per service: the services' characteristic arrays are
+ * slices of this one array, and each slice must end in its own zero entry or
+ * the next service's first characteristic reads as a continuation. */
+static struct ble_gatt_chr_def s_gatt_chrs[BW_GCHR_MAX + BW_GSVC_MAX];
 static ble_uuid16_t s_gatt_uuid16[BW_GSVC_MAX + BW_GCHR_MAX];
 static ble_uuid128_t s_gatt_uuid128[BW_GSVC_MAX + BW_GCHR_MAX];
 static int32_t s_gatt_uuid16_n, s_gatt_uuid128_n;
@@ -946,13 +949,16 @@ static void bw_gatts_build_tree(void)
             struct ble_gatt_chr_def *chr = &s_gatt_chrs[chr_out];
             chr->uuid = bw_gatt_uuid_of(s_decl_chrs[ci].uuid_len, s_decl_chrs[ci].uuid);
             chr->access_cb = bw_gatts_access;
-            chr->arg = (void *)(intptr_t)chr_out;
-            /* The ATT property bits are numerically NimBLE's flags. */
-            chr->flags = s_decl_chrs[ci].props;
-            /* NimBLE fills the assigned value handle right here, through the
-             * definition - the same record llgo_ble_gatts_attr reads. */
-            chr->val_handle = &s_gchrs[chr_out].handle;
+            /* arg and val_handle key on the REGISTRY index (ci): the
+             * definition array carries per-service terminator gaps the
+             * registry does not have. NimBLE fills the assigned value handle
+             * right here, through the definition - the same record
+             * llgo_ble_gatts_attr reads. */
+            chr->arg = (void *)(intptr_t)ci;
+            chr->flags = s_decl_chrs[ci].props; /* the ATT bits are NimBLE's flags */
+            chr->val_handle = &s_gchrs[ci].handle;
         }
+        chr_out++; /* this service's slice ends in the memset-zeroed entry */
     }
 }
 
@@ -1400,11 +1406,12 @@ static void bw_exec(const bw_cmd_t *c)
         s_adv_running = 0;
         break;
     case CMD_GATTS_DECLARE: {
-        /* One registration at a time, and re-declaring under a connected
-         * peer or a running advertisement would pull attributes out from
-         * under live users. */
+        /* A connected peer or a running advertisement would have attributes
+         * pulled out from under it. One registration at a time is the Go
+         * side's s_gatts_building flag (set at submission); checking it here
+         * too would trip on this very command. */
         int rc = 0;
-        if (s_gatts_building || s_pconn_any() || s_adv_running) {
+        if (s_pconn_any() || s_adv_running) {
             rc = BLE_HS_EBUSY;
         } else {
             s_gatts_building = 1;
