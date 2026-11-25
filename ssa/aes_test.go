@@ -53,15 +53,20 @@ func TestAESMachineCode(t *testing.T) {
 				types.NewParam(token.NoPos, nil, "key", ptr),
 			)
 			sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
-			var first Function
+			var first, hashRound, hashLast Function
 			for op := AESEncryptRound; op <= AESHashLast; op++ {
 				fn := pkg.NewFunc(fmt.Sprintf("aes_op_%d", op), sig, CDecl)
 				b := fn.MakeBody(1)
 				b.AESRound(op, fn.Param(0), fn.Param(1), fn.Param(2))
 				b.Return()
 				b.EndBuild()
-				if op == AESEncryptRound {
+				switch op {
+				case AESEncryptRound:
 					first = fn
+				case AESHashRound:
+					hashRound = fn
+				case AESHashLast:
+					hashLast = fn
 				}
 			}
 			// An aligned typed stack slot must vanish into the AES round chain.
@@ -114,6 +119,35 @@ func TestAESMachineCode(t *testing.T) {
 					}
 				}
 			}
+			// Verify AESHashRound and AESHashLast lowering per target contract.
+			hrIR := hashRound.impl.String()
+			hlIR := hashLast.impl.String()
+			if tc.arch != "ppc64le" {
+				if strings.Contains(hrIR, "shufflevector") || strings.Contains(hlIR, "shufflevector") {
+					t.Fatalf("hash round unexpectedly byte-swapped key:\nhashRound:\n%s\nhashLast:\n%s", hrIR, hlIR)
+				}
+			}
+			switch tc.arch {
+			case "arm64", "arm":
+				if !strings.Contains(hrIR, "aese") || !strings.Contains(hrIR, "aesmc") {
+					t.Fatalf("AESHashRound missing aese+aesmc:\n%s", hrIR)
+				}
+				if !strings.Contains(hlIR, "aese") || strings.Contains(hlIR, "aesmc") {
+					t.Fatalf("AESHashLast should emit aese without aesmc:\n%s", hlIR)
+				}
+			case "amd64", "386":
+				if !strings.Contains(hrIR, "llvm.x86.aesni.aesenc") || !strings.Contains(hlIR, "llvm.x86.aesni.aesenc") || strings.Contains(hlIR, "aesenclast") {
+					t.Fatalf("x86 hash ops should emit aesenc:\nhashRound:\n%s\nhashLast:\n%s", hrIR, hlIR)
+				}
+			case "ppc64", "ppc64le":
+				if !strings.Contains(hrIR, "vcipher") || !strings.Contains(hlIR, "vcipher") || strings.Contains(hlIR, "vcipherlast") {
+					t.Fatalf("ppc64 hash ops should emit vcipher:\nhashRound:\n%s\nhashLast:\n%s", hrIR, hlIR)
+				}
+			case "riscv64":
+				if !strings.Contains(hrIR, "aes64esm") || !strings.Contains(hlIR, "aes64esm") || strings.Contains(hlIR, "aes64es.") {
+					t.Fatalf("riscv64 hash ops should emit aes64esm:\nhashRound:\n%s\nhashLast:\n%s", hrIR, hlIR)
+				}
+			}
 			// Full-module optimization must leave a real dispatch boundary.
 			if !strings.Contains(baseline.impl.String(), "call void @aes_op_0") {
 				t.Fatalf("AES instructions escaped into the baseline caller:\n%s", baseline.impl.String())
@@ -147,6 +181,31 @@ func TestAESMachineCode(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAESOpABIValues(t *testing.T) {
+	// These numeric opcodes are part of the compiler/runtime ABI shared with
+	// runtime/internal/runtime/aeshash_llgo.go and crypto/internal/fips140/aes.
+	want := []struct {
+		name string
+		op   AESOp
+		code AESOp
+	}{
+		{"AESEncryptRound", AESEncryptRound, 0},
+		{"AESEncryptLast", AESEncryptLast, 1},
+		{"AESDecryptRound", AESDecryptRound, 2},
+		{"AESDecryptLast", AESDecryptLast, 3},
+		{"AESInverseMixKey", AESInverseMixKey, 4},
+		{"AESXORKey", AESXORKey, 5},
+		{"AESXORBlock", AESXORBlock, 6},
+		{"AESHashRound", AESHashRound, 7},
+		{"AESHashLast", AESHashLast, 8},
+	}
+	for _, tc := range want {
+		if tc.op != tc.code {
+			t.Fatalf("%s = %d, want %d", tc.name, tc.op, tc.code)
+		}
 	}
 }
 

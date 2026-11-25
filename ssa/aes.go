@@ -7,8 +7,13 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-// AESOp is the private interface used by the AES source patch. ARM rounds
-// consume a key before SubBytes; the other targets consume it after the round.
+// AESOp is the private interface used by the AES source patch
+// (crypto/internal/fips140/aes) and runtime AES hashing
+// (runtime/internal/runtime/aeshash_llgo.go). ARM rounds consume a key before
+// SubBytes; the other targets consume it after the round.
+//
+// Numeric values are part of the compiler/runtime ABI; keep them in sync with
+// runtime/internal/runtime/aeshash_llgo.go and crypto/internal/fips140/aes.
 type AESOp uint8
 
 const (
@@ -19,9 +24,14 @@ const (
 	AESInverseMixKey
 	AESXORKey
 	AESXORBlock
-	// Raw native byte-order encrypt rounds for non-cryptographic AES hashing
-	// (no big-endian uint32 key-schedule byte swap).
+	// AESHashRound is a raw native byte-order full AES encrypt round for
+	// non-cryptographic hashing (no big-endian uint32 key-schedule byte swap).
 	AESHashRound
+	// AESHashLast is the final raw native byte-order AES hash round. On
+	// arm/arm64 it omits MixColumns (aese without aesmc, saving an instruction
+	// as in Go's memhash_arm64.s); on amd64/386/ppc64/ppc64le/riscv64 a full
+	// round costs the same as a last round, so it emits aesenc/vcipher/aes64esm
+	// for full-round diffusion (as in Go's memhash_amd64.s).
 	AESHashLast
 )
 
@@ -212,7 +222,7 @@ func (b Builder) AESRound(op AESOp, dst, src, key Expr) Expr {
 				name := map[AESOp]string{
 					AESEncryptRound: "vcipher", AESEncryptLast: "vcipherlast",
 					AESDecryptLast: "vncipherlast",
-					AESHashRound:   "vcipher", AESHashLast: "vcipherlast",
+					AESHashRound:   "vcipher", AESHashLast: "vcipher",
 				}[op]
 				value = b.aesPPC(name, state, k)
 			case AESDecryptRound:
@@ -224,7 +234,7 @@ func (b Builder) AESRound(op AESOp, dst, src, key Expr) Expr {
 				value = b.aesPPC("vncipher", value, llvm.ConstNull(vec))
 			}
 		case "riscv64":
-			name := []string{"aes64esm", "aes64es", "aes64dsm", "aes64ds", "aes64im", "", "", "aes64esm", "aes64es"}[op]
+			name := []string{"aes64esm", "aes64es", "aes64dsm", "aes64ds", "aes64im", "", "", "aes64esm", "aes64esm"}[op]
 			value = b.aesRISCV(name, state)
 			if op != AESInverseMixKey {
 				value = b.impl.CreateXor(value, k, "")

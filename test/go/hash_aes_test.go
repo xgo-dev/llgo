@@ -81,18 +81,109 @@ func TestHashAllSizesAndBitSensitivity(t *testing.T) {
 		t.Fatalf("poor avalanche: average flipped bits = %.2f over %d samples (want ~32)", avgBits, samples)
 	}
 
-	// Repeating identical 128-byte blocks must not cancel out.
+	// Repeating identical 128-byte blocks must not cancel out. Use
+	// maphash.Comparable on full strings (not maphash.Bytes, which chunks at
+	// 128 bytes) so inputs >128 B reach the multi-block memhashAES loop.
 	block := make([]byte, 128)
 	for i := range block {
 		block[i] = byte(i*13 + 5)
 	}
-	rep2 := append(append([]byte(nil), block...), block...)
-	rep3 := append(append([]byte(nil), rep2...), block...)
-	h1 := maphash.Bytes(seed, block)
-	h2 := maphash.Bytes(seed, rep2)
-	h3 := maphash.Bytes(seed, rep3)
-	if h1 == h2 || h2 == h3 || h1 == h3 {
-		t.Fatalf("repeating 128B blocks collided: h1=%#x h2=%#x h3=%#x", h1, h2, h3)
+	rep1 := string(block)
+	rep2 := rep1 + rep1
+	rep3 := rep2 + rep1
+	rep4 := rep3 + rep1
+	h1 := maphash.Comparable(seed, rep1)
+	h2 := maphash.Comparable(seed, rep2)
+	h3 := maphash.Comparable(seed, rep3)
+	h4 := maphash.Comparable(seed, rep4)
+	seenRep := map[uint64]int{h1: 1, h2: 2, h3: 3, h4: 4}
+	if len(seenRep) != 4 {
+		t.Fatalf("repeating 128B blocks collided: h1=%#x h2=%#x h3=%#x h4=%#x", h1, h2, h3, h4)
+	}
+
+	// Exercise the unchunked >128 B path directly via maphash.Comparable on
+	// strings and fixed arrays: verify length differentiation, multi-block
+	// mixing (n >= 2), and per-byte tail diffusion into both low 16 bits and
+	// the top byte.
+	longSizes := []int{129, 130, 192, 255, 256, 257, 384, 512, 1025, 4096}
+	longZeroHashes := make(map[uint64]int, len(longSizes))
+	for _, n := range longSizes {
+		s := strings.Repeat("\x00", n)
+		h := maphash.Comparable(seed, s)
+		if prev, dup := longZeroHashes[h]; dup {
+			t.Fatalf("long zero string collision between len %d and %d: %#x", prev, n, h)
+		}
+		longZeroHashes[h] = n
+	}
+
+	var longTotalFlipped, longSamples, low16Changed, top8Changed int
+	for _, n := range []int{257, 384, 512} {
+		buf := make([]byte, n)
+		for i := range buf {
+			buf[i] = byte(i*41 + 7)
+		}
+		base := maphash.Comparable(seed, string(buf))
+		// Flip every byte of the final 128-byte tail plus early/mid-block bytes.
+		positions := make([]int, 0, 144)
+		for _, pos := range []int{0, 1, 15, 16, 63, 64, 127, 128, 129, 191, 192, 255} {
+			if pos < n-128 {
+				positions = append(positions, pos)
+			}
+		}
+		for pos := n - 128; pos < n; pos++ {
+			positions = append(positions, pos)
+		}
+		for _, pos := range positions {
+			buf[pos] ^= 1 << uint(pos%8)
+			flipped := maphash.Comparable(seed, string(buf))
+			buf[pos] ^= 1 << uint(pos%8)
+			diff := base ^ flipped
+			if diff == 0 {
+				t.Fatalf("long string single-bit flip at pos %d (len=%d) did not change hash %#x", pos, n, base)
+			}
+			longTotalFlipped += bits.OnesCount64(diff)
+			longSamples++
+			if pos >= n-128 {
+				if diff&0xffff != 0 {
+					low16Changed++
+				}
+				if diff>>56 != 0 {
+					top8Changed++
+				}
+			}
+		}
+	}
+	longAvg := float64(longTotalFlipped) / float64(longSamples)
+	if longAvg < 24 || longAvg > 40 {
+		t.Fatalf("poor >128B avalanche: average flipped bits = %.2f over %d samples (want ~32)", longAvg, longSamples)
+	}
+	// Across 3*128 = 384 tail flips, both the low 16 bits and top byte should
+	// change on nearly every flip (expected ~384 and ~382.5 respectively).
+	if low16Changed < 370 {
+		t.Fatalf("poor >128B tail low-16-bit mixing: %d/384 changed", low16Changed)
+	}
+	if top8Changed < 360 {
+		t.Fatalf("poor >128B tail top-byte mixing: %d/384 changed", top8Changed)
+	}
+
+	// Fixed-size array >256 B also hits memhash directly without chunking.
+	var arr [384]byte
+	for i := range arr {
+		arr[i] = byte(i*29 + 13)
+	}
+	mArr := make(map[[384]byte]int, 32)
+	arrBase := maphash.Comparable(seed, arr)
+	mArr[arr] = 1
+	for i := 0; i < 31; i++ {
+		alt := arr
+		alt[i*12] ^= 1
+		if h := maphash.Comparable(seed, alt); h == arrBase {
+			t.Fatalf("[384]byte flip at %d did not change hash %#x", i*12, arrBase)
+		}
+		mArr[alt] = i + 2
+	}
+	if len(mArr) != 32 || mArr[arr] != 1 {
+		t.Fatalf("map[[384]byte]int len=%d base=%d", len(mArr), mArr[arr])
 	}
 }
 
@@ -148,7 +239,7 @@ func TestMapFastPathMatchesReflect(t *testing.T) {
 
 	mstr := make(map[string]int)
 	keys := make([]string, 0, count)
-	for _, prefixLen := range []int{0, 8, 16, 24, 48, 96, 160} {
+	for _, prefixLen := range []int{0, 8, 16, 24, 48, 96, 160, 320, 512} {
 		prefix := strings.Repeat("k", prefixLen)
 		for i := 0; i < 64; i++ {
 			k := fmt.Sprintf("%s-%04d", prefix, i)

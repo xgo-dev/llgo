@@ -31,6 +31,7 @@ func llgoAESRound(op int, dst, src, key *byte)
 //go:linkname llgoAESAlloca llgo.aesAlloca
 func llgoAESAlloca(uintptr) unsafe.Pointer
 
+// Must match the AESOp iota values in ssa/aes.go.
 const (
 	llgoAESXORBlock  = 6
 	llgoAESHashRound = 7
@@ -76,7 +77,8 @@ func initAESHash() {
 
 // memhashAES hashes inputs larger than 16 bytes using hardware AES rounds
 // (2 lanes for 17..32 B, 4 lanes for 33..64 B, and 8 parallel lanes for
-// 65+ B). Callers must check useAeshash before invoking this function.
+// 65+ B). Callers must check useAeshash and s > 16 before invoking this
+// function.
 func memhashAES(p unsafe.Pointer, seed, s uintptr) uintptr {
 	sv := (*[16]byte)(llgoAESAlloca(16))
 	svWords := (*[2]uint64)(unsafe.Pointer(sv))
@@ -152,16 +154,28 @@ func memhashAES(p unsafe.Pointer, seed, s uintptr) uintptr {
 	}
 
 	tail := add(p, s-128)
+	// Start from the tail block mixed with the per-lane scrambled seed, then
+	// run 2 full AES rounds per 128-byte block (keyed scramble + block absorb)
+	// and 3 finalization rounds. Using the per-process secret aeskeysched lane
+	// rather than st[i] itself as the round key preserves full diffusion on
+	// both ARM (where AESE XORs the key before SubBytes) and x86 (where AESENC
+	// XORs the key after MixColumns).
+	for i := 0; i < 8; i++ {
+		llgoAESRound(llgoAESHashRound, &st[i][0], (*byte)(add(tail, uintptr(i*16))), &st[i][0])
+	}
 	n := (s - 1) >> 7
 	cur := p
 	for ; n > 0; n-- {
+		for i := 0; i < 8; i++ {
+			llgoAESRound(llgoAESHashRound, &st[i][0], &st[i][0], &aeskeysched[i*16])
+		}
 		for i := 0; i < 8; i++ {
 			llgoAESRound(llgoAESHashRound, &st[i][0], &st[i][0], (*byte)(add(cur, uintptr(i*16))))
 		}
 		cur = add(cur, 128)
 	}
 	for i := 0; i < 8; i++ {
-		llgoAESRound(llgoAESHashRound, &st[i][0], &st[i][0], (*byte)(add(tail, uintptr(i*16))))
+		llgoAESRound(llgoAESHashRound, &st[i][0], &st[i][0], &aeskeysched[i*16])
 	}
 	for i := 0; i < 8; i++ {
 		llgoAESRound(llgoAESHashRound, &st[i][0], &st[i][0], &aeskeysched[i*16])

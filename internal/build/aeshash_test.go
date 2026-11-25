@@ -28,15 +28,20 @@ var useAeshash bool
 
 func main() {
 	seed := maphash.MakeSeed()
-	buf := make([]byte, 256)
+	// Use maphash.Comparable on a 384-byte string so the full length reaches
+	// memhashAES (>128 B loop with n == 2) without maphash.Bytes's 128 B chunking.
+	buf := make([]byte, 384)
 	for i := range buf {
 		buf[i] = byte(i*17 + 3)
 	}
-	h1 := maphash.Bytes(seed, buf)
-	buf[199] ^= 1
-	h2 := maphash.Bytes(seed, buf)
-	if h1 == h2 {
-		panic("hash did not change after bit flip")
+	base := maphash.Comparable(seed, string(buf))
+	for _, pos := range []int{17, 199, 383} {
+		buf[pos] ^= 1
+		flipped := maphash.Comparable(seed, string(buf))
+		buf[pos] ^= 1
+		if flipped == base {
+			panic("hash did not change after bit flip")
+		}
 	}
 	if useAeshash {
 		println("aes=on")
