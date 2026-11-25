@@ -17,19 +17,33 @@
 package typepatch
 
 import (
+	"runtime"
 	"sync"
+	"weak"
 
 	"github.com/xgo-dev/llgo/types"
 )
 
-var patchedPkgs sync.Map // map[*types.Package]struct{}
+var patchedPkgs sync.Map // map[weak.Pointer[types.Package]]struct{}
 
 func IsPatched(pkg *types.Package) bool {
 	if pkg == nil {
 		return false
 	}
-	_, ok := patchedPkgs.Load(pkg)
+	_, ok := patchedPkgs.Load(weak.Make(pkg))
 	return ok
+}
+
+func markPatched(pkg *types.Package) {
+	if pkg == nil {
+		return
+	}
+	wp := weak.Make(pkg)
+	if _, loaded := patchedPkgs.LoadOrStore(wp, struct{}{}); !loaded {
+		runtime.AddCleanup(pkg, func(wp weak.Pointer[types.Package]) {
+			patchedPkgs.Delete(wp)
+		}, wp)
+	}
 }
 
 func Clone(alt *types.Package) *types.Package {
@@ -54,7 +68,7 @@ func Clone(alt *types.Package) *types.Package {
 
 func Merge(alt, pkg *types.Package, skips map[string]struct{}, skipall bool) {
 	if pkg != nil {
-		patchedPkgs.Store(pkg, struct{}{})
+		markPatched(pkg)
 	}
 	if skipall || alt == nil || pkg == nil {
 		return

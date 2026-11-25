@@ -47,12 +47,17 @@ func TestListGoPackagesQuery(t *testing.T) {
 }
 
 func TestListModuleQueryPreservesUserTags(t *testing.T) {
+	module := t.TempDir()
+	if err := os.WriteFile(filepath.Join(module, "go.mod"), []byte("module example.com/listmod\n\ngo 1.27\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(module)
 	var output bytes.Buffer
 	args := []string{"-m", "-tags=llgo_test_tag", "-f", "{{.Path}}"}
 	if err := run(args, nil, &output, &output); err != nil {
 		t.Fatalf("module list %q: %v, %s", args, err, &output)
 	}
-	if strings.TrimSpace(output.String()) != "github.com/xgo-dev/llgo" {
+	if strings.TrimSpace(output.String()) != "example.com/listmod" {
 		t.Fatalf("module list = %q", &output)
 	}
 }
