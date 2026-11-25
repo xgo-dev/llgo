@@ -29,10 +29,13 @@ import (
 )
 
 const (
-	cacheBuildDirName = "build"
-	cacheArchiveExt   = ".a"
-	cacheManifestExt  = ".manifest"
-	cacheMetaExt      = ".meta"
+	cacheBuildDirName   = "build"
+	cacheDepfileDirName = "depfiles"
+	cacheArchiveExt     = ".a"
+	cacheManifestExt    = ".manifest"
+	cacheMetaExt        = ".meta"
+	cacheLinkSnapExt    = ".linksnap"
+	cacheExportExt      = ".llgoex"
 )
 
 // cacheRootFunc can be overridden for testing
@@ -59,6 +62,8 @@ type cachePaths struct {
 	Archive  string // Path to .a file
 	Manifest string // Path to .manifest file
 	Meta     string // Path to .meta file
+	LinkSnap string // Path to binary exportdata.LinkSnapshot sidecar
+	Export   string // Path to binary exportdata.PackageMeta sidecar
 }
 
 // PackagePaths returns the cache paths for a package
@@ -70,7 +75,14 @@ func (cm *cacheManager) PackagePaths(targetTriple, pkgPath, fingerprint string) 
 		Archive:  filepath.Join(dir, fingerprint+cacheArchiveExt),
 		Manifest: filepath.Join(dir, fingerprint+cacheManifestExt),
 		Meta:     filepath.Join(dir, fingerprint+cacheMetaExt),
+		LinkSnap: filepath.Join(dir, fingerprint+cacheLinkSnapExt),
+		Export:   filepath.Join(dir, fingerprint+cacheExportExt),
 	}
+}
+
+func (cm *cacheManager) DepfilePath(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return filepath.Join(cm.root, cacheDepfileDirName, hex.EncodeToString(sum[:16])+".dep")
 }
 
 func (cm *cacheManager) packageDir(targetTriple, pkgPath string) string {

@@ -17,6 +17,7 @@
 package build
 
 import (
+	"encoding/binary"
 	"os"
 	"sort"
 	"strings"
@@ -383,50 +384,21 @@ func emitFuncInfoTable(ctx *context, pkg llvmgen.Package, records []funcInfoReco
 		return
 	}
 
-	values := make([]llvm.Value, 0, len(encoded.Records))
-	for _, rec := range encoded.Records {
-		values = append(values, llvm.ConstNamedStruct(recordType, []llvm.Value{
-			llvm.ConstInt(i32Type, uint64(rec.SymbolPkg), false),
-			llvm.ConstInt(i32Type, uint64(rec.SymbolName), false),
-			llvm.ConstInt(i32Type, uint64(rec.NamePkg), false),
-			llvm.ConstInt(i32Type, uint64(rec.NameName), false),
-			llvm.ConstInt(i32Type, uint64(rec.FileRoot), false),
-			llvm.ConstInt(i32Type, uint64(rec.FileName), false),
-			llvm.ConstInt(i32Type, uint64(rec.Line), false),
-		}))
-	}
-	arrayType := llvm.ArrayType(recordType, len(values))
-	data := llvm.AddGlobal(mod, arrayType, funcInfoDataSymbol)
-	data.SetInitializer(llvm.ConstArray(recordType, values))
-	data.SetLinkage(llvm.PrivateLinkage)
-	data.SetGlobalConstant(true)
-	data.SetUnnamedAddr(true)
-	data.SetAlignment(4)
+	td := ctx.prog.TargetData()
+	order := targetByteOrder(td)
 
-	pcLineValues := make([]llvm.Value, 0, len(encoded.PCLines))
-	for _, rec := range encoded.PCLines {
-		pcLineValues = append(pcLineValues, llvm.ConstNamedStruct(pcLineRecordType, []llvm.Value{
-			llvm.ConstInt(i64Type, rec.ID, false),
-			llvm.ConstInt(i32Type, uint64(rec.Func), false),
-			llvm.ConstInt(i32Type, uint64(rec.FileRoot), false),
-			llvm.ConstInt(i32Type, uint64(rec.FileName), false),
-			llvm.ConstInt(i32Type, uint64(rec.Line), false),
-		}))
-	}
+	recordBytes := encodeFuncInfoRecordsBytes(order, encoded.Records)
+	arrayType, data := emitPackedBinaryGlobal(mod, funcInfoDataSymbol, recordBytes, 4)
+
 	siteFormat := runtimeSiteObjectFormat(ctx)
-	if len(pcLineValues) == 0 {
+	if len(encoded.PCLines) == 0 {
 		pcLinePtr.SetInitializer(llvm.ConstPointerNull(pcLinePtr.GlobalValueType()))
 		pcLineCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 		pcSiteStartPtr.SetInitializer(llvm.ConstPointerNull(pcSiteStartPtr.GlobalValueType()))
 		pcSiteEndPtr.SetInitializer(llvm.ConstPointerNull(pcSiteEndPtr.GlobalValueType()))
 	} else {
-		pcLineArrayType := llvm.ArrayType(pcLineRecordType, len(pcLineValues))
-		pcLineData := llvm.AddGlobal(mod, pcLineArrayType, pcLineDataSymbol)
-		pcLineData.SetInitializer(llvm.ConstArray(pcLineRecordType, pcLineValues))
-		pcLineData.SetLinkage(llvm.PrivateLinkage)
-		pcLineData.SetGlobalConstant(true)
-		pcLineData.SetUnnamedAddr(true)
-		pcLineData.SetAlignment(8)
+		pcLineBytes := encodePCLineRecordsBytes(order, encoded.PCLines)
+		pcLineArrayType, pcLineData := emitPackedBinaryGlobal(mod, pcLineDataSymbol, pcLineBytes, 8)
 		pcLinePtr.SetInitializer(llvm.ConstInBoundsGEP(pcLineArrayType, pcLineData, []llvm.Value{
 			llvm.ConstInt(countType, 0, false),
 			llvm.ConstInt(countType, 0, false),
@@ -447,7 +419,7 @@ func emitFuncInfoTable(ctx *context, pkg llvmgen.Package, records []funcInfoReco
 	entrySiteInfo := runtimeEntrySiteSectionInfo(ctx)
 	emitSites := shouldEmitRuntimeSites(ctx)
 	emitEntrySites := shouldEmitRuntimeEntrySites(ctx) && len(encoded.Records) != 0
-	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), siteFormat, entrySiteInfo, emitSites && len(pcLineValues) != 0, emitEntrySites)
+	emitRuntimeFuncInfoSites(mod, ctx.prog.PointerSize(), siteFormat, entrySiteInfo, emitSites && len(encoded.PCLines) != 0, emitEntrySites)
 	if darwinSymbolEntries(ctx) {
 		emitSymbolEntryReserve(mod, entrySiteInfo, len(encoded.Records))
 	}
@@ -463,25 +435,10 @@ func emitFuncInfoTable(ctx *context, pkg llvmgen.Package, records []funcInfoReco
 		entryEndPtr.SetInitializer(llvm.ConstPointerNull(entryEndPtr.GlobalValueType()))
 	}
 
-	stringArrayType := llvm.ArrayType(i8Type, len(encoded.Strings))
-	stringData := llvm.AddGlobal(mod, stringArrayType, funcInfoStringsDataSymbol)
-	stringData.SetInitializer(llvmCtx.ConstString(string(encoded.Strings), false))
-	stringData.SetLinkage(llvm.PrivateLinkage)
-	stringData.SetGlobalConstant(true)
-	stringData.SetUnnamedAddr(true)
-	stringData.SetAlignment(1)
+	stringArrayType, stringData := emitPackedBinaryGlobal(mod, funcInfoStringsDataSymbol, encoded.Strings, 1)
 
-	stringOffsetValues := make([]llvm.Value, 0, len(encoded.StringOffsets))
-	for _, off := range encoded.StringOffsets {
-		stringOffsetValues = append(stringOffsetValues, llvm.ConstInt(i32Type, uint64(off), false))
-	}
-	stringOffsetsArrayType := llvm.ArrayType(i32Type, len(stringOffsetValues))
-	stringOffsetsData := llvm.AddGlobal(mod, stringOffsetsArrayType, funcInfoStringOffsetsDataSymbol)
-	stringOffsetsData.SetInitializer(llvm.ConstArray(i32Type, stringOffsetValues))
-	stringOffsetsData.SetLinkage(llvm.PrivateLinkage)
-	stringOffsetsData.SetGlobalConstant(true)
-	stringOffsetsData.SetUnnamedAddr(true)
-	stringOffsetsData.SetAlignment(4)
+	stringOffsetsBytes := encodeUint32SliceBytes(order, encoded.StringOffsets)
+	stringOffsetsArrayType, stringOffsetsData := emitPackedBinaryGlobal(mod, funcInfoStringOffsetsDataSymbol, stringOffsetsBytes, 4)
 
 	tablePtr.SetInitializer(llvm.ConstInBoundsGEP(arrayType, data, []llvm.Value{
 		llvm.ConstInt(countType, 0, false),
@@ -500,17 +457,8 @@ func emitFuncInfoTable(ctx *context, pkg llvmgen.Package, records []funcInfoReco
 		hashPtr.SetInitializer(llvm.ConstPointerNull(hashPtr.GlobalValueType()))
 		hashMask.SetInitializer(llvm.ConstInt(countType, 0, false))
 	} else {
-		hashValues := make([]llvm.Value, 0, len(encoded.Hash))
-		for _, idx := range encoded.Hash {
-			hashValues = append(hashValues, llvm.ConstInt(i16Type, uint64(idx), false))
-		}
-		hashArrayType := llvm.ArrayType(i16Type, len(hashValues))
-		hashData := llvm.AddGlobal(mod, hashArrayType, funcInfoHashDataSymbol)
-		hashData.SetInitializer(llvm.ConstArray(i16Type, hashValues))
-		hashData.SetLinkage(llvm.PrivateLinkage)
-		hashData.SetGlobalConstant(true)
-		hashData.SetUnnamedAddr(true)
-		hashData.SetAlignment(2)
+		hashBytes := encodeUint16SliceBytes(order, encoded.Hash)
+		hashArrayType, hashData := emitPackedBinaryGlobal(mod, funcInfoHashDataSymbol, hashBytes, 2)
 		hashPtr.SetInitializer(llvm.ConstInBoundsGEP(hashArrayType, hashData, []llvm.Value{
 			llvm.ConstInt(countType, 0, false),
 			llvm.ConstInt(countType, 0, false),
@@ -519,33 +467,106 @@ func emitFuncInfoTable(ctx *context, pkg llvmgen.Package, records []funcInfoReco
 	}
 	count.SetInitializer(llvm.ConstInt(countType, uint64(len(encoded.Records)), false))
 	symbolIndexRecords := collectFuncInfoSymbolIndexRecords(records)
-	symbolIndexValues := make([]llvm.Value, 0, len(symbolIndexRecords))
+	validSymbolIndex := make([]funcInfoSymbolIndexRecord, 0, len(symbolIndexRecords))
 	for _, rec := range symbolIndexRecords {
 		if rec.funcIndex == 0 || int(rec.funcIndex) > len(encoded.Records) {
 			continue
 		}
-		symbolIndexValues = append(symbolIndexValues, llvm.ConstNamedStruct(symbolIndexRecordType, []llvm.Value{
-			llvm.ConstInt(i64Type, rec.symbolID, false),
-			llvm.ConstInt(i32Type, uint64(rec.funcIndex), false),
-		}))
+		validSymbolIndex = append(validSymbolIndex, rec)
 	}
-	if len(symbolIndexValues) == 0 {
+	if len(validSymbolIndex) == 0 {
 		symbolIndexPtr.SetInitializer(llvm.ConstPointerNull(symbolIndexPtr.GlobalValueType()))
 		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, 0, false))
 	} else {
-		symbolIndexArrayType := llvm.ArrayType(symbolIndexRecordType, len(symbolIndexValues))
-		symbolIndexData := llvm.AddGlobal(mod, symbolIndexArrayType, funcInfoSymbolIndexDataSymbol)
-		symbolIndexData.SetInitializer(llvm.ConstArray(symbolIndexRecordType, symbolIndexValues))
-		symbolIndexData.SetLinkage(llvm.PrivateLinkage)
-		symbolIndexData.SetGlobalConstant(true)
-		symbolIndexData.SetUnnamedAddr(true)
-		symbolIndexData.SetAlignment(8)
+		symStride := int(td.TypeAllocSize(symbolIndexRecordType))
+		symIdxOff := int(td.ElementOffset(symbolIndexRecordType, 1))
+		symBytes := encodeSymbolIndexRecordsBytes(order, symStride, symIdxOff, validSymbolIndex)
+		symbolIndexArrayType, symbolIndexData := emitPackedBinaryGlobal(mod, funcInfoSymbolIndexDataSymbol, symBytes, 8)
 		symbolIndexPtr.SetInitializer(llvm.ConstInBoundsGEP(symbolIndexArrayType, symbolIndexData, []llvm.Value{
 			llvm.ConstInt(countType, 0, false),
 			llvm.ConstInt(countType, 0, false),
 		}))
-		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, uint64(len(symbolIndexValues)), false))
+		symbolIndexCount.SetInitializer(llvm.ConstInt(countType, uint64(len(validSymbolIndex)), false))
 	}
+}
+
+func targetByteOrder(td llvm.TargetData) binary.ByteOrder {
+	if td != (llvm.TargetData{}) && td.ByteOrder() == llvm.BigEndian {
+		return binary.BigEndian
+	}
+	return binary.LittleEndian
+}
+
+func emitPackedBinaryGlobal(mod llvm.Module, name string, raw []byte, align int) (llvm.Type, llvm.Value) {
+	llvmCtx := mod.Context()
+	arrType := llvm.ArrayType(llvmCtx.Int8Type(), len(raw))
+	g := llvm.AddGlobal(mod, arrType, name)
+	g.SetInitializer(llvmCtx.ConstString(string(raw), false))
+	g.SetLinkage(llvm.PrivateLinkage)
+	g.SetGlobalConstant(true)
+	g.SetUnnamedAddr(true)
+	g.SetAlignment(align)
+	return arrType, g
+}
+
+func encodeFuncInfoRecordsBytes(order binary.ByteOrder, records []buildfuncinfo.EncodedRecord) []byte {
+	raw := make([]byte, len(records)*28)
+	for i, rec := range records {
+		base := i * 28
+		order.PutUint32(raw[base+0:base+4], rec.SymbolPkg)
+		order.PutUint32(raw[base+4:base+8], rec.SymbolName)
+		order.PutUint32(raw[base+8:base+12], rec.NamePkg)
+		order.PutUint32(raw[base+12:base+16], rec.NameName)
+		order.PutUint32(raw[base+16:base+20], rec.FileRoot)
+		order.PutUint32(raw[base+20:base+24], rec.FileName)
+		order.PutUint32(raw[base+24:base+28], rec.Line)
+	}
+	return raw
+}
+
+func encodePCLineRecordsBytes(order binary.ByteOrder, records []buildfuncinfo.EncodedPCLineRecord) []byte {
+	raw := make([]byte, len(records)*24)
+	for i, rec := range records {
+		base := i * 24
+		order.PutUint64(raw[base+0:base+8], rec.ID)
+		order.PutUint32(raw[base+8:base+12], rec.Func)
+		order.PutUint32(raw[base+12:base+16], rec.FileRoot)
+		order.PutUint32(raw[base+16:base+20], rec.FileName)
+		order.PutUint32(raw[base+20:base+24], rec.Line)
+	}
+	return raw
+}
+
+func encodeUint32SliceBytes(order binary.ByteOrder, vals []uint32) []byte {
+	raw := make([]byte, len(vals)*4)
+	for i, v := range vals {
+		order.PutUint32(raw[i*4:i*4+4], v)
+	}
+	return raw
+}
+
+func encodeUint16SliceBytes(order binary.ByteOrder, vals []uint16) []byte {
+	raw := make([]byte, len(vals)*2)
+	for i, v := range vals {
+		order.PutUint16(raw[i*2:i*2+2], v)
+	}
+	return raw
+}
+
+func encodeSymbolIndexRecordsBytes(order binary.ByteOrder, stride, idxOff int, records []funcInfoSymbolIndexRecord) []byte {
+	if stride < 12 {
+		stride = 16
+	}
+	if idxOff < 8 {
+		idxOff = 8
+	}
+	raw := make([]byte, len(records)*stride)
+	for i, rec := range records {
+		base := i * stride
+		order.PutUint64(raw[base:base+8], rec.symbolID)
+		order.PutUint32(raw[base+idxOff:base+idxOff+4], rec.funcIndex)
+	}
+	return raw
 }
 
 type externalFuncInfoGlobals struct {

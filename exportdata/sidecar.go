@@ -359,19 +359,22 @@ type PCLNFunc struct {
 // LinkSnapshot persists the package-level link & PCLN metadata alongside cached
 // .a archives so warm builds skip cl.NewPackageEx and LLVM context creation.
 type LinkSnapshot struct {
-	PkgPath         string
-	PkgName         string
-	NeedRuntime     bool
-	NeedPyInit      bool
-	NeedAbiInit     bool
-	HasLocalExports bool
-	MethodByIndex   bool
-	MethodByName    []string
-	AbiSymbols      []string
-	AbiTypes        []string
-	CExports        []string
-	Imports         []string
-	PCLNFuncs       []PCLNFunc
+	PkgPath          string
+	PkgName          string
+	NeedRuntime      bool
+	NeedPyInit       bool
+	NeedAbiInit      bool
+	NeedAbiInitCount int
+	HasLocalExports  bool
+	MethodByIndex    bool
+	MethodIndexes    []int
+	MethodByName     []string
+	AbiSymbols       []string
+	AbiTypes         []string
+	CExports         []string
+	Imports          []string
+	TypeGraphBlob    []byte
+	PCLNFuncs        []PCLNFunc
 }
 
 // MarshalLinkSnapshot encodes snap into compact deterministic binary bytes.
@@ -385,13 +388,21 @@ func MarshalLinkSnapshot(snap *LinkSnapshot) ([]byte, error) {
 	e.writeBool(snap.NeedRuntime)
 	e.writeBool(snap.NeedPyInit)
 	e.writeBool(snap.NeedAbiInit)
+	e.writeVarint(int64(snap.NeedAbiInitCount))
 	e.writeBool(snap.HasLocalExports)
 	e.writeBool(snap.MethodByIndex)
+	idxs := append([]int(nil), snap.MethodIndexes...)
+	sort.Ints(idxs)
+	e.writeUvarint(uint64(len(idxs)))
+	for _, idx := range idxs {
+		e.writeVarint(int64(idx))
+	}
 	e.writeStringSlice(sortedCopy(snap.MethodByName))
 	e.writeStringSlice(sortedCopy(snap.AbiSymbols))
 	e.writeStringSlice(sortedCopy(snap.AbiTypes))
 	e.writeStringSlice(sortedCopy(snap.CExports))
 	e.writeStringSlice(sortedCopy(snap.Imports))
+	e.writeBytes(snap.TypeGraphBlob)
 
 	fns := append([]PCLNFunc(nil), snap.PCLNFuncs...)
 	sort.Slice(fns, func(i, j int) bool { return fns[i].Symbol < fns[j].Symbol })
@@ -445,11 +456,30 @@ func UnmarshalLinkSnapshot(raw []byte) (*LinkSnapshot, error) {
 	if s.NeedAbiInit, err = d.readBool(); err != nil {
 		return nil, err
 	}
+	abiCount, err := d.readVarint()
+	if err != nil {
+		return nil, err
+	}
+	s.NeedAbiInitCount = int(abiCount)
 	if s.HasLocalExports, err = d.readBool(); err != nil {
 		return nil, err
 	}
 	if s.MethodByIndex, err = d.readBool(); err != nil {
 		return nil, err
+	}
+	nIdxs, err := d.readUvarint()
+	if err != nil {
+		return nil, err
+	}
+	if nIdxs > 0 {
+		s.MethodIndexes = make([]int, nIdxs)
+		for i := uint64(0); i < nIdxs; i++ {
+			v, err := d.readVarint()
+			if err != nil {
+				return nil, err
+			}
+			s.MethodIndexes[i] = int(v)
+		}
 	}
 	if s.MethodByName, err = d.readStringSlice(); err != nil {
 		return nil, err
@@ -464,6 +494,9 @@ func UnmarshalLinkSnapshot(raw []byte) (*LinkSnapshot, error) {
 		return nil, err
 	}
 	if s.Imports, err = d.readStringSlice(); err != nil {
+		return nil, err
+	}
+	if s.TypeGraphBlob, err = d.readBytes(); err != nil {
 		return nil, err
 	}
 	nFns, err := d.readUvarint()

@@ -769,7 +769,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		goBuildFlags = append(goBuildFlags, "-overlay="+overlayFile)
 	}
 	cfg := &packages.Config{
-		Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
+		Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule,
 		BuildFlags: goBuildFlags,
 		Dir:        dir,
 		Fset:       token.NewFileSet(),

@@ -93,8 +93,8 @@ func TestRewriteEmbeddedPCLNIRRemapsAllTables(t *testing.T) {
 		"@__llgo_funcinfo_count = global i64 1",
 		"@__llgo_pcline_count = global i64 0",
 		"@__llgo_funcinfo_symbol_index_count = hidden global i64 1",
-		`@"__llgo_funcinfo_table$data" = private unnamed_addr constant [1 x`,
-		`@"__llgo_pcline_table$data" = private unnamed_addr constant [0 x`,
+		`@"__llgo_funcinfo_table$data" = private unnamed_addr constant [28 x i8]`,
+		`@"__llgo_pcline_table$data" = private unnamed_addr constant [0 x i8]`,
 	} {
 		if !strings.Contains(ir, expected) {
 			t.Fatalf("rewritten entry is missing %q:\n%s", expected, ir)

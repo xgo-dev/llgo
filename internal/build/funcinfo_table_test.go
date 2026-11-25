@@ -82,15 +82,15 @@ func TestFuncInfoTableMaterializesMetadataWithoutFunctionPointers(t *testing.T) 
 		"@__llgo_pcline_count = global i64 0",
 		"@__llgo_funcinfo_hash_mask = global i64 1",
 		"module asm \".section llgo_funcinfo_entry",
-		`@"__llgo_funcinfo_table$data" = private unnamed_addr constant [1 x { i32, i32, i32, i32, i32, i32, i32 }]`,
-		`@"__llgo_funcinfo_string_offsets$data" = private unnamed_addr constant`,
-		`@"__llgo_funcinfo_hash$data" = private unnamed_addr constant [2 x i16]`,
-		`@"__llgo_funcinfo_symbol_index$data" = private unnamed_addr constant [1 x { i64, i32 }]`,
+		`@"__llgo_funcinfo_table$data" = private unnamed_addr constant [28 x i8]`,
+		`@"__llgo_funcinfo_string_offsets$data" = private unnamed_addr constant [20 x i8]`,
+		`@"__llgo_funcinfo_hash$data" = private unnamed_addr constant [4 x i8]`,
+		`@"__llgo_funcinfo_symbol_index$data" = private unnamed_addr constant [16 x i8]`,
 		`example.com/p\00`,
 		`live\00`,
 		`Live\00`,
 		`live.go\00`,
-		"i32 17",
+		`\11\00\00\00`,
 	} {
 		if !strings.Contains(ir, want) {
 			t.Fatalf("funcinfo table IR missing %q:\n%s", want, ir)
@@ -550,9 +550,9 @@ func TestFuncInfoTableMaterializesPCLineMetadata(t *testing.T) {
 		"@__llgo_pcline_count = global i64 1",
 		"@__llgo_funcinfo_string_count = global i64 6",
 		"module asm \".section llgo_pcline",
-		`@"__llgo_pcline_table$data" = private unnamed_addr constant [1 x { i64, i32, i32, i32, i32 }]`,
-		"i64 4660",
-		"i32 23",
+		`@"__llgo_pcline_table$data" = private unnamed_addr constant [24 x i8]`,
+		`4\12\00\00\00\00\00\00`,
+		`\17\00\00\00`,
 		`call.go\00`,
 	} {
 		if !strings.Contains(ir, want) {
@@ -866,7 +866,7 @@ func TestFuncInfoTableEmissionMatrix(t *testing.T) {
 							t.Fatalf("32-bit COFF sentinel does not use its natural 16-byte Windows ABI layout; missing %q:\n%s", want, ir)
 						}
 					}
-					if want := `@"__llgo_funcinfo_symbol_index$data" = private unnamed_addr constant [2 x { i64, i32 }]`; !strings.Contains(ir, want) {
+					if want := `@"__llgo_funcinfo_symbol_index$data" = private unnamed_addr constant [32 x i8]`; !strings.Contains(ir, want) {
 						t.Fatalf("32-bit funcinfo symbol index does not use its natural 16-byte Windows ABI stride; missing %q:\n%s", want, ir)
 					}
 					if want := `.long 0\0A.quad `; !strings.Contains(ir, want) {

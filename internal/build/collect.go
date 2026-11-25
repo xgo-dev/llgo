@@ -536,6 +536,11 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	pkg.NeedRt = meta.NeedRt
 	pkg.NeedPyInit = meta.NeedPyInit
 	pkg.Meta = pkgMeta
+	if pkg.linkSnapshot == nil {
+		if snap, err := c.readLinkSnapshotSidecar(paths.LinkSnap); err == nil && snap != nil {
+			pkg.linkSnapshot = snap
+		}
+	}
 	pkg.CacheHit = true
 
 	return true
@@ -682,6 +687,15 @@ func (c *context) saveToCache(pkg *aPackage) error {
 	// Write manifest with metadata
 	if err := writeManifest(paths.Manifest, manifestWithMeta); err != nil {
 		return err
+	}
+
+	// Persist binary LinkSnapshot sidecar so warm cache hits skip cl.NewPackageEx
+	// and LLVM context allocation completely.
+	if pkg.linkSnapshot == nil && pkg.LPkg != nil {
+		c.snapshotBackendPackage(pkg)
+	}
+	if pkg.linkSnapshot != nil {
+		_ = c.writeLinkSnapshotSidecar(paths.LinkSnap, pkg)
 	}
 
 	// Link a cache miss from the same stable archive path used by a cache hit.

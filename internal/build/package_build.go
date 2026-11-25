@@ -314,6 +314,15 @@ func (ctx *context) packageUsesPlan9Asm(pkg *aPackage) (bool, error) {
 }
 
 func (ctx *context) executeIsolatedPackage(task *packageBuildTask, verbose bool) error {
+	// True separate-compilation fast path: when an isolated, non-patched package
+	// hits the build cache AND has a valid binary LinkSnapshot sidecar, skip
+	// creating an LLVMContext and running cl.NewPackageEx altogether.
+	if task.pkg.CacheHit && task.pkg.linkSnapshot != nil && task.parallel &&
+		!ctx.buildConf.deadcodeDropEnabled() && ctx.buildConf.ModuleHook == nil &&
+		(ctx.mode == ModeBuild || ctx.mode == ModeTest && len(ctx.initial) == 1) {
+		return nil
+	}
+
 	session := ctx.newBackendSession()
 	owned := true
 	defer func() {

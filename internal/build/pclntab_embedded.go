@@ -249,16 +249,22 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 		return err
 	}
 	defer mod.Dispose()
-	setArray := func(name string, values func(llvm.Type) []llvm.Value) error {
+	td := llvm.NewTargetData(mod.DataLayout())
+	defer td.Dispose()
+	order := targetByteOrder(td)
+	symRecType := lc.StructType([]llvm.Type{lc.Int64Type(), lc.Int32Type()}, false)
+	symStride := int(td.TypeAllocSize(symRecType))
+	symIdxOff := int(td.ElementOffset(symRecType, 1))
+
+	setBytes := func(name string, raw []byte) error {
 		old := mod.NamedGlobal(name)
 		if old.IsNil() {
 			return fmt.Errorf("embedded pclntab array %s is missing", name)
 		}
-		elem := old.GlobalValueType().ElementType()
-		items := values(elem)
 		old.SetName(name + ".unpruned")
-		array := llvm.AddGlobal(mod, llvm.ArrayType(elem, len(items)), name)
-		array.SetInitializer(llvm.ConstArray(elem, items))
+		arrType := llvm.ArrayType(lc.Int8Type(), len(raw))
+		array := llvm.AddGlobal(mod, arrType, name)
+		array.SetInitializer(lc.ConstString(string(raw), false))
 		array.SetLinkage(llvm.PrivateLinkage)
 		array.SetGlobalConstant(true)
 		array.SetUnnamedAddr(true)
@@ -269,60 +275,26 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 		old.EraseFromParentAsGlobal()
 		return nil
 	}
-	ints := func(typ llvm.Type, fields ...uint64) llvm.Value {
-		types := typ.StructElementTypes()
-		values := make([]llvm.Value, len(fields))
-		for i, field := range fields {
-			values[i] = llvm.ConstInt(types[i], field, false)
-		}
-		return llvm.ConstNamedStruct(typ, values)
+	symRecs := make([]funcInfoSymbolIndexRecord, len(data.SymbolIndex))
+	for i, r := range data.SymbolIndex {
+		symRecs[i] = funcInfoSymbolIndexRecord{symbolID: r.SymbolID, funcIndex: r.FuncIndex}
 	}
-	arrays := []struct {
-		name   string
-		values func(llvm.Type) []llvm.Value
+	blobs := []struct {
+		name string
+		raw  []byte
 	}{
-		{funcInfoDataSymbol, func(t llvm.Type) (v []llvm.Value) {
-			for _, r := range data.Table.Records {
-				v = append(v, ints(t, uint64(r.SymbolPkg), uint64(r.SymbolName), uint64(r.NamePkg), uint64(r.NameName), uint64(r.FileRoot), uint64(r.FileName), uint64(r.Line)))
-			}
-			return
-		}},
-		{pcLineDataSymbol, func(t llvm.Type) (v []llvm.Value) {
-			for _, r := range data.Table.PCLines {
-				v = append(v, ints(t, r.ID, uint64(r.Func), uint64(r.FileRoot), uint64(r.FileName), uint64(r.Line)))
-			}
-			return
-		}},
-		{funcInfoStringsDataSymbol, func(t llvm.Type) (v []llvm.Value) {
-			for _, b := range data.Table.Strings {
-				v = append(v, llvm.ConstInt(t, uint64(b), false))
-			}
-			return
-		}},
-		{funcInfoStringOffsetsDataSymbol, func(t llvm.Type) (v []llvm.Value) {
-			for _, b := range data.Table.StringOffsets {
-				v = append(v, llvm.ConstInt(t, uint64(b), false))
-			}
-			return
-		}},
-		{funcInfoHashDataSymbol, func(t llvm.Type) (v []llvm.Value) {
-			for _, b := range data.Table.Hash {
-				v = append(v, llvm.ConstInt(t, uint64(b), false))
-			}
-			return
-		}},
-		{funcInfoSymbolIndexDataSymbol, func(t llvm.Type) (v []llvm.Value) {
-			for _, r := range data.SymbolIndex {
-				v = append(v, ints(t, r.SymbolID, uint64(r.FuncIndex)))
-			}
-			return
-		}},
+		{funcInfoDataSymbol, encodeFuncInfoRecordsBytes(order, data.Table.Records)},
+		{pcLineDataSymbol, encodePCLineRecordsBytes(order, data.Table.PCLines)},
+		{funcInfoStringsDataSymbol, data.Table.Strings},
+		{funcInfoStringOffsetsDataSymbol, encodeUint32SliceBytes(order, data.Table.StringOffsets)},
+		{funcInfoHashDataSymbol, encodeUint16SliceBytes(order, data.Table.Hash)},
+		{funcInfoSymbolIndexDataSymbol, encodeSymbolIndexRecordsBytes(order, symStride, symIdxOff, symRecs)},
 	}
-	for _, array := range arrays {
-		if array.name == pcLineDataSymbol && len(data.Table.PCLines) == 0 && mod.NamedGlobal(array.name).IsNil() {
+	for _, blob := range blobs {
+		if blob.name == pcLineDataSymbol && len(data.Table.PCLines) == 0 && mod.NamedGlobal(blob.name).IsNil() {
 			continue
 		}
-		if err := setArray(array.name, array.values); err != nil {
+		if err := setBytes(blob.name, blob.raw); err != nil {
 			return err
 		}
 	}

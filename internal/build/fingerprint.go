@@ -22,10 +22,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 
+	"github.com/xgo-dev/llgo/exportdata"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -372,14 +374,66 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 		}
 		preprocessedHash, ok := ctx.llgoFileHashCache[cacheKey]
 		if !ok {
-			hash := sha256.New()
-			cmd := ctx.compilerForSource(input.path)
-			cmd.Stdout = hash
-			preprocessArgs := append(slices.Clone(compilerArgs), "-E", input.path)
-			if err := cmd.Compile(preprocessArgs...); err != nil {
-				return nil, fmt.Errorf("preprocess file %q: %w", input.path, err)
+			var depPath string
+			depKey := ""
+			if cacheEnabled() && overlay[input.path] == nil {
+				depKey = ctx.targetTriple() + "\x00" + cacheKey.path + "\x00" + cacheKey.compilerArgs
+				depPath = ctx.ensureCacheManager().DepfilePath(depKey)
+				if raw, err := os.ReadFile(depPath); err == nil {
+					if df, err := exportdata.UnmarshalDepfile(raw); err == nil && df.Key == depKey && exportdata.ValidateDepfile(df) {
+						preprocessedHash = df.PreprocessedHash
+						ok = true
+					}
+				}
 			}
-			preprocessedHash = hex.EncodeToString(hash.Sum(nil))
+			if !ok {
+				hash := sha256.New()
+				cmd := ctx.compilerForSource(input.path)
+				cmd.Stdout = hash
+				var tmpDep string
+				if depPath != "" {
+					if f, err := os.CreateTemp("", "llgo-dep-*.d"); err == nil {
+						tmpDep = f.Name()
+						_ = f.Close()
+					}
+				}
+				if tmpDep != "" {
+					preprocessArgs := append(slices.Clone(compilerArgs), "-E", "-MMD", "-MF", tmpDep, "-MT", "llgo", input.path)
+					if err := cmd.Compile(preprocessArgs...); err != nil {
+						// Fallback to plain -E if compiler rejects -MMD/-MF for these flags.
+						_ = os.Remove(tmpDep)
+						tmpDep = ""
+						hash.Reset()
+						cmd = ctx.compilerForSource(input.path)
+						cmd.Stdout = hash
+						if err := cmd.Compile(append(slices.Clone(compilerArgs), "-E", input.path)...); err != nil {
+							return nil, fmt.Errorf("preprocess file %q: %w", input.path, err)
+						}
+					}
+				} else {
+					preprocessArgs := append(slices.Clone(compilerArgs), "-E", input.path)
+					if err := cmd.Compile(preprocessArgs...); err != nil {
+						return nil, fmt.Errorf("preprocess file %q: %w", input.path, err)
+					}
+				}
+				preprocessedHash = hex.EncodeToString(hash.Sum(nil))
+				if tmpDep != "" {
+					if depBytes, err := os.ReadFile(tmpDep); err == nil {
+						deps := parseMakeDepfile(string(depBytes))
+						deps = append(deps, input.path)
+						if stats, err := exportdata.StatFiles(deps); err == nil && len(stats) > 0 {
+							if raw, err := exportdata.MarshalDepfile(&exportdata.Depfile{
+								Key:              depKey,
+								PreprocessedHash: preprocessedHash,
+								Files:            stats,
+							}); err == nil {
+								_ = writeFileAtomicBytes(depPath, raw)
+							}
+						}
+					}
+					_ = os.Remove(tmpDep)
+				}
+			}
 			ctx.llgoFileHashCache[cacheKey] = preprocessedHash
 		}
 		overlayHash := ""
@@ -439,4 +493,44 @@ func digestFilesWithOverlay(paths []string, overlay map[string][]byte) ([]fileDi
 	sort.Slice(digests, func(i, j int) bool { return digests[i].Path < digests[j].Path })
 
 	return digests, nil
+}
+
+// parseMakeDepfile parses a clang/gcc -MMD -MF Makefile dependency file and
+// returns the list of prerequisite file paths.
+func parseMakeDepfile(content string) []string {
+	content = strings.ReplaceAll(content, "\\\r\n", " ")
+	content = strings.ReplaceAll(content, "\\\n", " ")
+	colon := strings.IndexByte(content, ':')
+	if colon < 0 {
+		return nil
+	}
+	rest := content[colon+1:]
+	var out []string
+	var cur strings.Builder
+	for i := 0; i < len(rest); i++ {
+		ch := rest[i]
+		if ch == '\\' && i+1 < len(rest) {
+			i++
+			cur.WriteByte(rest[i])
+			continue
+		}
+		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+			if cur.Len() > 0 {
+				p := filepath.Clean(cur.String())
+				if p != "" && p != "." {
+					out = append(out, p)
+				}
+				cur.Reset()
+			}
+			continue
+		}
+		cur.WriteByte(ch)
+	}
+	if cur.Len() > 0 {
+		p := filepath.Clean(cur.String())
+		if p != "" && p != "." {
+			out = append(out, p)
+		}
+	}
+	return out
 }
