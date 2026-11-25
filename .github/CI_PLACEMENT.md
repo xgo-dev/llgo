@@ -1,11 +1,12 @@
 # CI placement
 
-Compiler, runtime, ABI and firmware correctness remain PR gates. Mise and Pixi
+Compiler, runtime, ABI and firmware correctness remain PR gates. Pixi
 host provisioning/build checks run daily in llgo-compat/ci's **Development
-environments** workflow (companion PR: https://github.com/llgo-compat/ci/pull/84).
-Both tools cover Linux amd64/arm64, macOS amd64/arm64 and Windows amd64. The
-Mise/Pixi workflows are removed from this repository after moving their host
-builds to the daily repository. Embedded debugger
+environments** workflow (originally set up in https://github.com/llgo-compat/ci/pull/84;
+Mise was retired in favor of Pixi and its daily job in llgo-compat/ci should be
+dropped alongside removing `dev/mise.toml`). Pixi covers Linux amd64/arm64,
+macOS amd64/arm64 and Windows amd64. The repository-local environment workflows
+are removed after moving host builds to the daily repository. Embedded debugger
 checks retain the Linux PR gate and their daily native-host coverage.
 
 **Baseline benchmarks** run only on PRs. Base and head are measured sequentially
