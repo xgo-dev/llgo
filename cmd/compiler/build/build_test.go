@@ -656,7 +656,7 @@ func TestGenericLocalTypeColdAndHotPackageCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := filepath.Join(repoRoot, "internal", "build", "testdata", "genericlocalcache")
+	fixture := filepath.Join(repoRoot, "cmd", "compiler", "build", "testdata", "genericlocalcache")
 	const (
 		cacheRootEnv  = "LLGO_TEST_GENERIC_LOCAL_CACHE_ROOT"
 		cachePhaseEnv = "LLGO_TEST_GENERIC_LOCAL_CACHE_PHASE"

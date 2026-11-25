@@ -173,8 +173,13 @@ func TestRuntimePatchGoTypesOverlayAndSizes(t *testing.T) {
 func TestParseMakeDepfileAndLinkSnapshotSidecar(t *testing.T) {
 	dep := "llgo: /tmp/foo.c \\\n  /usr/include/a\\ b.h /tmp/bar.h\n"
 	got := parseMakeDepfile(dep)
-	if len(got) != 3 || got[0] != "/tmp/foo.c" || got[1] != "/usr/include/a b.h" || got[2] != "/tmp/bar.h" {
-		t.Fatalf("parseMakeDepfile = %#v", got)
+	want := []string{
+		filepath.Clean("/tmp/foo.c"),
+		filepath.Clean("/usr/include/a b.h"),
+		filepath.Clean("/tmp/bar.h"),
+	}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("parseMakeDepfile = %#v, want %#v", got, want)
 	}
 
 	dir := t.TempDir()

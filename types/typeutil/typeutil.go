@@ -183,9 +183,9 @@ func (m *Map) KeysString() string { return m.toString(false) }
 // The zero value is ready to use; a nil *MethodSetCache falls back to
 // types.NewMethodSet directly.
 type MethodSetCache struct {
-	mu    sync.RWMutex
-	named map[*types.Named]struct{ value, pointer *types.MethodSet }
-	other Map
+	mu     sync.RWMutex
+	named  map[*types.Named]struct{ value, pointer *types.MethodSet }
+	others map[types.Type]*types.MethodSet
 }
 
 // MethodSet returns the method set of T (thread-safe).
@@ -204,7 +204,7 @@ func (cache *MethodSetCache) MethodSet(T types.Type) *types.MethodSet {
 		if ms != nil {
 			return ms
 		}
-		ms = types.NewMethodSet(T)
+		ms = types.NewMethodSet(n)
 		cache.mu.Lock()
 		if cache.named == nil {
 			cache.named = make(map[*types.Named]struct{ value, pointer *types.MethodSet })
@@ -227,7 +227,7 @@ func (cache *MethodSetCache) MethodSet(T types.Type) *types.MethodSet {
 			if ms != nil {
 				return ms
 			}
-			ms = types.NewMethodSet(T)
+			ms = types.NewMethodSet(types.NewPointer(n))
 			cache.mu.Lock()
 			if cache.named == nil {
 				cache.named = make(map[*types.Named]struct{ value, pointer *types.MethodSet })
@@ -245,17 +245,20 @@ func (cache *MethodSetCache) MethodSet(T types.Type) *types.MethodSet {
 	}
 
 	cache.mu.RLock()
-	cached := cache.other.At(T)
+	ms := cache.others[u]
 	cache.mu.RUnlock()
-	if ms, ok := cached.(*types.MethodSet); ok && ms != nil {
+	if ms != nil {
 		return ms
 	}
-	ms := types.NewMethodSet(T)
+	ms = types.NewMethodSet(u)
 	cache.mu.Lock()
-	if existing, ok := cache.other.At(T).(*types.MethodSet); ok && existing != nil {
+	if cache.others == nil {
+		cache.others = make(map[types.Type]*types.MethodSet)
+	}
+	if existing := cache.others[u]; existing != nil {
 		ms = existing
 	} else {
-		cache.other.Set(T, ms)
+		cache.others[u] = ms
 	}
 	cache.mu.Unlock()
 	return ms

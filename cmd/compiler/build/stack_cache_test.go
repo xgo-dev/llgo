@@ -164,7 +164,7 @@ func TestPthreadStackSizePackageCache(t *testing.T) {
 					generated[pkg.PkgPath] = checkStackCacheNewProc(t, pkg)
 				}
 			}
-			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: filepath.Join(repoRoot, "internal", "build", "testdata", "stackcache")})
+			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: filepath.Join(repoRoot, "cmd", "compiler", "build", "testdata", "stackcache")})
 			if err != nil {
 				t.Fatal(err)
 			}

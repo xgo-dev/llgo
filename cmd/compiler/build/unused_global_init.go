@@ -224,8 +224,7 @@ func hasNativePackageDecls(pkg *types.Package) bool {
 		return true
 	}
 	if c, ok := scope.Lookup("LLGoPackage").(*types.Const); ok && c.Val().Kind() == constant.String {
-		kind, _ := directive.ParsePackageKind(constant.StringVal(c.Val()))
-		if kind == directive.PkgLinkIR || kind == directive.PkgLinkExtern {
+		if strings.HasPrefix(constant.StringVal(c.Val()), "link") {
 			return true
 		}
 	}

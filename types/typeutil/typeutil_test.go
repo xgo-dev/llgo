@@ -164,3 +164,42 @@ func Use(r Reader, b Box, fn func()) {
 		t.Fatalf("StaticCallee count = %d (%v), want 3 (Read, Reset, Helper)", len(statics), statics)
 	}
 }
+
+func TestMethodSetCacheCanonicalizesAliasReceivers(t *testing.T) {
+	pkgA := types.NewPackage("example.com/a", "a")
+	pkgB := types.NewPackage("example.com/b", "b")
+
+	baseObj := types.NewTypeName(token.NoPos, pkgA, "Base", nil)
+	baseNamed := types.NewNamed(baseObj, types.NewStruct(nil, nil), nil)
+	sig := types.NewSignatureType(types.NewVar(token.NoPos, pkgA, "b", types.NewPointer(baseNamed)), nil, nil, nil, nil, false)
+	baseNamed.AddMethod(types.NewFunc(token.NoPos, pkgA, "Ping", sig))
+	pkgA.Scope().Insert(baseObj)
+
+	aliasObj := types.NewTypeName(token.NoPos, pkgB, "Alias", nil)
+	aliasType := types.NewAlias(aliasObj, baseNamed)
+	pkgB.Scope().Insert(aliasObj)
+
+	var cache typeutil.MethodSetCache
+	// Query pointer-to-alias BEFORE pointer-to-named; Selection.Recv must still
+	// be canonical *a.Base (matching x/tools typeutil.MethodSetCache).
+	ms := cache.MethodSet(types.NewPointer(aliasType))
+	sel := ms.Lookup(nil, "Ping")
+	if sel == nil {
+		t.Fatal("missing Ping method on *Alias")
+	}
+	if got := types.TypeString(sel.Recv(), nil); got != "*example.com/a.Base" {
+		t.Fatalf("MethodSet(*Alias).Recv() = %q, want %q", got, "*example.com/a.Base")
+	}
+	// Value alias too.
+	valSig := types.NewSignatureType(types.NewVar(token.NoPos, pkgA, "b", baseNamed), nil, nil, nil, nil, false)
+	baseNamed.AddMethod(types.NewFunc(token.NoPos, pkgA, "Val", valSig))
+	var cache2 typeutil.MethodSetCache
+	msVal := cache2.MethodSet(aliasType)
+	selVal := msVal.Lookup(nil, "Val")
+	if selVal == nil {
+		t.Fatal("missing Val method on Alias")
+	}
+	if got := types.TypeString(selVal.Recv(), nil); got != "example.com/a.Base" {
+		t.Fatalf("MethodSet(Alias).Recv() = %q, want %q", got, "example.com/a.Base")
+	}
+}

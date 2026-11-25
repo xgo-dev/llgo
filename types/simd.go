@@ -164,19 +164,15 @@ func goSIMDVectorShape(typ gotypes.Type) (*gotypes.Array, bool) {
 	if named.Obj().Name() != expected {
 		return nil, false
 	}
-	var wantTag int
-	switch bits * lanes.Len() {
-	case 128:
-		wantTag = 0
-	case 256:
-		wantTag = 1
-	case 512:
-		wantTag = 2
-	default:
+	width := bits * lanes.Len()
+	if width != 128 && width != 256 && width != 512 {
 		return nil, false
 	}
-	tag, ok := goSIMDTagIndex(st.Field(0).Type())
-	if !ok || tag != wantTag {
+	tag, ok := unaliasType(st.Field(0).Type()).(*gotypes.Named)
+	if !ok || tag.Obj() == nil || tag.Obj().Pkg() == nil || tag.Obj().Pkg().Path() != "simd/archsimd" || tag.Obj().Name() != fmt.Sprintf("v%d", width) {
+		return nil, false
+	}
+	if (&gotypes.StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(tag) != 0 {
 		return nil, false
 	}
 	return lanes, true
@@ -238,19 +234,15 @@ func llSIMDVectorShape(n *Named) (*Array, bool) {
 	if n.obj.name != expected {
 		return nil, false
 	}
-	var wantTag int
-	switch bits * lanes.length {
-	case 128:
-		wantTag = 0
-	case 256:
-		wantTag = 1
-	case 512:
-		wantTag = 2
-	default:
+	width := bits * lanes.length
+	if width != 128 && width != 256 && width != 512 {
 		return nil, false
 	}
-	tag, ok := llSIMDTagIndex(st.fields[0].typ)
-	if !ok || tag != wantTag {
+	tag, ok := Unalias(st.fields[0].typ).(*Named)
+	if !ok || tag.obj == nil || tag.obj.pkg == nil || tag.obj.pkg.path != "simd/archsimd" || tag.obj.name != fmt.Sprintf("v%d", width) {
+		return nil, false
+	}
+	if (&StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(tag) != 0 {
 		return nil, false
 	}
 	return lanes, true

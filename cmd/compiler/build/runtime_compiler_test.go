@@ -48,7 +48,7 @@ func TestRuntimeCompilerPackageCache(t *testing.T) {
 			}
 			pkgs, err := Build(Invocation{
 				Args: []string{"."}, Config: conf,
-				Dir: filepath.Join(root, "internal", "build", "testdata", "runtimecompiler"),
+				Dir: filepath.Join(root, "cmd", "compiler", "build", "testdata", "runtimecompiler"),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -103,7 +103,7 @@ func TestRuntimeCompilerToolchainPackages(t *testing.T) {
 	conf.Overlay = runtimeCompilerOverlay(t, root, "llgo-cache")
 	_, err = Build(Invocation{
 		Args: []string{"."}, Config: conf,
-		Dir: filepath.Join(root, "internal", "build", "testdata", "runtimecompiler", "toolchain"),
+		Dir: filepath.Join(root, "cmd", "compiler", "build", "testdata", "runtimecompiler", "toolchain"),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -24,12 +24,13 @@ import (
 	"sort"
 )
 
-const depfileMagic = "LLGODEP1"
+const depfileMagic = "LLGODEP2"
 
 type depfileStat struct {
 	Path    string
 	Size    int64
 	ModTime int64
+	Hash    string
 }
 
 type depfileRecord struct {
@@ -53,10 +54,15 @@ func statDepfiles(paths []string) ([]depfileStat, error) {
 		if err != nil {
 			return nil, err
 		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, err
+		}
 		stats = append(stats, depfileStat{
 			Path:    p,
 			Size:    fi.Size(),
 			ModTime: fi.ModTime().UnixNano(),
+			Hash:    digestBytes(data),
 		})
 	}
 	sort.Slice(stats, func(i, j int) bool { return stats[i].Path < stats[j].Path })
@@ -72,7 +78,11 @@ func validateDepfile(df *depfileRecord) bool {
 		if err != nil {
 			return false
 		}
-		if fi.Size() != f.Size || fi.ModTime().UnixNano() != f.ModTime {
+		if fi.Size() != f.Size || f.Hash == "" {
+			return false
+		}
+		data, err := os.ReadFile(f.Path)
+		if err != nil || digestBytes(data) != f.Hash {
 			return false
 		}
 	}
@@ -94,6 +104,7 @@ func marshalDepfile(df *depfileRecord) ([]byte, error) {
 		writeBinStr(&buf, f.Path)
 		writeBinVarint(&buf, f.Size)
 		writeBinVarint(&buf, f.ModTime)
+		writeBinStr(&buf, f.Hash)
 	}
 	return buf.Bytes(), nil
 }
@@ -129,6 +140,9 @@ func unmarshalDepfile(raw []byte) (*depfileRecord, error) {
 				return nil, err
 			}
 			if df.Files[i].ModTime, err = r.readVarint(); err != nil {
+				return nil, err
+			}
+			if df.Files[i].Hash, err = r.readStr(); err != nil {
 				return nil, err
 			}
 		}

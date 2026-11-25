@@ -49,8 +49,8 @@ func Parse(comment *ast.Comment) (Directive, bool) {
 		namespace, body = "llgo:", raw[len("//llgo:"):]
 	case strings.HasPrefix(raw, "// llgo:"):
 		namespace, body = "llgo:", raw[len("// llgo:"):]
-	case strings.HasPrefix(raw, "//export "):
-		return Directive{Name: "export", Args: strings.TrimSpace(raw[len("//export "):]), Raw: raw, Pos: comment.Pos()}, true
+	case strings.HasPrefix(raw, "//export ") || strings.HasPrefix(raw, "//export\t"):
+		return Directive{Name: "export", Args: strings.TrimSpace(raw[len("//export"):]), Raw: raw, Pos: comment.Pos()}, true
 	default:
 		return Directive{}, false
 	}
