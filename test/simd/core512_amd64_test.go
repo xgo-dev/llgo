@@ -98,6 +98,67 @@ func TestSIMD512VBMI2WideCall(t *testing.T) {
 }
 
 //go:noinline
+func doubleFour(p *[4]int32) {
+	x := archsimd.LoadInt32x4Array(p)
+	x.Add(x).StoreArray(p)
+}
+
+//go:noinline
+func independentWideCall(narrow *[4]int32, wide *[16]int32) {
+	if archsimd.X86.AVX() {
+		doubleFour(narrow)
+	}
+	if archsimd.X86.FMA() {
+		doubleFour(narrow)
+	}
+	if archsimd.X86.SHA() {
+		doubleFour(narrow)
+	}
+	if archsimd.X86.AVXVNNI() {
+		doubleFour(narrow)
+	}
+	if archsimd.X86.AVX512VBMI2() {
+		x := archsimd.LoadInt32x16Array(wide)
+		vectorcall.Add512(x, x).StoreArray(wide)
+	}
+}
+
+func TestSIMD512IndependentGuardsWideCall(t *testing.T) {
+	if !archsimd.X86.AVX() {
+		t.Skip("128-bit archsimd operations require AVX")
+	}
+	fma, sha, vnni := archsimd.X86.FMA(), archsimd.X86.SHA(), archsimd.X86.AVXVNNI()
+	vbmi2 := archsimd.X86.AVX512VBMI2()
+	t.Logf("FMA=%t SHA=%t AVXVNNI=%t VBMI2=%t", fma, sha, vnni, vbmi2)
+	narrow := [4]int32{1, -2, 3, -4}
+	want := narrow
+	for _, enabled := range []bool{true, fma, sha, vnni} {
+		if enabled {
+			for i := range want {
+				want[i] *= 2
+			}
+		}
+	}
+	var wide [16]int32
+	for i := range wide {
+		wide[i] = int32(i + 1)
+	}
+	independentWideCall(&narrow, &wide)
+	if narrow != want {
+		t.Fatalf("narrow lanes = %v, want %v", narrow, want)
+	}
+	for i, got := range wide {
+		want := int32(i + 1)
+		if vbmi2 {
+			want *= 2
+		}
+		if got != want {
+			t.Fatalf("wide lane %d = %d, want %d", i, got, want)
+		}
+	}
+}
+
+//go:noinline
 func eitherGuard512(dst *[16]int32, enabled bool, makeVector func() archsimd.Int32x16) {
 	if archsimd.X86.AVX512() || archsimd.X86.AVX512VBMI2() {
 		if enabled {

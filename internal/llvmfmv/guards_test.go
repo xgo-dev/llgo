@@ -2,9 +2,11 @@ package llvmfmv
 
 import (
 	"fmt"
-	"github.com/xgo-dev/llvm"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/xgo-dev/llvm"
 )
 
 func TestGuardedFeatureCombinations(t *testing.T) {
@@ -619,10 +621,22 @@ no:
 	checkCachedGuard(t, m, featureAVX2, m.NamedFunction("root"+variantSuffix))
 }
 
-func TestGuardCombinationBudget(t *testing.T) {
-	masks := dispatchMasks(map[uint64]bool{2: true, 4: true, 8: true, 16: true, 32: true})
-	if len(masks) != 6 || masks[len(masks)-1] != 62 {
-		t.Fatalf("expected five observed masks and their full union, got %v", masks)
+func TestGuardMaskUnions(t *testing.T) {
+	// Five independent sites have 31 nonempty combinations. A sixth site
+	// checking two of those same bits contributes no new combination.
+	sets := map[uint64]bool{1: true, 2: true, 4: true, 8: true, 16: true, 3: true}
+	choices := dispatchMasks(sets)
+	if len(choices) != 31 {
+		t.Fatalf("got %d choices, want 31", len(choices))
+	}
+	for i, mask := range choices {
+		if mask != uint64(i+1) {
+			t.Fatalf("choice %d = %d, want %d", i, mask, i+1)
+		}
+	}
+	// A conjunction that only occurs as a unit does not request its parts.
+	if got := dispatchMasks(map[uint64]bool{3: true, 7: true}); !slices.Equal(got, []uint64{3, 7}) {
+		t.Fatalf("overlapping guards produced %v", got)
 	}
 }
 
@@ -680,38 +694,26 @@ no:
 	}
 }
 
-func TestGuardBodyLimit(t *testing.T) {
-	observed := make(map[uint64]bool)
-	for i := 1; i <= 48; i++ {
-		observed[uint64(i)<<1] = true
-	}
-	masks := dispatchMasks(observed)
-	if len(masks) != maxGuardChoices || masks[len(masks)-1] != 126 {
-		t.Fatal(masks)
-	}
+func TestGuardedWideCallThroughLongHelperChain(t *testing.T) {
+	const depth = 66
 	var ir strings.Builder
 	ir.WriteString(`target triple = "x86_64-unknown-linux-gnu"
-declare i1 @wide() "llgo.cpu.query"="x86.avx512"
-declare i1 @fma() "llgo.cpu.query"="x86.fma"
-define void @root(ptr %p) {
- %q=call i1 @wide()
- br i1 %q,label %yes,label %next
-yes: call void @kernel0(ptr %p)
- br label %next
-next:
- %f=call i1 @fma()
- br i1 %f,label %fmayes,label %no
-fmayes: call void @kernel0(ptr %p)
- br label %no
-no: ret void
+declare i1 @vbmi2() "llgo.cpu.query"="x86.avx512vbmi2"
+declare void @wide(<16 x i32>)
+define void @root() {
+ %q=call i1 @vbmi2()
+ br i1 %q,label %yes,label %out
+yes: call void @kernel0()
+ br label %out
+out: ret void
 }
 `)
-	for i := 0; i < maxGuardBodies+4; i++ {
-		fmt.Fprintf(&ir, "define void @kernel%d(ptr %%p) {\n", i)
-		if i < maxGuardBodies+3 {
-			fmt.Fprintf(&ir, "call void @kernel%d(ptr %%p)\n", i+1)
+	for i := 0; i < depth; i++ {
+		fmt.Fprintf(&ir, "define void @kernel%d() noinline {\n", i)
+		if i+1 < depth {
+			fmt.Fprintf(&ir, "call void @kernel%d()\n", i+1)
 		} else {
-			ir.WriteString("%x = load <16 x i32>,ptr %p\nstore <16 x i32> %x,ptr %p\n")
+			ir.WriteString("call void @wide(<16 x i32> zeroinitializer)\n")
 		}
 		ir.WriteString("ret void\n}\n")
 	}
@@ -722,21 +724,22 @@ no: ret void
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	count := 0
-	for f := m.FirstFunction(); !f.IsNil(); f = llvm.NextFunction(f) {
-		if strings.Contains(f.Name(), symbolPrefix) {
-			count++
+	mask := predicateBits[X86Query("AVX512VBMI2")]
+	suffix := guardSuffix(mask)
+	body := m.NamedFunction("root" + suffix)
+	if body.IsNil() {
+		t.Fatal("missing VBMI2 root specialization")
+	}
+	checkCachedGuard(t, m, mask, body)
+	for i := 0; i < depth; i++ {
+		name := fmt.Sprintf("kernel%d%s", i, suffix)
+		if !strings.Contains(body.String(), "call void @"+name+"(") {
+			t.Fatalf("expected a specialized call to %s in %s", name, body.String())
 		}
+		body = m.NamedFunction(name)
 	}
-	if count != maxGuardBodies {
-		t.Fatalf("created %d bodies, want %d", count, maxGuardBodies)
-	}
-	union := guardSuffix(256 | 512)
-	if !strings.Contains(m.NamedFunction("root"+union).String(), "call void @kernel0"+union) {
-		t.Fatal("widest root did not get helper budget")
-	}
-	if !strings.Contains(m.NamedFunction("kernel58"+union).String(), "call void @kernel59(") {
-		t.Fatal("budget boundary did not preserve the ordinary call")
+	if !strings.Contains(body.String(), "call void @wide(") {
+		t.Fatal(body.String())
 	}
 }
 

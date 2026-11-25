@@ -533,15 +533,10 @@ the physical body from both predicates and caches it in one slot. Separately
 compiled AVX2 callers can still use the canonical AVX2 entry. An AVX2-only
 guard reuses that entry when available. The wider
 clone specializes direct calls to the local AVX2 helper body.
-For independent guarded regions, the resolver selects the union of matching
-masks when the function has up to 16 distinct unions (including the empty
-mask). Above that limit it retains at most 14 observed masks and their full
-union. Each root processed by the guard pass has a budget of 64 new bodies,
-including its helpers, baseline and resolver. A staged canonical AVX2 variant
-and its baseline may each contain another guard and receive separate budgets.
-The canonical AVX2 plan accounts for its own bodies outside these budgets. Wider masks receive the helper budget first. Further
-callees keep their ordinary entry. Regions outside the selected mask retain
-their runtime checks. Local helpers share a copy for each distinct proven mask.
+For independent guarded regions, the resolver selects the union of all
+matching masks. Overlapping guard combinations with the same effective
+mask share one body. Local helpers also share a copy for each distinct
+proven mask, including along long call chains.
 
 Specializations follow direct calls through local helpers, including kernels
 that take array pointers and use vectors internally. Recursive helper calls

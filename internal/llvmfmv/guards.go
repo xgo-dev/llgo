@@ -2,8 +2,7 @@ package llvmfmv
 
 import (
 	"fmt"
-	"math/bits"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llvm"
@@ -282,25 +281,12 @@ func guardContexts(fn llvm.Value, queries map[llvm.Value]uint64, work map[llvm.V
 	return dispatchMasks(sets)
 }
 
-// Reserve room for a baseline body and a resolver as well as the roots and
-// local helpers. At exhaustion, calls through the existing ABI remain legal.
-const maxGuardBodies = 64
-const maxGuardChoices = 15
-
-// Independent guard sites may both execute. A matching union must follow its
-// subsets in the resolver so it can cache a body with every proven feature.
+// Independent guarded regions can both execute. Build the distinct unions of
+// their masks so the resolver can select every enabled region together.
 func dispatchMasks(sets map[uint64]bool) []uint64 {
-	var all uint64
 	unions := []uint64{0}
 	seen := map[uint64]bool{0: true}
-	// Four independent predicates already yield fifteen nonempty combinations.
-	// Above the limit, keep up to fourteen observed masks and their full union.
-	const maxUnions = maxGuardChoices + 1
 	for mask := range sets {
-		all |= mask
-		if len(unions) > maxUnions {
-			continue
-		}
 		for _, prior := range unions {
 			union := prior | mask
 			if !seen[union] {
@@ -309,28 +295,10 @@ func dispatchMasks(sets map[uint64]bool) []uint64 {
 			}
 		}
 	}
-	if len(unions) <= maxUnions {
-		for _, mask := range unions[1:] {
-			sets[mask] = true
-		}
-	} else {
-		sets[all] = true
-	}
-	ordered := make([]uint64, 0, len(sets))
-	for mask := range sets {
-		ordered = append(ordered, mask)
-	}
-	sort.Slice(ordered, func(i, j int) bool {
-		a, b := bits.OnesCount64(ordered[i]), bits.OnesCount64(ordered[j])
-		if a != b {
-			return a < b
-		}
-		return ordered[i] < ordered[j]
-	})
-	if len(ordered) > maxGuardChoices {
-		ordered = append(ordered[:maxGuardChoices-1], all)
-	}
-	return ordered
+	// Every strict superset has a larger unsigned value and wins the select.
+	choices := unions[1:]
+	slices.Sort(choices)
+	return choices
 }
 
 type guardRoot struct {
@@ -340,7 +308,7 @@ type guardRoot struct {
 }
 
 // A direct call to a clone is valid when the caller covers every guard choice.
-// dispatchMasks places the union of all choices last, including at the budget limit.
+// dispatchMasks places the union of all choices last.
 func (r *guardRoot) needsDispatch(known uint64) bool {
 	return r != nil && r.masks[len(r.masks)-1]&^known != 0
 }
@@ -468,10 +436,7 @@ func runGuardedFeatures(abi *wideABI, avx2 *avx2Plan, baseline string) error {
 	}
 	clones := make(map[guardKey]llvm.Value)
 	// Materialize all copies before replacing any public entry. Local helper
-	// copies are shared by callers with identical proven predicates. Across a
-	// translation unit boundary, the ordinary Go carrier and entry remain valid.
-	var helperBudget int
-	var currentRoot llvm.Value
+	// copies are shared by callers with identical proven predicates.
 	var specializeLocal func(llvm.Value, uint64) (llvm.Value, error)
 	specializeLocal = func(fn llvm.Value, mask uint64) (llvm.Value, error) {
 		key := guardKey{fn, mask}
@@ -486,12 +451,6 @@ func runGuardedFeatures(abi *wideABI, avx2 *avx2Plan, baseline string) error {
 		}
 		canonical := !v.IsNil()
 		if !canonical {
-			if fn != currentRoot {
-				if helperBudget == 0 {
-					return fn, nil
-				}
-				helperBudget--
-			}
 			name := fn.Name() + guardSuffix(mask)
 			if !mod.NamedValue(name).IsNil() {
 				return llvm.Value{}, fmt.Errorf("SIMD FMV symbol collision: %s", name)
@@ -520,13 +479,8 @@ func runGuardedFeatures(abi *wideABI, avx2 *avx2Plan, baseline string) error {
 	}
 	for i := range roots {
 		root := &roots[i]
-		currentRoot = root.fn
-		helperBudget = maxGuardBodies - len(root.masks) - 2
-		// Allocate helper bodies to the widest choices first. Keep the resolver's
-		// select chain in ascending order so matching supersets still win.
 		root.choices = make([]dispatchChoice, len(root.masks))
-		for j := len(root.masks) - 1; j >= 0; j-- {
-			mask := root.masks[j]
+		for j, mask := range root.masks {
 			v, err := specializeLocal(root.fn, mask)
 			if err != nil {
 				for _, staged := range copies {
