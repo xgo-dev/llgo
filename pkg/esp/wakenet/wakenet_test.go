@@ -55,6 +55,61 @@ func TestErrorSegments(t *testing.T) {
 	}
 }
 
+// TestSentinelShape pins the migrated error shape: the session sentinels
+// render text-first with the 0x7Axx segment code kept on Error.Code as the
+// annotation, match by pointer identity and by code, stay readable through
+// errors.As, the lifecycle guards wrap their sentinel with the operation
+// that hit it, and a forwarded esp_err keeps the code-era rendering.
+func TestSentinelShape(t *testing.T) {
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{ErrNotReady, "esp/wakenet: not initialized (code 31233)"},
+		{ErrInvalidState, "esp/wakenet: invalid state (code 31234)"},
+		{ErrTimeout, "esp/wakenet: timeout (code 31235)"},
+		{ErrBadValue, "esp/wakenet: invalid argument (code 31236)"},
+		{ErrNotFound, "esp/wakenet: model not found (code 31237)"},
+		{ErrUnsupported, "esp/wakenet: unsupported (code 32512)"},
+	} {
+		if got := c.err.Error(); got != c.want {
+			t.Errorf("%v.Error() = %q, want %q", c.err, got, c.want)
+		}
+	}
+
+	// The lifecycle guards wrap with the op: the chain still matches the
+	// sentinel by pointer, the segment code by code, and errors.As still
+	// reads the annotation through the prefix.
+	err := Start()
+	if want := "wakenet: start: esp/wakenet: not initialized (code 31233)"; err.Error() != want {
+		t.Errorf("Start() before Init = %q, want %q", err.Error(), want)
+	}
+	if !errors.Is(err, ErrNotReady) {
+		t.Error("Start() before Init does not match ErrNotReady by pointer")
+	}
+	if !errors.Is(err, &esperr.Error{Code: codeNotReady}) {
+		t.Error("Start() before Init does not match the 0x7A01 code")
+	}
+	var e *esperr.Error
+	if !errors.As(err, &e) || e.Code != codeNotReady {
+		t.Errorf("errors.As through the guard = %v, want Code %#x", e, codeNotReady)
+	}
+	want := "wakenet: close: esp/wakenet: invalid state (code 31234)"
+	if got := Close().Error(); got != want {
+		t.Errorf("Close() before Init = %q, want %q", got, want)
+	}
+
+	// A config refusal keeps matching the 0x7A04 code through the op prefix.
+	if err := Init(ModelConfig{Threshold: 0.1}); !errors.Is(err, &esperr.Error{Code: codeBadValue}) {
+		t.Errorf("Init(bad threshold) does not match the 0x7A04 code")
+	}
+
+	// Forwarded esp_err keeps the code-era rendering byte for byte.
+	if got, want := espErr(0x103).Error(), "ESP_ERR_INVALID_STATE (259)"; got != want {
+		t.Errorf("espErr(ESP_ERR_INVALID_STATE) = %q, want %q", got, want)
+	}
+}
+
 // TestErrNameTable checks the ErrName vocabulary: the esp_err codes the
 // lifecycle calls can return, this package's own segment, and the family's
 // hex fallback for anything else.

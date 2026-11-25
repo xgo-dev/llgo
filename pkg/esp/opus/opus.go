@@ -165,19 +165,38 @@ var (
 // (8000/12000/16000/24000/48000), a channel count outside 1..2, an unknown
 // application, a frame duration outside {5,10,20,40,60} ms, an Encode
 // whose pcm does not hold exactly one frame, a Decode whose pcmOut is too
-// small to be sized.
-var ErrBadValue = &esperr.Error{Code: codeBadValue, Name: ErrName(codeBadValue)}
+// small to be sized. It is the package's semantic sentinel - match it with
+// errors.Is - and it keeps the 0x7901 segment code on Error.Code as the
+// diagnostic annotation, so errors.As and esperr.Code still expose the
+// number this package reports and code-style checks against the segment
+// value keep working.
+var ErrBadValue = newSentinel("esp/opus: invalid argument", codeBadValue)
 
 // ErrUnsupported reports that this firmware (or build) has no Opus at all:
 // a host build, or an ESP-IDF firmware that did not link the codec
 // component. The glue reports ESP_ERR_NOT_SUPPORTED and the package
-// renders it as this sentinel, the family's stub tag.
-var ErrUnsupported = &esperr.Error{Code: codeUnsupported, Name: ErrName(codeUnsupported)}
+// renders it as this sentinel, the family's stub tag. It is the package's
+// semantic sentinel - match it with errors.Is - and it keeps the 0x7F00
+// stub-tag code on Error.Code as the diagnostic annotation, so errors.As
+// and esperr.Code still expose the number the pipeline reported.
+var ErrUnsupported = newSentinel("esp/opus: unsupported", codeUnsupported)
+
+// newSentinel declares a semantic sentinel that keeps its historical
+// segment code on Error.Code as the annotation (esperr.New is text-only;
+// the glue still reports the code, and the error-model doc above pins the
+// segment).
+func newSentinel(text string, code int32) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	return e
+}
 
 // errOf wraps a raw pipeline code as this package's error value: 0 is nil,
 // the negative Opus codes keep their sign (the tls package's mbedtls
 // convention - the sign is what distinguishes an Opus error from an
-// esp_err), positive codes are esp_err or the stub tag.
+// esp_err), positive codes are esp_err or the stub tag. Everything but the
+// stub tag forwards as a bare esperr.Coded value - the library's or
+// esp_err's own code and name are the diagnostic.
 func errOf(code int32) error {
 	if code == 0 {
 		return nil
@@ -185,7 +204,7 @@ func errOf(code int32) error {
 	if code == codeUnsupported {
 		return ErrUnsupported
 	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	return esperr.Coded(code, ErrName(code))
 }
 
 // Application selects the encoder's signal model, the values Opus
@@ -281,12 +300,12 @@ type Encoder struct {
 // the codec component, or a host build, this reports ErrUnsupported.
 func NewEncoder(sampleRate, channels, application int) (*Encoder, error) {
 	if !validRate(sampleRate) || channels < 1 || channels > 2 {
-		return nil, ErrBadValue
+		return nil, esperr.Wrap("opus: new encoder", ErrBadValue)
 	}
 	switch application {
 	case AppVoip, AppAudio, AppLowDelay:
 	default:
-		return nil, ErrBadValue
+		return nil, esperr.Wrap("opus: new encoder", ErrBadValue)
 	}
 	var h int32
 	if code := encOpen(int32(sampleRate), int32(channels), int32(application), &h); code != 0 {
@@ -310,10 +329,10 @@ func NewEncoder(sampleRate, channels, application int) (*Encoder, error) {
 // esperr.ErrClosed like the family's other closed objects.
 func (e *Encoder) Encode(pcm []int16) ([]byte, error) {
 	if e == nil || e.handle == 0 {
-		return nil, esperr.ErrClosed
+		return nil, esperr.Wrap("opus: encode", esperr.ErrClosed)
 	}
 	if len(pcm) != e.frameSize*e.channels {
-		return nil, ErrBadValue
+		return nil, esperr.Wrap("opus: encode", ErrBadValue)
 	}
 	var p *int16
 	if len(pcm) > 0 {
@@ -331,7 +350,7 @@ func (e *Encoder) Encode(pcm []int16) ([]byte, error) {
 // special values below, are ErrBadArg).
 func (e *Encoder) SetBitrate(bps int) error {
 	if e == nil || e.handle == 0 {
-		return esperr.ErrClosed
+		return esperr.Wrap("opus: set bitrate", esperr.ErrClosed)
 	}
 	return errOf(encSetBitrate(e.handle, int32(bps)))
 }
@@ -341,7 +360,7 @@ func (e *Encoder) SetBitrate(bps int) error {
 // the codec refuses values outside it (ErrBadArg).
 func (e *Encoder) SetComplexity(c int) error {
 	if e == nil || e.handle == 0 {
-		return esperr.ErrClosed
+		return esperr.Wrap("opus: set complexity", esperr.ErrClosed)
 	}
 	return errOf(encSetComplexity(e.handle, int32(c)))
 }
@@ -351,11 +370,11 @@ func (e *Encoder) SetComplexity(c int) error {
 // moves with it: sampleRate * ms / 1000 per channel.
 func (e *Encoder) SetFrameSizeMs(ms int) error {
 	if e == nil || e.handle == 0 {
-		return esperr.ErrClosed
+		return esperr.Wrap("opus: set frame size", esperr.ErrClosed)
 	}
 	n, ok := frameSamples(e.sampleRate, ms)
 	if !ok {
-		return ErrBadValue
+		return esperr.Wrap("opus: set frame size", ErrBadValue)
 	}
 	e.frameMs, e.frameSize = ms, n
 	return nil
@@ -377,7 +396,7 @@ func (e *Encoder) Lookahead() int {
 // the first call releases the handle, a second reports esperr.ErrClosed.
 func (e *Encoder) Close() error {
 	if e == nil || e.handle == 0 {
-		return esperr.ErrClosed
+		return esperr.Wrap("opus: close encoder", esperr.ErrClosed)
 	}
 	code := encClose(e.handle)
 	e.handle = 0
@@ -400,7 +419,7 @@ type Decoder struct {
 // the decoder's. ErrUnsupported on a build without the codec.
 func NewDecoder(sampleRate, channels int) (*Decoder, error) {
 	if !validRate(sampleRate) || channels < 1 || channels > 2 {
-		return nil, ErrBadValue
+		return nil, esperr.Wrap("opus: new decoder", ErrBadValue)
 	}
 	var h int32
 	if code := decOpen(int32(sampleRate), int32(channels), &h); code != 0 {
@@ -419,10 +438,10 @@ func NewDecoder(sampleRate, channels int) (*Decoder, error) {
 // packet. After Close the decoder reports esperr.ErrClosed.
 func (d *Decoder) Decode(frame []byte, pcmOut []int16) (int, error) {
 	if d == nil || d.handle == 0 {
-		return 0, esperr.ErrClosed
+		return 0, esperr.Wrap("opus: decode", esperr.ErrClosed)
 	}
 	if len(pcmOut)/d.channels < 1 {
-		return 0, ErrBadValue
+		return 0, esperr.Wrap("opus: decode", ErrBadValue)
 	}
 	var data *uint8
 	if len(frame) > 0 {
@@ -443,7 +462,7 @@ func (d *Decoder) Decode(frame []byte, pcmOut []int16) (int, error) {
 // Close frees the decoder's C state (same idempotence as Encoder.Close).
 func (d *Decoder) Close() error {
 	if d == nil || d.handle == 0 {
-		return esperr.ErrClosed
+		return esperr.Wrap("opus: close decoder", esperr.ErrClosed)
 	}
 	code := decClose(d.handle)
 	d.handle = 0

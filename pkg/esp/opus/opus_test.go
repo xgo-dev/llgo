@@ -52,6 +52,100 @@ func TestErrorSegments(t *testing.T) {
 	}
 }
 
+// TestSentinelShape pins the migrated error shape: the binding's own
+// conditions render text-first with the historical segment code kept on
+// Error.Code as the annotation, match by pointer identity and by code, and
+// stay readable through errors.As; a forwarded codec or esp_err code keeps
+// the code-era rendering byte for byte.
+func TestSentinelShape(t *testing.T) {
+	if got, want := ErrBadValue.Error(), "esp/opus: invalid argument (code 30977)"; got != want {
+		t.Errorf("ErrBadValue.Error() = %q, want %q", got, want)
+	}
+	if got, want := ErrUnsupported.Error(), "esp/opus: unsupported (code 32512)"; got != want {
+		t.Errorf("ErrUnsupported.Error() = %q, want %q", got, want)
+	}
+
+	// Pointer identity: a guard refusal IS the sentinel (through the op
+	// prefix), and the code-era checks against the segment value keep
+	// working in both directions.
+	_, err := NewEncoder(44100, 1, AppAudio)
+	if !errors.Is(err, ErrBadValue) {
+		t.Errorf("NewEncoder(44100 Hz) does not match ErrBadValue by pointer")
+	}
+	if !errors.Is(err, &esperr.Error{Code: codeBadValue}) {
+		t.Errorf("NewEncoder(44100 Hz) does not match the 0x7901 code")
+	}
+	var e *esperr.Error
+	if !errors.As(err, &e) || e.Code != codeBadValue {
+		t.Errorf("errors.As through the guard = %v, want Code %#x", e, codeBadValue)
+	}
+	if got := esperr.Code(err); got != codeBadValue {
+		t.Errorf("esperr.Code = %#x, want %#x", got, codeBadValue)
+	}
+
+	// The stub tag renders as the sentinel, matched by pointer and code.
+	err = errOf(codeUnsupported)
+	if !errors.Is(err, ErrUnsupported) || !errors.Is(err, &esperr.Error{Code: codeUnsupported}) {
+		t.Errorf("errOf(stub tag) does not match ErrUnsupported by pointer and code")
+	}
+
+	// Forwarded codes keep the code-era rendering: the negative Opus errors
+	// with their library names (sign preserved), esp_err with theirs.
+	if got, want := errOf(-4).Error(), "OPUS_INVALID_PACKET (-4)"; got != want {
+		t.Errorf("errOf(OPUS_INVALID_PACKET) = %q, want %q", got, want)
+	}
+	if got, want := errOf(0x103).Error(), "ESP_ERR_INVALID_STATE (259)"; got != want {
+		t.Errorf("errOf(ESP_ERR_INVALID_STATE) = %q, want %q", got, want)
+	}
+}
+
+// TestWrapOps pins the op context the Go-side guards add: a closed or
+// argument refusal is wrapped as "opus: <operation>", the chain matches
+// the underlying sentinel through errors.Is, and esperr.Code sees the
+// annotated code through the prefix.
+func TestWrapOps(t *testing.T) {
+	var enc *Encoder
+	if _, err := enc.Encode(make([]int16, 960)); err.Error() != "opus: encode: closed (code 9)" {
+		t.Errorf("nil encoder Encode = %q", err.Error())
+	}
+	if err := enc.SetBitrate(32000); err.Error() != "opus: set bitrate: closed (code 9)" {
+		t.Errorf("nil encoder SetBitrate = %q", err.Error())
+	}
+	if err := enc.SetComplexity(5); err.Error() != "opus: set complexity: closed (code 9)" {
+		t.Errorf("nil encoder SetComplexity = %q", err.Error())
+	}
+	if err := enc.SetFrameSizeMs(20); err.Error() != "opus: set frame size: closed (code 9)" {
+		t.Errorf("nil encoder SetFrameSizeMs = %q", err.Error())
+	}
+	if err := enc.Close(); err.Error() != "opus: close encoder: closed (code 9)" {
+		t.Errorf("nil encoder Close = %q", err.Error())
+	}
+	var dec *Decoder
+	if _, err := dec.Decode(nil, make([]int16, 960)); err.Error() != "opus: decode: closed (code 9)" {
+		t.Errorf("nil decoder Decode = %q", err.Error())
+	}
+	if err := dec.Close(); err.Error() != "opus: close decoder: closed (code 9)" {
+		t.Errorf("nil decoder Close = %q", err.Error())
+	}
+	if _, err := NewEncoder(48000, 3, AppAudio); err.Error() !=
+		"opus: new encoder: esp/opus: invalid argument (code 30977)" {
+		t.Errorf("NewEncoder(3 ch) = %q", err.Error())
+	}
+	if _, err := NewDecoder(44100, 1); err.Error() !=
+		"opus: new decoder: esp/opus: invalid argument (code 30977)" {
+		t.Errorf("NewDecoder(44100 Hz) = %q", err.Error())
+	}
+
+	// Every wrapped shape still matches what the guards always reported.
+	var enc2 *Encoder
+	if _, err := enc2.Encode(nil); !errors.Is(err, esperr.ErrClosed) {
+		t.Errorf("Encode on a nil encoder does not match esperr.ErrClosed")
+	}
+	if got := esperr.Code(enc2.Close()); got != 9 {
+		t.Errorf("esperr.Code(Close on nil) = %d, want 9", got)
+	}
+}
+
 // TestErrNameTable checks the ErrName vocabulary: the negative Opus codes
 // with their library names, the esp_err codes the glue can return, this
 // package's own segment, and the family's hex fallback for anything else.
