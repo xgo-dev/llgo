@@ -67,7 +67,7 @@ func TestDCEEntryRootCandidates(t *testing.T) {
 		t.Fatalf("dceEntryRootCandidates(false) = %v, want %v", got, want)
 	}
 
-	want = append(want, llvmgen.PkgRuntime+".init")
+	want = append(want, llvmgen.PkgRuntime+".InitGC", llvmgen.PkgRuntime+".init")
 	if got := dceEntryRootCandidates(nil, true); !reflect.DeepEqual(got, want) {
 		t.Fatalf("dceEntryRootCandidates(true) = %v, want %v", got, want)
 	}

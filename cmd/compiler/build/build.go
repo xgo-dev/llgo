@@ -2974,7 +2974,7 @@ func dceEntryRootCandidates(pkgs []Package, needRuntime bool) []string {
 	slices.Sort(exports)
 	roots = append(roots, exports...)
 	if needRuntime {
-		roots = append(roots, llvmgen.PkgRuntime+".init")
+		roots = append(roots, llvmgen.PkgRuntime+".InitGC", llvmgen.PkgRuntime+".init")
 	}
 	return roots
 }
