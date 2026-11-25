@@ -1,7 +1,9 @@
-//go:build !llgo.idf
+//go:build !llgo
 
-// Host build (go build / go vet / gopls): the C glue only exists in the
-// ESP-IDF link environment, so every binding reports the family's
+// Host build (go build / go vet / gopls): the codec exists only in firmware
+// builds - an ESP-IDF link resolves the bindings against the project-side
+// glue (opus_idf.go), a baremetal llgo build against the vendored sources
+// (opus_baremetal.go) - so every binding here reports the family's
 // unsupported sentinel. Nothing here talks to a codec; the Go layer turns
 // the sentinel into ErrUnsupported exactly as it does for a firmware built
 // without the codec component, and the closed-handle guards fire before
