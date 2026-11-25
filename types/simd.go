@@ -182,9 +182,9 @@ func goSIMDVectorShape(typ gotypes.Type) (*gotypes.Array, bool) {
 	return lanes, true
 }
 
-// DefaultSIMDAlignments returns target-accurate vector alignments for
+// defaultSIMDAlignments returns target-accurate vector alignments for
 // v128, v256, and v512 without requiring LLVM TargetData.
-func DefaultSIMDAlignments(spec target.Spec) [3]int64 {
+func defaultSIMDAlignments(spec target.Spec) [3]int64 {
 	if spec.WordSize == 0 || spec.PtrSize == 0 {
 		spec = target.ResolveSpec(spec)
 	}
@@ -195,9 +195,9 @@ func DefaultSIMDAlignments(spec target.Spec) [3]int64 {
 	return [3]int64{16, 32, 64}
 }
 
-// DefaultHostBasicLayouts computes standard C ABI (size, align) for Go scalar
+// defaultHostBasicLayouts computes standard C ABI (size, align) for Go scalar
 // basic kinds on spec without requiring LLVM TargetData.
-func DefaultHostBasicLayouts(spec target.Spec) [UnsafePointer + 1]LayoutPair {
+func defaultHostBasicLayouts(spec target.Spec) [UnsafePointer + 1]LayoutPair {
 	if spec.WordSize == 0 || spec.PtrSize == 0 {
 		spec = target.ResolveSpec(spec)
 	}

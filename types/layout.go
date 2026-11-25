@@ -40,7 +40,151 @@ func SizesFor(compiler, arch string) Sizes {
 	if spec.WordSize == 0 {
 		return nil
 	}
-	return NewContext(spec)
+	return NewContextWithConfig(ContextConfig{Spec: spec})
+}
+
+// StdSizes is a convenience type for creating commonly used Sizes
+// (mirroring go/types.StdSizes).
+type StdSizes struct {
+	WordSize int64 // word size in bytes - must be >= 4 (32bits)
+	MaxAlign int64 // maximum alignment in bytes - must be >= 1
+}
+
+// Alignof implements Sizes on *StdSizes.
+func (s *StdSizes) Alignof(T Type) int64 {
+	if T == nil {
+		return 1
+	}
+	switch t := T.Underlying().(type) {
+	case *Array:
+		return s.Alignof(t.elem)
+	case *Struct:
+		max := int64(1)
+		for _, f := range t.fields {
+			if f != nil {
+				if a := s.Alignof(f.typ); a > max {
+					max = a
+				}
+			}
+		}
+		return max
+	case *Slice, *Interface:
+		return s.WordSize
+	case *Basic:
+		if t.info&IsString != 0 {
+			return s.WordSize
+		}
+	}
+	a := s.Sizeof(T)
+	if a < 1 {
+		return 1
+	}
+	if b, ok := T.Underlying().(*Basic); ok && b.info&IsComplex != 0 {
+		a /= 2
+	}
+	if a > s.MaxAlign {
+		return s.MaxAlign
+	}
+	return a
+}
+
+// Offsetsof implements Sizes on *StdSizes.
+func (s *StdSizes) Offsetsof(fields []*Var) []int64 {
+	offsets := make([]int64, len(fields))
+	var o int64
+	for i, f := range fields {
+		a := s.Alignof(f.typ)
+		o = alignSize(o, a)
+		offsets[i] = o
+		sz := s.Sizeof(f.typ)
+		if o < 0 || sz < 0 || sz > math.MaxInt64-o {
+			o = -1
+		} else {
+			o += sz
+		}
+	}
+	return offsets
+}
+
+// Sizeof implements Sizes on *StdSizes.
+func (s *StdSizes) Sizeof(T Type) int64 {
+	if T == nil {
+		return 0
+	}
+	switch t := T.Underlying().(type) {
+	case *Basic:
+		switch t.kind {
+		case Bool, Int8, Uint8:
+			return 1
+		case Int16, Uint16:
+			return 2
+		case Int32, Uint32, Float32:
+			return 4
+		case Int64, Uint64, Float64, Complex64:
+			return 8
+		case Complex128:
+			return 16
+		case Int, Uint, Uintptr, UnsafePointer:
+			return s.WordSize
+		case String:
+			return 2 * s.WordSize
+		default:
+			return 0
+		}
+	case *Array:
+		n := t.length
+		if n <= 0 {
+			return 0
+		}
+		esize := s.Sizeof(t.elem)
+		if esize < 0 {
+			return -1
+		}
+		if esize == 0 {
+			return 0
+		}
+		a := s.Alignof(t.elem)
+		esize = alignSize(esize, a)
+		if esize < 0 || n > math.MaxInt64/esize {
+			return -1
+		}
+		return esize * n
+	case *Slice:
+		return 3 * s.WordSize
+	case *Struct:
+		n := len(t.fields)
+		if n == 0 {
+			return 0
+		}
+		offsets := s.Offsetsof(t.fields)
+		last := offsets[n-1]
+		if last < 0 {
+			return -1
+		}
+		lastSz := s.Sizeof(t.fields[n-1].typ)
+		if lastSz < 0 || lastSz > math.MaxInt64-last {
+			return -1
+		}
+		size := last + lastSz
+		if lastSz == 0 && size > 0 {
+			if size == math.MaxInt64 {
+				return -1
+			}
+			size++
+		}
+		return alignSize(size, s.Alignof(t))
+	case *Interface:
+		return 2 * s.WordSize
+	case *Signature:
+		if t.callConv.IsClosure() {
+			return 2 * s.WordSize
+		}
+		return s.WordSize
+	case *SIMDVec:
+		return int64(basicBits(t.elem)/8) * int64(t.length)
+	default:
+		return s.WordSize
+	}
 }
 
 // LayoutPair holds an overflow-aware (Size, Align) pair computed without LLVM
@@ -50,9 +194,9 @@ type LayoutPair struct {
 	Align int64
 }
 
-// AlignSize rounds size up to a multiple of alignment, returning -1 on int64
+// alignSize rounds size up to a multiple of alignment, returning -1 on int64
 // overflow or when size is already negative.
-func AlignSize(size, alignment int64) int64 {
+func alignSize(size, alignment int64) int64 {
 	if alignment <= 1 {
 		return size
 	}
@@ -62,8 +206,8 @@ func AlignSize(size, alignment int64) int64 {
 	return (size + alignment - 1) &^ (alignment - 1)
 }
 
-// ArrayLayout computes the overflow-aware layout of [n]elem.
-func ArrayLayout(elem LayoutPair, n int64) LayoutPair {
+// arrayLayout computes the overflow-aware layout of [n]elem.
+func arrayLayout(elem LayoutPair, n int64) LayoutPair {
 	size := int64(0)
 	if n > 0 {
 		size = -1
@@ -74,9 +218,9 @@ func ArrayLayout(elem LayoutPair, n int64) LayoutPair {
 	return LayoutPair{Size: size, Align: elem.Align}
 }
 
-// AggregateLayout computes struct/tuple size, alignment, and per-field offsets
+// aggregateLayout computes struct/tuple size, alignment, and per-field offsets
 // with overflow protection and optional Go trailing zero-sized field padding.
-func AggregateLayout(numFields int, fieldLayout func(int) LayoutPair, padTail bool) (LayoutPair, []int64) {
+func aggregateLayout(numFields int, fieldLayout func(int) LayoutPair, padTail bool) (LayoutPair, []int64) {
 	result := LayoutPair{Align: 1}
 	offsets := make([]int64, numFields)
 	for i := 0; i < numFields; i++ {
@@ -84,7 +228,7 @@ func AggregateLayout(numFields int, fieldLayout func(int) LayoutPair, padTail bo
 		if field.Align > result.Align {
 			result.Align = field.Align
 		}
-		result.Size = AlignSize(result.Size, field.Align)
+		result.Size = alignSize(result.Size, field.Align)
 		offsets[i] = result.Size
 		if result.Size < 0 || field.Size < 0 || field.Size > math.MaxInt64-result.Size {
 			result.Size = -1
@@ -99,7 +243,7 @@ func AggregateLayout(numFields int, fieldLayout func(int) LayoutPair, padTail bo
 			}
 		}
 	}
-	result.Size = AlignSize(result.Size, result.Align)
+	result.Size = alignSize(result.Size, result.Align)
 	return result, offsets
 }
 
@@ -333,7 +477,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 			if u.kind == UnsafePointer {
 				l.PtrOffsets = []int64{0}
 				l.PtrBytes = ptr
-				l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, ptr)
+				l.GCBitmap = gcBitmap(l.PtrOffsets, l.PtrBytes, ptr)
 			}
 			return l
 		}
@@ -343,7 +487,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 				if u.kind == UnsafePointer {
 					l.PtrOffsets = []int64{0}
 					l.PtrBytes = word
-					l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+					l.GCBitmap = gcBitmap(l.PtrOffsets, l.PtrBytes, word)
 				}
 				return l
 			}
@@ -366,7 +510,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 			if u.kind == UnsafePointer {
 				l.PtrOffsets = []int64{0}
 				l.PtrBytes = p.Size
-				l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+				l.GCBitmap = gcBitmap(l.PtrOffsets, l.PtrBytes, word)
 			}
 			return l
 		}
@@ -379,7 +523,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 		if u.kind == String || u.kind == UnsafePointer {
 			l.PtrOffsets = []int64{0}
 			l.PtrBytes = word
-			l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+			l.GCBitmap = gcBitmap(l.PtrOffsets, l.PtrBytes, word)
 		}
 		return l
 
@@ -396,7 +540,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 		if u.kind != CPtr {
 			l.PtrOffsets = []int64{0}
 			l.PtrBytes = sz
-			l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, sz)
+			l.GCBitmap = gcBitmap(l.PtrOffsets, l.PtrBytes, sz)
 		}
 		return l
 
@@ -413,7 +557,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 			PtrBytes:        sz,
 			IsRegularMemory: isChan,
 		}
-		l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, sz)
+		l.GCBitmap = gcBitmap(l.PtrOffsets, l.PtrBytes, sz)
 		return l
 
 	case *Slice:
@@ -424,7 +568,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 			PtrBytes:        word,
 			IsRegularMemory: false,
 		}
-		l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+		l.GCBitmap = gcBitmap(l.PtrOffsets, l.PtrBytes, word)
 		return l
 
 	case *Interface:
@@ -435,7 +579,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 			PtrBytes:        2 * word,
 			IsRegularMemory: false,
 		}
-		l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+		l.GCBitmap = gcBitmap(l.PtrOffsets, l.PtrBytes, word)
 		return l
 
 	case *Signature:
@@ -454,7 +598,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 				PtrBytes:        2 * word,
 				IsRegularMemory: false,
 			}
-			l.GCBitmap = GCBitmap(l.PtrOffsets, l.PtrBytes, word)
+			l.GCBitmap = gcBitmap(l.PtrOffsets, l.PtrBytes, word)
 			return l
 		}
 		return &Layout{
@@ -479,7 +623,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 			elemMode = modeWasmNative
 		}
 		elemL := c.layoutInMode(u.elem, elemMode)
-		pair := ArrayLayout(LayoutPair{Size: elemL.Size, Align: elemL.Align}, u.length)
+		pair := arrayLayout(LayoutPair{Size: elemL.Size, Align: elemL.Align}, u.length)
 		l := &Layout{
 			Size:             pair.Size,
 			Align:            pair.Align,
@@ -499,7 +643,7 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 					}
 				}
 				l.PtrOffsets = offsets
-				l.GCBitmap = GCBitmap(offsets, l.PtrBytes, word)
+				l.GCBitmap = gcBitmap(offsets, l.PtrBytes, word)
 			}
 		}
 		return l
@@ -563,7 +707,7 @@ func (c *Context) computeStructLayout(st *Struct, mode layoutMode) *Layout {
 			Align:           al,
 			PtrBytes:        2 * word,
 			PtrOffsets:      ptrOff,
-			GCBitmap:        GCBitmap(ptrOff, 2*word, word),
+			GCBitmap:        gcBitmap(ptrOff, 2*word, word),
 			IsRegularMemory: false,
 			Fields: []FieldLayout{
 				{Offset: 0, Size: word, Align: al, WasmWideSlot: c.spec.UsesWideGoStorage()},
@@ -668,7 +812,7 @@ func (c *Context) layoutHostField(t Type) *Layout {
 		return c.layoutInMode(t, modeHostField)
 	case *Array:
 		elemL := c.layoutHostField(u.elem)
-		pair := ArrayLayout(LayoutPair{Size: elemL.Size, Align: elemL.Align}, u.length)
+		pair := arrayLayout(LayoutPair{Size: elemL.Size, Align: elemL.Align}, u.length)
 		return &Layout{
 			Size:            pair.Size,
 			Align:           pair.Align,
@@ -697,7 +841,7 @@ func (c *Context) layoutHostNested(t Type) *Layout {
 
 func (c *Context) assembleAggregate(fieldLayouts []*Layout, fieldVars []*Var, padTail, hasHost, hasSIMD bool, wasmWideOpt ...bool) *Layout {
 	n := len(fieldLayouts)
-	pair, offsets := AggregateLayout(n, func(i int) LayoutPair {
+	pair, offsets := aggregateLayout(n, func(i int) LayoutPair {
 		return LayoutPair{Size: fieldLayouts[i].Size, Align: fieldLayouts[i].Align}
 	}, padTail)
 
@@ -766,7 +910,7 @@ func (c *Context) assembleAggregate(fieldLayouts []*Layout, fieldVars []*Var, pa
 		Align:            pair.Align,
 		PtrBytes:         ptrBytes,
 		PtrOffsets:       ptrOffsets,
-		GCBitmap:         GCBitmap(ptrOffsets, ptrBytes, word),
+		GCBitmap:         gcBitmap(ptrOffsets, ptrBytes, word),
 		Fields:           fields,
 		IsRegularMemory:  regular,
 		HasWasmWideSlots: wasmWide,
@@ -898,7 +1042,7 @@ func (g *goSizesAdapter) Offsetsof(fields []*gotypes.Var) []int64 {
 		default:
 			fl = c.layoutInMode(llT, mode)
 		}
-		size = AlignSize(size, fl.Align)
+		size = alignSize(size, fl.Align)
 		offsets[i] = size
 		if size < 0 || fl.Size < 0 || fl.Size > math.MaxInt64-size {
 			size = -1

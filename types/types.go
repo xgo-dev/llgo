@@ -653,9 +653,6 @@ func (s *Signature) Results() *Tuple                { return s.results }
 func (s *Signature) Variadic() bool                 { return s.variadic }
 func (s *Signature) IsClosure() bool                { return s.callConv.IsClosure() }
 func (s *Signature) IsNative() bool                 { return s.callConv.IsNative() }
-func (s *Signature) IsGoVariadic() bool             { return s.variadic && s.callConv.IsGo() }
-func (s *Signature) IsCVariadic() bool              { return s.variadic && s.callConv.IsNative() }
-func (s *Signature) IsPyVariadic() bool             { return s.variadic && s.callConv == Py }
 func (s *Signature) Underlying() Type         { return s }
 func (s *Signature) goTypeRef() gotypes.Type  { return s.goType }
 func (s *Signature) llTypeMarker()            {}
@@ -741,7 +738,6 @@ func NewArray(elem Type, length int64) *Array {
 
 func (a *Array) Elem() Type              { return a.elem }
 func (a *Array) Len() int64              { return a.length }
-func (a *Array) NativeStorage() bool     { return a.nativeStorage }
 func (a *Array) Underlying() Type        { return a }
 func (a *Array) goTypeRef() gotypes.Type { return a.goType }
 func (a *Array) llTypeMarker()           {}
@@ -1136,12 +1132,8 @@ func (s *Struct) Tag(i int) string {
 	return ""
 }
 func (s *Struct) HasHostLayout() bool      { return s.hostLayout }
-func (s *Struct) NativeLayout() bool       { return s.nativeLayout }
-func (s *Struct) IsClosureStruct() bool    { return s.isClosureStruct }
 func (s *Struct) SIMDTagIndex() int        { return s.simdTagIndex }
 func (s *Struct) SIMDVec() *SIMDVec        { return nil }
-func (s *Struct) SetHostLayout(v bool)     { s.hostLayout = v }
-func (s *Struct) SetNativeLayout(v bool)   { s.nativeLayout = v }
 func (s *Struct) Underlying() Type         { return s }
 func (s *Struct) goTypeRef() gotypes.Type  { return s.goType }
 func (s *Struct) llTypeMarker()            {}
@@ -1217,8 +1209,8 @@ type SIMDVec struct {
 	goType   gotypes.Type
 }
 
-// NewSIMDVec constructs a canonical SIMD vector or mask type.
-func NewSIMDVec(elem *Basic, length int, isMask bool) *SIMDVec {
+// newSIMDVec constructs a canonical SIMD vector or mask type.
+func newSIMDVec(elem *Basic, length int, isMask bool) *SIMDVec {
 	tagIdx := simdTagForBits(basicBits(elem) * length)
 	return &SIMDVec{
 		elem:     elem,
@@ -1389,8 +1381,7 @@ func (n *Named) AddMethod(m *Func) {
 	n.methods = append(n.methods, m)
 }
 
-func (n *Named) CallConv() CallConv        { return n.callConv }
-func (n *Named) HasExplicitCallConv() bool { return n.hasCallConv }
+func (n *Named) CallConv() CallConv { return n.callConv }
 
 func (n *Named) IsHostLayoutMarker() bool {
 	if n.obj != nil && n.obj.pkg != nil && isStructsPkgPath(n.obj.pkg.path) && n.obj.name == "HostLayout" {
@@ -1434,11 +1425,6 @@ func (n *Named) ContainsSIMDStorage() bool {
 		return false
 	}
 	return n.underlying.ContainsSIMDStorage()
-}
-
-func (n *Named) NativeLayout() bool {
-	n.resolve()
-	return n.nativeLayout
 }
 
 func (n *Named) SIMDTagIndex() int {
@@ -1523,9 +1509,8 @@ func (a *Alias) SetTypeParams(tparams []*TypeParam) {
 	a.typeParams = newTypeParamList(tparams)
 }
 func (a *Alias) TypeArgs() *TypeList        { return a.typeArgs }
-func (a *Alias) CallConv() CallConv        { return a.callConv }
-func (a *Alias) HasExplicitCallConv() bool { return a.hasCallConv }
-func (a *Alias) goTypeRef() gotypes.Type   { return a.goType }
+func (a *Alias) CallConv() CallConv      { return a.callConv }
+func (a *Alias) goTypeRef() gotypes.Type { return a.goType }
 func (a *Alias) llTypeMarker()             {}
 
 func (a *Alias) Underlying() Type {

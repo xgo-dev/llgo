@@ -93,7 +93,7 @@ const (
 	BitCast           // store other value (need bitcast) directly in the interface value
 )
 
-var defaultDataKindCtx = lltypes.NewContext(target.Spec{GOOS: "linux", GOARCH: "amd64"})
+var defaultDataKindCtx = lltypes.NewContext()
 
 func DataKindOf(raw types.Type, lvl int, is32Bits bool) (DataKind, types.Type, int) {
 	switch raw.Underlying().(type) {
@@ -152,10 +152,12 @@ func (b *Builder) Init(ptrSize uintptr, sizes types.Sizes) {
 			maxAlign = ma
 		}
 	}
-	b.typeCtx = lltypes.NewContext(target.Spec{
-		WordSize: int(ptrSize),
-		PtrSize:  int(ptrSize),
-		MaxAlign: maxAlign,
+	b.typeCtx = lltypes.NewContextWithConfig(lltypes.ContextConfig{
+		Spec: target.Spec{
+			WordSize: int(ptrSize),
+			PtrSize:  int(ptrSize),
+			MaxAlign: maxAlign,
+		},
 	})
 }
 

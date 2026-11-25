@@ -26,8 +26,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-
-	"github.com/xgo-dev/llgo/directive"
 )
 
 // Object represents a named language entity (Func, Var, TypeName, Const,
@@ -117,33 +115,18 @@ func Id(pkg *Package, name string) string {
 	return path + "." + name
 }
 
-// Func represents a declared function, method, or concrete closure body,
-// carrying FreeVars and first-class LLGo link/directive metadata directly on
-// the symbol.
+// Func represents a declared function, concrete method, or abstract
+// (interface) method (mirroring go/types.Func).
 type Func struct {
 	object
-	origin     *Func
-	scope      *Scope
-	freeVars   []*Var
-	linkName   string
-	callConv   CallConv
-	isExternal bool
-	isSkip     bool
-	isPyList   bool
-	wasmMod    string
-	wasmName   string
-	wasmExport string
+	origin *Func
+	scope  *Scope
 }
 
 // NewFunc constructs a function or method object (matching go/types.NewFunc).
 func NewFunc(pos token.Pos, pkg *Package, name string, sig *Signature) *Func {
-	cc := Go
-	if sig != nil {
-		cc = sig.callConv
-	}
 	return &Func{
-		object:   object{pos: pos, pkg: pkg, name: name, typ: sig},
-		callConv: cc,
+		object: object{pos: pos, pkg: pkg, name: name, typ: sig},
 	}
 }
 
@@ -157,26 +140,7 @@ func (f *Func) Origin() *Func {
 	}
 	return f
 }
-func (f *Func) Scope() *Scope           { return f.scope }
-func (f *Func) FreeVars() []*Var        { return f.freeVars }
-func (f *Func) SetFreeVars(vars []*Var) { f.freeVars = vars }
-func (f *Func) LinkName() string        { return f.linkName }
-func (f *Func) CallConv() CallConv      { return f.callConv }
-func (f *Func) IsExternal() bool        { return f.isExternal }
-func (f *Func) IsSkip() bool            { return f.isSkip }
-func (f *Func) IsPyList() bool          { return f.isPyList }
-func (f *Func) WasmExport() string      { return f.wasmExport }
-func (f *Func) WasmImport() (string, string, bool) {
-	if f.wasmMod == "" && f.wasmName == "" {
-		return "", "", false
-	}
-	return f.wasmMod, f.wasmName, true
-}
-func (f *Func) SetLinkName(name string) { f.linkName = name }
-func (f *Func) SetCallConv(cc CallConv) { f.callConv = cc }
-func (f *Func) SetExternal(v bool)      { f.isExternal = v }
-func (f *Func) SetSkip(v bool)          { f.isSkip = v }
-func (f *Func) SetPyList(v bool)        { f.isPyList = v }
+func (f *Func) Scope() *Scope { return f.scope }
 
 func (f *Func) FullName() string {
 	var b strings.Builder
@@ -203,24 +167,54 @@ func (f *Func) String() string {
 	return b.String()
 }
 
+// VarKind describes the kind of a Var (mirroring go/types.VarKind).
+type VarKind uint8
+
+const (
+	PackageVar VarKind = iota
+	LocalVar
+	RecvVar
+	ParamVar
+	ResultVar
+	FieldVar
+)
+
+func (kind VarKind) String() string {
+	switch kind {
+	case PackageVar:
+		return "PackageVar"
+	case LocalVar:
+		return "LocalVar"
+	case RecvVar:
+		return "RecvVar"
+	case ParamVar:
+		return "ParamVar"
+	case ResultVar:
+		return "ResultVar"
+	case FieldVar:
+		return "FieldVar"
+	default:
+		return fmt.Sprintf("VarKind(%d)", uint8(kind))
+	}
+}
+
 // Var represents a variable, parameter, result, or struct field.
 type Var struct {
 	object
-	origin     *Var
-	embedded   bool
-	isField    bool
-	linkName   string
-	isExternal bool
+	origin   *Var
+	embedded bool
+	isField  bool
+	kind     VarKind
 }
 
 // NewVar constructs a variable object (matching go/types.NewVar).
 func NewVar(pos token.Pos, pkg *Package, name string, typ Type) *Var {
-	return &Var{object: object{pos: pos, pkg: pkg, name: name, typ: typ}}
+	return &Var{object: object{pos: pos, pkg: pkg, name: name, typ: typ}, kind: PackageVar}
 }
 
 // NewParam constructs a function parameter or result variable (matching go/types.NewParam).
 func NewParam(pos token.Pos, pkg *Package, name string, typ Type) *Var {
-	return &Var{object: object{pos: pos, pkg: pkg, name: name, typ: typ}}
+	return &Var{object: object{pos: pos, pkg: pkg, name: name, typ: typ}, kind: ParamVar}
 }
 
 // NewField constructs a struct field variable (matching go/types.NewField).
@@ -229,6 +223,7 @@ func NewField(pos token.Pos, pkg *Package, name string, typ Type, embedded bool)
 		object:   object{pos: pos, pkg: pkg, name: name, typ: typ},
 		embedded: embedded,
 		isField:  true,
+		kind:     FieldVar,
 	}
 }
 
@@ -238,13 +233,11 @@ func (v *Var) Origin() *Var {
 	}
 	return v
 }
-func (v *Var) Anonymous() bool      { return v.embedded }
-func (v *Var) Embedded() bool       { return v.embedded }
-func (v *Var) IsField() bool        { return v.isField }
-func (v *Var) LinkName() string     { return v.linkName }
-func (v *Var) IsExternal() bool     { return v.isExternal }
-func (v *Var) SetLinkName(s string) { v.linkName = s }
-func (v *Var) SetExternal(b bool)   { v.isExternal = b }
+func (v *Var) Anonymous() bool       { return v.embedded }
+func (v *Var) Embedded() bool        { return v.embedded }
+func (v *Var) IsField() bool         { return v.isField }
+func (v *Var) Kind() VarKind         { return v.kind }
+func (v *Var) SetKind(kind VarKind)  { v.kind = kind }
 func (v *Var) String() string {
 	kind := "var"
 	if v.isField {
@@ -259,11 +252,7 @@ func (v *Var) String() string {
 // TypeName represents a name for a defined type, type alias, or type parameter.
 type TypeName struct {
 	object
-	isAlias      bool
-	callConv     CallConv
-	hasCallConv  bool
-	nativeLayout bool
-	hostLayout   bool
+	isAlias bool
 }
 
 // NewTypeName constructs a TypeName object (matching go/types.NewTypeName).
@@ -271,11 +260,7 @@ func NewTypeName(pos token.Pos, pkg *Package, name string, typ Type) *TypeName {
 	return &TypeName{object: object{pos: pos, pkg: pkg, name: name, typ: typ}}
 }
 
-func (tn *TypeName) IsAlias() bool             { return tn.isAlias }
-func (tn *TypeName) CallConv() CallConv        { return tn.callConv }
-func (tn *TypeName) HasExplicitCallConv() bool { return tn.hasCallConv }
-func (tn *TypeName) NativeLayout() bool        { return tn.nativeLayout }
-func (tn *TypeName) HasHostLayout() bool       { return tn.hostLayout }
+func (tn *TypeName) IsAlias() bool { return tn.isAlias }
 func (tn *TypeName) String() string {
 	if tn.typ != nil {
 		return "type " + tn.name + " " + tn.typ.String()
@@ -543,14 +528,16 @@ func initUnsafe() *Package {
 	return pkg
 }
 
-// Package describes an LLGo-typed Go package.
+// Package describes an LLGo-typed Go package (mirroring go/types.Package).
 type Package struct {
-	path     string
-	name     string
-	scope    *Scope
-	complete bool
-	imports  []*Package
-	goPkg    *gotypes.Package
+	path      string
+	name      string
+	scope     *Scope
+	complete  bool
+	imports   []*Package
+	goVersion string
+	ctx       *Context
+	goPkg     *gotypes.Package
 }
 
 // NewPackage creates a new Package (matching go/types.NewPackage).
@@ -567,42 +554,7 @@ func (p *Package) Complete() bool             { return p.complete }
 func (p *Package) MarkComplete()              { p.complete = true }
 func (p *Package) Imports() []*Package        { return p.imports }
 func (p *Package) SetImports(list []*Package) { p.imports = list }
-func (p *Package) Lookup(name string) Object {
-	if p == nil || p.scope == nil {
-		return nil
-	}
-	return p.scope.Lookup(name)
-}
-
-// PackageKind inspects p's package scope for an LLGoPackage constant and
-// classifies the package using directive.ParsePackageKind.
-func (p *Package) PackageKind() (directive.PackageKind, string) {
-	if p == nil || p.scope == nil {
-		return directive.PkgNormal, ""
-	}
-	if c, ok := p.scope.Lookup("LLGoPackage").(*Const); ok {
-		if v := c.Val(); v != nil && v.Kind() == constant.String {
-			return directive.ParsePackageKind(constant.StringVal(v))
-		}
-		return directive.PkgLLGo, ""
-	}
-	return directive.PkgNormal, ""
-}
-
-// LLGoFiles returns the string value of the LLGoFiles constant in p's package
-// scope, if declared.
-func (p *Package) LLGoFiles() (string, bool) {
-	if p == nil || p.scope == nil {
-		return "", false
-	}
-	if c, ok := p.scope.Lookup("LLGoFiles").(*Const); ok {
-		if v := c.Val(); v != nil && v.Kind() == constant.String {
-			return constant.StringVal(v), true
-		}
-	}
-	return "", false
-}
-
+func (p *Package) GoVersion() string          { return p.goVersion }
 func (p *Package) String() string {
 	return fmt.Sprintf("package %s (%q)", p.name, p.path)
 }
@@ -632,7 +584,7 @@ type MethodSet struct {
 
 // NewMethodSet returns the method set for LLGo type T (matching go/types.NewMethodSet).
 func NewMethodSet(T Type) *MethodSet {
-	return methodSetOf(nil, T)
+	return syntheticMethodSet(T)
 }
 
 func (m *MethodSet) Len() int {
@@ -723,20 +675,20 @@ func (inst Instance) String() string {
 	return fmt.Sprintf("%s -> %s", inst.TypeArgs, TypeString(inst.Type, nil))
 }
 
-// Info holds type-checked LLGo semantic information for a package.
-// Every map and helper returns native LLGo Types and Objects with zero
-// go/types.Type leakage.
+// Info holds type-checked LLGo semantic information for a package
+// (mirroring go/types.Info fields 1:1).
 type Info struct {
-	Context    *Context
-	Types      map[ast.Expr]TypeAndValue
-	Defs       map[*ast.Ident]Object
-	Uses       map[*ast.Ident]Object
-	Implicits  map[ast.Node]Object
-	Selections map[*ast.SelectorExpr]*Selection
-	Scopes     map[ast.Node]*Scope
-	InitOrder  []*Initializer
-	Instances  map[*ast.Ident]Instance
+	Types        map[ast.Expr]TypeAndValue
+	Instances    map[*ast.Ident]Instance
+	Defs         map[*ast.Ident]Object
+	Uses         map[*ast.Ident]Object
+	Implicits    map[ast.Node]Object
+	Selections   map[*ast.SelectorExpr]*Selection
+	Scopes       map[ast.Node]*Scope
+	InitOrder    []*Initializer
+	FileVersions map[*ast.File]string
 
+	ctx    *Context
 	goInfo *gotypes.Info
 }
 
@@ -753,9 +705,9 @@ func (info *Info) TypeOf(e ast.Expr) Type {
 			return obj.Type()
 		}
 	}
-	if info.goInfo != nil && info.Context != nil {
+	if info.goInfo != nil && info.ctx != nil {
 		if t := info.goInfo.TypeOf(e); t != nil {
-			return info.Context.FromGo(t)
+			return info.ctx.FromGo(t)
 		}
 	}
 	return nil
@@ -788,9 +740,9 @@ func (info *Info) ObjectOf(id *ast.Ident) Object {
 	if obj := info.Uses[id]; obj != nil {
 		return obj
 	}
-	if info.goInfo != nil && info.Context != nil {
+	if info.goInfo != nil && info.ctx != nil {
 		if obj := info.goInfo.ObjectOf(id); obj != nil {
-			return info.Context.FromGoObject(obj)
+			return info.ctx.FromGoObject(obj)
 		}
 	}
 	return nil

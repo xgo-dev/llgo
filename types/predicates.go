@@ -18,10 +18,12 @@ package types
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"go/ast"
 	"go/printer"
 	"go/token"
+	"hash/maphash"
 	"sort"
 )
 
@@ -151,6 +153,27 @@ func SelectionString(s *Selection, qf Qualifier) string {
 		}
 	}
 	return buf.String()
+}
+
+// LookupSelection looks up the field or method with given package and name
+// in T and returns it as a Selection (mirroring go/types.LookupSelection).
+func LookupSelection(T Type, addressable bool, pkg *Package, name string) (Selection, bool) {
+	obj, index, indirect := LookupFieldOrMethod(T, addressable, pkg, name)
+	if obj == nil {
+		return Selection{}, false
+	}
+	kind := FieldVal
+	if _, isFunc := obj.(*Func); isFunc {
+		kind = MethodVal
+	}
+	return Selection{
+		kind:     kind,
+		recv:     T,
+		obj:      obj,
+		typ:      obj.Type(),
+		index:    index,
+		indirect: indirect,
+	}, true
 }
 
 // LookupFieldOrMethod looks up a field or method with given package and name
@@ -728,4 +751,204 @@ func syntheticMethodSet(T Type) *MethodSet {
 		return list[i].obj.Id() < list[j].obj.Id()
 	})
 	return &MethodSet{list: list}
+}
+
+// Hasher defines a hash function and equivalence relation for Types consistent
+// with Identical (mirroring go/types.Hasher). Hashers are stateless.
+type Hasher struct{}
+
+func (Hasher) Equal(x, y Type) bool {
+	return Identical(x, y)
+}
+
+func (Hasher) Hash(h *maphash.Hash, t Type) {
+	hashType(h, t, false, nil)
+}
+
+// HasherIgnoreTags is a variant of Hasher consistent with IdenticalIgnoreTags
+// (mirroring go/types.HasherIgnoreTags).
+type HasherIgnoreTags struct{}
+
+func (HasherIgnoreTags) Equal(x, y Type) bool {
+	return IdenticalIgnoreTags(x, y)
+}
+
+func (HasherIgnoreTags) Hash(h *maphash.Hash, t Type) {
+	hashType(h, t, true, nil)
+}
+
+func hashUint64(h *maphash.Hash, v uint64) {
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], v)
+	_, _ = h.Write(buf[:])
+}
+
+func hashType(h *maphash.Hash, t Type, ignoreTags bool, seen map[Type]bool) {
+	if h == nil {
+		return
+	}
+	if t == nil {
+		_ = h.WriteByte(0)
+		return
+	}
+	t = Unalias(t)
+	if seen != nil && seen[t] {
+		_ = h.WriteByte(255)
+		return
+	}
+	switch u := t.(type) {
+	case *Basic:
+		_ = h.WriteByte(1)
+		hashUint64(h, uint64(u.kind))
+	case *Pointer:
+		_ = h.WriteByte(2)
+		_ = h.WriteByte(byte(u.kind))
+		next := markSeen(seen, u)
+		hashType(h, u.elem, ignoreTags, next)
+	case *Slice:
+		_ = h.WriteByte(3)
+		next := markSeen(seen, u)
+		hashType(h, u.elem, ignoreTags, next)
+	case *Array:
+		_ = h.WriteByte(4)
+		hashUint64(h, uint64(u.length))
+		next := markSeen(seen, u)
+		hashType(h, u.elem, ignoreTags, next)
+	case *Map:
+		_ = h.WriteByte(5)
+		next := markSeen(seen, u)
+		hashType(h, u.key, ignoreTags, next)
+		hashType(h, u.elem, ignoreTags, next)
+	case *Chan:
+		_ = h.WriteByte(6)
+		hashUint64(h, uint64(u.dir))
+		next := markSeen(seen, u)
+		hashType(h, u.elem, ignoreTags, next)
+	case *Tuple:
+		_ = h.WriteByte(7)
+		hashUint64(h, uint64(u.Len()))
+		next := markSeen(seen, u)
+		for i := 0; i < u.Len(); i++ {
+			if v := u.At(i); v != nil {
+				hashType(h, v.typ, ignoreTags, next)
+			}
+		}
+	case *Signature:
+		_ = h.WriteByte(8)
+		_ = h.WriteByte(byte(u.callConv))
+		if u.variadic {
+			_ = h.WriteByte(1)
+		} else {
+			_ = h.WriteByte(0)
+		}
+		next := markSeen(seen, u)
+		hashType(h, u.params, ignoreTags, next)
+		hashType(h, u.results, ignoreTags, next)
+	case *Struct:
+		_ = h.WriteByte(9)
+		hashUint64(h, uint64(len(u.fields)))
+		next := markSeen(seen, u)
+		for i, f := range u.fields {
+			if f == nil {
+				_ = h.WriteByte(0)
+				continue
+			}
+			_, _ = h.WriteString(f.Id())
+			if f.embedded {
+				_ = h.WriteByte(1)
+			} else {
+				_ = h.WriteByte(0)
+			}
+			if !ignoreTags && i < len(u.tags) {
+				_, _ = h.WriteString(u.tags[i])
+			}
+			hashType(h, f.typ, ignoreTags, next)
+		}
+	case *Interface:
+		u.resolve()
+		_ = h.WriteByte(10)
+		if u.comparable {
+			_ = h.WriteByte(1)
+		} else {
+			_ = h.WriteByte(0)
+		}
+		if u.methodSet {
+			_ = h.WriteByte(1)
+		} else {
+			_ = h.WriteByte(0)
+		}
+		nm := len(u.methods)
+		hashUint64(h, uint64(nm))
+		if nm > 0 {
+			ms := make([]*Func, nm)
+			copy(ms, u.methods)
+			sort.Slice(ms, func(i, j int) bool {
+				return ms[i].Id() < ms[j].Id()
+			})
+			next := markSeen(seen, u)
+			for _, m := range ms {
+				_, _ = h.WriteString(m.Id())
+				hashType(h, m.typ, ignoreTags, next)
+			}
+		}
+	case *Union:
+		_ = h.WriteByte(11)
+		hashUint64(h, uint64(len(u.terms)))
+		next := markSeen(seen, u)
+		for _, term := range u.terms {
+			if term == nil {
+				continue
+			}
+			if term.tilde {
+				_ = h.WriteByte(1)
+			} else {
+				_ = h.WriteByte(0)
+			}
+			hashType(h, term.typ, ignoreTags, next)
+		}
+	case *Named:
+		_ = h.WriteByte(12)
+		orig := u.Origin()
+		if orig != nil && orig.obj != nil {
+			if orig.obj.pkg != nil {
+				_, _ = h.WriteString(orig.obj.pkg.path)
+			}
+			_ = h.WriteByte(0)
+			_, _ = h.WriteString(orig.obj.name)
+			hashUint64(h, uint64(orig.obj.pos))
+		}
+		targs := u.TypeArgs()
+		hashUint64(h, uint64(targs.Len()))
+		next := markSeen(seen, u)
+		for i := 0; i < targs.Len(); i++ {
+			hashType(h, targs.At(i), ignoreTags, next)
+		}
+	case *TypeParam:
+		_ = h.WriteByte(13)
+		hashUint64(h, uint64(u.index))
+		if u.obj != nil {
+			_, _ = h.WriteString(u.obj.name)
+			hashUint64(h, uint64(u.obj.pos))
+		}
+	case *SIMDVec:
+		_ = h.WriteByte(14)
+		if u.elem != nil {
+			hashUint64(h, uint64(u.elem.kind))
+		}
+		hashUint64(h, uint64(u.length))
+		if u.isMask {
+			_ = h.WriteByte(1)
+		} else {
+			_ = h.WriteByte(0)
+		}
+	}
+}
+
+func markSeen(seen map[Type]bool, t Type) map[Type]bool {
+	next := make(map[Type]bool, len(seen)+1)
+	for k, v := range seen {
+		next[k] = v
+	}
+	next[t] = true
+	return next
 }

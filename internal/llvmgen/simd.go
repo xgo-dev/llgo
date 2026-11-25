@@ -4,7 +4,6 @@ import (
 	"go/types"
 	"strings"
 
-	"github.com/xgo-dev/llgo/target"
 	lltypes "github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
@@ -170,7 +169,7 @@ const (
 	SIMDGaloisFieldAffineTransformInverse
 )
 
-var simdShapeCtx = lltypes.NewContext(target.Spec{GOOS: "linux", GOARCH: "amd64"})
+var simdShapeCtx = lltypes.NewContext()
 
 func simdVectorLanes(typ types.Type) (*types.Array, *lltypes.SIMDVec, bool) {
 	if typ == nil {

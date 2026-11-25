@@ -70,9 +70,9 @@ func dataKindOf(t Type, lvl int, is32Bits bool) (DataKind, Type, int) {
 	return DataIndirect, t, lvl
 }
 
-// GCBitmap encodes sorted GC-traced pointer byte offsets into Go's standard
+// gcBitmap encodes sorted GC-traced pointer byte offsets into Go's standard
 // 1-bit-per-pointer-word GCData bitmap spanning [0, ptrBytes).
-func GCBitmap(ptrOffsets []int64, ptrBytes, wordSize int64) []byte {
+func gcBitmap(ptrOffsets []int64, ptrBytes, wordSize int64) []byte {
 	if ptrBytes <= 0 || wordSize <= 0 || len(ptrOffsets) == 0 {
 		return nil
 	}

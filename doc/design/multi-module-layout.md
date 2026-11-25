@@ -41,7 +41,7 @@ go.work                              Coordinates `.`, `./cmd`, and `./runtime` i
 
 | `golang.org/x/tools` counterpart | `github.com/xgo-dev/llgo` package | Role |
 |---|---|---|
-| `go/types` + `x/tools/go/types/typeutil` | `llgo/types` *(+ `llgo/types/typeutil`)* | Complete pure-Go LLGo semantic & physical type model (`Type`, merged `Signature`, `Pointer` kinds, generic `Named`, `Object`/`Func`/`Var`/`Package`/`Scope`/`Selection`/`MethodSet`/`Info`), single-source `Layout` (`PtrBytes`, `GCBitmap`, `IsRegularMemory`, `HostLayout`, Wasm32, SIMD), `FuncABI`, and one-shot `go/types` + `//llgo:*` lowering |
+| `go/types` + `x/tools/go/types/typeutil` | `llgo/types` *(+ `llgo/types/typeutil`)* | Complete pure-Go LLGo semantic & physical type model (`Type`, merged `Signature`, `Pointer` kinds, generic `Named`, `Object`/`Func`/`Var`/`Package`/`Scope`/`Selection`/`MethodSet`/`Info`/`Config`/`Checker`), single-source `Layout` (`PtrBytes`, `GCBitmap`, `IsRegularMemory`, `HostLayout`, Wasm32, SIMD), `NativeIntExtForSpec`, and `go/types` + `//llgo:*` lowering |
 | `x/tools/go/ssa` | `llgo/ssa` | Pure-Go mid-level SSA IR (`Package`, `Function`, `BasicBlock`, `Parameter`, `Instruction`, `Value`, `Summarize`) — omits low-value `ssautil` wrappers |
 | `x/tools/go/gcexportdata` | `llgo/exportdata` | Compact binary package export codec (`types.Package`, `PackageSummary`, `LinkSnapshot`, `PCLN`) |
 | `x/tools/go/analysis` + `callgraph` | `llgo/analysis/{callgraph,escape,deadcode,inline}` | Reusable pure-Go analysis passes consuming `types`, `ssa`, and `exportdata` |
