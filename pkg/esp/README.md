@@ -472,7 +472,7 @@ scheduler property as net/tls: keep one session on one goroutine.
 
 **Integration and acceptance.** No glue to copy, no REQUIRES beyond
 what net/tls already bring. The demo probe (`[go] ws ...` in
-`_demo/esp-idf-wifi/goapp/main.go`) runs against
+`_demo/esp-idf-wifi/goapp/`, one file per probe area) runs against
 `idfproj/host/wssrv` - a host peer that sniffs each connection and
 serves the raw echo, the TLS echo and both WebSocket endpoints on the
 same two ports (9000/9443), so one process backs the whole
@@ -642,7 +642,7 @@ validation):
 
 The emulator models WiFi (softAP) and PSRAM faithfully; peripheral
 fidelity is documented by the acceptance probe in
-`_demo/esp-idf-wifi/goapp/main.go` (`[go] periph ...` console lines, and
+`_demo/esp-idf-wifi/goapp/` (`[go] periph ...` console lines, and
 `[go] net ...` for the network items below). Measured on S31, 16 MiB
 PSRAM variant (2026-11):
 
