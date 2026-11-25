@@ -1,4 +1,7 @@
 /* Native BDWGC pacing. No Go code or allocation runs under the collector lock. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE 1
+#endif
 #if defined(_WIN32)
 #define _CRT_SECURE_NO_WARNINGS 1
 #define WIN32_LEAN_AND_MEAN
@@ -6,7 +9,7 @@
 #else
 #include <sched.h>
 #endif
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
@@ -194,10 +197,10 @@ void llgo_gc_init_policy(void)
     atomic_store(&llgo_gc_policy_initialized, 2);
 }
 
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__linux__)
 extern int GC_is_incremental_mode(void);
 static atomic_size_t llgo_gc_page_size;
-#if defined(MADV_ZERO)
+#if defined(__APPLE__) && defined(MADV_ZERO)
 static atomic_int llgo_gc_madv_zero_unsupported;
 #endif
 
@@ -214,6 +217,7 @@ static size_t llgo_gc_get_page_size(void)
     return ps;
 }
 
+#if defined(__APPLE__)
 /* Minimum interior span for the MAP_FIXED fallback on older Darwin kernels
  * without MADV_ZERO: replacing an interior range splits VM map entries and
  * drops VM tags, so restrict it to larger blocks where avoiding eager page
@@ -239,7 +243,7 @@ static int llgo_gc_zero_pages_darwin_fallback(uintptr_t start, size_t span, size
                 MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) != MAP_FAILED;
 }
 
-static int llgo_gc_zero_pages_darwin(uintptr_t start, size_t span, size_t ps)
+static int llgo_gc_zero_pages_os(uintptr_t start, size_t span, size_t ps)
 {
 #if defined(MADV_ZERO)
     /* Prefer Darwin's MADV_ZERO when supported: it zeroes resident/modified
@@ -255,6 +259,34 @@ static int llgo_gc_zero_pages_darwin(uintptr_t start, size_t span, size_t ps)
 #endif
     return llgo_gc_zero_pages_darwin_fallback(start, span, ps);
 }
+#elif defined(__linux__)
+/* Minimum interior span for Linux MADV_DONTNEED: avoids syscall overhead on
+ * smaller blocks while delivering multi-x speedups on fresh/sparse large
+ * allocations and keeping hot reuse neutral via the midpoint residency probe. */
+#define LLGO_GC_LINUX_LAZY_ZERO_MIN_SPAN (256u << 10)
+
+static int llgo_gc_zero_pages_linux(uintptr_t start, size_t span, size_t ps)
+{
+    if (span < LLGO_GC_LINUX_LAZY_ZERO_MIN_SPAN)
+        return 0;
+    /* Probe a single interior page: if the middle page is already resident
+     * (hot dense reuse), fall back to memset so we avoid tearing down PTEs,
+     * triggering multi-core TLB shootdowns, and re-faulting every page.
+     * Otherwise MADV_DONTNEED guarantees OS zero-fill on private anonymous
+     * pages (including swapped-out or partially dirty blocks) without
+     * splitting VMAs or materializing untouched pages. */
+    uintptr_t mid = start + ((span / 2) & ~(ps - 1));
+    unsigned char resident = 0;
+    if (mincore((void *)mid, ps, &resident) == 0 && (resident & 1u) != 0)
+        return 0;
+    return madvise((void *)start, span, MADV_DONTNEED) == 0;
+}
+
+static int llgo_gc_zero_pages_os(uintptr_t start, size_t span, size_t ps)
+{
+    return llgo_gc_zero_pages_linux(start, span, ps);
+}
+#endif
 
 void llgo_gc_zero_atomic_large(void *p, size_t size)
 {
@@ -279,7 +311,7 @@ void llgo_gc_zero_atomic_large(void *p, size_t size)
         return;
     }
     size_t span = (size_t)(end - start);
-    if (!llgo_gc_zero_pages_darwin(start, span, ps)) {
+    if (!llgo_gc_zero_pages_os(start, span, ps)) {
         memset(p, 0, size);
         return;
     }
