@@ -265,22 +265,43 @@ func TestEventPayload(t *testing.T) {
 	}
 }
 
-// TestErrNameTable pins that every sentinel of this package carries the name
-// ErrName reports for its code - the two tables must not drift.
-func TestErrNameTable(t *testing.T) {
-	for _, e := range []*esperr.Error{
-		ErrTimeout, ErrNotReady, ErrUnsupported, ErrBadUUID, ErrBadValue,
-		ErrBusy, ErrBadProperty, ErrNotFound, ErrTooLong,
+// TestSentinels pins the Go-domain sentinels in their migrated shape: the
+// human text renders first with the segment code as the annotation, and the
+// code-era checks keep working - errors.Is against a raw literal of the
+// segment value, the annotation reachable through esperr.Code and errors.As,
+// and the sentinel matching itself by identity.
+func TestSentinels(t *testing.T) {
+	for _, c := range []struct {
+		err  *esperr.Error
+		code int32
+		text string
+	}{
+		{ErrTimeout, codeTimeout, "esp/ble: timeout (code 31489)"},
+		{ErrNotReady, codeNotReady, "esp/ble: not ready (code 31490)"},
+		{ErrUnsupported, codeUnsupported, "esp/ble: unsupported (code 32512)"},
+		{ErrBadUUID, codeBadUUID, "esp/ble: bad uuid (code 31491)"},
+		{ErrBadValue, codeBadValue, "esp/ble: bad value (code 31492)"},
+		{ErrBusy, codeBusy, "esp/ble: busy (code 31493)"},
+		{ErrBadProperty, codeBadProperty, "esp/ble: bad property (code 31494)"},
+		{ErrNotFound, codeNotFound, "esp/ble: not found (code 31495)"},
+		{ErrTooLong, codeTooLong, "esp/ble: too long (code 31496)"},
+		{ErrTooMany, codeTooMany, "esp/ble: too many (code 31497)"},
 	} {
-		if e.Name == "" {
-			t.Errorf("sentinel %d has no name", e.Code)
-			continue
+		if got := esperr.Code(c.err); got != c.code {
+			t.Errorf("esperr.Code(%v) = %d, want %d", c.err, got, c.code)
 		}
-		if got := ErrName(e.Code); got != e.Name {
-			t.Errorf("ErrName(%#x) = %q, want %q", e.Code, got, e.Name)
+		if got := c.err.Error(); got != c.text {
+			t.Errorf("Error() = %q, want %q", got, c.text)
 		}
-		if !errors.Is(error(e), e) {
-			t.Errorf("errors.Is(error(%q), sentinel) = false", e.Name)
+		if !errors.Is(error(c.err), c.err) {
+			t.Errorf("errors.Is does not match the %q sentinel by identity", c.text)
+		}
+		if !errors.Is(error(c.err), &esperr.Error{Code: c.code}) {
+			t.Errorf("the %q sentinel does not match a code-era literal of %#x", c.text, c.code)
+		}
+		var e *esperr.Error
+		if !errors.As(error(c.err), &e) || e.Code != c.code {
+			t.Errorf("errors.As did not surface the %#x annotation", c.code)
 		}
 	}
 }
@@ -392,6 +413,7 @@ func TestErrNames(t *testing.T) {
 		{NimbleBase + 0x213, "HCI_REMOTE_USER_TERM_CONN"},
 		{codeTimeout, "BLE_ERR_TIMEOUT"},
 		{codeNotReady, "BLE_ERR_NOT_READY"},
+		{codeTooMany, "BLE_ERR_TOO_MANY"},
 		{codeUnsupported, "BLE_ERR_UNSUPPORTED"},
 	}
 	for _, c := range cases {
@@ -716,13 +738,75 @@ func TestLocalHandle(t *testing.T) {
 	resetRegistry()
 }
 
-// TestErrNamePeripheralTable pins the new sentinel's name in the ErrName
-// table - the two must not drift.
-func TestErrNamePeripheralTable(t *testing.T) {
-	if got := ErrName(codeTooMany); got != ErrTooMany.Name {
-		t.Errorf("ErrName(%#x) = %q, want %q", codeTooMany, got, ErrTooMany.Name)
+// TestGuardWrapShapes pins the argument-refusal guards' migrated shape: the
+// sentinel rides under the operation's esperr.Wrap prefix, the rendering is
+// "ble: <op>: esp/ble: <text> (code N)", and errors.Is / errors.As /
+// esperr.Code all walk through the wrap. The state and wait sentinels stay
+// bare - their text already names the package and condition - which the two
+// identity checks at the end pin.
+func TestGuardWrapShapes(t *testing.T) {
+	zeroChr := Characteristic{} // ValueHandle 0: never a real attribute
+	readOnly := Characteristic{ValueHandle: 7, Properties: PropRead}
+	writable := Characteristic{ValueHandle: 7, Properties: PropRead | PropWriteNoRsp}
+
+	cCases := []struct {
+		name string
+		err  error
+		text string
+	}{
+		{"read zero handle", func() error { _, e := Read(ConnID(1), zeroChr); return e }(),
+			"ble: read: esp/ble: bad value (code 31492)"},
+		{"write zero handle", Write(ConnID(1), zeroChr, []byte("x")),
+			"ble: write: esp/ble: bad value (code 31492)"},
+		{"write read-only", Write(ConnID(1), readOnly, []byte("x")),
+			"ble: write: esp/ble: bad property (code 31494)"},
+		{"write too long", WriteWithResponse(ConnID(1), writable, make([]byte, MaxData+1)),
+			"ble: write: esp/ble: too long (code 31496)"},
+		{"subscribe char zero handle", func() error { _, e := SubscribeChar(ConnID(1), zeroChr); return e }(),
+			"ble: subscribe char: esp/ble: bad value (code 31492)"},
+		{"unsubscribe nil", Unsubscribe(nil),
+			"ble: unsubscribe: esp/ble: bad value (code 31492)"},
+		{"characteristics zero uuid", func() error { _, e := Characteristics(ConnID(1), UUID{}); return e }(),
+			"ble: characteristics: esp/ble: bad uuid (code 31491)"},
+		{"add service zero uuid", AddService(UUID{}, 4),
+			"ble: add service: esp/ble: bad uuid (code 31491)"},
+		{"commit empty registry", func() error { resetRegistry(); defer resetRegistry(); return CommitServices() }(),
+			"ble: commit services: esp/ble: bad value (code 31492)"},
+		{"write char value zero handle", WriteCharValue(0, []byte("x")),
+			"ble: write char value: esp/ble: bad value (code 31492)"},
+		{"notify zero handle", Notify(ConnID(1), 0, []byte("x")),
+			"ble: notify: esp/ble: bad value (code 31492)"},
+		{"indicate too long", Indicate(ConnID(1), 4, make([]byte, MaxData+1)),
+			"ble: indicate: esp/ble: too long (code 31496)"},
+		{"start advertising oversize", func() error { _, e := StartAdvertising(AdvParams{AdvData: make([]byte, MaxAdvData+1)}); return e }(),
+			"ble: start advertising: esp/ble: too many (code 31497)"},
 	}
-	if !errors.Is(error(ErrTooMany), ErrTooMany) {
-		t.Fatal("errors.Is does not match ErrTooMany")
+	for _, c := range cCases {
+		if got := c.err.Error(); got != c.text {
+			t.Errorf("%s: Error() = %q, want %q", c.name, got, c.text)
+		}
+		var e *esperr.Error
+		if !errors.As(c.err, &e) {
+			t.Errorf("%s: errors.As did not walk through the wrap", c.name)
+		} else if got := esperr.Code(c.err); got != e.Code {
+			t.Errorf("%s: esperr.Code = %d, want the annotation %d", c.name, got, e.Code)
+		}
+	}
+
+	// The sentinel behind a wrapped guard still matches by identity (the
+	// wrap unwraps to it) and by its code-era literal.
+	err := Unsubscribe(nil)
+	if !errors.Is(err, ErrBadValue) || !errors.Is(err, &esperr.Error{Code: codeBadValue}) {
+		t.Fatal("the wrapped guard lost its sentinel or code identity")
+	}
+
+	// State and wait sentinels return bare: the pointer identity a demo's
+	// sentinel comparison relies on stays intact.
+	if _, err := StartScan(ScanOptions{}); err != ErrNotReady {
+		t.Fatalf("StartScan before Init = %v, want the bare ErrNotReady sentinel", err)
+	}
+	sub := &Subscription{kinds: []EventKind{EvAdv}}
+	if _, err := sub.Next(0); err != ErrTimeout {
+		t.Fatalf("Next(0) = %v, want the bare ErrTimeout sentinel", err)
 	}
 }

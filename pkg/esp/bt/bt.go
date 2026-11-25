@@ -111,6 +111,13 @@ import (
 // stub tag). The classic-audio profile that shares this package has its own
 // segment: 0x77xx is A2DP's. Raw esp_err codes, esp_bt_status_t and
 // esp_spp_status_t values pass through unchanged and are named by ErrName.
+//
+// The segment conditions are text-first semantic sentinels: Error() renders
+// the words ("esp/bt: busy") and the segment value stays on Error.Code as
+// the diagnostic annotation, so errors.Is matches both by sentinel identity
+// and, against code-era literals, by code. Forwarded codes stay bare Coded
+// values; the SPPListen argument and event-shape guards wrap their errors
+// with esperr.Wrap to name the operation that refused the call.
 const (
 	codeGlueABI   = 0x7601
 	codeNotReady  = 0x7602
@@ -126,31 +133,46 @@ const (
 var (
 	// ErrGlueABI reports a glue whose contract version differs from this
 	// package's: the firmware's bt_glue.c copy and the Go package were not
-	// built from the same source.
-	ErrGlueABI = &esperr.Error{Code: codeGlueABI, Name: ErrName(codeGlueABI)}
+	// built from the same source. A semantic sentinel carrying the 0x7601
+	// segment code on Error.Code as the diagnostic annotation.
+	ErrGlueABI = newSentinel("esp/bt: glue abi mismatch", codeGlueABI)
 	// ErrNotReady reports a control call made before Init completed (or
 	// after Deinit): the controller is down, no SPP operation can start.
-	ErrNotReady = &esperr.Error{Code: codeNotReady, Name: ErrName(codeNotReady)}
+	// A semantic sentinel with the 0x7602 segment annotation.
+	ErrNotReady = newSentinel("esp/bt: not ready", codeNotReady)
 	// ErrBusy reports a concurrency guard: a second SPPAccept while one is
-	// already waiting (the MVP serves one connection at a time).
-	ErrBusy = &esperr.Error{Code: codeBusy, Name: ErrName(codeBusy)}
+	// already waiting (the MVP serves one connection at a time). A semantic
+	// sentinel with the 0x7603 segment annotation.
+	ErrBusy = newSentinel("esp/bt: busy", codeBusy)
 	// ErrTimeout reports a deadline that passed with the operation
-	// unfinished (ESP_ERR_TIMEOUT).
-	ErrTimeout = &esperr.Error{Code: codeTimeout, Name: ErrName(codeTimeout)}
+	// unfinished (ESP_ERR_TIMEOUT). A semantic sentinel that keeps the
+	// esp_err value (0x107) on Error.Code as the annotation.
+	ErrTimeout = newSentinel("esp/bt: timeout", codeTimeout)
 	// ErrUnsupported is what a host build reports for every call: the
 	// value the stub bindings return, named above the esperr/ws/tls meta
-	// segments so it can never be mistaken for a real code.
-	ErrUnsupported = &esperr.Error{Code: codeUnsupport, Name: ErrName(codeUnsupport)}
+	// segments so it can never be mistaken for a real code. A semantic
+	// sentinel with the 0x7F00 stub-tag annotation.
+	ErrUnsupported = newSentinel("esp/bt: unsupported", codeUnsupport)
 )
 
-// errOf wraps a raw pipeline code (0 = nil) as the error value this package
-// returns, named through ErrName so a printed error reads like the ErrName
-// table's output.
+// newSentinel declares a semantic sentinel that keeps its historical segment
+// code on Error.Code as the annotation (esperr.New is text-only; the glue
+// still reports the code, and the ErrName table pins the segment values).
+func newSentinel(text string, code int32) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	return e
+}
+
+// errOf turns one raw pipeline code into the error this package returns (nil
+// for ESP_OK): a bare esperr.Coded value - the forwarded esp_err,
+// esp_bt_status_t or esp_spp_status_t number is the diagnostic, named through
+// ErrName so a printed error reads like the ErrName table's output.
 func errOf(code int32) error {
 	if code == 0 {
 		return nil
 	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	return esperr.Coded(code, ErrName(code))
 }
 
 // ---- constants ----
@@ -591,7 +613,7 @@ func SPPListen(opts SPPOptions) error {
 		scn = DefaultSCN
 	}
 	if scn > 30 {
-		return errOf(0x102) // ESP_ERR_INVALID_ARG: SCN out of RFCOMM range
+		return esperr.Wrap("bt: listen", errOf(0x102)) // ESP_ERR_INVALID_ARG: SCN out of RFCOMM range
 	}
 	name := opts.Name
 	if name == "" {
@@ -610,7 +632,7 @@ func SPPListen(opts SPPOptions) error {
 		return err
 	}
 	if ev.Kind != int32(EvSPPInit) {
-		return errOf(0x103) // ESP_ERR_INVALID_STATE: unexpected event shape
+		return esperr.Wrap("bt: listen", errOf(0x103)) // ESP_ERR_INVALID_STATE: unexpected event shape
 	}
 	if ev.Status != 0 {
 		return errOf(ev.Status)
@@ -623,7 +645,7 @@ func SPPListen(opts SPPOptions) error {
 		return err
 	}
 	if ev.Kind != int32(EvSPPListen) {
-		return errOf(0x103)
+		return esperr.Wrap("bt: listen", errOf(0x103)) // ESP_ERR_INVALID_STATE: unexpected event shape
 	}
 	if ev.Status != 0 {
 		return errOf(ev.Status)
@@ -853,7 +875,7 @@ func (c *SPPConn) Close() error {
 		// Also removes a conn that another path (a failed Read, Deinit's
 		// sweep) already closed; removeConn is a no-op when absent.
 		removeConn(c)
-		return esperr.ErrClosed
+		return esperr.Wrap("bt: close", esperr.ErrClosed)
 	}
 	if c.remote {
 		// The peer's close already tore the RFCOMM link down and Read (or
@@ -863,7 +885,7 @@ func (c *SPPConn) Close() error {
 		c.closed = true
 		removeConn(c)
 		c.drain()
-		return esperr.ErrClosed
+		return esperr.Wrap("bt: close", esperr.ErrClosed)
 	}
 	if err := errOf(sppDisconnect(c.handle)); err != nil {
 		c.closed = true

@@ -115,6 +115,85 @@ func TestErrOf(t *testing.T) {
 	}
 }
 
+// TestSentinelTexts pins the segment sentinels in their migrated shape: the
+// human text renders first with the segment code as the annotation (the
+// values themselves are pinned by TestErrorSegments), and the code-era checks
+// keep working - errors.Is against a raw literal of the code, the annotation
+// reachable through esperr.Code and errors.As, and the sentinel matching
+// itself by identity.
+func TestSentinelTexts(t *testing.T) {
+	for _, c := range []struct {
+		err  *esperr.Error
+		text string
+	}{
+		{ErrGlueABI, "esp/bt: glue abi mismatch (code 30209)"},
+		{ErrNotReady, "esp/bt: not ready (code 30210)"},
+		{ErrBusy, "esp/bt: busy (code 30211)"},
+		{ErrTimeout, "esp/bt: timeout (code 263)"},
+		{ErrUnsupported, "esp/bt: unsupported (code 32512)"},
+	} {
+		if got := c.err.Error(); got != c.text {
+			t.Errorf("Error() = %q, want %q", got, c.text)
+		}
+		if !errors.Is(error(c.err), c.err) {
+			t.Errorf("errors.Is does not match the %q sentinel by identity", c.text)
+		}
+		if !errors.Is(error(c.err), &esperr.Error{Code: c.err.Code}) {
+			t.Errorf("the %q sentinel does not match a code-era literal of %#x", c.text, c.err.Code)
+		}
+		var e *esperr.Error
+		if !errors.As(error(c.err), &e) || e.Code != c.err.Code {
+			t.Errorf("errors.As did not surface the %#x annotation", c.err.Code)
+		}
+	}
+
+	// A forwarded pipeline code still matches the sentinel that carries the
+	// same value (the code-era compatibility path), next to a different-code
+	// sentinel staying distinct.
+	if !errors.Is(errOf(0x107), ErrTimeout) || errors.Is(errOf(0x107), ErrBusy) {
+		t.Error("code-path matching between errOf values and sentinels drifted")
+	}
+
+	// State sentinels return bare: the pointer identity stays intact for a
+	// pre-Init control call, whose text already names the package.
+	if err := SetName("llgo"); err != ErrNotReady {
+		t.Fatalf("SetName before Init = %v, want the bare ErrNotReady sentinel", err)
+	}
+}
+
+// TestCloseWrapShape pins the idempotent-Close contract in the migrated
+// shape: a Close on an already-closed (or remotely closed) connection
+// reports the family's ErrClosed under the "bt: close" op - rendering
+// "bt: close: closed (code 9)" - with errors.Is and esperr.Code still
+// walking through the wrap to the EBADF annotation.
+func TestCloseWrapShape(t *testing.T) {
+	c := &SPPConn{closed: true}
+	err := c.Close()
+	if !errors.Is(err, esperr.ErrClosed) {
+		t.Fatalf("second Close = %v, want esperr.ErrClosed", err)
+	}
+	if got, want := err.Error(), "bt: close: closed (code 9)"; got != want {
+		t.Fatalf("Error() = %q, want %q", got, want)
+	}
+	if got := esperr.Code(err); got != 9 {
+		t.Fatalf("esperr.Code = %d, want the EBADF 9 annotation", got)
+	}
+	var e *esperr.Error
+	if !errors.As(err, &e) || e.Code != 9 {
+		t.Fatal("errors.As did not surface the EBADF annotation through the wrap")
+	}
+
+	// The peer already closed: Close must answer the same wrapped ErrClosed
+	// without going near the bindings, per the Close contract.
+	r := &SPPConn{remote: true}
+	if err := r.Close(); !errors.Is(err, esperr.ErrClosed) || err.Error() != "bt: close: closed (code 9)" {
+		t.Fatalf("Close after remote close = %v, want the wrapped ErrClosed", err)
+	}
+	if errors.Is(err, esperr.ErrTimeout) {
+		t.Fatal("the wrapped close matched ErrTimeout - sentinel isolation broken")
+	}
+}
+
 // TestStubReportsUnsupported exercises the host stub's honesty: Init/Deinit
 // refuse at the binding level, and every pre-Init control call hits the
 // package's not-ready guard before any binding would run.

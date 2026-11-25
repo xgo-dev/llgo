@@ -138,6 +138,13 @@
 // is none of them. Tagging the nimble domain keeps errors.Is from mixing
 // them, and keeps an esp_err comparison from ever matching a host status.
 //
+// The Go-domain conditions are text-first semantic sentinels: Error() renders
+// the words ("esp/ble: busy") and the segment value stays on Error.Code as
+// the diagnostic annotation, so errors.Is matches both by sentinel identity
+// and, against code-era literals, by code. Forwarded esp_err and NimBLE
+// codes stay bare Coded values; the argument-refusal guards wrap their
+// sentinels with esperr.Wrap to name the operation that refused the call.
+//
 // # Scope
 //
 // Both BLE roles share this package. The central side is GAP scanning (legacy
@@ -172,59 +179,83 @@ const (
 	codeUnsupported = 0x7F00
 )
 
-// ErrTimeout reports a bounded wait that found nothing: ESP_ERR_TIMEOUT-style
-// semantics in this package's own code space - Subscription.Next saw no event
-// inside its bound, or Init saw no host sync.
-var ErrTimeout = &esperr.Error{Code: codeTimeout, Name: "BLE_ERR_TIMEOUT"}
+var (
+	// ErrTimeout reports a bounded wait that found nothing: ESP_ERR_TIMEOUT-style
+	// semantics in this package's own code space - Subscription.Next saw no event
+	// inside its bound, or Init saw no host sync. It is a semantic sentinel -
+	// match it with errors.Is - and keeps the 0x7B01 segment code on Error.Code
+	// as the diagnostic annotation, so code-style checks against the segment
+	// value keep working.
+	ErrTimeout = newSentinel("esp/ble: timeout", codeTimeout)
 
-// ErrNotReady reports a control call made before Init completed (or after
-// Deinit): the host stack has no sync yet, so no GAP procedure can start.
-var ErrNotReady = &esperr.Error{Code: codeNotReady, Name: "BLE_ERR_NOT_READY"}
+	// ErrNotReady reports a control call made before Init completed (or after
+	// Deinit): the host stack has no sync yet, so no GAP procedure can start.
+	// A semantic sentinel carrying the 0x7B02 segment code as its annotation.
+	ErrNotReady = newSentinel("esp/ble: not ready", codeNotReady)
 
-// ErrUnsupported reports that this firmware (or build) has no BLE at all: a
-// host build, or an ESP-IDF firmware compiled without the NimBLE host. The
-// glue reports ESP_ERR_NOT_SUPPORTED and the package renders it in this
-// package's code space, where it can never be mistaken for a real status.
-var ErrUnsupported = &esperr.Error{Code: codeUnsupported, Name: "BLE_ERR_UNSUPPORTED"}
+	// ErrUnsupported reports that this firmware (or build) has no BLE at all: a
+	// host build, or an ESP-IDF firmware compiled without the NimBLE host. The
+	// glue reports ESP_ERR_NOT_SUPPORTED and the package renders it in this
+	// package's code space, where it can never be mistaken for a real status.
+	// A semantic sentinel carrying the 0x7F00 stub-tag code as its annotation.
+	ErrUnsupported = newSentinel("esp/ble: unsupported", codeUnsupported)
 
-// ErrBadUUID reports a UUID value this package cannot use: a text form that is
-// neither four hex digits nor the 36-character 128-bit form, or a zero UUID
-// where a service or characteristic UUID is required.
-var ErrBadUUID = &esperr.Error{Code: codeBadUUID, Name: "BLE_ERR_BAD_UUID"}
+	// ErrBadUUID reports a UUID value this package cannot use: a text form that is
+	// neither four hex digits nor the 36-character 128-bit form, or a zero UUID
+	// where a service or characteristic UUID is required. Argument-refusal
+	// sentinels ride under the operation's esperr.Wrap prefix.
+	ErrBadUUID = newSentinel("esp/ble: bad uuid", codeBadUUID)
 
-// ErrBadValue reports a caller-side argument this package refuses before
-// submitting anything: a zero value handle in a Characteristic, or a nil
-// Subscription.
-var ErrBadValue = &esperr.Error{Code: codeBadValue, Name: "BLE_ERR_BAD_VALUE"}
+	// ErrBadValue reports a caller-side argument this package refuses before
+	// submitting anything: a zero value handle in a Characteristic, or a nil
+	// Subscription. It rides under the operation's esperr.Wrap prefix.
+	ErrBadValue = newSentinel("esp/ble: bad value", codeBadValue)
 
-// ErrBusy reports that another GATT procedure is still in flight. The ATT
-// bearer carries one outstanding request per connection, and this package's
-// result slots are single, so a second procedure is refused instead of being
-// queued behind the first.
-var ErrBusy = &esperr.Error{Code: codeBusy, Name: "BLE_ERR_BUSY"}
+	// ErrBusy reports that another GATT procedure is still in flight. The ATT
+	// bearer carries one outstanding request per connection, and this package's
+	// result slots are single, so a second procedure is refused instead of being
+	// queued behind the first. A semantic sentinel with the 0x7B05 annotation.
+	ErrBusy = newSentinel("esp/ble: busy", codeBusy)
 
-// ErrBadProperty reports a characteristic whose properties do not allow the
-// requested operation: write on a characteristic that declares neither write
-// nor write-without-response, or a subscription on one that declares neither
-// notify nor indicate.
-var ErrBadProperty = &esperr.Error{Code: codeBadProperty, Name: "BLE_ERR_BAD_PROPERTY"}
+	// ErrBadProperty reports a characteristic whose properties do not allow the
+	// requested operation: write on a characteristic that declares neither write
+	// nor write-without-response, or a subscription on one that declares neither
+	// notify nor indicate. It rides under the operation's esperr.Wrap prefix.
+	ErrBadProperty = newSentinel("esp/ble: bad property", codeBadProperty)
 
-// ErrNotFound reports a service that the last discovery did not report: a
-// Characteristics call takes a UUID that Services returned for that same
-// connection.
-var ErrNotFound = &esperr.Error{Code: codeNotFound, Name: "BLE_ERR_NOT_FOUND"}
+	// ErrNotFound reports a service that the last discovery did not report: a
+	// Characteristics call takes a UUID that Services returned for that same
+	// connection. A lookup miss, returned bare like the state sentinels.
+	ErrNotFound = newSentinel("esp/ble: not found", codeNotFound)
 
-// ErrTooLong reports a payload larger than one event or one ATT write carries
-// (MaxData bytes). The value is refused rather than truncated.
-var ErrTooLong = &esperr.Error{Code: codeTooLong, Name: "BLE_ERR_TOO_LONG"}
+	// ErrTooLong reports a payload larger than one event or one ATT write carries
+	// (MaxData bytes). The value is refused rather than truncated. It rides
+	// under the operation's esperr.Wrap prefix.
+	ErrTooLong = newSentinel("esp/ble: too long", codeTooLong)
 
-// ErrTooMany reports a registry or argument count beyond what this package
-// holds statically: more than MaxLocalServices services, MaxLocalChars
-// characteristics, or an advertising payload that does not fit one legacy
-// advertising packet even with the name moved to the scan response.
-var ErrTooMany = &esperr.Error{Code: codeTooMany, Name: "BLE_ERR_TOO_MANY"}
+	// ErrTooMany reports a registry or argument count beyond what this package
+	// holds statically: more than MaxLocalServices services, MaxLocalChars
+	// characteristics, or an advertising payload that does not fit one legacy
+	// advertising packet even with the name moved to the scan response. It
+	// rides under the operation's esperr.Wrap prefix.
+	ErrTooMany = newSentinel("esp/ble: too many", codeTooMany)
+)
 
-// espErr wraps a raw esp_err code (0 = nil) - the esp domain of this package.
+// newSentinel declares a semantic sentinel that keeps its historical segment
+// code on Error.Code as the annotation (esperr.New is text-only; the glue's
+// error-model doc pins the segment table, and code-era checks against the
+// segment values keep working through it).
+func newSentinel(text string, code int32) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	return e
+}
+
+// espErr turns one raw esp_err code into the error this package returns
+// (nil for ESP_OK): every code forwards as a bare esperr.Coded value - the
+// esp domain's number is the diagnostic. The firmware-without-NimBLE case
+// (ESP_ERR_NOT_SUPPORTED) becomes the ErrUnsupported sentinel instead, so a
+// build without BLE answers in the Go domain, not with a raw code.
 func espErr(code int32) error {
 	if code == 0 {
 		return nil
@@ -232,17 +263,18 @@ func espErr(code int32) error {
 	if code == 0x106 { // ESP_ERR_NOT_SUPPORTED: no NimBLE host in the firmware
 		return ErrUnsupported
 	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	return esperr.Coded(code, ErrName(code))
 }
 
-// nimbleErr wraps a raw NimBLE host status (0 = nil) into the tagged nimble
-// domain.
+// nimbleErr turns one raw NimBLE host status (0 = nil) into the tagged
+// nimble domain: a bare esperr.Coded value - the forwarded status is the
+// diagnostic, and ErrName names it.
 func nimbleErr(status int32) error {
 	if status == 0 {
 		return nil
 	}
 	code := NimbleBase + status
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	return esperr.Coded(code, ErrName(code))
 }
 
 // ErrStatus builds the error value one NimBLE host status maps to (nil for
@@ -1213,7 +1245,7 @@ func Services(conn ConnID) ([]Service, error) {
 // keeps; a peer with more ends the discovery with BLE_HS_EMSGSIZE.
 func Characteristics(conn ConnID, svc UUID) ([]Characteristic, error) {
 	if svc.IsZero() {
-		return nil, ErrBadUUID
+		return nil, esperr.Wrap("ble: characteristics", ErrBadUUID)
 	}
 	if err := gattBegin(); err != nil {
 		return nil, err
@@ -1270,7 +1302,7 @@ func Characteristics(conn ConnID, svc UUID) ([]Characteristic, error) {
 // is truncated by the peer (a long read is a later stage).
 func Read(conn ConnID, chr Characteristic) ([]byte, error) {
 	if chr.ValueHandle == 0 {
-		return nil, ErrBadValue
+		return nil, esperr.Wrap("ble: read", ErrBadValue)
 	}
 	if err := gattBegin(); err != nil {
 		return nil, err
@@ -1302,7 +1334,7 @@ func Read(conn ConnID, chr Characteristic) ([]byte, error) {
 // ErrTooLong.
 func Write(conn ConnID, chr Characteristic, data []byte) error {
 	if chr.ValueHandle == 0 {
-		return ErrBadValue
+		return esperr.Wrap("ble: write", ErrBadValue)
 	}
 	switch {
 	case chr.Properties&PropWrite != 0:
@@ -1310,7 +1342,7 @@ func Write(conn ConnID, chr Characteristic, data []byte) error {
 	case chr.Properties&PropWriteNoRsp != 0:
 		return writeValue(conn, chr.ValueHandle, data, writeWithoutResponse)
 	}
-	return ErrBadProperty
+	return esperr.Wrap("ble: write", ErrBadProperty)
 }
 
 // WriteWithResponse writes data with an ATT Write Request: the peer
@@ -1340,10 +1372,10 @@ const (
 // writeValue submits one write and waits for its completion record.
 func writeValue(conn ConnID, handle uint16, data []byte, mode writeMode) error {
 	if handle == 0 {
-		return ErrBadValue
+		return esperr.Wrap("ble: write", ErrBadValue)
 	}
 	if len(data) > MaxData {
-		return ErrTooLong
+		return esperr.Wrap("ble: write", ErrTooLong)
 	}
 	if err := gattBegin(); err != nil {
 		return err
@@ -1378,7 +1410,7 @@ func writeValue(conn ConnID, handle uint16, data []byte, mode writeMode) error {
 // for this subscriber (and reported in the mailbox's overflow count).
 func SubscribeChar(conn ConnID, chr Characteristic) (*Subscription, error) {
 	if chr.ValueHandle == 0 {
-		return nil, ErrBadValue
+		return nil, esperr.Wrap("ble: subscribe char", ErrBadValue)
 	}
 	var cccd uint16
 	switch {
@@ -1387,7 +1419,7 @@ func SubscribeChar(conn ConnID, chr Characteristic) (*Subscription, error) {
 	case chr.Properties&PropIndicate != 0:
 		cccd = 2
 	default:
-		return nil, ErrBadProperty
+		return nil, esperr.Wrap("ble: subscribe char", ErrBadProperty)
 	}
 	// Register before the CCCD write: the peer may push a notification as soon
 	// as it sees the write, and a subscription created afterwards would lose
@@ -1412,7 +1444,7 @@ func SubscribeChar(conn ConnID, chr Characteristic) (*Subscription, error) {
 // already buffered stay readable through Next either way.
 func Unsubscribe(s *Subscription) error {
 	if s == nil {
-		return ErrBadValue
+		return esperr.Wrap("ble: unsubscribe", ErrBadValue)
 	}
 	var err error
 	if s.notif != nil {
@@ -1546,7 +1578,7 @@ func StartAdvertising(p AdvParams) (OpID, error) {
 	// same way a device would.
 	adv, rsp, err := buildAdvPayloads(p)
 	if err != nil {
-		return 0, err
+		return 0, esperr.Wrap("ble: start advertising", err)
 	}
 	if !Ready() {
 		return 0, ErrNotReady
@@ -1625,20 +1657,20 @@ var (
 // that does not fit its declared counts.
 func AddService(uuid UUID, numHandles int) error {
 	if uuid.IsZero() {
-		return ErrBadUUID
+		return esperr.Wrap("ble: add service", ErrBadUUID)
 	}
 	if numHandles < 1 {
-		return ErrBadValue
+		return esperr.Wrap("ble: add service", ErrBadValue)
 	}
 	if committed {
-		return ErrBadValue // the attribute table is already built
+		return esperr.Wrap("ble: add service", ErrBadValue) // the attribute table is already built
 	}
 	if len(gsvcs) >= MaxLocalServices {
-		return ErrTooMany
+		return esperr.Wrap("ble: add service", ErrTooMany)
 	}
 	for i := range gsvcs {
 		if gsvcs[i].uuid == uuid {
-			return ErrBadUUID // one UUID, one service
+			return esperr.Wrap("ble: add service", ErrBadUUID) // one UUID, one service
 		}
 	}
 	gsvcs = append(gsvcs, gsvcReg{uuid: uuid, numHandles: numHandles, first: len(gchrs)})
@@ -1654,16 +1686,16 @@ func AddService(uuid UUID, numHandles int) error {
 // added here.
 func AddCharacteristic(svc, chr UUID, props uint8) error {
 	if svc.IsZero() || chr.IsZero() {
-		return ErrBadUUID
+		return esperr.Wrap("ble: add characteristic", ErrBadUUID)
 	}
 	if props&^(PropRead|PropWriteNoRsp|PropWrite|PropNotify|PropIndicate) != 0 {
-		return ErrBadProperty // the package builds no broadcast/signed/extended properties
+		return esperr.Wrap("ble: add characteristic", ErrBadProperty) // the package builds no broadcast/signed/extended properties
 	}
 	if committed {
-		return ErrBadValue
+		return esperr.Wrap("ble: add characteristic", ErrBadValue)
 	}
 	if len(gchrs) >= MaxLocalChars {
-		return ErrTooMany
+		return esperr.Wrap("ble: add characteristic", ErrTooMany)
 	}
 	for i := range gsvcs {
 		if gsvcs[i].uuid != svc {
@@ -1671,7 +1703,7 @@ func AddCharacteristic(svc, chr UUID, props uint8) error {
 		}
 		for j := gsvcs[i].first; j < len(gchrs); j++ {
 			if gchrs[j].uuid == chr {
-				return ErrBadUUID // one UUID, one characteristic per service
+				return esperr.Wrap("ble: add characteristic", ErrBadUUID) // one UUID, one characteristic per service
 			}
 		}
 		gsvcs[i].nchars++
@@ -1738,13 +1770,13 @@ func CommitServices() error {
 	// or double commit is the caller's bug, reportable the same way on a
 	// host build as on a device.
 	if committed {
-		return ErrBadValue
+		return esperr.Wrap("ble: commit services", ErrBadValue)
 	}
 	if len(gsvcs) == 0 {
-		return ErrBadValue
+		return esperr.Wrap("ble: commit services", ErrBadValue)
 	}
 	if err := checkRegistry(); err != nil {
-		return err
+		return esperr.Wrap("ble: commit services", err)
 	}
 	if !Ready() {
 		return ErrNotReady
@@ -1833,10 +1865,10 @@ func LocalHandle(chr UUID) (uint16, error) {
 // not a committed characteristic is ErrNotFound.
 func WriteCharValue(handle uint16, data []byte) error {
 	if handle == 0 {
-		return ErrBadValue
+		return esperr.Wrap("ble: write char value", ErrBadValue)
 	}
 	if len(data) > MaxData {
-		return ErrTooLong
+		return esperr.Wrap("ble: write char value", ErrTooLong)
 	}
 	if !committed {
 		return ErrNotReady
@@ -1861,7 +1893,7 @@ func WriteCharValue(handle uint16, data []byte) error {
 // notification has no failure report for it, which is what
 // "unacknowledged" means on the wire.
 func Notify(conn ConnID, handle uint16, data []byte) error {
-	return gattsPush(conn, handle, data, false)
+	return gattsPush(conn, handle, data, false, "ble: notify")
 }
 
 // Indicate pushes data to every subscribed peer of the characteristic handle,
@@ -1869,16 +1901,17 @@ func Notify(conn ConnID, handle uint16, data []byte) error {
 // peer's confirmation and enforces the one-outstanding-indication rule
 // itself. Like Notify, the returned error reports the submission only.
 func Indicate(conn ConnID, handle uint16, data []byte) error {
-	return gattsPush(conn, handle, data, true)
+	return gattsPush(conn, handle, data, true, "ble: indicate")
 }
 
-// gattsPush is the shared body of Notify and Indicate.
-func gattsPush(conn ConnID, handle uint16, data []byte, indicate bool) error {
+// gattsPush is the shared body of Notify and Indicate; op names the public
+// operation for the argument-refusal guards.
+func gattsPush(conn ConnID, handle uint16, data []byte, indicate bool, op string) error {
 	if handle == 0 {
-		return ErrBadValue
+		return esperr.Wrap(op, ErrBadValue)
 	}
 	if len(data) > MaxData {
-		return ErrTooLong
+		return esperr.Wrap(op, ErrTooLong)
 	}
 	if !Ready() {
 		return ErrNotReady
@@ -1888,10 +1921,10 @@ func gattsPush(conn ConnID, handle uint16, data []byte, indicate bool) error {
 		return ErrNotFound
 	}
 	if indicate && reg.props&PropIndicate == 0 {
-		return ErrBadProperty
+		return esperr.Wrap(op, ErrBadProperty)
 	}
 	if !indicate && reg.props&PropNotify == 0 {
-		return ErrBadProperty
+		return esperr.Wrap(op, ErrBadProperty)
 	}
 	var p *uint8
 	if len(data) > 0 {
