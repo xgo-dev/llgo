@@ -5,7 +5,6 @@ package runtime
 import (
 	"unsafe"
 
-	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/clite/debug"
 )
 
@@ -26,7 +25,7 @@ func Rethrow(link *Defer) {
 			FreeRoot(unsafe.Pointer(node))
 			exitPanic()
 		} else {
-			c.Siglongjmp(link.Addr, 1)
+			deferLongjmp(link.Addr, 1)
 		}
 	} else if gp.goexit {
 		// Goexit must run deferred functions before terminating the current
@@ -34,7 +33,7 @@ func Rethrow(link *Defer) {
 		// longjmp-based defer unwinding until the final defer frame is gone.
 		gp.defer_ = link
 		if link != nil {
-			c.Siglongjmp(link.Addr, 1)
+			deferLongjmp(link.Addr, 1)
 		}
 		if gp.isMain {
 			markMainExited()

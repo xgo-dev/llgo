@@ -241,6 +241,29 @@ func (b Builder) cLongjmp(jb, retval Expr) {
 
 // -----------------------------------------------------------------------------
 
+func (b Builder) useFastDarwinArm64DeferSetjmp() bool {
+	t := b.Prog.target
+	return t.Target == "" && t.effectiveGOOS() == "darwin" && t.effectiveGOARCH() == "arm64"
+}
+
+func (b Builder) deferSetjmp(jb Expr) Expr {
+	if b.useFastDarwinArm64DeferSetjmp() {
+		fn := b.Pkg.cFunc("llgo_setjmp", b.Prog.tySetjmp())
+		b.addReturnsTwiceAttr(fn)
+		return b.Call(fn, jb)
+	}
+	czero := b.Prog.IntVal(0, b.Prog.CInt())
+	return b.Sigsetjmp(jb, czero)
+}
+
+func (b Builder) allocaDeferSigjmpBuf() Expr {
+	ret := b.AllocaSigjmpBuf()
+	if b.useFastDarwinArm64DeferSetjmp() {
+		ret.impl.SetAlignment(16)
+	}
+	return ret
+}
+
 func (p Function) deferInitBuilder(from Builder) (b Builder, next BasicBlock) {
 	b = p.NewBuilder()
 	// NewBuilder supplies a line-zero function location for generated code;
@@ -394,7 +417,7 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	zero := prog.Val(uintptr(0))
 	slot := b.Call(b.Pkg.rtFunc("ThreadDeferSlot"))
 	link := b.Load(slot)
-	jb := b.AllocaSigjmpBuf()
+	jb := b.allocaDeferSigjmpBuf()
 	// Wasm Reth selector 0 is reserved for procBlk; Rund selector 0 is
 	// rethrowBlk. Native targets store the corresponding block addresses.
 	initialReth := deferTarget{index: 0, block: procBlk}
@@ -424,8 +447,7 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	// can safely detect an empty chain without a prior push.
 	b.Store(argsPtr, prog.Nil(prog.VoidPtr()))
 
-	czero := prog.IntVal(0, prog.CInt())
-	retval := b.Sigsetjmp(jb, czero)
+	retval := b.deferSetjmp(jb)
 	if prog.GCRootsEnabled() {
 		b.Call(b.Pkg.rtFunc("RestoreDeferGCRoot"), deferData)
 	}

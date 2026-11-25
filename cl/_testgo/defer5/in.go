@@ -30,7 +30,7 @@ func main() {
 	// CHECK-NEXT: [[DEFER_RESUME_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 3
 	// CHECK-NEXT: [[DEFER_RETHROW_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 4
 	// CHECK-NEXT: [[DEFER_HEAD_FIELD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}.Defer", ptr [[DEFER_FRAME]], i32 0, i32 5
-	// DARWIN-ARM64: [[SETJMP_RESULT:%[0-9]+]] = call i32 @sigsetjmp(ptr [[DEFER_JMPBUF]], i32 0)
+	// DARWIN-ARM64: [[SETJMP_RESULT:%[0-9]+]] = call i32 @llgo_setjmp(ptr [[DEFER_JMPBUF]])
 	// LINUX-AMD64: [[SETJMP_RESULT:%[0-9]+]] = call i32 @__sigsetjmp(ptr [[DEFER_JMPBUF]], i32 0)
 	// WINDOWS-ARM64: [[SETJMP_RESULT:%[0-9]+]] = call i32 @llgo_setjmp(ptr [[DEFER_JMPBUF]])
 	// WINDOWS-AMD64: [[SETJMP_RESULT:%[0-9]+]] = call i32 @{{_setjmpex|__intrinsic_setjmpex}}(ptr [[DEFER_JMPBUF]], ptr null)
