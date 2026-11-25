@@ -203,7 +203,10 @@ func tophash(hash uintptr) uint8 {
 }
 
 func evacuated(b *bmap) bool {
-	h := b.tophash[0]
+	// Read tophash[0] directly at offset 0 of bmap. Using b.tophash[0] emits a
+	// pointer-to-array AssertNilDeref check that prevents LLVM from treating
+	// fast map lookups as leaf functions once evacuated is inlined.
+	h := *(*uint8)(unsafe.Pointer(b))
 	return h > emptyOne && h < minTopHash
 }
 

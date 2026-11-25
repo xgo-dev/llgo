@@ -7,4 +7,5 @@ import c "github.com/xgo-dev/llgo/runtime/internal/clite"
 func exitPanic() {
 	crashAfterPanic()
 	c.Exit(2)
+	c.Unreachable()
 }

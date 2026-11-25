@@ -67,29 +67,35 @@ func Recover(token unsafe.Pointer) (ret any) {
 		return nil
 	}
 	ptr := gp.recoverPanic
-	if ptr != nil && ptr == gp.panic_ {
-		node := (*panicNode)(ptr)
-		gp.panic_ = node.prev
-		// Keep the activation token until its deferred call returns, so a
-		// same-value repanic can reuse the original snapshot. Clearing the
-		// eligible panic still prevents any subsequent recover from succeeding.
-		gp.recoverPanic = nil
-		ret = node.arg
-		FreeRoot(unsafe.Pointer(node))
-		// The deferred function that recovers keeps observing the panic
-		// stack until it returns (gc runs defers on top of it). The public
-		// runtime marks its frame so the pc snapshot stays spliceable that
-		// long; the mark reads the frame-pointer chain, which after
-		// siglongjmp can reach a stale/unmapped slot, so the guarded read
-		// lives in the package that has a page probe (RecoverMark). Nil
-		// when lib/runtime is not linked — no snapshot machinery, nothing
-		// to mark.
-		if RecoverMark != nil {
-			RecoverMark()
-		}
-		if panicCallerSnapshotAvailable() {
-			gp.panicPCs.recovered = recoveredPanic{value: ret, frame: gp.recoverFrame}
-		}
+	if ptr == nil || ptr != gp.panic_ {
+		return nil
+	}
+	return recoverActive(gp, ptr)
+}
+
+//go:noinline
+func recoverActive(gp *g, ptr unsafe.Pointer) (ret any) {
+	node := (*panicNode)(ptr)
+	gp.panic_ = node.prev
+	// Keep the activation token until its deferred call returns, so a
+	// same-value repanic can reuse the original snapshot. Clearing the
+	// eligible panic still prevents any subsequent recover from succeeding.
+	gp.recoverPanic = nil
+	ret = node.arg
+	FreeRoot(unsafe.Pointer(node))
+	// The deferred function that recovers keeps observing the panic
+	// stack until it returns (gc runs defers on top of it). The public
+	// runtime marks its frame so the pc snapshot stays spliceable that
+	// long; the mark reads the frame-pointer chain, which after
+	// siglongjmp can reach a stale/unmapped slot, so the guarded read
+	// lives in the package that has a page probe (RecoverMark). Nil
+	// when lib/runtime is not linked — no snapshot machinery, nothing
+	// to mark.
+	if RecoverMark != nil {
+		RecoverMark()
+	}
+	if panicCallerSnapshotAvailable() {
+		gp.panicPCs.recovered = recoveredPanic{value: ret, frame: gp.recoverFrame}
 	}
 	return
 }
