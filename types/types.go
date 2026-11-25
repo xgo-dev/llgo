@@ -29,8 +29,10 @@
 package types
 
 import (
+	"bytes"
 	"fmt"
 	gotypes "go/types"
+	"sort"
 	"strings"
 )
 
@@ -147,10 +149,90 @@ func RelativeTo(pkg *Package) Qualifier {
 
 // TypeString returns the string representation of typ qualified by qf.
 func TypeString(typ Type, qf Qualifier) string {
+	var buf bytes.Buffer
+	WriteType(&buf, typ, qf)
+	return buf.String()
+}
+
+// WriteType writes the string representation of typ to buf (mirroring
+// go/types.WriteType). The Qualifier controls package-level naming and may be nil.
+func WriteType(buf *bytes.Buffer, typ Type, qf Qualifier) {
 	if typ == nil {
-		return "<nil>"
+		buf.WriteString("<nil>")
+		return
 	}
-	return writeTypeString(typ, qf)
+	buf.WriteString(writeTypeString(typ, qf))
+}
+
+// WriteSignature writes the representation of signature sig to buf without a
+// leading "func" keyword (mirroring go/types.WriteSignature).
+func WriteSignature(buf *bytes.Buffer, sig *Signature, qf Qualifier) {
+	if sig == nil {
+		buf.WriteString("()")
+		return
+	}
+	if sig.callConv != Go {
+		buf.WriteByte('<')
+		buf.WriteString(sig.callConv.String())
+		buf.WriteByte('>')
+	}
+	if tps := sig.typeParams; tps != nil && tps.Len() > 0 {
+		writeTypeParamList(buf, tps, qf)
+	}
+	buf.WriteByte('(')
+	n := sig.params.Len()
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		p := sig.params.At(i)
+		if sig.variadic && i == n-1 {
+			if sl, ok := Unalias(p.typ).(*Slice); ok {
+				buf.WriteString("...")
+				WriteType(buf, sl.elem, qf)
+				continue
+			}
+			buf.WriteString("...")
+		}
+		if p.typ != nil {
+			WriteType(buf, p.typ, qf)
+		}
+	}
+	buf.WriteByte(')')
+	if rn := sig.results.Len(); rn == 1 {
+		buf.WriteByte(' ')
+		WriteType(buf, sig.results.At(0).typ, qf)
+	} else if rn > 1 {
+		buf.WriteString(" (")
+		for i := 0; i < rn; i++ {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			r := sig.results.At(i)
+			if r.name != "" {
+				buf.WriteString(r.name)
+				buf.WriteByte(' ')
+			}
+			WriteType(buf, r.typ, qf)
+		}
+		buf.WriteByte(')')
+	}
+}
+
+func writeTypeParamList(buf *bytes.Buffer, list *TypeParamList, qf Qualifier) {
+	buf.WriteByte('[')
+	for i := 0; i < list.Len(); i++ {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		tp := list.At(i)
+		buf.WriteString(tp.String())
+		if tp.constraint != nil {
+			buf.WriteByte(' ')
+			WriteType(buf, tp.constraint, qf)
+		}
+	}
+	buf.WriteByte(']')
 }
 
 func writeTypeString(typ Type, qf Qualifier) string {
@@ -182,6 +264,16 @@ func writeTypeString(typ Type, qf Qualifier) string {
 			var b strings.Builder
 			writeQualPkg(&b, t.obj.pkg, qf)
 			b.WriteString(t.obj.name)
+			if args := t.TypeArgs(); args != nil && args.Len() > 0 {
+				b.WriteByte('[')
+				for i := 0; i < args.Len(); i++ {
+					if i > 0 {
+						b.WriteString(", ")
+					}
+					b.WriteString(writeTypeString(args.At(i), qf))
+				}
+				b.WriteByte(']')
+			}
 			return b.String()
 		}
 		return writeTypeString(t.rhs, qf)
@@ -205,6 +297,23 @@ func writeTypeString(typ Type, qf Qualifier) string {
 		default:
 			return "chan " + writeTypeString(t.elem, qf)
 		}
+	case *Signature:
+		var buf bytes.Buffer
+		buf.WriteString("func")
+		WriteSignature(&buf, t, qf)
+		return buf.String()
+	case *Union:
+		var b strings.Builder
+		for i, term := range t.terms {
+			if i > 0 {
+				b.WriteString(" | ")
+			}
+			if term.tilde {
+				b.WriteByte('~')
+			}
+			b.WriteString(writeTypeString(term.typ, qf))
+		}
+		return b.String()
 	default:
 		return typ.String()
 	}
@@ -249,6 +358,22 @@ func (l *TypeList) Len() int {
 
 func (l *TypeList) At(i int) Type { return l.types[i] }
 
+func (l *TypeList) String() string {
+	if l == nil || len(l.types) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, t := range l.types {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(TypeString(t, nil))
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
 // TypeParamList holds an immutable list of TypeParams (mirroring go/types.TypeParamList).
 type TypeParamList struct {
 	tparams []*TypeParam
@@ -272,6 +397,15 @@ func (l *TypeParamList) Len() int {
 
 func (l *TypeParamList) At(i int) *TypeParam { return l.tparams[i] }
 
+func (l *TypeParamList) String() string {
+	if l == nil || len(l.tparams) == 0 {
+		return ""
+	}
+	var buf bytes.Buffer
+	writeTypeParamList(&buf, l, nil)
+	return buf.String()
+}
+
 // Unalias resolves any *Alias chain and returns the underlying non-alias Type.
 func Unalias(t Type) Type {
 	for {
@@ -291,8 +425,9 @@ type Basic struct {
 	goType gotypes.Type
 }
 
-// Typ holds the predeclared canonical *Basic types, indexed by BasicKind.
-var Typ = [...]*Basic{
+// Typ holds the predeclared canonical *Basic types, indexed by BasicKind
+// (matching go/types.Typ slice type).
+var Typ = []*Basic{
 	Invalid:        {kind: Invalid, name: "invalid type", goType: gotypes.Typ[gotypes.Invalid]},
 	Bool:           {kind: Bool, info: IsBoolean, name: "bool", goType: gotypes.Typ[gotypes.Bool]},
 	Int:            {kind: Int, info: IsInteger, name: "int", goType: gotypes.Typ[gotypes.Int]},
@@ -679,23 +814,38 @@ func (c *Chan) String() string {
 // referencing an unchecked interface behind a pointer during go/types.Check
 // never forces premature resolution.
 type Interface struct {
-	ctx        *Context
-	goIface    *gotypes.Interface
-	resolved   bool
-	methods    []*Func
-	embeddeds  []Type
-	comparable bool
-	goType     gotypes.Type
+	ctx             *Context
+	goIface         *gotypes.Interface
+	resolved        bool
+	completed       bool
+	explicitMethods []*Func
+	methods         []*Func
+	embeddeds       []Type
+	comparable      bool
+	implicit        bool
+	methodSet       bool
+	goType          gotypes.Type
 }
 
 // NewInterfaceType constructs an Interface type (matching go/types.NewInterfaceType).
 func NewInterfaceType(methods []*Func, embeddeds []Type) *Interface {
-	return &Interface{
-		resolved:   true,
-		methods:    methods,
-		embeddeds:  embeddeds,
-		comparable: true,
+	var exp []*Func
+	if len(methods) > 0 {
+		exp = make([]*Func, len(methods))
+		copy(exp, methods)
 	}
+	var embs []Type
+	if len(embeddeds) > 0 {
+		embs = make([]Type, len(embeddeds))
+		copy(embs, embeddeds)
+	}
+	t := &Interface{
+		resolved:        true,
+		explicitMethods: exp,
+		embeddeds:       embs,
+		methodSet:       true,
+	}
+	return t
 }
 
 // NewInterface constructs an Interface from methods and embedded *Named types
@@ -712,16 +862,98 @@ func NewInterface(methods []*Func, embeddeds []*Named) *Interface {
 }
 
 func (t *Interface) resolve() {
-	if t.resolved || t.ctx == nil || t.goIface == nil {
+	if !t.resolved && t.ctx != nil && t.goIface != nil {
+		t.ctx.resolveInterface(t)
+	}
+	if !t.completed {
+		t.completeSynthetic()
+	}
+}
+
+func (t *Interface) completeSynthetic() {
+	if t.completed {
 		return
 	}
-	t.ctx.resolveInterface(t)
+	t.completed = true
+	seen := make(map[string]*Func, len(t.explicitMethods))
+	for _, m := range t.explicitMethods {
+		if m != nil {
+			seen[m.Id()] = m
+		}
+	}
+	methodSet := true
+	hasTerms := false
+	allTermsComparable := true
+	var collect func(Type)
+	collect = func(e Type) {
+		if e == nil {
+			return
+		}
+		if iface, ok := e.Underlying().(*Interface); ok {
+			iface.resolve()
+			for _, m := range iface.methods {
+				if m != nil {
+					if _, dup := seen[m.Id()]; !dup {
+						seen[m.Id()] = m
+					}
+				}
+			}
+			if !iface.methodSet {
+				methodSet = false
+			}
+			if iface.comparable {
+				t.comparable = true
+			}
+			return
+		}
+		methodSet = false
+		hasTerms = true
+		switch u := Unalias(e).(type) {
+		case *Union:
+			for _, term := range u.terms {
+				if term != nil && !Comparable(term.typ) {
+					allTermsComparable = false
+				}
+			}
+		default:
+			if !Comparable(e) {
+				allTermsComparable = false
+			}
+		}
+	}
+	for _, e := range t.embeddeds {
+		collect(e)
+	}
+	if len(seen) > 0 {
+		all := make([]*Func, 0, len(seen))
+		for _, m := range seen {
+			all = append(all, m)
+		}
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].Id() < all[j].Id()
+		})
+		t.methods = all
+	}
+	t.methodSet = methodSet
+	if hasTerms && allTermsComparable {
+		t.comparable = true
+	}
 }
 
 // Complete computes the interface's method set and returns t (matching go/types).
 func (t *Interface) Complete() *Interface {
 	t.resolve()
 	return t
+}
+
+func (t *Interface) NumExplicitMethods() int {
+	t.resolve()
+	return len(t.explicitMethods)
+}
+
+func (t *Interface) ExplicitMethod(i int) *Func {
+	t.resolve()
+	return t.explicitMethods[i]
 }
 
 func (t *Interface) NumMethods() int {
@@ -742,9 +974,23 @@ func (t *Interface) EmbeddedType(i int) Type {
 }
 func (t *Interface) Empty() bool {
 	t.resolve()
-	return len(t.methods) == 0 && len(t.embeddeds) == 0
+	return len(t.methods) == 0 && t.methodSet && !t.comparable
 }
-func (t *Interface) Comparable() bool         { return t.comparable }
+func (t *Interface) IsComparable() bool {
+	t.resolve()
+	return t.comparable
+}
+func (t *Interface) IsImplicit() bool {
+	t.resolve()
+	return t.implicit
+}
+func (t *Interface) MarkImplicit() {
+	t.implicit = true
+}
+func (t *Interface) IsMethodSet() bool {
+	t.resolve()
+	return t.methodSet
+}
 func (t *Interface) Underlying() Type         { return t }
 func (t *Interface) goTypeRef() gotypes.Type  { return t.goType }
 func (t *Interface) llTypeMarker()            {}
@@ -757,23 +1003,94 @@ func (t *Interface) SIMDTagIndex() int        { return -1 }
 func (t *Interface) SIMDVec() *SIMDVec        { return nil }
 func (t *Interface) String() string {
 	t.resolve()
-	if len(t.methods) == 0 && len(t.embeddeds) == 0 {
+	if t.Empty() {
 		return "any"
 	}
 	var b strings.Builder
 	b.WriteString("interface{")
-	for i, m := range t.methods {
-		if i > 0 {
+	first := true
+	for _, m := range t.explicitMethods {
+		if !first {
 			b.WriteString("; ")
 		}
+		first = false
 		b.WriteString(m.name)
 		if sig := m.Signature(); sig != nil {
 			b.WriteString(strings.TrimPrefix(sig.String(), "func"))
 		}
 	}
+	for _, e := range t.embeddeds {
+		if !first {
+			b.WriteString("; ")
+		}
+		first = false
+		b.WriteString(TypeString(e, nil))
+	}
+	if first && len(t.methods) > 0 {
+		for i, m := range t.methods {
+			if i > 0 {
+				b.WriteString("; ")
+			}
+			b.WriteString(m.name)
+			if sig := m.Signature(); sig != nil {
+				b.WriteString(strings.TrimPrefix(sig.String(), "func"))
+			}
+		}
+	}
 	b.WriteByte('}')
 	return b.String()
 }
+
+// Term represents a term in a Union constraint (matching go/types.Term).
+type Term struct {
+	tilde bool
+	typ   Type
+}
+
+// NewTerm constructs a Term (matching go/types.NewTerm).
+func NewTerm(tilde bool, typ Type) *Term {
+	return &Term{tilde: tilde, typ: typ}
+}
+
+func (t *Term) Tilde() bool { return t.tilde }
+func (t *Term) Type() Type  { return t.typ }
+func (t *Term) String() string {
+	if t == nil {
+		return "<nil>"
+	}
+	if t.tilde {
+		return "~" + TypeString(t.typ, nil)
+	}
+	return TypeString(t.typ, nil)
+}
+
+// Union represents a union of terms embedded in an interface constraint
+// (matching go/types.Union).
+type Union struct {
+	terms  []*Term
+	goType gotypes.Type
+}
+
+// NewUnion constructs a Union type from terms (matching go/types.NewUnion).
+func NewUnion(terms []*Term) *Union {
+	cp := make([]*Term, len(terms))
+	copy(cp, terms)
+	return &Union{terms: cp}
+}
+
+func (u *Union) Len() int                  { return len(u.terms) }
+func (u *Union) Term(i int) *Term          { return u.terms[i] }
+func (u *Union) Underlying() Type          { return u }
+func (u *Union) goTypeRef() gotypes.Type   { return u.goType }
+func (u *Union) llTypeMarker()             {}
+func (u *Union) HasPtrData() bool          { return false }
+func (u *Union) IsHostLayoutMarker() bool  { return false }
+func (u *Union) HasHostLayout() bool       { return false }
+func (u *Union) ContainsHostLayout() bool  { return false }
+func (u *Union) ContainsSIMDStorage() bool { return false }
+func (u *Union) SIMDTagIndex() int         { return -1 }
+func (u *Union) SIMDVec() *SIMDVec         { return nil }
+func (u *Union) String() string            { return writeTypeString(u, nil) }
 
 // Struct represents a Go or native C struct with first-class LLGo layout flags.
 type Struct struct {
@@ -1042,6 +1359,16 @@ func (n *Named) TypeParams() *TypeParamList {
 	return n.typeParams
 }
 
+// SetTypeParams sets the type parameters of the named type n (matching go/types).
+func (n *Named) SetTypeParams(tparams []*TypeParam) {
+	for i, tp := range tparams {
+		if tp != nil {
+			tp.index = i
+		}
+	}
+	n.typeParams = newTypeParamList(tparams)
+}
+
 func (n *Named) TypeArgs() *TypeList {
 	n.resolve()
 	return n.typeArgs
@@ -1185,6 +1512,16 @@ func (a *Alias) Origin() *Alias {
 	return a
 }
 func (a *Alias) TypeParams() *TypeParamList { return a.typeParams }
+
+// SetTypeParams sets the type parameters of the alias type a (matching go/types).
+func (a *Alias) SetTypeParams(tparams []*TypeParam) {
+	for i, tp := range tparams {
+		if tp != nil {
+			tp.index = i
+		}
+	}
+	a.typeParams = newTypeParamList(tparams)
+}
 func (a *Alias) TypeArgs() *TypeList        { return a.typeArgs }
 func (a *Alias) CallConv() CallConv        { return a.callConv }
 func (a *Alias) HasExplicitCallConv() bool { return a.hasCallConv }
@@ -1271,6 +1608,9 @@ func NewTypeParam(obj *TypeName, constraint Type) *TypeParam {
 func (tp *TypeParam) Obj() *TypeName   { return tp.obj }
 func (tp *TypeParam) Index() int       { return tp.index }
 func (tp *TypeParam) Constraint() Type { return tp.constraint }
+
+// SetConstraint sets the type constraint for tp (matching go/types).
+func (tp *TypeParam) SetConstraint(bound Type) { tp.constraint = bound }
 func (tp *TypeParam) Underlying() Type {
 	if tp.constraint != nil {
 		return tp.constraint.Underlying()
@@ -1297,6 +1637,16 @@ func (tp *TypeParam) String() string {
 // LLGo-specific attributes such as CallConv, PtrKind, HostLayout, NativeLayout,
 // and SIMDVec shapes.
 func Identical(x, y Type) bool {
+	return identical(x, y, false)
+}
+
+// IdenticalIgnoreTags reports whether x and y are identical LLGo types if
+// struct field tags are ignored (mirroring go/types.IdenticalIgnoreTags).
+func IdenticalIgnoreTags(x, y Type) bool {
+	return identical(x, y, true)
+}
+
+func identical(x, y Type, ignoreTags bool) bool {
 	x = Unalias(x)
 	y = Unalias(y)
 	if x == y {
@@ -1311,26 +1661,26 @@ func Identical(x, y Type) bool {
 		return ok && x.kind == y.kind
 	case *Pointer:
 		y, ok := y.(*Pointer)
-		return ok && x.kind == y.kind && Identical(x.elem, y.elem)
+		return ok && x.kind == y.kind && identical(x.elem, y.elem, ignoreTags)
 	case *Slice:
 		y, ok := y.(*Slice)
-		return ok && Identical(x.elem, y.elem)
+		return ok && identical(x.elem, y.elem, ignoreTags)
 	case *Array:
 		y, ok := y.(*Array)
-		return ok && x.length == y.length && x.nativeStorage == y.nativeStorage && Identical(x.elem, y.elem)
+		return ok && x.length == y.length && x.nativeStorage == y.nativeStorage && identical(x.elem, y.elem, ignoreTags)
 	case *Map:
 		y, ok := y.(*Map)
-		return ok && Identical(x.key, y.key) && Identical(x.elem, y.elem)
+		return ok && identical(x.key, y.key, ignoreTags) && identical(x.elem, y.elem, ignoreTags)
 	case *Chan:
 		y, ok := y.(*Chan)
-		return ok && x.dir == y.dir && Identical(x.elem, y.elem)
+		return ok && x.dir == y.dir && identical(x.elem, y.elem, ignoreTags)
 	case *Tuple:
 		y, ok := y.(*Tuple)
 		if !ok || x.Len() != y.Len() {
 			return false
 		}
 		for i := 0; i < x.Len(); i++ {
-			if !Identical(x.At(i).typ, y.At(i).typ) {
+			if !identical(x.At(i).typ, y.At(i).typ, ignoreTags) {
 				return false
 			}
 		}
@@ -1340,7 +1690,7 @@ func Identical(x, y Type) bool {
 		if !ok || x.callConv != y.callConv || x.variadic != y.variadic {
 			return false
 		}
-		return Identical(x.params, y.params) && Identical(x.results, y.results)
+		return identical(x.params, y.params, ignoreTags) && identical(x.results, y.results, ignoreTags)
 	case *Struct:
 		y, ok := y.(*Struct)
 		if !ok || len(x.fields) != len(y.fields) ||
@@ -1350,27 +1700,49 @@ func Identical(x, y Type) bool {
 		}
 		for i, xf := range x.fields {
 			yf := y.fields[i]
-			if xf.name != yf.name || xf.embedded != yf.embedded || x.Tag(i) != y.Tag(i) || !Identical(xf.typ, yf.typ) {
+			if xf.name != yf.name || xf.embedded != yf.embedded || (!ignoreTags && x.Tag(i) != y.Tag(i)) || !identical(xf.typ, yf.typ, ignoreTags) {
 				return false
 			}
 		}
 		return true
 	case *Interface:
 		y, ok := y.(*Interface)
-		if !ok || x.NumMethods() != y.NumMethods() || x.NumEmbeddeds() != y.NumEmbeddeds() {
+		if !ok || x.NumMethods() != y.NumMethods() || x.IsComparable() != y.IsComparable() || x.IsMethodSet() != y.IsMethodSet() {
 			return false
 		}
 		for i := 0; i < x.NumMethods(); i++ {
 			xm := x.Method(i)
 			ym := y.Method(i)
-			if xm.name != ym.name || !Identical(xm.typ, ym.typ) {
+			if xm.Id() != ym.Id() || !identical(xm.typ, ym.typ, ignoreTags) {
+				return false
+			}
+		}
+		if !x.IsMethodSet() && x.NumEmbeddeds() != y.NumEmbeddeds() {
+			return false
+		}
+		if !x.IsMethodSet() {
+			for i := 0; i < x.NumEmbeddeds(); i++ {
+				if !identical(x.EmbeddedType(i), y.EmbeddedType(i), ignoreTags) {
+					return false
+				}
+			}
+		}
+		return true
+	case *Union:
+		y, ok := y.(*Union)
+		if !ok || len(x.terms) != len(y.terms) {
+			return false
+		}
+		for i, xt := range x.terms {
+			yt := y.terms[i]
+			if xt.tilde != yt.tilde || !identical(xt.typ, yt.typ, ignoreTags) {
 				return false
 			}
 		}
 		return true
 	case *SIMDVec:
 		y, ok := y.(*SIMDVec)
-		return ok && x.length == y.length && x.isMask == y.isMask && Identical(x.elem, y.elem)
+		return ok && x.length == y.length && x.isMask == y.isMask && identical(x.elem, y.elem, ignoreTags)
 	case *Named:
 		y, ok := y.(*Named)
 		if !ok {
@@ -1380,7 +1752,7 @@ func Identical(x, y Type) bool {
 		yArgs := y.TypeArgs()
 		if x.obj == y.obj && xArgs.Len() == yArgs.Len() {
 			for i := 0; i < xArgs.Len(); i++ {
-				if !Identical(xArgs.At(i), yArgs.At(i)) {
+				if !identical(xArgs.At(i), yArgs.At(i), ignoreTags) {
 					return false
 				}
 			}

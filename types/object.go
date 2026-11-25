@@ -17,11 +17,13 @@
 package types
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/constant"
 	"go/token"
 	gotypes "go/types"
+	"io"
 	"sort"
 	"strings"
 
@@ -273,7 +275,7 @@ func (tn *TypeName) IsAlias() bool             { return tn.isAlias }
 func (tn *TypeName) CallConv() CallConv        { return tn.callConv }
 func (tn *TypeName) HasExplicitCallConv() bool { return tn.hasCallConv }
 func (tn *TypeName) NativeLayout() bool        { return tn.nativeLayout }
-func (tn *TypeName) HostLayout() bool          { return tn.hostLayout }
+func (tn *TypeName) HasHostLayout() bool       { return tn.hostLayout }
 func (tn *TypeName) String() string {
 	if tn.typ != nil {
 		return "type " + tn.name + " " + tn.typ.String()
@@ -371,8 +373,59 @@ func (s *Scope) Parent() *Scope     { return s.parent }
 func (s *Scope) Len() int           { return len(s.elems) }
 func (s *Scope) NumChildren() int   { return len(s.children) }
 func (s *Scope) Child(i int) *Scope { return s.children[i] }
-func (s *Scope) Pos() token.Pos     { return s.pos }
-func (s *Scope) End() token.Pos     { return s.end }
+func (s *Scope) Pos() token.Pos { return s.pos }
+func (s *Scope) End() token.Pos { return s.end }
+
+// Contains reports whether pos is within the scope's extent (mirroring go/types).
+func (s *Scope) Contains(pos token.Pos) bool {
+	return s != nil && pos.IsValid() && s.pos <= pos && pos < s.end
+}
+
+// Innermost returns the innermost (child) scope containing pos (mirroring go/types).
+func (s *Scope) Innermost(pos token.Pos) *Scope {
+	if s == nil {
+		return nil
+	}
+	if s.parent == Universe {
+		for _, c := range s.children {
+			if inner := c.Innermost(pos); inner != nil {
+				return inner
+			}
+		}
+	}
+	if s.Contains(pos) {
+		for _, c := range s.children {
+			if c.Contains(pos) {
+				return c.Innermost(pos)
+			}
+		}
+		return s
+	}
+	return nil
+}
+
+// WriteTo writes a string representation of the scope to w (mirroring go/types).
+func (s *Scope) WriteTo(w io.Writer, n int, recurse bool) {
+	const ind = ".  "
+	indn := strings.Repeat(ind, n)
+	fmt.Fprintf(w, "%s%s scope %p {\n", indn, s.comment, s)
+	indn1 := indn + ind
+	for _, name := range s.Names() {
+		fmt.Fprintf(w, "%s%s\n", indn1, s.elems[name])
+	}
+	if recurse {
+		for _, c := range s.children {
+			c.WriteTo(w, n+1, recurse)
+		}
+	}
+	fmt.Fprintf(w, "%s}\n", indn)
+}
+
+func (s *Scope) String() string {
+	var buf bytes.Buffer
+	s.WriteTo(&buf, 0, false)
+	return buf.String()
+}
 func (s *Scope) Lookup(name string) Object {
 	if s == nil {
 		return nil
@@ -455,7 +508,8 @@ func initUniverse() *Scope {
 	errIface := NewInterfaceType([]*Func{NewFunc(token.NoPos, nil, "Error", errSig)}, nil)
 	u.Insert(NewNamed(NewTypeName(token.NoPos, nil, "error", nil), errIface, nil).Obj())
 	// Predeclared comparable interface.
-	u.Insert(NewNamed(NewTypeName(token.NoPos, nil, "comparable", nil), NewInterfaceType(nil, nil), nil).Obj())
+	compIface := &Interface{resolved: true, completed: true, comparable: true, methodSet: false}
+	u.Insert(NewNamed(NewTypeName(token.NoPos, nil, "comparable", nil), compIface, nil).Obj())
 	// Predeclared constants & nil.
 	u.Insert(NewConst(token.NoPos, nil, "true", Typ[UntypedBool], constant.MakeBool(true)))
 	u.Insert(NewConst(token.NoPos, nil, "false", Typ[UntypedBool], constant.MakeBool(false)))
@@ -470,6 +524,23 @@ func initUniverse() *Scope {
 		u.Insert(&Builtin{object: object{name: name, typ: Typ[Invalid]}})
 	}
 	return u
+}
+
+// Unsafe is the canonical package representing Go's "unsafe" package
+// (mirroring go/types.Unsafe).
+var Unsafe = initUnsafe()
+
+func initUnsafe() *Package {
+	pkg := NewPackage("unsafe", "unsafe")
+	pkg.complete = true
+	pkg.goPkg = gotypes.Unsafe
+	pkg.scope.Insert(NewTypeName(token.NoPos, pkg, "Pointer", Typ[UnsafePointer]))
+	for _, name := range []string{
+		"Add", "Alignof", "Offsetof", "Sizeof", "Slice", "SliceData", "String", "StringData",
+	} {
+		pkg.scope.Insert(&Builtin{object: object{pkg: pkg, name: name, typ: Typ[Invalid]}})
+	}
+	return pkg
 }
 
 // Package describes an LLGo-typed Go package.
@@ -490,6 +561,7 @@ func NewPackage(path, name string) *Package {
 
 func (p *Package) Path() string               { return p.path }
 func (p *Package) Name() string               { return p.name }
+func (p *Package) SetName(name string)        { p.name = name }
 func (p *Package) Scope() *Scope              { return p.scope }
 func (p *Package) Complete() bool             { return p.complete }
 func (p *Package) MarkComplete()              { p.complete = true }
@@ -551,6 +623,7 @@ func (s *Selection) Obj() Object         { return s.obj }
 func (s *Selection) Type() Type          { return s.typ }
 func (s *Selection) Index() []int        { return s.index }
 func (s *Selection) Indirect() bool      { return s.indirect }
+func (s *Selection) String() string      { return SelectionString(s, nil) }
 
 // MethodSet represents the ordered set of methods of a Type.
 type MethodSet struct {
@@ -584,10 +657,24 @@ func (m *MethodSet) Lookup(pkg *Package, name string) *Selection {
 	return nil
 }
 
+func (m *MethodSet) String() string {
+	if m == nil || len(m.list) == 0 {
+		return "MethodSet {}"
+	}
+	var b strings.Builder
+	b.WriteString("MethodSet {\n")
+	for _, sel := range m.list {
+		fmt.Fprintf(&b, "\t%s\n", sel)
+	}
+	b.WriteByte('}')
+	return b.String()
+}
+
 // TypeAndValue reports the LLGo Type and constant value (if any) of an expression.
 type TypeAndValue struct {
 	Type        Type
 	Value       constant.Value
+	isVoid      bool
 	isType      bool
 	isValue     bool
 	isNil       bool
@@ -597,6 +684,7 @@ type TypeAndValue struct {
 	isBuiltin   bool
 }
 
+func (tv TypeAndValue) IsVoid() bool      { return tv.isVoid }
 func (tv TypeAndValue) IsType() bool      { return tv.isType }
 func (tv TypeAndValue) IsValue() bool     { return tv.isValue }
 func (tv TypeAndValue) IsNil() bool       { return tv.isNil }
@@ -611,11 +699,28 @@ type Initializer struct {
 	Rhs ast.Expr
 }
 
+func (init *Initializer) String() string {
+	var b strings.Builder
+	for i, lhs := range init.Lhs {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(lhs.Name())
+	}
+	b.WriteString(" = ")
+	b.WriteString(ExprString(init.Rhs))
+	return b.String()
+}
+
 // Instance reports the LLGo type arguments and instantiated type for a generic
 // identifier use (mirroring go/types.Instance).
 type Instance struct {
 	TypeArgs *TypeList
 	Type     Type
+}
+
+func (inst Instance) String() string {
+	return fmt.Sprintf("%s -> %s", inst.TypeArgs, TypeString(inst.Type, nil))
 }
 
 // Info holds type-checked LLGo semantic information for a package.
@@ -654,6 +759,22 @@ func (info *Info) TypeOf(e ast.Expr) Type {
 		}
 	}
 	return nil
+}
+
+// PkgNameOf returns the local package name defined by the import, or nil if not
+// found (mirroring go/types.Info.PkgNameOf).
+func (info *Info) PkgNameOf(imp *ast.ImportSpec) *PkgName {
+	if info == nil || imp == nil {
+		return nil
+	}
+	var obj Object
+	if imp.Name != nil {
+		obj = info.Defs[imp.Name]
+	} else {
+		obj = info.Implicits[imp]
+	}
+	pkgName, _ := obj.(*PkgName)
+	return pkgName
 }
 
 // ObjectOf returns the LLGo Object denoted by ident (checking Defs then Uses).

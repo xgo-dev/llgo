@@ -55,7 +55,7 @@ func TestCoverageAllTypesObjectsAndContext(t *testing.T) {
 	_ = ctx.Basic(types.BasicKind(999))
 
 	anyT := ctx.Any()
-	if !anyT.Empty() || !anyT.Comparable() || anyT.String() != "any" || !anyT.HasPtrData() {
+	if !anyT.Empty() || anyT.IsComparable() || !anyT.IsMethodSet() || anyT.IsImplicit() || anyT.String() != "any" || !anyT.HasPtrData() {
 		t.Fatalf("Any() = %+v", anyT)
 	}
 	sl := ctx.Slice(i32)

@@ -149,7 +149,7 @@ func NewContextWithConfig(cfg ContextConfig) *Context {
 		nativeStructFields: make(map[token.Pos]bool),
 		nativeGoVars:       make(map[gotypes.Object]bool),
 		nativeVars:         make(map[*Var]bool),
-		anyType:            &Interface{resolved: true, comparable: true},
+		anyType:            &Interface{resolved: true, completed: true, methodSet: true},
 		ptrs:               make(map[ptrInternKey]*Pointer),
 		slices:             make(map[Type]*Slice),
 		maps:               make(map[mapInternKey]*Map),
@@ -737,7 +737,17 @@ func (c *Context) resolveInterface(iface *Interface) {
 		return
 	}
 	iface.resolved = true
+	iface.completed = true
 	gt := iface.goIface
+	iface.comparable = gt.IsComparable()
+	iface.implicit = gt.IsImplicit()
+	iface.methodSet = gt.IsMethodSet()
+	if n := gt.NumExplicitMethods(); n > 0 {
+		iface.explicitMethods = make([]*Func, n)
+		for i := 0; i < n; i++ {
+			iface.explicitMethods[i] = c.fromGoFuncLocked(gt.ExplicitMethod(i))
+		}
+	}
 	if n := gt.NumMethods(); n > 0 {
 		iface.methods = make([]*Func, n)
 		for i := 0; i < n; i++ {
@@ -896,13 +906,24 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 
 	case *gotypes.Interface:
 		iface := &Interface{
-			ctx:        c,
-			goIface:    gt,
-			comparable: true,
-			goType:     gt,
+			ctx:       c,
+			goIface:   gt,
+			methodSet: true,
+			goType:    gt,
 		}
 		c.goTypes[key] = iface
 		return iface
+
+	case *gotypes.Union:
+		n := gt.Len()
+		terms := make([]*Term, n)
+		for i := 0; i < n; i++ {
+			term := gt.Term(i)
+			terms[i] = NewTerm(term.Tilde(), c.fromGoLocked(term.Type(), Go, false))
+		}
+		u := &Union{terms: terms, goType: gt}
+		c.goTypes[key] = u
+		return u
 
 	case *gotypes.Struct:
 		n := gt.NumFields()
@@ -1270,6 +1291,9 @@ func (c *Context) fromGoPkgLocked(gp *gotypes.Package) *Package {
 	if gp == nil {
 		return nil
 	}
+	if gp == gotypes.Unsafe {
+		return Unsafe
+	}
 	if cached, ok := c.goPkgs[gp]; ok {
 		return cached
 	}
@@ -1338,51 +1362,7 @@ func methodSetOf(c *Context, t Type) *MethodSet {
 			return &MethodSet{list: list}
 		}
 	}
-	var list []*Selection
-	switch u := Unalias(t).(type) {
-	case *Named:
-		for i := 0; i < u.NumMethods(); i++ {
-			m := u.Method(i)
-			if sig := m.Signature(); sig != nil && sig.recv != nil {
-				if _, ptrRecv := sig.recv.typ.(*Pointer); ptrRecv {
-					continue
-				}
-			}
-			list = append(list, &Selection{
-				kind:  MethodVal,
-				recv:  t,
-				obj:   m,
-				typ:   m.typ,
-				index: []int{i},
-			})
-		}
-	case *Pointer:
-		if n, ok := Unalias(u.elem).(*Named); ok {
-			for i := 0; i < n.NumMethods(); i++ {
-				m := n.Method(i)
-				list = append(list, &Selection{
-					kind:     MethodVal,
-					recv:     t,
-					obj:      m,
-					typ:      m.typ,
-					index:    []int{i},
-					indirect: true,
-				})
-			}
-		}
-	case *Interface:
-		for i := 0; i < u.NumMethods(); i++ {
-			m := u.Method(i)
-			list = append(list, &Selection{
-				kind:  MethodVal,
-				recv:  t,
-				obj:   m,
-				typ:   m.typ,
-				index: []int{i},
-			})
-		}
-	}
-	return &MethodSet{list: list}
+	return syntheticMethodSet(t)
 }
 
 // Check type-checks files using go/types with LLGo's exact GoSizes (after
@@ -1465,6 +1445,7 @@ func (c *Context) FromGoPackage(goPkg *gotypes.Package, goInfo *gotypes.Info, fs
 			info.Types[expr] = TypeAndValue{
 				Type:        c.fromGoLocked(tv.Type, Go, false),
 				Value:       tv.Value,
+				isVoid:      tv.IsVoid(),
 				isType:      tv.IsType(),
 				isValue:     tv.IsValue(),
 				isNil:       tv.IsNil(),

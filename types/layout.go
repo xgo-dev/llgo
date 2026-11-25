@@ -515,6 +515,9 @@ func (c *Context) layoutInMode(t Type, mode layoutMode) *Layout {
 		}
 		return c.assembleAggregate(fieldLayouts, nil, false, false, false)
 
+	case *Union:
+		return &Layout{Align: 1, IsRegularMemory: true}
+
 	case *TypeParam:
 		return &Layout{
 			Size:            word,

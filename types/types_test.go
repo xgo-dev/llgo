@@ -17,6 +17,7 @@
 package types_test
 
 import (
+	"bytes"
 	"go/ast"
 	"go/constant"
 	"go/importer"
@@ -661,5 +662,269 @@ func TestContextConcurrencyAndFormatting(t *testing.T) {
 	vec := ctx.SIMDVec(types.Int32, 4, true)
 	if vec.String() != "mask<4xint32>" {
 		t.Fatalf("SIMDVec.String() = %q", vec.String())
+	}
+}
+
+func TestGoTypesAlignmentUnionPredicatesAndFormatting(t *testing.T) {
+	// Typ is a slice matching go/types.Typ; Unsafe singleton is populated.
+	var typSlice []*types.Basic = types.Typ
+	if len(typSlice) <= int(types.UntypedNil) || types.Unsafe == nil || types.Unsafe.Lookup("Pointer") == nil {
+		t.Fatal("Typ slice or Unsafe package mismatch")
+	}
+
+	// Context.Check with generic union constraints, interfaces, unsafe import, void calls.
+	src := `package aligned
+
+import u "unsafe"
+
+type Signed interface {
+	~int | ~int64
+}
+
+type MyInt int
+
+type Reader interface {
+	Read(p []byte) int
+}
+
+type ReadCloser interface {
+	Reader
+	Close()
+}
+
+type Base struct{ X int }
+func (b Base) Read(p []byte) int { return b.X }
+func (b *Base) Close() {}
+
+type Derived struct {
+	Base
+	Y int
+}
+
+func Sum[T Signed](a, b T) T { return a + b }
+func Noop() {}
+
+var (
+	_ = u.Sizeof(MyInt(0))
+	V = Sum(MyInt(1), MyInt(2))
+)
+
+func Use() { Noop() }
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "aligned.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := types.NewContext(target.Spec{GOOS: "linux", GOARCH: "amd64"})
+	pkg, info, err := ctx.Check("example.com/aligned", fset, []*ast.File{file}, &gotypes.Config{
+		Importer: importer.Default(),
+	})
+	if err != nil {
+		t.Fatalf("Check failed: %v", err)
+	}
+	if pkg.Imports()[0] != types.Unsafe {
+		t.Fatalf("unsafe import did not resolve to types.Unsafe singleton: %v", pkg.Imports()[0])
+	}
+	if pn := info.PkgNameOf(file.Imports[0]); pn == nil || pn.Name() != "u" || pn.Imported() != types.Unsafe {
+		t.Fatalf("Info.PkgNameOf = %v", pn)
+	}
+	// Union constraint lowering & Satisfies.
+	signedIface := pkg.Lookup("Signed").Type().Underlying().(*types.Interface)
+	if !signedIface.IsComparable() || signedIface.IsMethodSet() || signedIface.Empty() || signedIface.NumEmbeddeds() != 1 {
+		t.Fatalf("Signed interface flags: comp=%v mset=%v empty=%v embs=%d", signedIface.IsComparable(), signedIface.IsMethodSet(), signedIface.Empty(), signedIface.NumEmbeddeds())
+	}
+	union, ok := signedIface.EmbeddedType(0).(*types.Union)
+	if !ok || union.Len() != 2 || !union.Term(0).Tilde() || union.Term(0).Type() != types.Typ[types.Int] || union.String() != "~int | ~int64" {
+		t.Fatalf("Signed union = %T %v", signedIface.EmbeddedType(0), signedIface.EmbeddedType(0))
+	}
+	myInt := pkg.Lookup("MyInt").Type()
+	if !types.Satisfies(myInt, signedIface) || !types.Satisfies(types.Typ[types.Int64], signedIface) || types.Satisfies(types.Typ[types.String], signedIface) {
+		t.Fatal("Satisfies(Signed) mismatch")
+	}
+	if !types.Comparable(myInt) || types.Comparable(types.NewSlice(types.Typ[types.Int])) || !types.IsInterface(signedIface) || types.IsInterface(myInt) {
+		t.Fatal("Comparable/IsInterface mismatch")
+	}
+	if types.Default(types.Typ[types.UntypedInt]) != types.Typ[types.Int] || types.Default(types.Typ[types.UntypedNil]) != types.Typ[types.UntypedNil] {
+		t.Fatal("Default mismatch")
+	}
+
+	// Interface explicit vs flattened methods.
+	rc := pkg.Lookup("ReadCloser").Type().Underlying().(*types.Interface)
+	if rc.NumExplicitMethods() != 1 || rc.ExplicitMethod(0).Name() != "Close" || rc.NumMethods() != 2 || rc.IsComparable() || !rc.IsMethodSet() {
+		t.Fatalf("ReadCloser interface: explicit=%d total=%d comp=%v mset=%v", rc.NumExplicitMethods(), rc.NumMethods(), rc.IsComparable(), rc.IsMethodSet())
+	}
+	reader := pkg.Lookup("Reader").Type().Underlying().(*types.Interface)
+	derived := pkg.Lookup("Derived").Type()
+	ptrDerived := types.NewPointer(derived)
+	if !types.Implements(derived, reader) || types.Implements(derived, rc) || !types.Implements(ptrDerived, rc) {
+		t.Fatal("Implements mismatch on Derived/*Derived")
+	}
+	if m, wrong := types.MissingMethod(derived, rc, true); m == nil || m.Name() != "Close" || !wrong {
+		t.Fatalf("MissingMethod(Derived, ReadCloser) = (%v, %v), want (Close, true)", m, wrong)
+	}
+	if !types.AssertableTo(reader, ptrDerived) || types.AssertableTo(rc, derived) {
+		t.Fatal("AssertableTo mismatch")
+	}
+
+	// LookupFieldOrMethod (promoted fields, value/pointer methods, indirect flag).
+	if obj, idx, ind := types.LookupFieldOrMethod(derived, false, pkg, "X"); obj == nil || obj.Name() != "X" || len(idx) != 2 || ind {
+		t.Fatalf("LookupFieldOrMethod(Derived, X) = (%v, %v, %v)", obj, idx, ind)
+	}
+	if obj, _, ind := types.LookupFieldOrMethod(derived, false, pkg, "Close"); obj != nil || !ind {
+		t.Fatalf("LookupFieldOrMethod(non-addr Derived, Close) = (%v, %v), want (nil, true)", obj, ind)
+	}
+	if obj, _, _ := types.LookupFieldOrMethod(derived, true, pkg, "Close"); obj == nil || obj.Name() != "Close" {
+		t.Fatalf("LookupFieldOrMethod(addr Derived, Close) = %v", obj)
+	}
+	if ms := types.NewMethodSet(ptrDerived); ms.Len() != 2 || !strings.Contains(ms.String(), "method") {
+		t.Fatalf("NewMethodSet(*Derived) = len %d %s", ms.Len(), ms.String())
+	}
+
+	// AssignableTo, ConvertibleTo, IdenticalIgnoreTags (including LLGo CallConv & PtrKind).
+	s1 := types.NewStruct([]*types.Var{types.NewField(0, pkg, "A", types.Typ[types.Int], false)}, []string{`json:"a"`})
+	s2 := types.NewStruct([]*types.Var{types.NewField(0, pkg, "A", types.Typ[types.Int], false)}, []string{`json:"b"`})
+	if types.Identical(s1, s2) || !types.IdenticalIgnoreTags(s1, s2) || !types.ConvertibleTo(s1, s2) {
+		t.Fatal("IdenticalIgnoreTags/ConvertibleTo mismatch on tagged structs")
+	}
+	goSig := types.NewSignature(nil, nil, nil, false)
+	cSig := types.NewSignatureWithCallConv(nil, nil, nil, false, types.CDecl)
+	if types.AssignableTo(goSig, cSig) || !types.AssignableTo(types.Typ[types.UntypedNil], cSig) || !types.AssignableTo(ptrDerived, rc) {
+		t.Fatal("AssignableTo CallConv/interface mismatch")
+	}
+	if !types.ConvertibleTo(types.Typ[types.Int32], types.Typ[types.Float64]) || !types.ConvertibleTo(types.NewSlice(types.Typ[types.Int]), types.NewArray(types.Typ[types.Int], 2)) {
+		t.Fatal("ConvertibleTo numeric/slice-to-array mismatch")
+	}
+
+	// Scope Contains/Innermost/WriteTo/String, Package.SetName, Initializer/Instance/TypeList/TypeParamList String, WriteType/WriteSignature/SelectionString, IsVoid.
+	sc := types.NewScope(pkg.Scope(), token.Pos(10), token.Pos(50), "fn")
+	inner := types.NewScope(sc, token.Pos(20), token.Pos(30), "block")
+	if !sc.Contains(token.Pos(15)) || sc.Contains(token.Pos(50)) || sc.Innermost(token.Pos(25)) != inner || sc.Innermost(token.Pos(15)) != sc {
+		t.Fatal("Scope.Contains/Innermost mismatch")
+	}
+	if !strings.Contains(sc.String(), "fn scope") {
+		t.Fatalf("Scope.String() = %q", sc.String())
+	}
+	var buf bytes.Buffer
+	sc.WriteTo(&buf, 0, true)
+	if !strings.Contains(buf.String(), "block scope") {
+		t.Fatalf("Scope.WriteTo recurse = %q", buf.String())
+	}
+
+	tmpPkg := types.NewPackage("example.com/tmp", "old")
+	tmpPkg.SetName("renamed")
+	if tmpPkg.Name() != "renamed" {
+		t.Fatal("Package.SetName failed")
+	}
+
+	// Named/Alias SetTypeParams, TypeParam.SetConstraint, TypeName.HasHostLayout, Interface.MarkImplicit.
+	tp := types.NewTypeParam(types.NewTypeName(0, tmpPkg, "T", nil), nil)
+	tp.SetConstraint(types.NewUnion([]*types.Term{types.NewTerm(true, types.Typ[types.Int])}))
+	genNamed := types.NewNamed(types.NewTypeName(0, tmpPkg, "Gen", nil), types.Typ[types.Int], nil)
+	genNamed.SetTypeParams([]*types.TypeParam{tp})
+	genAlias := types.NewAlias(types.NewTypeName(0, tmpPkg, "GenAlias", nil), genNamed)
+	genAlias.SetTypeParams([]*types.TypeParam{tp})
+	if genNamed.TypeParams().String() != "[T ~int]" || genAlias.TypeParams().Len() != 1 || genNamed.Obj().HasHostLayout() {
+		t.Fatalf("TypeParams/HasHostLayout mismatch: %s", genNamed.TypeParams().String())
+	}
+	impIface := types.NewInterfaceType(nil, []types.Type{types.NewUnion([]*types.Term{types.NewTerm(false, types.Typ[types.Int])})}).Complete()
+	impIface.MarkImplicit()
+	if !impIface.IsImplicit() || !impIface.IsComparable() || impIface.IsMethodSet() {
+		t.Fatal("synthetic constraint Interface flags mismatch")
+	}
+
+	// Formatting helpers + Info.InitOrder / Info.Instances / TypeAndValue.IsVoid.
+	if len(info.InitOrder) == 0 || !strings.Contains(info.InitOrder[0].String(), "=") {
+		t.Fatalf("Initializer.String = %v", info.InitOrder)
+	}
+	for _, inst := range info.Instances {
+		if !strings.Contains(inst.String(), "->") || inst.TypeArgs.String() == "" {
+			t.Fatalf("Instance.String = %q", inst.String())
+		}
+	}
+	sawVoid := false
+	for _, tv := range info.Types {
+		if tv.IsVoid() {
+			sawVoid = true
+		}
+	}
+	if !sawVoid {
+		t.Fatal("expected at least one IsVoid() expression for Noop()")
+	}
+	buf.Reset()
+	types.WriteSignature(&buf, cSig, nil)
+	if buf.String() != "<cdecl>()" {
+		t.Fatalf("WriteSignature(cSig) = %q", buf.String())
+	}
+	if sel := types.NewMethodSet(derived).Lookup(pkg, "Read"); sel == nil || !strings.Contains(types.SelectionString(sel, types.RelativeTo(pkg)), "method (Derived) Read") {
+		t.Fatalf("SelectionString = %v", sel)
+	}
+
+	// Additional edge cases for predicates, conversions, assignability, lookup, and formatting.
+	for _, tc := range []struct {
+		in, want types.Type
+	}{
+		{types.Typ[types.UntypedBool], types.Typ[types.Bool]},
+		{types.Typ[types.UntypedRune], types.Typ[types.Rune]},
+		{types.Typ[types.UntypedFloat], types.Typ[types.Float64]},
+		{types.Typ[types.UntypedComplex], types.Typ[types.Complex128]},
+		{types.Typ[types.UntypedString], types.Typ[types.String]},
+	} {
+		if got := types.Default(tc.in); got != tc.want {
+			t.Fatalf("Default(%v) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+	if !types.Comparable(tp) || !types.Comparable(types.NewArray(types.Typ[types.Int], 2)) || !types.Comparable(s1) {
+		t.Fatal("Comparable on TypeParam/Array/Struct failed")
+	}
+	// Ambiguous embedded field lookup.
+	e1 := types.NewNamed(types.NewTypeName(0, tmpPkg, "E1", nil), types.NewStruct([]*types.Var{types.NewField(0, tmpPkg, "F", types.Typ[types.Int], false)}, nil), nil)
+	e2 := types.NewNamed(types.NewTypeName(0, tmpPkg, "E2", nil), types.NewStruct([]*types.Var{types.NewField(0, tmpPkg, "F", types.Typ[types.Int], false)}, nil), nil)
+	ambig := types.NewStruct([]*types.Var{
+		types.NewField(0, tmpPkg, "E1", e1, true),
+		types.NewField(0, tmpPkg, "E2", e2, true),
+	}, nil)
+	if obj, idx, _ := types.LookupFieldOrMethod(ambig, false, tmpPkg, "F"); obj != nil || idx == nil {
+		t.Fatalf("ambiguous LookupFieldOrMethod = (%v, %v), want (nil, non-nil)", obj, idx)
+	}
+	if obj, _, _ := types.LookupFieldOrMethod(reader, false, pkg, "Read"); obj == nil || obj.Name() != "Read" {
+		t.Fatalf("LookupFieldOrMethod(Reader, Read) = %v", obj)
+	}
+	// MissingMethod between two interfaces (static=true vs static=false).
+	if m, _ := types.MissingMethod(reader, rc, true); m == nil || m.Name() != "Close" {
+		t.Fatalf("MissingMethod(Reader, ReadCloser, static=true) = %v", m)
+	}
+	if m, _ := types.MissingMethod(reader, rc, false); m != nil {
+		t.Fatalf("MissingMethod(Reader, ReadCloser, static=false) = %v, want nil", m)
+	}
+	// AssignableTo directional chan, untyped constants, named vs unnamed.
+	bidir := types.NewChan(types.SendRecv, types.Typ[types.Int])
+	sendOnly := types.NewChan(types.SendOnly, types.Typ[types.Int])
+	if !types.AssignableTo(bidir, sendOnly) || types.AssignableTo(sendOnly, bidir) {
+		t.Fatal("directional chan AssignableTo mismatch")
+	}
+	if !types.AssignableTo(types.Typ[types.UntypedBool], types.Typ[types.Bool]) ||
+		!types.AssignableTo(types.Typ[types.UntypedInt], types.Typ[types.Float64]) ||
+		!types.AssignableTo(types.Typ[types.UntypedFloat], types.Typ[types.Complex128]) ||
+		!types.AssignableTo(types.Typ[types.UntypedComplex], types.Typ[types.Complex64]) ||
+		!types.AssignableTo(types.Typ[types.UntypedString], types.Typ[types.String]) ||
+		!types.AssignableTo(types.Typ[types.UntypedInt], ctx.Any()) {
+		t.Fatal("untyped constant AssignableTo mismatch")
+	}
+	// ConvertibleTo pointer/unsafe.Pointer/uintptr/complex/string/[]byte/[]rune.
+	if !types.ConvertibleTo(types.NewPointer(s1), types.NewPointer(s2)) ||
+		!types.ConvertibleTo(types.NewPointer(types.Typ[types.Int]), types.Typ[types.UnsafePointer]) ||
+		!types.ConvertibleTo(types.Typ[types.UnsafePointer], types.NewPointer(types.Typ[types.Int])) ||
+		!types.ConvertibleTo(types.Typ[types.UnsafePointer], types.Typ[types.Uintptr]) ||
+		!types.ConvertibleTo(types.Typ[types.Uintptr], types.Typ[types.UnsafePointer]) ||
+		!types.ConvertibleTo(types.Typ[types.Complex64], types.Typ[types.Complex128]) ||
+		!types.ConvertibleTo(types.Typ[types.Int], types.Typ[types.String]) ||
+		!types.ConvertibleTo(types.Typ[types.String], types.NewSlice(types.Typ[types.Byte])) ||
+		!types.ConvertibleTo(types.NewSlice(types.Typ[types.Rune]), types.Typ[types.String]) ||
+		!types.ConvertibleTo(types.NewSlice(types.Typ[types.Int]), types.NewPointer(types.NewArray(types.Typ[types.Int], 2))) {
+		t.Fatal("ConvertibleTo edge cases failed")
+	}
+	if types.SelectionString(nil, nil) != "<nil>" || types.ExprString(nil) != "" {
+		t.Fatal("nil formatting helpers failed")
 	}
 }
