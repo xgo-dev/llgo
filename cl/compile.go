@@ -1928,24 +1928,20 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			hoistToEntry = inLoop
 		}
 		heap := !p.stackStorage(v)
-		if !heap && p.recoverSlots != nil {
-			// SjLj restores the entry stack pointer. Recover-visible slots
-			// must survive that reset, including in package initializers.
-			hoistToEntry = true
-		}
 		if heap && uintptrEscapesBackingArray(v) {
 			// The pragma gives uintptr arguments pointer lifetime semantics.
 			// Pending go/defer calls retain their pointees through this array.
 			ret = b.AllocZ(p.prog.IntVal(p.prog.SizeOf(elem), p.prog.Uintptr()))
 			ret.Type = p.prog.Pointer(elem)
+		} else if !heap && p.recoverSlots != nil {
+			// SjLj restores the entry stack pointer. Recover-visible slots
+			// must survive that reset, including in package initializers.
+			ret = b.AllocRecover(elem)
 		} else {
 			ret = b.AllocEx(elem, heap, hoistToEntry)
 		}
 		p.debugAlloc(b, v, ret)
 		p.markRecoverSlot(v, heap)
-		if p.isRecoverSlotAddr(v) {
-			b.Store(ret, p.prog.Zero(elem)).SetVolatile(true)
-		}
 	case *ssa.IndexAddr:
 		vx := v.X
 		if _, ok := p.isVArgs(vx); ok { // varargs: this is a varargs index

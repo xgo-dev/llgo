@@ -108,6 +108,33 @@ func TestDeferCaptureStorageGC(t *testing.T) {
 	}
 }
 
+//go:noinline
+func deferredCaptureAggregate(callback func()) (result int) {
+	var capture struct {
+		payload *deferCapturePayload
+		words   [13]uintptr
+	}
+	defer func() {
+		recover()
+		runtime.GC()
+		result = capture.payload.value + int(capture.words[0]+capture.words[12])
+	}()
+	capture.payload = newDeferCapturePayload(7)
+	capture.words[0] = 2
+	callback()
+	capture.words[12] = 3
+	return
+}
+
+func TestDeferCaptureAggregateAcrossRecovery(t *testing.T) {
+	if got := deferredCaptureAggregate(func() {}); got != 12 {
+		t.Fatalf("normal aggregate capture = %d, want 12", got)
+	}
+	if got := deferredCaptureAggregate(func() { panic("callback") }); got != 9 {
+		t.Fatalf("recovered aggregate capture = %d, want 9", got)
+	}
+}
+
 func TestDeferCaptureStorageGoexit(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {

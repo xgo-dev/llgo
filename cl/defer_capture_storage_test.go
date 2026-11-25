@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
@@ -83,6 +84,12 @@ func aggregate(callback func()) {
  callback()
  values[0] = 5
 }
+func largeAggregate(callback func()) {
+ var values [33]uintptr
+ defer func(){ Sink += int(values[0]) }()
+ callback()
+ values[0] = 5
+}
 `
 	for _, target := range []llssa.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
@@ -114,7 +121,22 @@ func aggregate(callback func()) {
 					t.Errorf("%s lost recover-visible accesses:\n%s", name, body)
 				}
 			}
-			for _, name := range []string{"escaping", "asynchronous", "loop", "aggregate", "branchEscaping", "branchLoop"} {
+			ptrSize := 8
+			if target.GOARCH == "386" || target.GOARCH == "wasm" {
+				ptrSize = 4
+			}
+			aggregate := llvmFunction(t, ir, "recoverstorage.aggregate")
+			if uint64(5*ptrSize) <= llabi.MaxRecoverStackValueSize(target.GOARCH, ptrSize) {
+				if strings.Contains(aggregate, "runtime.Alloc") || !strings.Contains(aggregate, "store volatile") {
+					t.Errorf("bounded aggregate lost recover-visible stack placement:\n%s", aggregate)
+				}
+				if strings.Count(aggregate, "i64 40, i1 true)") != 1 || strings.Contains(aggregate, "i64 40, i1 false)") {
+					t.Errorf("bounded aggregate must receive one volatile initialization:\n%s", aggregate)
+				}
+			} else if !strings.Contains(aggregate, "runtime.Alloc") {
+				t.Errorf("aggregate lost retained storage on %s:\n%s", target.GOARCH, aggregate)
+			}
+			for _, name := range []string{"escaping", "asynchronous", "loop", "largeAggregate", "branchEscaping", "branchLoop"} {
 				if body := llvmFunction(t, ir, "recoverstorage."+name); !strings.Contains(body, "runtime.Alloc") {
 					t.Errorf("%s lost retained storage:\n%s", name, body)
 				}
