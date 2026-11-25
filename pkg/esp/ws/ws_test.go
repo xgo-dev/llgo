@@ -1027,7 +1027,7 @@ func TestSentinelErrors(t *testing.T) {
 	if !errors.Is(tls.ErrCertVerifyFailed, &esperr.Error{Code: tls.ErrCertVerifyFailed.Code}) {
 		t.Errorf("errors.Is(tls.ErrCertVerifyFailed, same-code Error) = false")
 	}
-	if tls.ErrCertVerifyFailed.Error() != "TLS_ERR_CERT_VERIFY (32258)" {
+	if tls.ErrCertVerifyFailed.Error() != "tls: certificate verify failed (code 32258)" {
 		t.Errorf("tls.ErrCertVerifyFailed.Error() = %q", tls.ErrCertVerifyFailed.Error())
 	}
 	// ErrName still names the sentinel's code (the diagnostic path).

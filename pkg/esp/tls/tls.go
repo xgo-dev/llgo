@@ -249,47 +249,45 @@ const (
 	tlsNoPeerCert        = 0x7E08
 )
 
-// Handshake-phase and dial-policy failures as sentinel errors: errors.Is
+// Handshake-phase and dial-policy failures as text-first sentinels: errors.Is
 // tells the classes apart (CertVerifyFailed covers both the chain-verify
 // failure and the ServerName CN/SAN mismatch; mbedtls reports both as
-// X509_CERT_VERIFY_FAILED). See the package doc's error-model section for
-// the pass-through conventions (lwip errnos from the TCP phase, raw
-// negative mbedtls codes from the setup and record phases).
+// X509_CERT_VERIFY_FAILED). Each carries its historical 0x7E00 segment code
+// on Error.Code and its ErrName entry on Error.Name as the diagnostic
+// annotation, so code-style checks against the segment value and the
+// field-level code/name diagnostics keep working. See the package doc's
+// error-model section for the pass-through conventions (lwip errnos from
+// the TCP phase, raw negative mbedtls codes from the setup and record
+// phases).
 var (
 	// ErrHandshakeTimeout: the handshake was still only making WANT progress
 	// when the dial's total budget (timeoutMs) ran out. The TCP layer was
 	// fine; the peer was too slow or the network too lossy.
-	ErrHandshakeTimeout = &esperr.Error{Code: tlsHandshakeTimeout,
-		Name: ErrName(tlsHandshakeTimeout)}
+	ErrHandshakeTimeout = newSentinel("tls: handshake timeout", tlsHandshakeTimeout)
 	// ErrCertVerifyFailed: VERIFY_REQUIRED and the server failed
 	// verification: the chain does not verify against the CA (validity
 	// included), or the ServerName does not match the certificate's CN/SAN
 	// entries.
-	ErrCertVerifyFailed = &esperr.Error{Code: tlsCertVerifyFailed,
-		Name: ErrName(tlsCertVerifyFailed)}
+	ErrCertVerifyFailed = newSentinel("tls: certificate verify failed", tlsCertVerifyFailed)
 	// ErrCaParseFailed: the CA PEM did not yield a usable certificate (hard
 	// parse error, or mbedtls reported a failed member in the PEM - any
 	// failed member rejects the whole parameter).
-	ErrCaParseFailed = &esperr.Error{Code: tlsCaParseFailed,
-		Name: ErrName(tlsCaParseFailed)}
+	ErrCaParseFailed = newSentinel("tls: CA parse failed", tlsCaParseFailed)
 	// ErrWantPollExhausted: Close's bounded close_notify wait ended before
 	// the peer exchange completed. The fd and the context are released
 	// regardless - Close never fails to clean up; the error only reports
 	// that the graceful part did not finish.
-	ErrWantPollExhausted = &esperr.Error{Code: tlsWantPollExhausted,
-		Name: ErrName(tlsWantPollExhausted)}
+	ErrWantPollExhausted = newSentinel("tls: close notify wait exhausted", tlsWantPollExhausted)
 	// ErrHandshake: any other fatal mbedtls error during the handshake
 	// (protocol failure, alert from the peer, out of memory) - the dial
 	// loop maps codes its table does not act on to this one. The setup
 	// phase never produces it: there the raw negative mbedtls code is
 	// passed through (see the error-model section above).
-	ErrHandshake = &esperr.Error{Code: tlsHandshakeFailure,
-		Name: ErrName(tlsHandshakeFailure)}
+	ErrHandshake = newSentinel("tls: handshake failed", tlsHandshakeFailure)
 	// ErrPsaInitFailed: the glue's defensive psa_crypto_init call failed -
 	// the handshake has no random source. IDF initializes PSA at boot, so
 	// reaching this means the crypto subsystem itself is broken.
-	ErrPsaInitFailed = &esperr.Error{Code: tlsPsaInitFailed,
-		Name: ErrName(tlsPsaInitFailed)}
+	ErrPsaInitFailed = newSentinel("tls: PSA crypto init failed", tlsPsaInitFailed)
 	// ErrNoRootCAs: the fail-closed dial. RootCAs was nil and
 	// InsecureSkipVerify false, so there is no way to authenticate the
 	// peer's identity - a bare-metal target has no system trust store to
@@ -297,15 +295,25 @@ var (
 	// exactly the hole a MITM with any certificate of the pinned CA would
 	// walk through. Raised before the dial touches the network; the glue
 	// carries the same refusal as a defense-in-depth check.
-	ErrNoRootCAs = &esperr.Error{Code: tlsNoRootCAs,
-		Name: ErrName(tlsNoRootCAs)}
+	ErrNoRootCAs = newSentinel("tls: no root CAs", tlsNoRootCAs)
 	// ErrNoPeerCert: State() on a session that carries no peer certificate
 	// - the handshake is not over (or the conn is already closed), or the
 	// peer never sent one. (State reports the zero ConnectionState rather
 	// than the error; the sentinel exists so the code stays nameable.)
-	ErrNoPeerCert = &esperr.Error{Code: tlsNoPeerCert,
-		Name: ErrName(tlsNoPeerCert)}
+	ErrNoPeerCert = newSentinel("tls: no peer certificate", tlsNoPeerCert)
 )
+
+// newSentinel declares a semantic sentinel that keeps its historical
+// 0x7E00 segment code on Error.Code and its ErrName entry on Error.Name as
+// the diagnostic annotation (esperr.New is text-only; the glue still
+// reports the code, ErrName's table names it, and the code-field
+// diagnostics the demo probes print read the fields directly).
+func newSentinel(text string, code int32) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	e.Name = ErrName(code)
+	return e
+}
 
 // The transport error sentinels, re-exported from the shared esperr base
 // so callers can stay inside this package's namespace.
@@ -317,9 +325,11 @@ var (
 )
 
 // errOf converts a pipeline code to the error the API returns (nil for 0).
-// The sentinel codes map to their sentinel values; anything else (lwip
-// errnos, negative mbedtls codes) becomes an *esperr.Error named through
-// ErrName.
+// The sentinel codes (the 0x7E00 segment and the transport errnos) map to
+// their sentinel values; anything else (lwip errnos, negative mbedtls
+// codes) forwards as a bare esperr.Coded value named through ErrName - a
+// forwarded code is its own diagnostic, and the bare *esperr.Error keeps
+// the field-level code/name diagnostics byte-identical.
 func errOf(code int32) error {
 	switch code {
 	case 0:
@@ -347,7 +357,7 @@ func errOf(code int32) error {
 	case tlsNoPeerCert:
 		return ErrNoPeerCert
 	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	return esperr.Coded(code, ErrName(code))
 }
 
 // Protocol versions for Config.MinVersion. The values are the TLS wire
@@ -469,7 +479,7 @@ func Dial(addr string, timeoutMs int32, cfg *Config) (*TLSConn, error) {
 		return nil, errOf(einval)
 	}
 	if cfgv.RootCAs == nil && !cfgv.InsecureSkipVerify {
-		return nil, ErrNoRootCAs
+		return nil, esperr.Wrap("tls: dial", ErrNoRootCAs)
 	}
 	serverName := host
 	if cfgv.ServerName != "" {
@@ -704,7 +714,7 @@ func boolToInt32(b bool) int32 {
 // (it would otherwise be indistinguishable from a peer close).
 func (c *TLSConn) Read(p []byte) (int, error) {
 	if c == nil || c.fd < 0 {
-		return 0, ErrClosed
+		return 0, esperr.Wrap("tls: read", ErrClosed)
 	}
 	if len(p) == 0 {
 		return 0, nil
@@ -747,7 +757,7 @@ func (c *TLSConn) Read(p []byte) (int, error) {
 //	                   either way
 func (c *TLSConn) Write(p []byte) (int, error) {
 	if c == nil || c.fd < 0 {
-		return 0, ErrClosed
+		return 0, esperr.Wrap("tls: write", ErrClosed)
 	}
 	if len(p) == 0 {
 		return 0, nil
@@ -778,7 +788,7 @@ func (c *TLSConn) Write(p []byte) (int, error) {
 // stalled peer can never hold the close open.
 func (c *TLSConn) Close() error {
 	if c == nil || c.fd < 0 {
-		return ErrClosed
+		return esperr.Wrap("tls: close", ErrClosed)
 	}
 	fd := c.fd
 	h := c.h
@@ -823,7 +833,7 @@ func (c *TLSConn) Close() error {
 // changes it. ms < 0 is EINVAL.
 func (c *TLSConn) SetDeadline(ms int32) error {
 	if c == nil || c.fd < 0 {
-		return ErrClosed
+		return esperr.Wrap("tls: set deadline", ErrClosed)
 	}
 	if ms < 0 {
 		return errOf(einval)

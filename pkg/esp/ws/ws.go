@@ -119,12 +119,14 @@
 //
 // # Error model
 //
-// WS-layer failures are sentinel error values of the shared esperr type:
-// ErrHandshake, ErrNotWS, ErrAcceptKey, ErrTooBig, ErrProtocol,
-// ErrPeerClosed, ErrConnDead and ErrNoDeadline, each carrying its internal
-// 0x7D00-segment code (outside the lwip errno range, the DNS h_errno
-// range, the esp_err range and the tls 0x7E00 segment; ErrName names the
-// codes). Three conventions on top, matching the transport packages:
+// WS-layer failures are text-first sentinel error values of the shared
+// esperr type: ErrHandshake, ErrNotWS, ErrAcceptKey, ErrTooBig,
+// ErrProtocol, ErrPeerClosed, ErrConnDead and ErrNoDeadline, each rendering
+// its condition ("ws: frame too large") and keeping its internal
+// 0x7D00-segment code on Error.Code as the diagnostic annotation (outside
+// the lwip errno range, the DNS h_errno range, the esp_err range and the
+// tls 0x7E00 segment; ErrName names the codes). Three conventions on top,
+// matching the transport packages:
 //
 //   - Transport failures pass through unchanged: ReadMessage returns the
 //     transport's own error (an lwip-errno esperr.Error like
@@ -175,26 +177,31 @@ const (
 	wsErrNoDeadline = 0x7D08
 )
 
-// WS-layer failure sentinels. See the package doc's error-model section.
+// WS-layer failure sentinels, text-first: errors.Is tells the classes
+// apart, and each keeps its historical 0x7D00-segment code on Error.Code
+// and its ErrName entry on Error.Name as the diagnostic annotation (the
+// package has no C-side producer for these codes, but code-era matching -
+// errors.Is against a raw 0x7Dxx Error - and the field-level diagnostics
+// keep working). See the package doc's error-model section.
 var (
 	// ErrHandshake: the peer's response was not a usable HTTP/1.x upgrade
 	// response - malformed status line, a header bigger than the 512-byte
 	// response window, garbage after the header, or a missing required
 	// header. (A 101 with wrong Upgrade/Connection headers is ErrNotWS.)
-	ErrHandshake = &esperr.Error{Code: wsErrHandshake, Name: "WS_ERR_HANDSHAKE"}
+	ErrHandshake = newSentinel("ws: malformed handshake response", wsErrHandshake)
 	// ErrNotWS: the response is HTTP but not a WebSocket upgrade - the
 	// status is not "101", or Upgrade/Connection do not carry the required
 	// tokens (websocket / upgrade). The classic shape when the far end is
 	// not a WebSocket server (a plain echo, a proxy, an error page).
-	ErrNotWS = &esperr.Error{Code: wsErrNotWS, Name: "WS_ERR_NOT_WEBSOCKET"}
+	ErrNotWS = newSentinel("ws: not a websocket upgrade", wsErrNotWS)
 	// ErrAcceptKey: Sec-WebSocket-Accept did not equal
 	// base64(SHA-1(key + GUID)) for the key we sent - either the peer is
 	// broken or something in between answered.
-	ErrAcceptKey = &esperr.Error{Code: wsErrAcceptKey, Name: "WS_ERR_ACCEPT_KEY"}
+	ErrAcceptKey = newSentinel("ws: accept key mismatch", wsErrAcceptKey)
 	// ErrTooBig: a data frame did not fit the caller's ReadMessage buffer.
 	// The frame was drained, so the connection stays usable; the message
 	// content is lost.
-	ErrTooBig = &esperr.Error{Code: wsErrTooBig, Name: "WS_ERR_FRAME_TOO_BIG"}
+	ErrTooBig = newSentinel("ws: frame too large", wsErrTooBig)
 	// ErrProtocol: the peer violated the framing rules - a masked
 	// server-to-client frame, RSV bits set (an extension we did not
 	// negotiate), a fragmented or oversize control frame, an unknown
@@ -205,22 +212,34 @@ var (
 	// RFC 6455 section 7.1.7 SHOULD to answer a protocol error with a 1002
 	// close: a misaligned stream cannot promise a well-formed closing
 	// exchange.
-	ErrProtocol = &esperr.Error{Code: wsErrProtocol, Name: "WS_ERR_PROTOCOL"}
+	ErrProtocol = newSentinel("ws: protocol error", wsErrProtocol)
 	// ErrPeerClosed: the orderly end of a session, not a failure - the
 	// peer sent a close frame, we echoed it, the transport is closed.
 	// CloseCode carries the peer's code (1000 normal, 1001 going away,
 	// ...). Close() reports nil for this same event when WE initiated.
-	ErrPeerClosed = &esperr.Error{Code: wsErrPeerClosed, Name: "WS_ERR_PEER_CLOSED"}
+	ErrPeerClosed = newSentinel("ws: peer closed", wsErrPeerClosed)
 	// ErrConnDead: the underlying transport closed (or failed) without a
 	// WebSocket close frame - the RFC's abnormal closure. The transport is
 	// already gone; just stop using the WSConn.
-	ErrConnDead = &esperr.Error{Code: wsErrConnDead, Name: "WS_ERR_CONN_DEAD"}
+	ErrConnDead = newSentinel("ws: connection dead", wsErrConnDead)
 	// ErrNoDeadline: the transport has no SetDeadline method, so the
 	// bounded-wait model cannot be honored - HandshakeURL refuses to run
 	// unbounded (its timeoutMs cannot be enforced) and WSConn.SetDeadline
 	// has nothing to forward to.
-	ErrNoDeadline = &esperr.Error{Code: wsErrNoDeadline, Name: "WS_ERR_NO_DEADLINE"}
+	ErrNoDeadline = newSentinel("ws: no deadline support", wsErrNoDeadline)
 )
+
+// newSentinel declares a semantic sentinel that keeps its historical
+// 0x7D00 segment code on Error.Code and its ErrName entry on Error.Name as
+// the diagnostic annotation (esperr.New is text-only; the number stays
+// inspectable, and code-era matching and the code-field diagnostics keep
+// working).
+func newSentinel(text string, code int32) *esperr.Error {
+	e, _ := esperr.New(text).(*esperr.Error)
+	e.Code = code
+	e.Name = ErrName(code)
+	return e
+}
 
 // The transport error sentinels, re-exported from the shared esperr base
 // so callers can stay inside this package's namespace.
@@ -232,9 +251,12 @@ var (
 )
 
 // errOf converts a pipeline code to the error the API returns (nil for 0).
-// The sentinel codes map to their sentinel values; anything else (an lwip
-// errno passed through from a transport-shaped code path) becomes an
-// *esperr.Error named through ErrName.
+// The sentinel codes (the 0x7D00 segment and the transport errnos) map to
+// their sentinel values; anything else (an lwip errno passed through from
+// a transport-shaped code path) forwards as a bare esperr.Coded value
+// named through ErrName - a forwarded code is its own diagnostic, and the
+// bare *esperr.Error keeps the field-level code/name diagnostics
+// byte-identical.
 func errOf(code int32) error {
 	switch code {
 	case 0:
@@ -262,7 +284,7 @@ func errOf(code int32) error {
 	case wsErrNoDeadline:
 		return ErrNoDeadline
 	}
-	return &esperr.Error{Code: code, Name: ErrName(code)}
+	return esperr.Coded(code, ErrName(code))
 }
 
 // lwip errno values this package acts on, same values the net package pins
