@@ -603,6 +603,13 @@ func (p *context) atomicStore(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	panic("atomicStore(addr *T, val T) T: invalid arguments")
 }
 
+func (p *context) atomicAddRelaxed(b llssa.Builder, args []llssa.Expr) llssa.Expr {
+	if len(args) == 2 {
+		return b.AtomicWithOrdering(llssa.OpAdd, args[0], args[1], llssa.OrderingMonotonic)
+	}
+	panic("atomicAddRelaxed(addr *T, val T) T: invalid arguments")
+}
+
 func (p *context) atomicStoreUnordered(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	if len(args) == 2 {
 		return b.Store(args[0], args[1]).SetOrdering(llssa.OrderingUnordered)
@@ -681,6 +688,7 @@ var llgoInstrs = map[string]int{
 	"atomicLoad":           llgoAtomicLoad,
 	"atomicStore":          llgoAtomicStore,
 	"atomicStoreUnordered": llgoAtomicStoreUnordered,
+	"atomicAddRelaxed":     llgoAtomicAddRelaxed,
 	"atomicCmpXchg":        llgoAtomicCmpXchg,
 	"atomicCmpXchgOK":      llgoAtomicCmpXchgOK,
 	"atomicAddReturnNew":   llgoAtomicAddReturnNew,
@@ -3021,6 +3029,11 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			args := p.compileValues(b, args, kind)
 			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return b.BinOp(token.ADD, p.atomic(b, llssa.OpAdd, args), args[1])
+			}, args...)
+		case llgoAtomicAddRelaxed:
+			args := p.compileValues(b, args, kind)
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return p.atomicAddRelaxed(b, args)
 			}, args...)
 		default:
 			if ftype >= llgoAtomicOpBase && ftype <= llgoAtomicOpLast {

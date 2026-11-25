@@ -12,10 +12,12 @@ type memProfileCounter struct {
 	value uint64
 }
 
-func memProfileAddObject(p *memProfileCounter) {
-	atomic.Add(&p.value, uint64(1))
+var memProfileCounters [memProfileNumBuckets]memProfileCounter
+
+func memProfileAddBucket(idx int) {
+	atomic.Add(&memProfileCounters[idx].value, uint64(1))
 }
 
-func memProfileLoadObjects(p *memProfileCounter) uint64 {
-	return atomic.Load(&p.value)
+func memProfileLoadBucket(idx int) uint64 {
+	return atomic.Load(&memProfileCounters[idx].value)
 }
