@@ -122,3 +122,16 @@ CONFIG_BT_GATTC_NOTIF_REG_MAX=16
 # Cache the peer attribute table per connection (Bluedroid): a reconnect
 # skips service discovery (~1.3 s on this link) when the table is intact.
 CONFIG_BT_GATTC_CACHE=y
+
+# ---- Internal-RAM headroom: BT controller + WiFi modem pools in PSRAM ----
+#
+# Measured on this firmware (esp-emu, all four stacks up, emu internal free
+# at the steady-state ledger line): 17.6 KB with neither switch, 39.3 KB
+# with both (51.6 KB once the A2DP DMA ring in bt_a2dp.go is also trimmed).
+# The controller-side switch moves its non-DMA pools (~15 KB; the ACL DMA
+# pools and the OSAL event/sem pools stay internal by design - the PSRAM
+# path has no DMA cap), and the WiFi/LWIP switch re-homes the modem-sleep
+# keep-alive buffers that default onto the 31 KB RTC RAM (~15 KB back),
+# leaving RTC to what really needs it.
+CONFIG_BT_CTRL_ALLOW_MALLOC_FROM_SPIRAM=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
