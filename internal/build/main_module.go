@@ -146,6 +146,10 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	}
 
 	wasmRuntimeScheduler := needsWasmRuntimeScheduler(ctx)
+	var gcInit llssa.Function
+	if cfg.rtInit {
+		gcInit = declareNoArgFunc(mainPkg, rtPkgPath+".InitGC")
+	}
 	var rtInit llssa.Function
 	if cfg.rtInit || wasmRuntimeScheduler {
 		rtInit = declareNoArgFunc(mainPkg, rtPkgPath+".init")
@@ -190,7 +194,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		if ctx.buildConf.BuildMode == BuildModeCShared && ctx.buildConf.Goos == "linux" {
 			initArraySection = ".init_array"
 		}
-		inits := []llssa.Function{godebugInit, pyInit, rtInit, abiInit, runtimeStub}
+		inits := []llssa.Function{godebugInit, pyInit, gcInit, rtInit, abiInit, runtimeStub}
 		// Windows already enables this during runtime initialization because
 		// callbacks in ordinary executables also enter from foreign threads.
 		// Other platforms enable it at startup when linked C exports exist.
@@ -252,6 +256,7 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 		startPCLN:    startPCLN,
 		pyInit:       pyInit,
 		pyFinalize:   pyFinalize,
+		gcInit:       gcInit,
 		rtInit:       rtInit,
 		callbackInit: callbackInit,
 		processExit:  processExit,
@@ -482,6 +487,7 @@ type entryFunctions struct {
 	startPCLN    llssa.Function
 	pyInit       llssa.Function
 	pyFinalize   llssa.Function
+	gcInit       llssa.Function
 	rtInit       llssa.Function
 	callbackInit llssa.Function
 	processExit  llssa.Function
@@ -577,6 +583,9 @@ func emitRuntimeMainBody(b llssa.Builder, fns entryFunctions) {
 	}
 	if fns.pyInit != nil {
 		b.Call(fns.pyInit.Expr)
+	}
+	if fns.gcInit != nil {
+		b.Call(fns.gcInit.Expr)
 	}
 	if fns.rtInit != nil {
 		b.Call(fns.rtInit.Expr)
