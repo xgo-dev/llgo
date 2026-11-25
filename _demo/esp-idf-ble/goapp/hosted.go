@@ -11,13 +11,9 @@ package main
 
 import _ "unsafe" // for go:linkname
 
-//go:linkname stubFixStreams C.llgoFixStreams
-func stubFixStreams() {}
-
 //go:linkname stubHeapPrint C.llgo_demo_heap
 func stubHeapPrint(tag *byte, n int32) { _, _ = tag, n }
 
-// fixStreams and heapPrint keep their names on both sides; the stubs above
-// claim the C symbols on the host, so main.go's declarations resolve either
-// way. The llgo.idf build resolves the same names against llgo_syms.S and the
-// demo glue instead.
+// heapPrint keeps its name on both sides; the stub above claims the C symbol
+// on the host, so main.go's declaration resolves either way. The llgo.idf
+// build resolves the same name against the demo glue instead.

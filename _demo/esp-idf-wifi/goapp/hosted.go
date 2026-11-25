@@ -13,9 +13,6 @@ package main
 
 import "unsafe"
 
-//go:linkname stubFixStreams C.llgoFixStreams
-func stubFixStreams() {}
-
 //go:linkname stubXTaskGetTickCount C.xTaskGetTickCount
 func stubXTaskGetTickCount() uint32 { return 0 }
 

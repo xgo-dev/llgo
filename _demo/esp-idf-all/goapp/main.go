@@ -43,12 +43,6 @@ import (
 	"github.com/xgo-dev/llgo/pkg/esp/wifi"
 )
 
-// llgoFixStreams repoints clite's stdout/stderr/stdin handles at the ESP-IDF
-// picolibc streams (host/llgo_syms.S). Must run before the first print.
-//
-//go:linkname fixStreams C.llgoFixStreams
-func fixStreams()
-
 // nowMs is the millisecond clock of the net glue (esp_timer domain), used
 // for the AP station-age checks.
 //
@@ -69,7 +63,6 @@ func secInitiate(conn uint32) int32
 func connSec(conn uint32) int32
 
 func main() {
-	fixStreams()
 	println("[go] all: llgo comprehensive verification firmware (WiFi AP + A2DP + BLE keyboard + audio)")
 	println("[go] all: sequence - 1) join AP llgo-ap, open http://192.168.4.1:8000/",
 		"2) phone connects llgo-audio and plays",

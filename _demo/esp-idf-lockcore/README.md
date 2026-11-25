@@ -80,8 +80,9 @@ esp-idf-lockcore/
     ├── partitions.csv
     ├── host/
     │   ├── make-artifact.sh  llgo build → IDF-linkable relocatable object
-    │   └── llgo_syms.S       GC window + bootstrap stack providers + the
-    │                         clite stream redirect (llgoFixStreams)
+    │   └── llgo_syms.S       GC window + bootstrap stack providers
+    │                         (llgoFixStreams legacy no-op kept for
+    │                         link compatibility)
     └── main/
         ├── CMakeLists.txt  Sources + WHOLE_ARCHIVE + link options
         ├── app_main.c      app_main → llgo entry; _write/_exit shims

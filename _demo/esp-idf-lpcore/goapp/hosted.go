@@ -11,9 +11,6 @@ package main
 
 import _ "unsafe" // for go:linkname
 
-//go:linkname stubFixStreams C.llgoFixStreams
-func stubFixStreams() {}
-
 //go:linkname stubHeapPrint C.llgo_demo_heap
 func stubHeapPrint(tag *byte, n int32) { _, _ = tag, n }
 

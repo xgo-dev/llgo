@@ -27,14 +27,6 @@ import (
 	"github.com/xgo-dev/llgo/pkg/esp/lpcore"
 )
 
-// llgoFixStreams is the assembly helper merged into llgo_out.o
-// (host/llgo_syms.S): it repoints clite's stdout/stderr/stdin handles at the
-// ESP-IDF picolibc streams, because clite's baremetal init fopen fails under
-// IDF's VFS. Must run after package init and before the first print.
-//
-//go:linkname fixStreams C.llgoFixStreams
-func fixStreams()
-
 // heapPrint prints the IDF heap pools from the C side (main/demo_glue.c).
 //
 //go:linkname heapPrint C.llgo_demo_heap
@@ -261,7 +253,6 @@ func recvReply() (lpcore.Msg, bool) {
 }
 
 func main() {
-	fixStreams()
 	println("[go] lp: start")
 
 	// The wakeup cause of THIS boot: exactly ESP_SLEEP_WAKEUP_UNDEFINED on

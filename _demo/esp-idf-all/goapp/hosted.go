@@ -10,9 +10,6 @@ package main
 
 import _ "unsafe" // for the push //go:linkname definitions below
 
-//go:linkname stubFixStreams C.llgoFixStreams
-func stubFixStreams() {}
-
 //go:linkname stubNowMs C.llgo_net_now_ms
 func stubNowMs() uint32 { return 0 }
 

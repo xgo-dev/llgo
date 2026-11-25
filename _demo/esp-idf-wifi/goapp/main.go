@@ -15,18 +15,8 @@ func produce(ch chan int, v int) {
 	ch <- v
 }
 
-// llgoFixStreams is the assembly helper merged into llgo_out.o
-// (host/llgo_syms.S): it repoints clite's stdout/stderr/stdin handles at the
-// ESP-IDF picolibc streams, because clite's baremetal init fopen fails under
-// IDF's VFS. Must run after package init (clite's Fopen assignment) and
-// before the first print.
-//
-//go:linkname fixStreams C.llgoFixStreams
-func fixStreams()
-
 func main() {
 	defer wifi.Finish() // flush C stdio on every exit path
-	fixStreams()
 	println("[go] hello from llgo on FreeRTOS/ESP32-S31")
 
 	// Goroutine + channel: exercises the fiber scheduler multiplexing Gs

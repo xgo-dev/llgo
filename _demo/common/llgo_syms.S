@@ -44,28 +44,13 @@ _stack_end:
     .globl _stack_top                /* ceiling of the bootstrap window */
 _stack_top:
 
-/* Redirect llgo's stdout/stderr/stdin handles to the ESP-IDF streams.
- *
- * On baremetal, clite opens its own streams at package init
- * (Fopen("/dev/stdout", "w")); under ESP-IDF that fopen fails, so the Go
- * print path would fwrite to a NULL FILE*. goapp/main.go calls this
- * (fixStreams) at the top of main, after the Go package inits ran and
- * before main.main prints anything; IDF's
- * stdout/stderr/stdin FILE* globals are valid from startup on.
- */
+/* llgoFixStreams: kept for link compatibility with firmware built against
+ * the old contract, but a no-op since the clite mechanism fix. clite's
+ * stdout/stderr/stdin now reference the ESP-IDF libc's stream globals
+ * directly (runtime/internal/clite/stdio_baremetal_idf.go), so no runtime
+ * repointing is needed and app code no longer calls this at the top of
+ * main. */
     .text
     .globl llgoFixStreams
 llgoFixStreams:
-    la t0, stdout
-    lw t1, 0(t0)
-    la t2, "github.com/xgo-dev/llgo/runtime/internal/clite.Stdout"
-    sw t1, 0(t2)
-    la t3, stderr
-    lw t3, 0(t3)
-    la t2, "github.com/xgo-dev/llgo/runtime/internal/clite.Stderr"
-    sw t3, 0(t2)
-    la t3, stdin
-    lw t3, 0(t3)
-    la t2, "github.com/xgo-dev/llgo/runtime/internal/clite.Stdin"
-    sw t3, 0(t2)
     ret

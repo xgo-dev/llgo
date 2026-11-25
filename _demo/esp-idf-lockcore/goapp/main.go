@@ -20,14 +20,6 @@ import (
 	_ "unsafe" // the pull //go:linkname declarations below need it
 )
 
-// llgoFixStreams is the assembly helper merged into llgo_out.o
-// (host/llgo_syms.S): it repoints clite's stdout/stderr/stdin handles at the
-// ESP-IDF picolibc streams, because clite's baremetal init fopen fails under
-// IDF's VFS. Must run after package init and before the first print.
-//
-//go:linkname fixStreams C.llgoFixStreams
-func fixStreams()
-
 // FreeRTOS bindings declared probe-side (the runtime package is internal;
 // the idf_freertos.go comment documents this declaration pattern).
 //
@@ -69,7 +61,6 @@ func dec32(v uint32) string {
 }
 
 func main() {
-	fixStreams()
 	handle := xTaskGetCurrentTaskHandle()
 	report := func(stage string) {
 		println("[go] lockcore: " + stage +

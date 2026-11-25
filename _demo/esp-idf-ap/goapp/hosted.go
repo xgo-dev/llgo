@@ -11,8 +11,5 @@ package main
 
 import _ "unsafe" // for the push //go:linkname definitions below
 
-//go:linkname stubFixStreams C.llgoFixStreams
-func stubFixStreams() {}
-
 //go:linkname stubVTaskDelay C.vTaskDelay
 func stubVTaskDelay(ticks uint32) { _ = ticks }

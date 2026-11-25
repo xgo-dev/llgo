@@ -14,7 +14,7 @@
 package main
 
 import (
-	_ "unsafe" // the two pull //go:linkname declarations below need it
+	_ "unsafe" // the pull //go:linkname declaration below needs it
 
 	"github.com/xgo-dev/llgo/pkg/esp/esperr"
 	"github.com/xgo-dev/llgo/pkg/esp/net"
@@ -48,9 +48,6 @@ const (
 
 //go:linkname vTaskDelay C.vTaskDelay
 func vTaskDelay(ticks uint32)
-
-//go:linkname fixStreams C.llgoFixStreams
-func fixStreams()
 
 // heapMark prints the IDF heap watermarks at one pipeline stage. The AP-mode
 // RAM ledger is the difference between these lines: Setup sizes for a station,
@@ -150,7 +147,6 @@ func produce(ch chan int, v int) { ch <- v }
 
 func main() {
 	defer wifi.Finish() // flush C stdio on every exit path
-	fixStreams()
 	println("[go] hello from llgo on FreeRTOS/ESP32-S31 (soft AP probe)")
 
 	// Scheduler sanity before the radio work: one goroutine + channel
