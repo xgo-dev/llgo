@@ -13,10 +13,7 @@ func cStrView(p *c.Char) string {
 	if p == nil {
 		return ""
 	}
-	var n uintptr
-	for *(*byte)(unsafe.Add(unsafe.Pointer(p), n)) != 0 {
-		n++
-	}
+	n := c.Strlen(p)
 	if n == 0 {
 		return ""
 	}
