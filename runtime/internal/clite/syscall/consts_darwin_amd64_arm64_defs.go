@@ -8,7 +8,10 @@
 package syscall
 
 const (
+	EFAULT     = Errno(0xe)
 	EINTR      = Errno(0x4)
+	ENOENT     = Errno(0x2)
+	ENOMEM     = Errno(0xc)
 	ENOTSUP    = Errno(0x2d)
 	EPERM      = Errno(0x1)
 	F_GETFD    = 0x1
