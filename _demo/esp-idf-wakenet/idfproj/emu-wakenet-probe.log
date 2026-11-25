@@ -1,0 +1,129 @@
+
+    ╻ ╻ ╻ ╻
+   ┏┻━┻━┻━┻┓    ┏━╸┏━┓┏━┓   ┏━╸┏┳┓╻ ╻
+  ━┫       ┣━   ┣╸ ┗━┓┣━┛╺━╸┣╸ ┃┃┃┃ ┃
+  ━┫ ESP32 ┣━   ┗━╸┗━┛╹     ┗━╸╹ ╹┗━┛
+  ━┫       ┣━
+   ┗┳━┳━┳━┳┛    ESP32 series emulator · v1.2.0
+    ╹ ╹ ╹ ╹     https://github.com/espressif/esp-emulator
+
+[INFO  cli::run] Loaded firmware: 8548685 bytes
+[INFO  machine] WiFi SoftAP: WPA2/WPA3 transition enabled (PWE Both) for SSID 'myssid'
+[INFO  host::net_user] user-net: DNS forwarder upstream [100.100.100.100:53, [fd7a:115c:a1e0::53]:53], restrict=false
+[INFO  host::net_user] user-net: backend ready (192.168.4.0/24 (gateway 192.168.4.1, firmware 192.168.4.2), 0 hostfwd rules)
+[INFO  cli::run] Network backend: user-mode (smoltcp NAT, 192.168.4.0/24 (gateway 192.168.4.1, firmware 192.168.4.2); the gateway is host loopback)
+[WARN  cli::run] the emulator's network defaults to 192.168.4.0/24, the subnet ESP-IDF gives a firmware's own soft AP; a future release changes the default to 10.0.2.0/24. Add net=192.168.4.0/24 to --net to keep it, or net=10.0.2.0/24 to switch now
+[INFO  cli::run] Loaded ROM ELF: <embedded esp32s31> (521752 bytes)
+[INFO  cli::run] Booting from real ROM reset vector (use --skip-rom to bypass)
+[INFO  machine] ROM ELF: 4045 symbols loaded
+[INFO  machine] ROM ELF loaded, 22 functions patched for interception
+[INFO  machine] CPU reset at ROM entry: PC=0x2F800000, SP=0x2F07C600
+[INFO  cli::run] Starting emulation (chip=esp32s31, batch_size=50000)
+ESP-ROM:esp32s31-20251218
+Build:Dec 18 2025
+rst:0x1 (POWERON),boot:0x12 (SPI_FAST_FLASH_BOOT)
+SPI mode:DIO, clock div:1
+load:0x2f0740c0,len:0x1750
+load:0x2f06a2b0,len:0xddc
+load:0x2f06cfb0,len:0x3200
+entry 0x2f06a2ba
+I (3) boot: ESP-IDF v6.3-dev-132-gad20ded62a2 2nd stage bootloader
+I (3) boot: compile time Nov 25 2026 10:40:59
+I (3) boot: chip revision: v0.0
+I (3) qio_mode: Enabling default flash chip QIO
+I (3) boot.esp32s31: SPI Speed      : 80MHz
+I (3) boot.esp32s31: SPI Mode       : QIO
+I (3) boot.esp32s31: SPI Flash Size : 16MB
+I (3) boot: Partition Table:
+I (3) boot: ## Label            Usage          Type ST Offset   Length
+I (3) boot:  0              nvs        WiFi data 01 02 00009000 00006000
+I (3) boot:  1         phy_init          RF data 01 01 0000f000 00001000
+I (3) boot:  2          factory      factory app 00 00 00010000 007d0000
+I (3) boot:  3            model     Unknown data 01 82 007e0000 007b7000
+I (3) esp_image: segment 0: paddr=00010020 vaddr=400c0020 size=40dd8h (265688) map
+I (24) esp_image: segment 1: paddr=00050e00 vaddr=2f000000 size=0f218h ( 61976) load
+I (31) esp_image: segment 2: paddr=00060020 vaddr=40000020 size=b1c58h (728152) map
+I (86) esp_image: segment 3: paddr=00111c80 vaddr=2f00f218 size=00338h (   824) load
+I (87) esp_image: segment 4: paddr=00111fc0 vaddr=2f00f580 size=04a5ch ( 19036) load
+I (92) boot: Loaded app from partition at offset 0x10000
+W pmu_init: blk_version is less than 1, pvt function not supported in efuse.
+I (94) oct_psram: vendor id    : 0x0d (AP)
+I (94) oct_psram: Latency      : 0x01 (Fixed)
+I (94) oct_psram: DriveStr.    : 0x00 (25 Ohm)
+I (94) oct_psram: dev id       : 0x01 (generation 2)
+I (94) oct_psram: density      : 0x05 (128 Mbit)
+I (94) oct_psram: good-die     : 0x06 (Pass)
+I (94) oct_psram: SRF          : 0x00 (Slow Refresh)
+I (94) oct_psram: BurstType    : 0x00 ( Wrap)
+I (94) oct_psram: BurstLen     : 0x03 (2048 Byte)
+I (94) oct_psram: BitMode      : 0x00 (X8 Mode)
+I (94) oct_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+I (94) oct_psram: DriveStrength: 0x00 (1/1)
+I (94) MSPI Timing: Enter psram timing tuning
+I (191) esp_psram: Found 16MB PSRAM device
+I (191) esp_psram: Speed: 200MHz
+I (191) cpu_start: Multicore app
+I (263) esp_psram: SPI SRAM memory test OK
+I (271) cpu_start: GPIO 59 and 58 are used as console UART I/O pins
+I (271) cpu_start: Pro cpu start user code
+I (271) cpu_start: cpu freq: 240000000 Hz
+I (271) app_init: Application information:
+I (271) app_init: Project name:     llgo_idf_s31
+I (271) app_init: App version:      1
+I (271) app_init: Compile time:     Nov 25 2026 10:41:06
+I (271) app_init: ELF file SHA256:  1df084656...
+I (271) app_init: ESP-IDF:          v6.3-dev-132-gad20ded62a2
+I (271) efuse_init: Min chip rev:     v0.0
+I (271) efuse_init: Max chip rev:     v0.99 
+I (271) efuse_init: Chip rev:         v0.0
+I (271) heap_init: Initializing. RAM available for dynamic allocation:
+I (271) heap_init: At 2F02A020 len 00050F90 (323 KiB): RAM
+I (271) heap_init: At 2F07AFB0 len 000041C0 (16 KiB): RAM
+I (271) heap_init: At 2E000000 len 00007FE8 (31 KiB): RTCRAM
+I (271) esp_psram: Adding pool of 16384K of PSRAM memory to heap allocator
+I (271) spi_flash: detected chip: gd
+I (271) spi_flash: flash io: qio
+I (272) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (272) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (272) coexist: coex firmware version: f5cea85
+I (272) coexist: coexist rom version cdcf52b
+I (272) main_task: Started on CPU0
+I (272) esp_psram: Reserving pool of 32K of internal memory for DMA/internal allocations
+I (272) main_task: Calling app_main()
+[c] app_main: starting llgo runtime
+[go] wakenet: start
+[c] wakenet heap boot free=17128783 min=17096752 | internal=354147 | psram=16774636
+[go] wakenet test pcm samples = 60392
+I (272) MODEL_LOADER: The storage free size is 64448 KB
+I (272) MODEL_LOADER: The partition size is 7900 KB
+I (272) MODEL_LOADER: Successfully load srmodels
+MC Quantized wakenet9: wakenet9_v1h24_嗨，乐鑫_3_0.608_0.615, tigger:v4, mode:1, p:0
+[go] wakenet init ok model=wn9_hilexin chunk=512 rate=16000
+[c] wakenet heap init free=16774203 min=16733072 | internal=319467 | psram=16454736
+[go] wakenet start ok
+[go] wakenet frames=32 avg_us=1481 max_us=2246 detections=0
+[go] wakenet DETECTED #1 state=1 ts=2183
+[go] wakenet frames=63 avg_us=1465 max_us=2246 detections=1
+[go] wakenet frames=94 avg_us=1476 max_us=2246 detections=1
+[go] wakenet DETECTED #2 state=1 ts=4103
+[go] wakenet frames=126 avg_us=1472 max_us=2246 detections=2
+[c] wakenet heap run free=16774203 min=16733072 | internal=319467 | psram=16454736
+[go] wakenet frames=157 avg_us=1477 max_us=2246 detections=2
+[go] wakenet DETECTED #3 state=1 ts=6023
+[go] wakenet frames=188 avg_us=1476 max_us=2246 detections=3
+[go] wakenet frames=219 avg_us=1477 max_us=2246 detections=3
+[go] wakenet DETECTED #4 state=1 ts=7943
+[go] wakenet frames=251 avg_us=1490 max_us=2246 detections=4
+[c] wakenet heap run free=16774203 min=16733072 | internal=319467 | psram=16454736
+[go] wakenet frames=282 avg_us=1488 max_us=2246 detections=4
+[go] wakenet DETECTED #5 state=1 ts=9863
+[go] wakenet frames=313 avg_us=1490 max_us=2246 detections=5
+[go] wakenet frames=344 avg_us=1500 max_us=2246 detections=5
+[go] wakenet DETECTED #6 state=1 ts=11783
+[go] wakenet stop ok
+[go] wakenet final frames=375 avg_us=1507 max_us=2246 detections=6 errors=0 overflows=0 detected_flag=1
+[c] wakenet heap closed free=17128783 min=16733072 | internal=354147 | psram=16774636
+[go] wakenet PASS frames=375 detections=6 avg_us=1507 max_us=2246
+[c] gc ext heap: cap = 4294967295, bytes = 0 | idf internal free = 354147, psram free = 16774636
+[c] app_main: llgo main returned, deleting main task
+[INFO  cli::run] Interrupted (signal)
