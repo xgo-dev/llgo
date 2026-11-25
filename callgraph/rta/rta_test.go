@@ -63,14 +63,19 @@ func TestRTAAnalyzeDirectClosureAndInterface(t *testing.T) {
 	pkg.AddFunction(deadFn, types.NewFunc(0, goPkg, "dead", voidSig))
 	deadFn.NewBasicBlock("entry").Emit(&ssa.Return{}, nil, token.NoPos)
 
-	// main calls helper(), makes closure clo & calls it, boxes *Dog into Speaker & invokes Speak().
-	mainFn := prog.NewFunction("main", voidSig, "")
-	pkg.AddFunction(mainFn, types.NewFunc(0, goPkg, "main", voidSig))
+	// main(cb func()) calls helper(), takes clo, calls cb() dynamically, boxes *Dog into Speaker & invokes Speak().
+	mainSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewParam(0, goPkg, "cb", voidSig)),
+		nil, false,
+	)
+	mainFn := prog.NewFunction("main", mainSig, "")
+	pkg.AddFunction(mainFn, types.NewFunc(0, goPkg, "main", mainSig))
+	cbParam := mainFn.AddParam("cb", nil, voidSig)
 	bMain := mainFn.NewBasicBlock("entry")
 	bMain.Emit(&ssa.Call{Call: ssa.CallCommon{Value: helperFn}}, nil, token.Pos(1))
 	mkClo := &ssa.MakeClosure{Fn: cloFn}
 	bMain.Emit(mkClo, voidSig, token.Pos(2))
-	bMain.Emit(&ssa.Call{Call: ssa.CallCommon{Value: mkClo}}, nil, token.Pos(3))
+	bMain.Emit(&ssa.Call{Call: ssa.CallCommon{Value: cbParam}}, nil, token.Pos(3))
 	allocDog := &ssa.Alloc{Heap: true}
 	bMain.Emit(allocDog, dogPtr, token.Pos(4))
 	mkIface := &ssa.MakeInterface{X: allocDog}
@@ -78,6 +83,10 @@ func TestRTAAnalyzeDirectClosureAndInterface(t *testing.T) {
 	bMain.Emit(&ssa.Call{Call: ssa.CallCommon{Value: mkIface, Method: speakMethod}}, nil, token.Pos(6))
 	bMain.Emit(&ssa.Return{}, nil, token.Pos(7))
 
+	mainFn.Finish()
+	helperFn.Finish()
+	cloFn.Finish()
+	dogSpeakFn.Finish()
 	prog.Build()
 
 	res := rta.Analyze([]*ssa.Function{mainFn}, true)

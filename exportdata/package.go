@@ -43,6 +43,8 @@ const (
 	typeTagAliasRef
 	typeTagTypeParamRef
 	typeTagSIMDVec
+	typeTagNamedInst
+	typeTagAliasInst
 )
 
 const (
@@ -134,6 +136,9 @@ func ReadBundle(in io.Reader, fset *token.FileSet, imports map[string]*types.Pac
 		pkg, err := unmarshalPackage(blob, imports)
 		if err != nil {
 			return nil, err
+		}
+		if pkg != nil && pkg.Path() != "" {
+			imports[pkg.Path()] = pkg
 		}
 		pkgs[i] = pkg
 	}
@@ -275,6 +280,13 @@ func (w *pkgWriter) registerType(t types.Type, seen map[types.Type]bool) {
 			w.registerType(u.Term(i).Type(), seen)
 		}
 	case *types.Named:
+		if orig := u.Origin(); orig != nil && orig != u && u.TypeArgs().Len() > 0 {
+			w.registerType(orig, seen)
+			for i := 0; i < u.TypeArgs().Len(); i++ {
+				w.registerType(u.TypeArgs().At(i), seen)
+			}
+			return
+		}
 		if _, ok := w.namedIndex[u]; !ok {
 			idx := uint64(len(w.nameds))
 			w.nameds = append(w.nameds, u)
@@ -282,14 +294,8 @@ func (w *pkgWriter) registerType(t types.Type, seen map[types.Type]bool) {
 			if u.Obj() != nil {
 				w.internPkg(u.Obj().Pkg())
 			}
-			if orig := u.Origin(); orig != nil && orig != u {
-				w.registerType(orig, seen)
-			}
 			for i := 0; i < u.TypeParams().Len(); i++ {
 				w.registerType(u.TypeParams().At(i), seen)
-			}
-			for i := 0; i < u.TypeArgs().Len(); i++ {
-				w.registerType(u.TypeArgs().At(i), seen)
 			}
 			w.registerType(u.Underlying(), seen)
 			for i := 0; i < u.NumMethods(); i++ {
@@ -299,6 +305,13 @@ func (w *pkgWriter) registerType(t types.Type, seen map[types.Type]bool) {
 			}
 		}
 	case *types.Alias:
+		if orig := u.Origin(); orig != nil && orig != u && u.TypeArgs().Len() > 0 {
+			w.registerType(orig, seen)
+			for i := 0; i < u.TypeArgs().Len(); i++ {
+				w.registerType(u.TypeArgs().At(i), seen)
+			}
+			return
+		}
 		if _, ok := w.aliasIndex[u]; !ok {
 			idx := uint64(len(w.aliases))
 			w.aliases = append(w.aliases, u)
@@ -353,6 +366,26 @@ func (w *pkgWriter) encode() {
 			objs = append(objs, o)
 			w.internPkg(o.Pkg())
 			w.registerType(o.Type(), seen)
+		}
+	}
+
+	// Order generic Named origins ahead of non-generic Nameds so instantiated
+	// references during decode always see populated origins.
+	if len(w.nameds) > 1 {
+		ordered := make([]*types.Named, 0, len(w.nameds))
+		for _, n := range w.nameds {
+			if n.TypeParams().Len() > 0 {
+				ordered = append(ordered, n)
+			}
+		}
+		for _, n := range w.nameds {
+			if n.TypeParams().Len() == 0 {
+				ordered = append(ordered, n)
+			}
+		}
+		w.nameds = ordered
+		for i, n := range w.nameds {
+			w.namedIndex[n] = uint64(i)
 		}
 	}
 
@@ -568,9 +601,29 @@ func (w *pkgWriter) writeType(t types.Type) {
 			w.writeType(term.Type())
 		}
 	case *types.Named:
+		if orig := u.Origin(); orig != nil && orig != u && u.TypeArgs().Len() > 0 {
+			w.enc.writeByte(typeTagNamedInst)
+			w.enc.writeUvarint(w.namedIndex[orig])
+			targs := u.TypeArgs()
+			w.enc.writeUvarint(uint64(targs.Len()))
+			for i := 0; i < targs.Len(); i++ {
+				w.writeType(targs.At(i))
+			}
+			return
+		}
 		w.enc.writeByte(typeTagNamedRef)
 		w.enc.writeUvarint(w.namedIndex[u])
 	case *types.Alias:
+		if orig := u.Origin(); orig != nil && orig != u && u.TypeArgs().Len() > 0 {
+			w.enc.writeByte(typeTagAliasInst)
+			w.enc.writeUvarint(w.aliasIndex[orig])
+			targs := u.TypeArgs()
+			w.enc.writeUvarint(uint64(targs.Len()))
+			for i := 0; i < targs.Len(); i++ {
+				w.writeType(targs.At(i))
+			}
+			return
+		}
 		w.enc.writeByte(typeTagAliasRef)
 		w.enc.writeUvarint(w.aliasIndex[u])
 	case *types.TypeParam:
@@ -718,13 +771,14 @@ func (r *pkgReader) decode() (*types.Package, error) {
 		r.tparams[i] = types.NewTypeParam(types.NewTypeName(token.NoPos, r.pkgByID(pkgID), tpName, nil), nil)
 	}
 
-	// Read Named shells.
+	// Read Named shells, reusing Universe and already-imported external Named types.
 	namedCount, err := r.dec.readUvarint()
 	if err != nil {
 		return nil, err
 	}
 	r.nameds = make([]*types.Named, namedCount)
 	namedCC := make([]types.CallConv, namedCount)
+	namedReused := make([]bool, namedCount)
 	for i := uint64(0); i < namedCount; i++ {
 		pkgID, err := r.dec.readUvarint()
 		if err != nil {
@@ -739,16 +793,35 @@ func (r *pkgReader) decode() (*types.Package, error) {
 			return nil, err
 		}
 		namedCC[i] = types.CallConv(cc)
-		r.nameds[i] = types.NewNamed(types.NewTypeName(token.NoPos, r.pkgByID(pkgID), nName, nil), nil, nil)
+		owner := r.pkgByID(pkgID)
+		if pkgID == 0 {
+			if obj := types.Universe.Lookup(nName); obj != nil {
+				if existing, ok := obj.Type().(*types.Named); ok {
+					r.nameds[i] = existing
+					namedReused[i] = true
+					continue
+				}
+			}
+		} else if owner != nil && owner != pkg {
+			if obj := owner.Scope().Lookup(nName); obj != nil {
+				if existing, ok := obj.Type().(*types.Named); ok {
+					r.nameds[i] = existing
+					namedReused[i] = true
+					continue
+				}
+			}
+		}
+		r.nameds[i] = types.NewNamed(types.NewTypeName(token.NoPos, owner, nName, nil), nil, nil)
 	}
 
-	// Read Alias shells.
+	// Read Alias shells, reusing Universe and already-imported external Alias types.
 	aliasCount, err := r.dec.readUvarint()
 	if err != nil {
 		return nil, err
 	}
 	r.aliases = make([]*types.Alias, aliasCount)
 	aliasObjs := make([]*types.TypeName, aliasCount)
+	aliasReused := make([]bool, aliasCount)
 	for i := uint64(0); i < aliasCount; i++ {
 		pkgID, err := r.dec.readUvarint()
 		if err != nil {
@@ -758,7 +831,25 @@ func (r *pkgReader) decode() (*types.Package, error) {
 		if err != nil {
 			return nil, err
 		}
-		aliasObjs[i] = types.NewTypeName(token.NoPos, r.pkgByID(pkgID), aName, nil)
+		owner := r.pkgByID(pkgID)
+		if pkgID == 0 {
+			if obj := types.Universe.Lookup(aName); obj != nil {
+				if existing, ok := obj.Type().(*types.Alias); ok {
+					r.aliases[i] = existing
+					aliasReused[i] = true
+					continue
+				}
+			}
+		} else if owner != nil && owner != pkg {
+			if obj := owner.Scope().Lookup(aName); obj != nil {
+				if existing, ok := obj.Type().(*types.Alias); ok {
+					r.aliases[i] = existing
+					aliasReused[i] = true
+					continue
+				}
+			}
+		}
+		aliasObjs[i] = types.NewTypeName(token.NoPos, owner, aName, nil)
 		r.aliases[i] = types.NewAlias(aliasObjs[i], nil)
 	}
 
@@ -777,21 +868,20 @@ func (r *pkgReader) decode() (*types.Package, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(tps) > 0 {
-			r.nameds[i].SetTypeParams(tps)
-		}
 		under, err := r.readType()
 		if err != nil {
 			return nil, err
 		}
-		if sig, ok := under.(*types.Signature); ok && namedCC[i] != types.Go {
-			under = sig.WithCallConv(namedCC[i])
-		}
-		r.nameds[i].SetUnderlying(under)
 		nm, err := r.dec.readUvarint()
 		if err != nil {
 			return nil, err
 		}
+		type methodRec struct {
+			pkg  *types.Package
+			name string
+			sig  *types.Signature
+		}
+		var methods []methodRec
 		for j := uint64(0); j < nm; j++ {
 			mPkgID, err := r.dec.readUvarint()
 			if err != nil {
@@ -806,7 +896,22 @@ func (r *pkgReader) decode() (*types.Package, error) {
 				return nil, err
 			}
 			sig, _ := mTyp.(*types.Signature)
-			r.nameds[i].AddMethod(types.NewFunc(token.NoPos, r.pkgByID(mPkgID), mName, sig))
+			if !namedReused[i] {
+				methods = append(methods, methodRec{pkg: r.pkgByID(mPkgID), name: mName, sig: sig})
+			}
+		}
+		if namedReused[i] {
+			continue
+		}
+		if len(tps) > 0 {
+			r.nameds[i].SetTypeParams(tps)
+		}
+		if sig, ok := under.(*types.Signature); ok && namedCC[i] != types.Go {
+			under = sig.WithCallConv(namedCC[i])
+		}
+		r.nameds[i].SetUnderlying(under)
+		for _, mr := range methods {
+			r.nameds[i].AddMethod(types.NewFunc(token.NoPos, mr.pkg, mr.name, mr.sig))
 		}
 	}
 
@@ -819,6 +924,9 @@ func (r *pkgReader) decode() (*types.Package, error) {
 		rhs, err := r.readType()
 		if err != nil {
 			return nil, err
+		}
+		if aliasReused[i] {
+			continue
 		}
 		a := types.NewAlias(aliasObjs[i], rhs)
 		if len(tps) > 0 {
@@ -1176,12 +1284,62 @@ func (r *pkgReader) readType() (types.Type, error) {
 			return nil, errCorrupt
 		}
 		return r.nameds[idx], nil
+	case typeTagNamedInst:
+		origIdx, err := r.dec.readUvarint()
+		if err != nil || origIdx >= uint64(len(r.nameds)) {
+			return nil, errCorrupt
+		}
+		nArgs, err := r.dec.readUvarint()
+		if err != nil {
+			return nil, err
+		}
+		args := make([]types.Type, nArgs)
+		for i := uint64(0); i < nArgs; i++ {
+			args[i], err = r.readType()
+			if err != nil {
+				return nil, err
+			}
+		}
+		orig := r.nameds[origIdx]
+		if orig.Underlying() == nil {
+			return orig, nil
+		}
+		inst, err := types.Instantiate(nil, orig, args, false)
+		if err != nil {
+			return nil, err
+		}
+		return inst, nil
 	case typeTagAliasRef:
 		idx, err := r.dec.readUvarint()
 		if err != nil || idx >= uint64(len(r.aliases)) {
 			return nil, errCorrupt
 		}
 		return r.aliases[idx], nil
+	case typeTagAliasInst:
+		origIdx, err := r.dec.readUvarint()
+		if err != nil || origIdx >= uint64(len(r.aliases)) {
+			return nil, errCorrupt
+		}
+		nArgs, err := r.dec.readUvarint()
+		if err != nil {
+			return nil, err
+		}
+		args := make([]types.Type, nArgs)
+		for i := uint64(0); i < nArgs; i++ {
+			args[i], err = r.readType()
+			if err != nil {
+				return nil, err
+			}
+		}
+		orig := r.aliases[origIdx]
+		if orig.Rhs() == nil {
+			return orig, nil
+		}
+		inst, err := types.Instantiate(nil, orig, args, false)
+		if err != nil {
+			return nil, err
+		}
+		return inst, nil
 	case typeTagTypeParamRef:
 		idx, err := r.dec.readUvarint()
 		if err != nil || idx >= uint64(len(r.tparams)) {

@@ -521,4 +521,18 @@ func TestXToolsPackageParityGuards(t *testing.T) {
 			},
 		)
 	})
+
+	t.Run("ssa/ssautil", func(t *testing.T) {
+		assertXToolsParity(t,
+			"github.com/xgo-dev/llgo/ssa/ssautil",
+			"golang.org/x/tools/go/ssa/ssautil",
+			map[string]bool{
+				// Packages and AllPackages accept golang.org/x/tools/go/packages.Package,
+				// which root pure-Go core packages intentionally do not import.
+				"func:Packages":    true,
+				"func:AllPackages": true,
+			},
+			nil,
+		)
+	})
 }

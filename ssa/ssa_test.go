@@ -82,6 +82,7 @@ func TestProgramPackageFunctionDominatorsAndVerify(t *testing.T) {
 	mergeBlk.Emit(phi, types.Typ[types.Int], token.Pos(6))
 	mergeBlk.Emit(&ssa.Return{Results: []ssa.Value{phi}}, nil, token.Pos(7))
 
+	fn.Finish()
 	prog.Build()
 
 	if err := ssa.VerifyPackage(pkg); err != nil {

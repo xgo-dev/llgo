@@ -76,6 +76,7 @@ const (
 	IsUntyped  BasicInfo = gotypes.IsUntyped
 
 	IsOrdered   BasicInfo = gotypes.IsOrdered
+	IsNumeric   BasicInfo = gotypes.IsNumeric
 	IsConstType BasicInfo = gotypes.IsConstType
 )
 

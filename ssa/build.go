@@ -41,10 +41,13 @@ func (p *Package) AddGlobal(name string, obj *types.Var, ptrType types.Type) *Gl
 		pos:    pos,
 	}
 	p.Members[name] = g
+	if obj != nil && p.objects != nil {
+		p.objects[obj] = g
+	}
 	return g
 }
 
-// AddFunction adds a Function to p (and p.Prog maps if present).
+// AddFunction adds a Function to p (and p.Prog method/object tables if present).
 func (p *Package) AddFunction(fn *Function, obj *types.Func) {
 	if fn == nil {
 		return
@@ -56,21 +59,21 @@ func (p *Package) AddFunction(fn *Function, obj *types.Func) {
 	if obj != nil {
 		fn.object = obj
 		fn.pos = obj.Pos()
+		if p != nil && p.objects != nil {
+			p.objects[obj] = fn
+		}
 	}
 	if p != nil && fn.parent == nil && (fn.Signature == nil || fn.Signature.Recv() == nil) {
 		p.Members[fn.name] = fn
 	}
-	if p != nil && p.Prog != nil {
+	if p != nil && p.Prog != nil && fn.Signature != nil && fn.Signature.Recv() != nil {
+		var pkg *types.Package
 		if obj != nil {
-			p.Prog.funcsByObj[obj] = fn
+			pkg = obj.Pkg()
+		} else if p.Pkg != nil {
+			pkg = p.Pkg
 		}
-		if fn.Signature != nil && fn.Signature.Recv() != nil {
-			var pkg *types.Package
-			if p.Pkg != nil {
-				pkg = p.Pkg
-			}
-			p.Prog.methods[methodKey(fn.Signature.Recv().Type(), pkg, fn.name)] = fn
-		}
+		p.Prog.RegisterMethod(fn.Signature.Recv().Type(), pkg, fn.name, fn)
 	}
 }
 
@@ -81,6 +84,9 @@ func (p *Package) AddType(obj *types.TypeName) *Type {
 	}
 	t := &Type{pkg: p, object: obj}
 	p.Members[obj.Name()] = t
+	if p.objects != nil {
+		p.objects[obj] = t
+	}
 	return t
 }
 
@@ -91,6 +97,9 @@ func (p *Package) AddConst(obj *types.Const, val *Const) *NamedConst {
 	}
 	c := &NamedConst{pkg: p, object: obj, Value: val}
 	p.Members[obj.Name()] = c
+	if p.objects != nil {
+		p.objects[obj] = c
+	}
 	return c
 }
 
@@ -99,7 +108,15 @@ func (prog *Program) RegisterMethod(T types.Type, pkg *types.Package, name strin
 	if prog == nil || T == nil || fn == nil {
 		return
 	}
-	prog.methods[methodKey(T, pkg, name)] = fn
+	key := methodKeyOf(pkg, name)
+	prog.methodsMu.Lock()
+	defer prog.methodsMu.Unlock()
+	mset, ok := prog.methodSets.At(T).(*methodSet)
+	if !ok {
+		mset = &methodSet{mapping: make(map[methodKey]*Function)}
+		prog.methodSets.Set(T, mset)
+	}
+	mset.mapping[key] = fn
 }
 
 // AddRuntimeType records a concrete type that may be stored into an interface at runtime.
@@ -107,7 +124,12 @@ func (prog *Program) AddRuntimeType(T types.Type) {
 	if prog == nil || T == nil {
 		return
 	}
-	prog.runtimeTypes.Set(T, true)
+	prog.makeInterfaceTypesMu.Lock()
+	if prog.makeInterfaceTypes == nil {
+		prog.makeInterfaceTypes = make(map[types.Type]unit)
+	}
+	prog.makeInterfaceTypes[T] = unit{}
+	prog.makeInterfaceTypesMu.Unlock()
 }
 
 // NewBasicBlock appends a new BasicBlock to f.
@@ -117,15 +139,20 @@ func (f *Function) NewBasicBlock(comment string) *BasicBlock {
 		Comment: comment,
 		parent:  f,
 	}
+	b.Succs = b.succs2[:0]
 	f.Blocks = append(f.Blocks, b)
 	return b
 }
 
 // AddParam appends a formal Parameter to f.Params.
 func (f *Function) AddParam(name string, obj types.Object, typ types.Type) *Parameter {
+	v, _ := obj.(*types.Var)
+	if v == nil {
+		v = types.NewParam(token.NoPos, nil, name, typ)
+	}
 	p := &Parameter{
 		name:   name,
-		object: obj,
+		object: v,
 		typ:    typ,
 		parent: f,
 	}
@@ -138,7 +165,6 @@ func (f *Function) AddFreeVar(name string, typ types.Type, pos token.Pos) *FreeV
 	fv := &FreeVar{
 		name:   name,
 		typ:    typ,
-		pos:    pos,
 		parent: f,
 	}
 	f.FreeVars = append(f.FreeVars, fv)
@@ -153,6 +179,7 @@ func (f *Function) AddAnonFunc(anon *Function) {
 	anon.parent = f
 	anon.Pkg = f.Pkg
 	anon.Prog = f.Prog
+	anon.anonIdx = int32(len(f.AnonFuncs))
 	f.AnonFuncs = append(f.AnonFuncs, anon)
 }
 
@@ -168,28 +195,51 @@ func (b *BasicBlock) AddEdge(succ *BasicBlock) {
 // Emit appends ins to b.Instrs, assigning its block, source position, register
 // type, and virtual register name.
 func (b *BasicBlock) Emit(ins Instruction, typ types.Type, pos token.Pos) {
-	if s, ok := ins.(instrSetter); ok {
-		s.setBlock(b)
-		s.setPos(pos)
-	}
-	if r, ok := ins.(regSetter); ok {
-		r.setType(typ)
-		if b.parent != nil {
-			r.setNum(b.parent.nextReg)
-			b.parent.nextReg++
-		}
+	ins.setBlock(b)
+	setInstrPos(ins, pos)
+	if v, ok := ins.(interface {
+		setType(types.Type)
+		setNum(int)
+	}); ok {
+		v.setType(typ)
+		v.setNum(len(b.Instrs))
 	}
 	if a, ok := ins.(*Alloc); ok && !a.Heap && b.parent != nil {
 		b.parent.Locals = append(b.parent.Locals, a)
 	}
-	if c, ok := ins.(CallInstruction); ok {
+	if c, ok := ins.(CallInstruction); ok && c.Common().pos == token.NoPos {
 		c.Common().pos = pos
 	}
 	b.Instrs = append(b.Instrs, ins)
 }
 
-// Finish recomputes value Referrers and immediate dominators for f after all
-// blocks, edges, and Phi operands have been populated.
+func setInstrPos(ins Instruction, pos token.Pos) {
+	if r, ok := ins.(interface{ setPos(token.Pos) }); ok {
+		r.setPos(pos)
+		return
+	}
+	switch i := ins.(type) {
+	case *Store:
+		i.pos = pos
+	case *Return:
+		i.pos = pos
+	case *Panic:
+		i.pos = pos
+	case *Send:
+		i.pos = pos
+	case *Go:
+		i.pos = pos
+	case *Defer:
+		i.pos = pos
+	case *MapUpdate:
+		i.pos = pos
+	case *DebugRef:
+		// DebugRef.Pos() comes from Expr.Pos().
+	}
+}
+
+// Finish recomputes register numbering, value Referrers, and immediate
+// dominators for f after all blocks, edges, and Phi operands have been populated.
 func (f *Function) Finish() {
 	if f == nil || len(f.Blocks) == 0 {
 		return
@@ -213,122 +263,7 @@ func (f *Function) Finish() {
 			}
 		}
 	}
-	// Populate Referrers from every instruction's Operands.
-	var rands []*Value
-	for _, b := range f.Blocks {
-		for _, ins := range b.Instrs {
-			rands = ins.Operands(rands[:0])
-			for _, op := range rands {
-				if op == nil || *op == nil {
-					continue
-				}
-				if refs := (*op).Referrers(); refs != nil {
-					*refs = append(*refs, ins)
-				}
-			}
-		}
-	}
-	computeDominators(f)
-}
-
-// computeDominators computes immediate dominators (Cooper-Harvey-Kennedy) and
-// preorder/postorder DFS intervals for O(1) BasicBlock.Dominates queries.
-func computeDominators(f *Function) {
-	for _, b := range f.Blocks {
-		b.idom = nil
-		b.dominees = nil
-		b.domPre = 0
-		b.domPost = 0
-	}
-	if len(f.Blocks) == 0 {
-		return
-	}
-
-	// Compute reverse postorder (RPO) from entry block f.Blocks[0].
-	visited := make(map[*BasicBlock]bool, len(f.Blocks))
-	var post []*BasicBlock
-	var dfs func(*BasicBlock)
-	dfs = func(b *BasicBlock) {
-		visited[b] = true
-		for _, s := range b.Succs {
-			if !visited[s] {
-				dfs(s)
-			}
-		}
-		post = append(post, b)
-	}
-	dfs(f.Blocks[0])
-
-	n := len(post)
-	rpo := make([]*BasicBlock, n)
-	rpoNum := make(map[*BasicBlock]int, n)
-	for i := 0; i < n; i++ {
-		b := post[n-1-i]
-		rpo[i] = b
-		rpoNum[b] = i
-	}
-
-	idom := make([]int, n)
-	for i := range idom {
-		idom[i] = -1
-	}
-	idom[0] = 0
-
-	intersect := func(a, b int) int {
-		for a != b {
-			for a > b {
-				a = idom[a]
-			}
-			for b > a {
-				b = idom[b]
-			}
-		}
-		return a
-	}
-
-	changed := true
-	for changed {
-		changed = false
-		for i := 1; i < n; i++ {
-			b := rpo[i]
-			newIdom := -1
-			for _, p := range b.Preds {
-				pIdx, ok := rpoNum[p]
-				if !ok || idom[pIdx] == -1 {
-					continue
-				}
-				if newIdom == -1 {
-					newIdom = pIdx
-				} else {
-					newIdom = intersect(pIdx, newIdom)
-				}
-			}
-			if newIdom != -1 && idom[i] != newIdom {
-				idom[i] = newIdom
-				changed = true
-			}
-		}
-	}
-
-	for i := 1; i < n; i++ {
-		if idom[i] >= 0 {
-			parent := rpo[idom[i]]
-			child := rpo[i]
-			child.idom = parent
-			parent.dominees = append(parent.dominees, child)
-		}
-	}
-
-	// Assign Euler tour timestamps for O(1) Dominates.
-	timer := 0
-	var tour func(*BasicBlock)
-	tour = func(b *BasicBlock) {
-		timer++
-		b.domPre = timer
-		for _, child := range b.dominees {
-			tour(child)
-		}
-		b.domPost = timer
-	}
-	tour(rpo[0])
+	numberRegisters(f)
+	buildReferrers(f)
+	buildDomTree(f)
 }

@@ -348,6 +348,7 @@ func TestPureGoCoreDependencyIsolation(t *testing.T) {
 		"github.com/xgo-dev/llgo/types",
 		"github.com/xgo-dev/llgo/types/typeutil",
 		"github.com/xgo-dev/llgo/ssa",
+		"github.com/xgo-dev/llgo/ssa/ssautil",
 		"github.com/xgo-dev/llgo/callgraph",
 		"github.com/xgo-dev/llgo/callgraph/rta",
 		"github.com/xgo-dev/llgo/exportdata",
@@ -383,6 +384,7 @@ func TestPureGoCoreDependencyIsolation(t *testing.T) {
 			}
 		}
 		if p.ImportPath == "github.com/xgo-dev/llgo/ssa" ||
+			p.ImportPath == "github.com/xgo-dev/llgo/ssa/ssautil" ||
 			p.ImportPath == "github.com/xgo-dev/llgo/types/typeutil" ||
 			p.ImportPath == "github.com/xgo-dev/llgo/exportdata" ||
 			p.ImportPath == "github.com/xgo-dev/llgo/callgraph" ||

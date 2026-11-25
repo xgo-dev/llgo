@@ -1,280 +1,387 @@
-/*
- * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright 2013 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file (LICENSES/Go-BSD-3-Clause.txt).
 
-// Package rta computes the call graph and set of reachable functions and
-// runtime types using Rapid Type Analysis (RTA) over github.com/xgo-dev/llgo/ssa,
-// aligning 1:1 with golang.org/x/tools/go/callgraph/rta (pure Go 1.20+).
+// Package rta provides Rapid Type Analysis (RTA) for Go over
+// github.com/xgo-dev/llgo/ssa, aligning 1:1 with
+// golang.org/x/tools/go/callgraph/rta in pure Go 1.20+.
 package rta
 
 import (
+	"fmt"
+	"hash/crc32"
+
 	"github.com/xgo-dev/llgo/callgraph"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llgo/types/typeutil"
 )
 
-// Result holds the results of Rapid Type Analysis, aligning 1:1 with
-// golang.org/x/tools/go/callgraph/rta.Result.
+// A Result holds the results of Rapid Type Analysis, which includes the
+// set of reachable functions/methods, runtime types, and the call graph.
 type Result struct {
 	CallGraph    *callgraph.Graph
 	Reachable    map[*ssa.Function]struct{ AddrTaken bool }
 	RuntimeTypes typeutil.Map
 }
 
-// Analyze performs Rapid Type Analysis, starting at the specified root
-// functions. If buildCallGraph is true, Result.CallGraph will contain a call
-// graph; otherwise, only the other fields are populated.
-func Analyze(roots []*ssa.Function, buildCallGraph bool) *Result {
-	r := &rta{
-		result: &Result{
-			Reachable: make(map[*ssa.Function]struct{ AddrTaken bool }),
-		},
-		addrTakenFuncsBySig: new(typeutil.Map),
-		dynCallSites:        new(typeutil.Map),
-		invokeSites:         new(typeutil.Map),
-		concreteTypes:       new(typeutil.Map),
-		interfaceTypes:      new(typeutil.Map),
-	}
-	if buildCallGraph {
-		r.result.CallGraph = callgraph.New(nil)
-	}
-	for _, root := range roots {
-		if root == nil {
-			continue
-		}
-		if r.prog == nil && root.Prog != nil {
-			r.prog = root.Prog
-		}
-		r.addReachable(root, false)
-		if r.result.CallGraph != nil {
-			callgraph.AddEdge(r.result.CallGraph.Root, nil, r.result.CallGraph.CreateNode(root))
-		}
-	}
-
-	for len(r.worklist) > 0 {
-		fn := r.worklist[len(r.worklist)-1]
-		r.worklist = r.worklist[:len(r.worklist)-1]
-		r.visitFunc(fn)
-	}
-	return r.result
-}
-
 type rta struct {
-	result   *Result
-	prog     *ssa.Program
-	worklist []*ssa.Function
+	result           *Result
+	prog             *ssa.Program
+	reflectValueCall *ssa.Function
+	worklist         []*ssa.Function
 
-	addrTakenFuncsBySig *typeutil.Map // key: *types.Signature -> map[*ssa.Function]bool
-	dynCallSites        *typeutil.Map // key: *types.Signature -> map[ssa.CallInstruction]bool
-	invokeSites         *typeutil.Map // key: *types.Interface -> map[ssa.CallInstruction]bool
-	concreteTypes       *typeutil.Map // key: types.Type -> bool
-	interfaceTypes      *typeutil.Map // key: *types.Interface -> bool
+	addrTakenFuncsBySig typeutil.Map
+	dynCallSites        typeutil.Map
+	invokeSites         typeutil.Map
+
+	concreteTypes typeutil.Map
+	concreteList  []*concreteTypeInfo
+
+	interfaceTypes typeutil.Map
+	interfaceList  []*interfaceTypeInfo
 }
 
-func (r *rta) addEdge(site ssa.CallInstruction, callee *ssa.Function) {
+type concreteTypeInfo struct {
+	C          types.Type
+	fprint     uint64
+	implements []*types.Interface
+}
+
+type interfaceTypeInfo struct {
+	I               *types.Interface
+	fprint          uint64
+	implementations []types.Type
+}
+
+func (r *rta) addReachable(f *ssa.Function, addrTaken bool) {
+	if f == nil {
+		return
+	}
+	reachable := r.result.Reachable
+	n := len(reachable)
+	v := reachable[f]
+	if addrTaken {
+		v.AddrTaken = true
+	}
+	reachable[f] = v
+	if len(reachable) > n {
+		r.worklist = append(r.worklist, f)
+	}
+}
+
+func (r *rta) addEdge(caller *ssa.Function, site ssa.CallInstruction, callee *ssa.Function, addrTaken bool) {
 	if callee == nil {
 		return
 	}
-	r.addReachable(callee, false)
-	if r.result.CallGraph != nil && site != nil && site.Parent() != nil {
-		from := r.result.CallGraph.CreateNode(site.Parent())
-		to := r.result.CallGraph.CreateNode(callee)
+	r.addReachable(callee, addrTaken)
+	if g := r.result.CallGraph; g != nil {
+		if caller == nil {
+			panic(site)
+		}
+		from := g.CreateNode(caller)
+		to := g.CreateNode(callee)
 		callgraph.AddEdge(from, site, to)
 	}
 }
 
-func (r *rta) addReachable(fn *ssa.Function, addrTaken bool) {
-	if fn == nil {
+func (r *rta) visitAddrTakenFunc(f *ssa.Function) {
+	if f == nil || f.Signature == nil {
 		return
 	}
-	if r.prog == nil && fn.Prog != nil {
-		r.prog = fn.Prog
+	S := f.Signature
+	funcs, _ := r.addrTakenFuncsBySig.At(S).(map[*ssa.Function]bool)
+	if funcs == nil {
+		funcs = make(map[*ssa.Function]bool)
+		r.addrTakenFuncsBySig.Set(S, funcs)
 	}
-	prev, seen := r.result.Reachable[fn]
-	if !seen {
-		r.result.Reachable[fn] = struct{ AddrTaken bool }{AddrTaken: addrTaken}
-		r.worklist = append(r.worklist, fn)
-	} else if addrTaken && !prev.AddrTaken {
-		prev.AddrTaken = true
-		r.result.Reachable[fn] = prev
-	}
-	if addrTaken && fn.Signature != nil {
-		r.addAddrTakenFunc(fn)
-	}
-}
-
-func (r *rta) addAddrTakenFunc(fn *ssa.Function) {
-	sig := fn.Signature
-	set, _ := r.addrTakenFuncsBySig.At(sig).(map[*ssa.Function]bool)
-	if set == nil {
-		set = make(map[*ssa.Function]bool)
-		r.addrTakenFuncsBySig.Set(sig, set)
-	}
-	if set[fn] {
-		return
-	}
-	set[fn] = true
-	if sites, _ := r.dynCallSites.At(sig).(map[ssa.CallInstruction]bool); sites != nil {
-		for site := range sites {
-			r.addEdge(site, fn)
+	if !funcs[f] {
+		funcs[f] = true
+		sites, _ := r.dynCallSites.At(S).([]ssa.CallInstruction)
+		for _, site := range sites {
+			r.addEdge(site.Parent(), site, f, true)
+		}
+		if r.reflectValueCall != nil {
+			var site ssa.CallInstruction
+			r.addEdge(r.reflectValueCall, site, f, true)
 		}
 	}
 }
 
-func (r *rta) addDynCallSite(site ssa.CallInstruction, sig *types.Signature) {
-	if sig == nil {
+func (r *rta) visitDynCall(site ssa.CallInstruction) {
+	S := site.Common().Signature()
+	if S == nil {
 		return
 	}
-	sites, _ := r.dynCallSites.At(sig).(map[ssa.CallInstruction]bool)
-	if sites == nil {
-		sites = make(map[ssa.CallInstruction]bool)
-		r.dynCallSites.Set(sig, sites)
-	}
-	if sites[site] {
-		return
-	}
-	sites[site] = true
-	if funcs, _ := r.addrTakenFuncsBySig.At(sig).(map[*ssa.Function]bool); funcs != nil {
-		for fn := range funcs {
-			r.addEdge(site, fn)
-		}
+	sites, _ := r.dynCallSites.At(S).([]ssa.CallInstruction)
+	r.dynCallSites.Set(S, append(sites, site))
+	funcs, _ := r.addrTakenFuncsBySig.At(S).(map[*ssa.Function]bool)
+	for g := range funcs {
+		r.addEdge(site.Parent(), site, g, true)
 	}
 }
 
-func (r *rta) addInvokeSite(site ssa.CallInstruction, iface *types.Interface) {
-	if iface == nil {
+func (r *rta) addInvokeEdge(site ssa.CallInstruction, C types.Type) {
+	if r.prog == nil {
 		return
 	}
-	r.interfaceTypes.Set(iface, true)
-	sites, _ := r.invokeSites.At(iface).(map[ssa.CallInstruction]bool)
-	if sites == nil {
-		sites = make(map[ssa.CallInstruction]bool)
-		r.invokeSites.Set(iface, sites)
+	imethod := site.Common().Method
+	if cmethod := r.prog.LookupMethod(C, imethod.Pkg(), imethod.Name()); cmethod != nil {
+		r.addEdge(site.Parent(), site, cmethod, true)
 	}
-	if sites[site] {
-		return
-	}
-	sites[site] = true
-	r.concreteTypes.Iterate(func(C types.Type, _ interface{}) {
-		if types.Implements(C, iface) {
-			r.resolveInvoke(site, C)
-		}
-	})
 }
 
-func (r *rta) addRuntimeType(T types.Type, skip bool) {
-	if T == nil {
-		return
+func (r *rta) visitInvoke(site ssa.CallInstruction) {
+	I := site.Common().Value.Type().Underlying().(*types.Interface)
+	sites, _ := r.invokeSites.At(I).([]ssa.CallInstruction)
+	r.invokeSites.Set(I, append(sites, site))
+	for _, C := range r.implementations(I) {
+		r.addInvokeEdge(site, C)
 	}
-	if prev, ok := r.result.RuntimeTypes.At(T).(bool); ok && (!prev || skip) {
-		return
-	}
-	r.result.RuntimeTypes.Set(T, skip)
+}
 
-	if _, isIface := T.Underlying().(*types.Interface); isIface {
-		return
-	}
-	if r.concreteTypes.At(T) != nil {
-		return
-	}
-	r.concreteTypes.Set(T, true)
+func (r *rta) visitFunc(f *ssa.Function) {
+	var space [32]*ssa.Value
+	for _, b := range f.Blocks {
+		for _, instr := range b.Instrs {
+			rands := instr.Operands(space[:0])
 
-	// Check every seen interface against this new concrete type.
-	r.interfaceTypes.Iterate(func(k types.Type, _ interface{}) {
-		iface, ok := k.(*types.Interface)
-		if !ok || !types.Implements(T, iface) {
-			return
-		}
-		if sites, _ := r.invokeSites.At(iface).(map[ssa.CallInstruction]bool); sites != nil {
-			for site := range sites {
-				r.resolveInvoke(site, T)
-			}
-		}
-	})
-
-	// If T is accessible to reflection, mark its exported methods reachable.
-	if !skip && r.prog != nil {
-		mset := r.prog.MethodSets.MethodSet(T)
-		for i := 0; i < mset.Len(); i++ {
-			sel := mset.At(i)
-			if sel.Obj().Exported() {
-				if fn := r.prog.MethodValue(sel); fn != nil {
-					r.addReachable(fn, true)
+			switch instr := instr.(type) {
+			case ssa.CallInstruction:
+				call := instr.Common()
+				if call.IsInvoke() {
+					r.visitInvoke(instr)
+				} else if g := call.StaticCallee(); g != nil {
+					r.addEdge(f, instr, g, false)
+				} else if _, ok := call.Value.(*ssa.Builtin); !ok {
+					r.visitDynCall(instr)
 				}
-			}
-		}
-	}
-}
-
-func (r *rta) resolveInvoke(site ssa.CallInstruction, concrete types.Type) {
-	if r.prog == nil || site == nil || site.Common().Method == nil {
-		return
-	}
-	m := site.Common().Method
-	if fn := r.prog.LookupMethod(concrete, m.Pkg(), m.Name()); fn != nil {
-		r.addEdge(site, fn)
-	}
-}
-
-func (r *rta) visitFunc(fn *ssa.Function) {
-	var rands []*ssa.Value
-	for _, blk := range fn.Blocks {
-		for _, ins := range blk.Instrs {
-			// Track runtime types entering interfaces.
-			switch ins := ins.(type) {
+				if len(rands) > 0 {
+					rands = rands[1:]
+				}
 			case *ssa.MakeInterface:
-				if ins.X != nil {
-					r.addRuntimeType(ins.X.Type(), false)
-				}
-			case *ssa.MakeClosure:
-				if target, ok := ins.Fn.(*ssa.Function); ok {
-					r.addReachable(target, true)
-				}
+				r.addRuntimeType(instr.X.Type())
 			}
 
-			// Handle call sites (Call, Go, Defer).
-			if site, ok := ins.(ssa.CallInstruction); ok {
-				common := site.Common()
-				if common.IsInvoke() {
-					if common.Value != nil && common.Value.Type() != nil {
-						if iface, ok := common.Value.Type().Underlying().(*types.Interface); ok {
-							r.addInvokeSite(site, iface)
-						}
+			for _, op := range rands {
+				if op != nil {
+					if g, ok := (*op).(*ssa.Function); ok {
+						r.visitAddrTakenFunc(g)
 					}
-				} else if callee := common.StaticCallee(); callee != nil {
-					r.addEdge(site, callee)
-				} else if _, isBuiltin := common.Value.(*ssa.Builtin); !isBuiltin {
-					r.addDynCallSite(site, common.Signature())
 				}
 			}
+		}
+	}
+}
 
-			// Any *ssa.Function referenced as a non-callee operand is address-taken.
-			rands = ins.Operands(rands[:0])
-			var staticCallee *ssa.Function
-			if site, ok := ins.(ssa.CallInstruction); ok && !site.Common().IsInvoke() {
-				staticCallee = site.Common().StaticCallee()
+// Analyze performs Rapid Type Analysis, starting at the specified root
+// functions. It returns nil if no roots were specified.
+func Analyze(roots []*ssa.Function, buildCallGraph bool) *Result {
+	if len(roots) == 0 {
+		return nil
+	}
+
+	r := &rta{
+		result: &Result{Reachable: make(map[*ssa.Function]struct{ AddrTaken bool })},
+		prog:   roots[0].Prog,
+	}
+
+	if buildCallGraph {
+		r.result.CallGraph = callgraph.New(roots[0])
+	}
+
+	if r.prog != nil {
+		if reflectPkg := r.prog.ImportedPackage("reflect"); reflectPkg != nil {
+			if reflectValue, ok := reflectPkg.Members["Value"].(*ssa.Type); ok {
+				r.reflectValueCall = r.prog.LookupMethod(reflectValue.Object().Type(), reflectPkg.Pkg, "Call")
 			}
-			for _, opPtr := range rands {
-				if opPtr == nil || *opPtr == nil {
+		}
+	}
+
+	hasher := typeutil.MakeHasher()
+	r.result.RuntimeTypes.SetHasher(hasher)
+	r.addrTakenFuncsBySig.SetHasher(hasher)
+	r.dynCallSites.SetHasher(hasher)
+	r.invokeSites.SetHasher(hasher)
+	r.concreteTypes.SetHasher(hasher)
+	r.interfaceTypes.SetHasher(hasher)
+
+	for _, root := range roots {
+		r.addReachable(root, false)
+	}
+
+	var shadow []*ssa.Function
+	for len(r.worklist) > 0 {
+		shadow, r.worklist = r.worklist, shadow[:0]
+		for _, f := range shadow {
+			r.visitFunc(f)
+		}
+	}
+	return r.result
+}
+
+func (r *rta) interfaces(C types.Type) []*types.Interface {
+	var cinfo *concreteTypeInfo
+	if v := r.concreteTypes.At(C); v != nil {
+		cinfo = v.(*concreteTypeInfo)
+	} else {
+		cinfo = &concreteTypeInfo{
+			C:      C,
+			fprint: fingerprint(r.prog.MethodSets.MethodSet(C)),
+		}
+		r.concreteTypes.Set(C, cinfo)
+		r.concreteList = append(r.concreteList, cinfo)
+
+		for _, iinfo := range r.interfaceList {
+			if implements(cinfo, iinfo) {
+				iinfo.implementations = append(iinfo.implementations, C)
+				cinfo.implements = append(cinfo.implements, iinfo.I)
+			}
+		}
+	}
+	return cinfo.implements
+}
+
+func (r *rta) implementations(I *types.Interface) []types.Type {
+	var iinfo *interfaceTypeInfo
+	if v := r.interfaceTypes.At(I); v != nil {
+		iinfo = v.(*interfaceTypeInfo)
+	} else {
+		iinfo = &interfaceTypeInfo{
+			I:      I,
+			fprint: fingerprint(r.prog.MethodSets.MethodSet(I)),
+		}
+		r.interfaceTypes.Set(I, iinfo)
+		r.interfaceList = append(r.interfaceList, iinfo)
+
+		for _, cinfo := range r.concreteList {
+			if implements(cinfo, iinfo) {
+				cinfo.implements = append(cinfo.implements, I)
+				iinfo.implementations = append(iinfo.implementations, cinfo.C)
+			}
+		}
+	}
+	return iinfo.implementations
+}
+
+func (r *rta) addRuntimeType(T types.Type) {
+	if r.prog == nil || T == nil {
+		return
+	}
+	methodSetOf := r.prog.MethodSets.MethodSet
+	forEachElement(methodSetOf, T, func(T types.Type, access bool) bool {
+		if prevInaccess, ok := r.result.RuntimeTypes.At(T).(bool); ok {
+			if prevInaccess && access {
+				r.result.RuntimeTypes.Set(T, false)
+			}
+			return true
+		}
+		r.result.RuntimeTypes.Set(T, !access)
+
+		if !types.IsInterface(T) {
+			mset := methodSetOf(T)
+			for i := 0; i < mset.Len(); i++ {
+				sel := mset.At(i)
+				obj := sel.Obj()
+				if !obj.Exported() {
 					continue
 				}
-				if target, ok := (*opPtr).(*ssa.Function); ok && target != staticCallee {
-					r.addReachable(target, true)
+				if obj.Type().(*types.Signature).TypeParams() != nil {
+					continue
+				}
+				r.addReachable(r.prog.MethodValue(sel), true)
+			}
+
+			for _, I := range r.interfaces(T) {
+				sites, _ := r.invokeSites.At(I).([]ssa.CallInstruction)
+				for _, site := range sites {
+					r.addInvokeEdge(site, T)
 				}
 			}
 		}
+
+		return false
+	})
+}
+
+func forEachElement(methodSetOf func(types.Type) *types.MethodSet, T types.Type, f func(T types.Type, access bool) bool) {
+	var visit func(T types.Type, access bool)
+	visit = func(T types.Type, access bool) {
+		if f(T, access) {
+			return
+		}
+		tmset := methodSetOf(T)
+		for i := 0; i < tmset.Len(); i++ {
+			method := tmset.At(i)
+			sig := method.Type().(*types.Signature)
+			if sig.TypeParams() != nil {
+				continue
+			}
+			visit(sig.Params(), false)
+			visit(sig.Results(), false)
+		}
+		switch T := T.(type) {
+		case *types.Alias:
+			visit(types.Unalias(T), access)
+		case *types.Basic, *types.SIMDVec:
+			// nop
+		case *types.Interface:
+			// nop---handled by recursion over method set.
+		case *types.Pointer:
+			visit(T.Elem(), true)
+		case *types.Slice:
+			visit(T.Elem(), true)
+		case *types.Chan:
+			visit(T.Elem(), true)
+		case *types.Map:
+			visit(T.Key(), true)
+			visit(T.Elem(), true)
+		case *types.Signature:
+			if T.Recv() != nil {
+				panic(fmt.Sprintf("Signature %s has Recv %s", T, T.Recv()))
+			}
+			visit(T.Params(), false)
+			visit(T.Results(), false)
+		case *types.Named:
+			visit(types.NewPointer(T), true)
+			visit(T.Underlying(), false)
+		case *types.Array:
+			visit(T.Elem(), true)
+		case *types.Struct:
+			for i, n := 0, T.NumFields(); i < n; i++ {
+				visit(T.Field(i).Type(), true)
+			}
+		case *types.Tuple:
+			for i, n := 0, T.Len(); i < n; i++ {
+				visit(T.At(i).Type(), true)
+			}
+		case *types.TypeParam, *types.Union:
+			panic(fmt.Sprintf("forEachElement called on type containing %T", T))
+		default:
+			panic(fmt.Sprintf("forEachElement called on unexpected type %T", T))
+		}
 	}
+	visit(T, true)
+}
+
+func fingerprint(mset *types.MethodSet) uint64 {
+	var space [64]byte
+	var mask uint64
+	for i := 0; i < mset.Len(); i++ {
+		method := mset.At(i).Obj()
+		sig := method.Type().(*types.Signature)
+		if sig.TypeParams() != nil {
+			continue
+		}
+		sum := crc32.ChecksumIEEE(fmt.Appendf(space[:0], "%s/%d/%d",
+			method.Id(),
+			sig.Params().Len(),
+			sig.Results().Len()))
+		mask |= 1 << (sum % 64)
+	}
+	return mask
+}
+
+func implements(cinfo *concreteTypeInfo, iinfo *interfaceTypeInfo) (got bool) {
+	return iinfo.fprint & ^cinfo.fprint == 0 && types.Implements(cinfo.C, iinfo.I)
 }

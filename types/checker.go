@@ -214,6 +214,9 @@ func makeMirrorGoInfo(info *Info) *gotypes.Info {
 	if info.Scopes != nil {
 		goInfo.Scopes = make(map[ast.Node]*gotypes.Scope)
 	}
+	if info.FileVersions != nil {
+		initGoInfoFileVersions(goInfo)
+	}
 	return goInfo
 }
 

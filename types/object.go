@@ -348,7 +348,7 @@ func NewScope(parent *Scope, pos, end token.Pos, comment string) *Scope {
 		end:     end,
 		comment: comment,
 	}
-	if parent != nil {
+	if parent != nil && parent != Universe {
 		parent.children = append(parent.children, s)
 	}
 	return s
@@ -449,7 +449,9 @@ func (s *Scope) Insert(obj Object) Object {
 		return alt
 	}
 	s.elems[name] = obj
-	setObjParent(obj, s)
+	if obj.Parent() == nil {
+		setObjParent(obj, s)
+	}
 	return nil
 }
 
@@ -476,10 +478,22 @@ func setObjParent(obj Object, s *Scope) {
 
 // Universe is the predeclared Go universe scope speaking LLGo types natively
 // (mirroring go/types.Universe).
-var Universe = initUniverse()
+var Universe *Scope
+
+// Unsafe is the canonical package representing Go's "unsafe" package
+// (mirroring go/types.Unsafe).
+var Unsafe *Package
+
+func init() {
+	Universe = initUniverse()
+	Unsafe = initUnsafe()
+}
 
 func initUniverse() *Scope {
-	u := NewScope(nil, token.NoPos, token.NoPos, "universe")
+	u := &Scope{
+		elems:   make(map[string]Object),
+		comment: "universe",
+	}
 	for k := Bool; k <= String; k++ {
 		b := Typ[k]
 		u.Insert(NewTypeName(token.NoPos, nil, b.name, b))
@@ -487,11 +501,22 @@ func initUniverse() *Scope {
 	// Predeclared aliases: byte = uint8, rune = int32, any = interface{}.
 	u.Insert(NewAlias(NewTypeName(token.NoPos, nil, "byte", nil), Typ[Uint8]).Obj())
 	u.Insert(NewAlias(NewTypeName(token.NoPos, nil, "rune", nil), Typ[Int32]).Obj())
-	u.Insert(NewAlias(NewTypeName(token.NoPos, nil, "any", nil), NewInterfaceType(nil, nil)).Obj())
+	anyIface := &Interface{resolved: true, completed: true, comparable: false, methodSet: true}
+	u.Insert(NewAlias(NewTypeName(token.NoPos, nil, "any", nil), anyIface).Obj())
 	// Predeclared error interface.
 	errSig := NewSignature(nil, nil, NewTuple(NewParam(token.NoPos, nil, "", Typ[String])), false)
-	errIface := NewInterfaceType([]*Func{NewFunc(token.NoPos, nil, "Error", errSig)}, nil)
-	u.Insert(NewNamed(NewTypeName(token.NoPos, nil, "error", nil), errIface, nil).Obj())
+	errMethod := NewFunc(token.NoPos, nil, "Error", errSig)
+	errIface := &Interface{
+		resolved:        true,
+		completed:       true,
+		comparable:      false,
+		methodSet:       true,
+		explicitMethods: []*Func{errMethod},
+		methods:         []*Func{errMethod},
+	}
+	errNamed := NewNamed(NewTypeName(token.NoPos, nil, "error", nil), errIface, nil)
+	errSig.recv = NewParam(token.NoPos, nil, "", errNamed)
+	u.Insert(errNamed.Obj())
 	// Predeclared comparable interface.
 	compIface := &Interface{resolved: true, completed: true, comparable: true, methodSet: false}
 	u.Insert(NewNamed(NewTypeName(token.NoPos, nil, "comparable", nil), compIface, nil).Obj())
@@ -510,10 +535,6 @@ func initUniverse() *Scope {
 	}
 	return u
 }
-
-// Unsafe is the canonical package representing Go's "unsafe" package
-// (mirroring go/types.Unsafe).
-var Unsafe = initUnsafe()
 
 func initUnsafe() *Package {
 	pkg := NewPackage("unsafe", "unsafe")
@@ -542,7 +563,7 @@ type Package struct {
 
 // NewPackage creates a new Package (matching go/types.NewPackage).
 func NewPackage(path, name string) *Package {
-	scope := NewScope(nil, token.NoPos, token.NoPos, fmt.Sprintf("package %q", path))
+	scope := NewScope(Universe, token.NoPos, token.NoPos, fmt.Sprintf("package %q", path))
 	return &Package{path: path, name: name, scope: scope}
 }
 

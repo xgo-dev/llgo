@@ -73,11 +73,17 @@ func buildRichTestPackage() (*types.Package, *types.Package) {
 	).WithCallConv(types.CDecl)
 	pkg.Scope().Insert(types.NewFunc(0, pkg, "CFunc", cSig))
 
-	// Alias & Var.
+	// Alias, Var, Universe error, and instantiated generic Box[int].
 	aliasObj := types.NewTypeName(0, pkg, "MyInt", nil)
 	_ = types.NewAlias(aliasObj, types.Typ[types.Int32])
 	pkg.Scope().Insert(aliasObj)
 	pkg.Scope().Insert(types.NewVar(0, pkg, "GlobalCount", types.Typ[types.Int]))
+	pkg.Scope().Insert(types.NewVar(0, pkg, "LastErr", types.Universe.Lookup("error").Type()))
+	boxInt, err := types.Instantiate(nil, boxNamed, []types.Type{types.Typ[types.Int]}, false)
+	if err != nil {
+		panic(err)
+	}
+	pkg.Scope().Insert(types.NewVar(0, pkg, "IntBox", boxInt))
 
 	pkg.MarkComplete()
 	return dep, pkg
@@ -128,6 +134,11 @@ func TestWriteReadDeterministicAndImporter(t *testing.T) {
 		t.Fatalf("CFunc CallConv = %v, want CDecl", sig.CallConv())
 	}
 
+	// Verify external Named identity reuse, Universe identity, and instantiated generics.
+	if gotItem := st.Field(2).Type(); gotItem != dep.Scope().Lookup("Item").Type() {
+		t.Fatalf("external dep.Item identity not preserved across Read: got %p, want %p", gotItem, dep.Scope().Lookup("Item").Type())
+	}
+
 	// Verify NewImporter (types.ImporterFrom) compatibility.
 	var imp types.ImporterFrom = exportdata.NewImporter(fset, imports)
 	resolved, err := imp.Import(pkg.Path())
@@ -161,6 +172,17 @@ func TestWriteReadBundleAndErrors(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].Path() != dep.Path() || got[1].Path() != pkg.Path() {
 		t.Fatalf("ReadBundle got %v", got)
+	}
+	gotNode := got[1].Scope().Lookup("Node").Type().(*types.Named).Underlying().(*types.Struct)
+	if gotNode.Field(2).Type() != got[0].Scope().Lookup("Item").Type() {
+		t.Fatal("ReadBundle did not share dep.Item identity between bundle packages")
+	}
+	if got[1].Scope().Lookup("LastErr").Type() != types.Universe.Lookup("error").Type() {
+		t.Fatal("ReadBundle did not resolve Universe error identity")
+	}
+	gotIntBox, ok := got[1].Scope().Lookup("IntBox").Type().(*types.Named)
+	if !ok || gotIntBox.TypeArgs().Len() != 1 || gotIntBox.Origin() != got[1].Scope().Lookup("Box").Type() {
+		t.Fatalf("ReadBundle did not preserve instantiated generic Box[int]: %v", got[1].Scope().Lookup("IntBox").Type())
 	}
 
 	// Corrupt/bad-magic/kind-mismatch checks.

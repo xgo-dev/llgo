@@ -713,6 +713,12 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 
 	// Preserve go/types.Alias identity and any calling convention attached to it.
 	if aObj, rhs, ok := aliasObjAndRhs(t); ok {
+		if !hasOverride && aObj != nil && aObj.Parent() == gotypes.Universe {
+			if uo := Universe.Lookup(aObj.Name()); uo != nil && uo.Type() != nil {
+				c.goTypes[key] = uo.Type()
+				return uo.Type()
+			}
+		}
 		if !hasOverride {
 			if existing, ok := c.goAliases[t]; ok {
 				return existing
@@ -740,6 +746,27 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 			c.goAliases[t] = a
 		}
 		c.goTypes[key] = a
+		if orig, tps, targs := aliasGenericInfo(t); orig != nil || (tps != nil && tps.Len() > 0) || (targs != nil && targs.Len() > 0) {
+			if orig != nil {
+				if origA, ok := c.fromGoLocked(orig, Go, false).(*Alias); ok {
+					a.origin = origA
+				}
+			}
+			if tps != nil && tps.Len() > 0 {
+				list := make([]*TypeParam, tps.Len())
+				for i := 0; i < tps.Len(); i++ {
+					list[i] = c.fromGoTypeParamLocked(tps.At(i))
+				}
+				a.typeParams = newTypeParamList(list)
+			}
+			if targs != nil && targs.Len() > 0 {
+				list := make([]Type, targs.Len())
+				for i := 0; i < targs.Len(); i++ {
+					list[i] = c.fromGoLocked(targs.At(i), Go, false)
+				}
+				a.typeArgs = newTypeList(list)
+			}
+		}
 		a.rhs = c.fromGoLocked(rhs, effCC, effOverride)
 		return a
 	}
@@ -858,6 +885,15 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 // fromGoNamedShellLocked creates or returns the cached *Named shell for gt
 // without calling gt.Underlying() or gt.NumMethods().
 func (c *Context) fromGoNamedShellLocked(gt *gotypes.Named, cc CallConv, hasOverride bool) *Named {
+	if !hasOverride && gt.Obj() != nil && gt.Obj().Parent() == gotypes.Universe {
+		if uo := Universe.Lookup(gt.Obj().Name()); uo != nil {
+			if un, ok := uo.Type().(*Named); ok {
+				c.goNamed[gt] = un
+				c.goTypes[goTypeCacheKey{typ: gt, cc: cc, hasOverride: hasOverride}] = un
+				return un
+			}
+		}
+	}
 	if !hasOverride {
 		if cached, ok := c.goNamed[gt]; ok {
 			return cached
@@ -917,13 +953,13 @@ func (c *Context) structFromGoFieldsLocked(fields []*gotypes.Var, tags []string,
 
 	llFields := make([]*Var, len(fields))
 	for i, f := range fields {
+		if !native {
+			llFields[i] = c.fromGoVarWithKindLocked(f, FieldVar)
+			continue
+		}
 		var ft Type
-		if native {
-			if _, isSig := f.Type().Underlying().(*gotypes.Signature); isSig {
-				ft = c.fromGoLocked(f.Type(), CDecl, true)
-			} else {
-				ft = c.fromGoLocked(f.Type(), Go, false)
-			}
+		if _, isSig := f.Type().Underlying().(*gotypes.Signature); isSig {
+			ft = c.fromGoLocked(f.Type(), CDecl, true)
 		} else {
 			ft = c.fromGoLocked(f.Type(), Go, false)
 		}
@@ -931,7 +967,7 @@ func (c *Context) structFromGoFieldsLocked(fields []*gotypes.Var, tags []string,
 		if f.Pkg() != nil {
 			pkg = c.fromGoPkgLocked(f.Pkg())
 		}
-		llFields[i] = &Var{
+		lf := &Var{
 			object: object{
 				pos:   f.Pos(),
 				pkg:   pkg,
@@ -943,6 +979,13 @@ func (c *Context) structFromGoFieldsLocked(fields []*gotypes.Var, tags []string,
 			isField:  true,
 			kind:     FieldVar,
 		}
+		if orig := f.Origin(); orig != nil && orig != f {
+			lf.origin = c.fromGoVarWithKindLocked(orig, FieldVar)
+		}
+		if _, exists := c.goObjs[f]; !exists {
+			c.goObjs[f] = lf
+		}
+		llFields[i] = lf
 	}
 
 	return &Struct{
@@ -1040,6 +1083,18 @@ func (c *Context) fromGoObjectLocked(obj gotypes.Object) Object {
 	if cached, ok := c.goObjs[obj]; ok {
 		return cached
 	}
+	if obj.Parent() == gotypes.Universe {
+		if uo := Universe.Lookup(obj.Name()); uo != nil {
+			c.goObjs[obj] = uo
+			return uo
+		}
+	}
+	if obj.Pkg() == gotypes.Unsafe {
+		if uo := Unsafe.Scope().Lookup(obj.Name()); uo != nil {
+			c.goObjs[obj] = uo
+			return uo
+		}
+	}
 	switch o := obj.(type) {
 	case *gotypes.Func:
 		return c.fromGoFuncLocked(o)
@@ -1058,6 +1113,9 @@ func (c *Context) fromGoObjectLocked(obj gotypes.Object) Object {
 			val: o.Val(),
 		}
 		c.goObjs[o] = res
+		if o.Parent() != nil {
+			res.parent = c.fromGoScopeLocked(o.Parent())
+		}
 		res.typ = c.fromGoLocked(o.Type(), Go, false)
 		return res
 	case *gotypes.PkgName:
@@ -1071,6 +1129,9 @@ func (c *Context) fromGoObjectLocked(obj gotypes.Object) Object {
 			imported: c.fromGoPkgLocked(o.Imported()),
 		}
 		c.goObjs[o] = res
+		if o.Parent() != nil {
+			res.parent = c.fromGoScopeLocked(o.Parent())
+		}
 		return res
 	case *gotypes.Label:
 		res := &Label{
@@ -1083,14 +1144,18 @@ func (c *Context) fromGoObjectLocked(obj gotypes.Object) Object {
 			},
 		}
 		c.goObjs[o] = res
+		if o.Parent() != nil {
+			res.parent = c.fromGoScopeLocked(o.Parent())
+		}
 		return res
 	case *gotypes.Builtin:
 		res := &Builtin{
 			object: object{
-				pos:   o.Pos(),
-				name:  o.Name(),
-				typ:   Typ[Invalid],
-				goObj: o,
+				pos:    o.Pos(),
+				parent: Universe,
+				name:   o.Name(),
+				typ:    Typ[Invalid],
+				goObj:  o,
 			},
 		}
 		c.goObjs[o] = res
@@ -1098,10 +1163,11 @@ func (c *Context) fromGoObjectLocked(obj gotypes.Object) Object {
 	case *gotypes.Nil:
 		res := &Nil{
 			object: object{
-				pos:   o.Pos(),
-				name:  o.Name(),
-				typ:   Typ[UntypedNil],
-				goObj: o,
+				pos:    o.Pos(),
+				parent: Universe,
+				name:   o.Name(),
+				typ:    Typ[UntypedNil],
+				goObj:  o,
 			},
 		}
 		c.goObjs[o] = res
@@ -1123,6 +1189,12 @@ func (c *Context) fromGoFuncLocked(o *gotypes.Func) *Func {
 		},
 	}
 	c.goObjs[o] = f
+	if o.Parent() != nil {
+		f.parent = c.fromGoScopeLocked(o.Parent())
+	}
+	if o.Scope() != nil {
+		f.scope = c.fromGoScopeLocked(o.Scope())
+	}
 	if orig := o.Origin(); orig != nil && orig != o {
 		f.origin = c.fromGoFuncLocked(orig)
 	}
@@ -1171,6 +1243,9 @@ func (c *Context) fromGoVarWithKindLocked(o *gotypes.Var, kind VarKind) *Var {
 		kind:     kind,
 	}
 	c.goObjs[o] = v
+	if o.Parent() != nil {
+		v.parent = c.fromGoScopeLocked(o.Parent())
+	}
 	if orig := o.Origin(); orig != nil && orig != o {
 		v.origin = c.fromGoVarWithKindLocked(orig, kind)
 	}
@@ -1187,6 +1262,18 @@ func (c *Context) fromGoTypeNameShellLocked(o *gotypes.TypeName) *TypeName {
 	if cached, ok := c.goObjs[o]; ok {
 		return cached.(*TypeName)
 	}
+	if o.Parent() == gotypes.Universe {
+		if uo, ok := Universe.Lookup(o.Name()).(*TypeName); ok {
+			c.goObjs[o] = uo
+			return uo
+		}
+	}
+	if o.Pkg() == gotypes.Unsafe {
+		if uo, ok := Unsafe.Scope().Lookup(o.Name()).(*TypeName); ok {
+			c.goObjs[o] = uo
+			return uo
+		}
+	}
 	tn := &TypeName{
 		object: object{
 			pos:   o.Pos(),
@@ -1197,6 +1284,9 @@ func (c *Context) fromGoTypeNameShellLocked(o *gotypes.TypeName) *TypeName {
 		isAlias: o.IsAlias(),
 	}
 	c.goObjs[o] = tn
+	if o.Parent() != nil {
+		tn.parent = c.fromGoScopeLocked(o.Parent())
+	}
 	return tn
 }
 
@@ -1223,6 +1313,11 @@ func (c *Context) fromGoPkgLocked(gp *gotypes.Package) *Package {
 	p.ctx = c
 	p.goPkg = gp
 	c.goPkgs[gp] = p
+	if gs := gp.Scope(); gs != nil {
+		p.scope.pos = gs.Pos()
+		p.scope.end = gs.End()
+		c.goScopes[gs] = p.scope
+	}
 	return p
 }
 
@@ -1230,11 +1325,14 @@ func (c *Context) fromGoScopeLocked(gs *gotypes.Scope) *Scope {
 	if gs == nil {
 		return nil
 	}
+	if gs == gotypes.Universe {
+		return Universe
+	}
 	if cached, ok := c.goScopes[gs]; ok {
 		return cached
 	}
 	var parent *Scope
-	if gs.Parent() != nil && gs.Parent() != gotypes.Universe {
+	if gs.Parent() != nil {
 		parent = c.fromGoScopeLocked(gs.Parent())
 	}
 	s := NewScope(parent, gs.Pos(), gs.End(), "")
@@ -1386,9 +1484,12 @@ func (c *Context) populateInfoFromGoLocked(info *Info, goInfo *gotypes.Info, goV
 		}
 	}
 	if info.FileVersions != nil {
+		copyGoInfoFileVersions(info.FileVersions, goInfo)
 		for _, f := range files {
 			if f != nil {
-				info.FileVersions[f] = goVersion
+				if _, ok := info.FileVersions[f]; !ok {
+					info.FileVersions[f] = goVersion
+				}
 			}
 		}
 	}
