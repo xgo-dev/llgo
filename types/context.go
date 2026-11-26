@@ -1542,44 +1542,32 @@ func (c *Context) populateInfoFromGoLocked(info *Info, goInfo *gotypes.Info, goV
 	if goInfo != nil {
 		if info.Defs != nil {
 			for id, obj := range goInfo.Defs {
-				if _, exists := info.Defs[id]; !exists {
-					info.Defs[id] = c.fromGoObjectLocked(obj)
-				}
+				info.Defs[id] = c.fromGoObjectLocked(obj)
 			}
 		}
 		if info.Uses != nil {
 			for id, obj := range goInfo.Uses {
-				if _, exists := info.Uses[id]; !exists {
-					info.Uses[id] = c.fromGoObjectLocked(obj)
-				}
+				info.Uses[id] = c.fromGoObjectLocked(obj)
 			}
 		}
 		if info.Implicits != nil {
 			for node, obj := range goInfo.Implicits {
-				if _, exists := info.Implicits[node]; !exists {
-					info.Implicits[node] = c.fromGoObjectLocked(obj)
-				}
+				info.Implicits[node] = c.fromGoObjectLocked(obj)
 			}
 		}
 		if info.Types != nil {
 			for expr, tv := range goInfo.Types {
-				if _, exists := info.Types[expr]; !exists {
-					info.Types[expr] = c.fromGoTypeAndValueLocked(tv)
-				}
+				info.Types[expr] = c.fromGoTypeAndValueLocked(tv)
 			}
 		}
 		if info.Selections != nil {
 			for selExpr, sel := range goInfo.Selections {
-				if _, exists := info.Selections[selExpr]; !exists {
-					info.Selections[selExpr] = c.fromGoSelectionLocked(sel)
-				}
+				info.Selections[selExpr] = c.fromGoSelectionLocked(sel)
 			}
 		}
 		if info.Scopes != nil {
 			for node, sc := range goInfo.Scopes {
-				if _, exists := info.Scopes[node]; !exists {
-					info.Scopes[node] = c.fromGoScopeLocked(sc)
-				}
+				info.Scopes[node] = c.fromGoScopeLocked(sc)
 			}
 		}
 		if len(goInfo.InitOrder) > 0 {
@@ -1594,9 +1582,6 @@ func (c *Context) populateInfoFromGoLocked(info *Info, goInfo *gotypes.Info, goV
 		}
 		if info.Instances != nil {
 			for id, inst := range goInfo.Instances {
-				if _, exists := info.Instances[id]; exists {
-					continue
-				}
 				var args []Type
 				if inst.TypeArgs != nil && inst.TypeArgs.Len() > 0 {
 					args = make([]Type, inst.TypeArgs.Len())

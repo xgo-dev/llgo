@@ -202,13 +202,44 @@ type CRich = Rich
 	if cloned := cloner.cloneFuncType(richFT); cloned == nil || cloner.failed {
 		t.Fatalf("astExprCloner failed on rich FuncType: cloned=%v failed=%v", cloned, cloner.failed)
 	}
-	// Exercise remaining expression cloning cases (CompositeLit, KeyValueExpr,
-	// SliceExpr, TypeAssertExpr, IndexExpr, fallback).
+	// Exercise remaining expression & statement cloning cases (CompositeLit,
+	// KeyValueExpr, SliceExpr, TypeAssertExpr, IndexExpr, FuncLit with statements,
+	// and fallback).
 	for _, exprSrc := range []string{
 		`S{k: v}`,
 		`s[1:2:3]`,
 		`x.(int)`,
 		`G[int]`,
+		`func(ch chan int, s []int, iface any) int {
+			const c = 1
+			type t = int
+			var v t = c
+			v++
+			if u := v; u > 0 {
+				ch <- u
+			} else {
+				;
+			}
+		L:
+			for i := 0; i < 1; i++ {
+				break L
+			}
+			for k, val := range s {
+				_ = k + val
+			}
+			switch v {
+			case 1:
+				go f(v)
+			}
+			switch w := iface.(type) {
+			case int:
+				defer f(w)
+			}
+			select {
+			case x := <-ch:
+				return x
+			}
+		}`,
 	} {
 		expr, err := parser.ParseExpr(exprSrc)
 		if err != nil {
@@ -222,6 +253,18 @@ type CRich = Rich
 	cBad := &astExprCloner{}
 	if got := cBad.cloneExpr(&ast.BadExpr{}); got != nil || !cBad.failed {
 		t.Fatalf("cloneExpr(BadExpr) = %v, failed=%v; want nil, true", got, cBad.failed)
+	}
+	cBadStmt := &astExprCloner{}
+	if got := cBadStmt.cloneStmt(&ast.BadStmt{}); got != nil || !cBadStmt.failed {
+		t.Fatalf("cloneStmt(BadStmt) = %v, failed=%v; want nil, true", got, cBadStmt.failed)
+	}
+	cBadDecl := &astExprCloner{}
+	if got := cBadDecl.cloneDecl(&ast.BadDecl{}); got != nil || !cBadDecl.failed {
+		t.Fatalf("cloneDecl(BadDecl) = %v, failed=%v; want nil, true", got, cBadDecl.failed)
+	}
+	cBadSpec := &astExprCloner{}
+	if got := cBadSpec.cloneSpec(&ast.ImportSpec{}); got != nil || !cBadSpec.failed {
+		t.Fatalf("cloneSpec(ImportSpec) = %v, failed=%v; want nil, true", got, cBadSpec.failed)
 	}
 
 	if xGoInfo.Scopes[fa] == nil || xGoInfo.Scopes[fb] == nil || xGoInfo.Scopes[fc] == nil || xGoInfo.Scopes[fd] == nil {

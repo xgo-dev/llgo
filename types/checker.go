@@ -159,7 +159,11 @@ func NewChecker(conf *Config, fset *token.FileSet, pkg *Package, info *Info) *Ch
 		}
 	}
 	if ctx == nil {
-		ctx = NewContext()
+		if pkg != nil && pkg.ctx != nil {
+			ctx = pkg.ctx
+		} else {
+			ctx = NewContext()
+		}
 	}
 	if pkg == nil {
 		pkg = NewPackage("", "")
@@ -227,6 +231,7 @@ func (check *Checker) Files(files []*ast.File) error {
 	err := check.goChecker.Files(checkFiles)
 	prep.restoreGoInfo(check.goInfo)
 	check.ctx.populateFromGoPackage(check.pkg, check.goPkg, check.Info, check.goInfo, check.goVersion, files, prevChildren)
+	clearGoInfoBatchMaps(check.goInfo)
 	if check.pkg != nil {
 		if check.erasedAliases != nil && len(check.erasedAliases.synthNames) > 0 {
 			// Keep check.pkg.goPkg intact so file/function lexical scopes remain
@@ -292,6 +297,9 @@ func (p *erasedAliasPrep) restoreGoInfo(goInfo *gotypes.Info) {
 		if goInfo.Implicits != nil {
 			delete(goInfo.Implicits, node)
 		}
+		if goInfo.Scopes != nil {
+			delete(goInfo.Scopes, node)
+		}
 	}
 	if len(p.clonedToOrig) > 0 {
 		for cloned, orig := range p.clonedToOrig {
@@ -306,6 +314,33 @@ func (p *erasedAliasPrep) restoreGoInfo(goInfo *gotypes.Info) {
 	}
 }
 
+func clearGoInfoBatchMaps(goInfo *gotypes.Info) {
+	if goInfo == nil {
+		return
+	}
+	for k := range goInfo.Defs {
+		delete(goInfo.Defs, k)
+	}
+	for k := range goInfo.Uses {
+		delete(goInfo.Uses, k)
+	}
+	for k := range goInfo.Implicits {
+		delete(goInfo.Implicits, k)
+	}
+	for k := range goInfo.Types {
+		delete(goInfo.Types, k)
+	}
+	for k := range goInfo.Selections {
+		delete(goInfo.Selections, k)
+	}
+	for k := range goInfo.Scopes {
+		delete(goInfo.Scopes, k)
+	}
+	for k := range goInfo.Instances {
+		delete(goInfo.Instances, k)
+	}
+}
+
 type localAliasDecl struct {
 	expr ast.Expr
 	file *ast.File
@@ -316,6 +351,7 @@ type localAliasDecl struct {
 // calls on Go toolchains where go/types erases aliases into *gotypes.Signature.
 type erasedAliasState struct {
 	aliasDecls map[string]localAliasDecl
+	pkgDecls   map[string]bool
 	usedNames  map[string]bool
 	synthSeq   int
 	synthNames map[string]bool
@@ -324,22 +360,28 @@ type erasedAliasState struct {
 func newErasedAliasState() *erasedAliasState {
 	return &erasedAliasState{
 		aliasDecls: make(map[string]localAliasDecl),
+		pkgDecls:   make(map[string]bool),
 		usedNames:  make(map[string]bool),
 		synthNames: make(map[string]bool),
 	}
 }
 
-func (st *erasedAliasState) nextSynthName() string {
+func (st *erasedAliasState) nextSynthName(goPkg *gotypes.Package) string {
 	for {
 		// Prefix with '$' (not a valid Go identifier character) so user Go
 		// source and Eval expressions can never parse or resolve this name.
 		name := fmt.Sprintf("$llgo_ccalias_%d", st.synthSeq)
 		st.synthSeq++
-		if !st.usedNames[name] {
-			st.usedNames[name] = true
-			st.synthNames[name] = true
-			return name
+		if st.usedNames[name] {
+			continue
 		}
+		if goPkg != nil && goPkg.Scope() != nil && goPkg.Scope().Lookup(name) != nil {
+			st.usedNames[name] = true
+			continue
+		}
+		st.usedNames[name] = true
+		st.synthNames[name] = true
+		return name
 	}
 }
 
@@ -354,12 +396,15 @@ func fileImportDir(fset *token.FileSet, f *ast.File) string {
 	return "."
 }
 
-func lookupAliasedSignature(gp *gotypes.Package, name string) *gotypes.Signature {
+func lookupAliasedSignature(gp *gotypes.Package, name string, exportedOnly bool) *gotypes.Signature {
 	if gp == nil || gp.Scope() == nil {
 		return nil
 	}
 	obj, ok := gp.Scope().Lookup(name).(*gotypes.TypeName)
 	if !ok || !obj.IsAlias() {
+		return nil
+	}
+	if exportedOnly && !obj.Exported() {
 		return nil
 	}
 	sig, _ := unaliasType(obj.Type()).(*gotypes.Signature)
@@ -393,22 +438,44 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package, f
 			return true
 		})
 		for _, decl := range f.Decls {
-			gd, ok := decl.(*ast.GenDecl)
-			if !ok || gd.Tok != token.TYPE {
-				continue
-			}
-			for _, spec := range gd.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok || ts.Name == nil || !ts.Assign.IsValid() {
-					continue
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil && d.Name != nil && d.Name.Name != "_" && d.Name.Name != "init" {
+					st.pkgDecls[d.Name.Name] = true
 				}
-				st.aliasDecls[ts.Name.Name] = localAliasDecl{expr: ts.Type, file: f}
-				doc := ts.Doc
-				if doc == nil && len(gd.Specs) == 1 {
-					doc = gd.Doc
-				}
-				if _, ok := parseTypeCallConvDirective(doc); ok {
-					hasDirectiveAlias = true
+			case *ast.GenDecl:
+				switch d.Tok {
+				case token.CONST, token.VAR:
+					for _, spec := range d.Specs {
+						if vs, ok := spec.(*ast.ValueSpec); ok {
+							for _, name := range vs.Names {
+								if name != nil && name.Name != "_" {
+									st.pkgDecls[name.Name] = true
+								}
+							}
+						}
+					}
+				case token.TYPE:
+					for _, spec := range d.Specs {
+						ts, ok := spec.(*ast.TypeSpec)
+						if !ok || ts.Name == nil {
+							continue
+						}
+						if ts.Name.Name != "_" {
+							st.pkgDecls[ts.Name.Name] = true
+						}
+						if !ts.Assign.IsValid() {
+							continue
+						}
+						st.aliasDecls[ts.Name.Name] = localAliasDecl{expr: ts.Type, file: f}
+						doc := ts.Doc
+						if doc == nil && len(d.Specs) == 1 {
+							doc = d.Doc
+						}
+						if _, ok := parseTypeCallConvDirective(doc); ok {
+							hasDirectiveAlias = true
+						}
+					}
 				}
 			}
 		}
@@ -418,7 +485,7 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package, f
 	}
 
 	resolveImportedSig := func(pkgIdent, selName string, f *ast.File) *gotypes.Signature {
-		if f == nil || goImp == nil {
+		if f == nil || goImp == nil || !token.IsExported(selName) {
 			return nil
 		}
 		dir := fileImportDir(fset, f)
@@ -438,39 +505,65 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package, f
 				if err != nil || gp == nil {
 					return nil
 				}
-				return lookupAliasedSignature(gp, selName)
+				return lookupAliasedSignature(gp, selName, true)
 			}
 			gp, err := goImp.ImportFrom(impPath, dir, 0)
 			if err != nil || gp == nil {
 				continue
 			}
 			if gp.Name() == pkgIdent {
-				return lookupAliasedSignature(gp, selName)
+				return lookupAliasedSignature(gp, selName, true)
 			}
 		}
 		return nil
 	}
 
 	resolveDotImportedSig := func(name string, f *ast.File) *gotypes.Signature {
-		if f == nil || goImp == nil {
+		if f == nil || goImp == nil || !token.IsExported(name) {
 			return nil
 		}
 		dir := fileImportDir(fset, f)
+		var matched *gotypes.Signature
+		matches := 0
 		for _, imp := range f.Imports {
-			if imp == nil || imp.Path == nil || imp.Name == nil || imp.Name.Name != "." {
+			if imp == nil || imp.Path == nil {
 				continue
 			}
 			impPath, err := strconv.Unquote(imp.Path.Value)
 			if err != nil || impPath == "C" || impPath == "unsafe" {
 				continue
 			}
-			gp, err := goImp.ImportFrom(impPath, dir, 0)
-			if err != nil || gp == nil {
+			if imp.Name != nil {
+				if imp.Name.Name == "_" {
+					continue
+				}
+				if imp.Name.Name != "." {
+					if imp.Name.Name == name {
+						// File-scoped named import shadows dot-imports.
+						return nil
+					}
+					continue
+				}
+				gp, err := goImp.ImportFrom(impPath, dir, 0)
+				if err != nil || gp == nil || gp.Scope() == nil {
+					continue
+				}
+				if obj := gp.Scope().Lookup(name); obj != nil && obj.Exported() {
+					matches++
+					if matches > 1 {
+						return nil
+					}
+					matched = lookupAliasedSignature(gp, name, true)
+				}
 				continue
 			}
-			if sig := lookupAliasedSignature(gp, name); sig != nil {
-				return sig
+			gp, err := goImp.ImportFrom(impPath, dir, 0)
+			if err == nil && gp != nil && gp.Name() == name {
+				return nil
 			}
+		}
+		if matches == 1 {
+			return matched
 		}
 		return nil
 	}
@@ -505,16 +598,22 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package, f
 				visited[x.Name] = true
 				ad, exists := st.aliasDecls[x.Name]
 				if !exists {
-					if sig := resolveDotImportedSig(x.Name, curFile); sig != nil {
-						return nil, curFile, sig, false
+					if st.pkgDecls[x.Name] {
+						return nil, nil, nil, false
 					}
-					if sig := lookupAliasedSignature(goPkg, x.Name); sig != nil {
+					if goPkg != nil && goPkg.Scope() != nil && goPkg.Scope().Lookup(x.Name) != nil {
+						if sig := lookupAliasedSignature(goPkg, x.Name, false); sig != nil {
+							return nil, curFile, sig, false
+						}
+						return nil, nil, nil, false
+					}
+					if sig := resolveDotImportedSig(x.Name, curFile); sig != nil {
 						return nil, curFile, sig, false
 					}
 					return nil, nil, nil, false
 				}
 				if _, inBatch := batchIndex[ad.file]; !inBatch {
-					if sig := lookupAliasedSignature(goPkg, x.Name); sig != nil {
+					if sig := lookupAliasedSignature(goPkg, x.Name, false); sig != nil {
 						return nil, ad.file, sig, false
 					}
 					return nil, nil, nil, false
@@ -594,16 +693,18 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package, f
 					// Target came from an earlier batch or an imported package:
 					// allocate a distinct, type-identical *gotypes.Signature
 					// directly without creating any synthetic *ast.File.
-					synthName := st.nextSynthName()
-					if res.synthNames == nil {
-						res.synthNames = make(map[string]bool)
-					}
-					res.synthNames[synthName] = true
+					synthName := st.nextSynthName(goPkg)
 					freshSig := gotypes.NewSignatureType(
 						prevSig.Recv(), nil, nil,
 						prevSig.Params(), prevSig.Results(), prevSig.Variadic(),
 					)
-					goPkg.Scope().Insert(gotypes.NewTypeName(token.NoPos, goPkg, synthName, freshSig))
+					if alt := goPkg.Scope().Insert(gotypes.NewTypeName(token.NoPos, goPkg, synthName, freshSig)); alt != nil {
+						continue
+					}
+					if res.synthNames == nil {
+						res.synthNames = make(map[string]bool)
+					}
+					res.synthNames[synthName] = true
 					refIdent := &ast.Ident{NamePos: token.NoPos, Name: synthName}
 					paren := &ast.ParenExpr{X: refIdent}
 					res.synthIdents = append(res.synthIdents, refIdent)
@@ -623,7 +724,7 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package, f
 					} else {
 						// Keep the cloned FuncType in its declaring file so all
 						// file-scoped imports and import aliases bind identically.
-						synthName := st.nextSynthName()
+						synthName := st.nextSynthName(goPkg)
 						if res.synthNames == nil {
 							res.synthNames = make(map[string]bool)
 						}
@@ -638,7 +739,7 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package, f
 							Specs: []ast.Spec{
 								&ast.TypeSpec{
 									Name:   declIdent,
-									Assign: ts.Assign,
+									Assign: ft.Pos(),
 									Type:   clonedFT,
 								},
 							},
@@ -828,12 +929,165 @@ func (c *astExprCloner) cloneExpr(expr ast.Expr) ast.Expr {
 		}
 	case *ast.TypeAssertExpr:
 		out = &ast.TypeAssertExpr{X: c.cloneExpr(e.X), Type: c.cloneExpr(e.Type)}
+	case *ast.FuncLit:
+		out = &ast.FuncLit{Type: c.cloneFuncType(e.Type), Body: c.cloneBlockStmt(e.Body)}
 	default:
 		c.failed = true
 		return nil
 	}
 	c.exprs = append(c.exprs, out)
 	return out
+}
+
+func (c *astExprCloner) cloneBlockStmt(bs *ast.BlockStmt) *ast.BlockStmt {
+	if bs == nil || c.failed {
+		return nil
+	}
+	out := &ast.BlockStmt{List: c.cloneStmts(bs.List)}
+	c.nodes = append(c.nodes, out)
+	return out
+}
+
+func (c *astExprCloner) cloneStmts(list []ast.Stmt) []ast.Stmt {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]ast.Stmt, len(list))
+	for i, s := range list {
+		out[i] = c.cloneStmt(s)
+	}
+	return out
+}
+
+func (c *astExprCloner) cloneStmt(stmt ast.Stmt) ast.Stmt {
+	if stmt == nil || c.failed {
+		return nil
+	}
+	var out ast.Stmt
+	switch s := stmt.(type) {
+	case *ast.BlockStmt:
+		return c.cloneBlockStmt(s)
+	case *ast.DeclStmt:
+		out = &ast.DeclStmt{Decl: c.cloneDecl(s.Decl)}
+	case *ast.EmptyStmt:
+		out = &ast.EmptyStmt{Implicit: s.Implicit}
+	case *ast.LabeledStmt:
+		out = &ast.LabeledStmt{Label: c.cloneIdent(s.Label), Stmt: c.cloneStmt(s.Stmt)}
+	case *ast.ExprStmt:
+		out = &ast.ExprStmt{X: c.cloneExpr(s.X)}
+	case *ast.SendStmt:
+		out = &ast.SendStmt{Chan: c.cloneExpr(s.Chan), Value: c.cloneExpr(s.Value)}
+	case *ast.IncDecStmt:
+		out = &ast.IncDecStmt{X: c.cloneExpr(s.X), Tok: s.Tok}
+	case *ast.AssignStmt:
+		out = &ast.AssignStmt{Lhs: c.cloneExprs(s.Lhs), Tok: s.Tok, Rhs: c.cloneExprs(s.Rhs)}
+	case *ast.GoStmt:
+		call, _ := c.cloneExpr(s.Call).(*ast.CallExpr)
+		out = &ast.GoStmt{Call: call}
+	case *ast.DeferStmt:
+		call, _ := c.cloneExpr(s.Call).(*ast.CallExpr)
+		out = &ast.DeferStmt{Call: call}
+	case *ast.ReturnStmt:
+		out = &ast.ReturnStmt{Results: c.cloneExprs(s.Results)}
+	case *ast.BranchStmt:
+		out = &ast.BranchStmt{Tok: s.Tok, Label: c.cloneIdent(s.Label)}
+	case *ast.IfStmt:
+		out = &ast.IfStmt{
+			Init: c.cloneStmt(s.Init),
+			Cond: c.cloneExpr(s.Cond),
+			Body: c.cloneBlockStmt(s.Body),
+			Else: c.cloneStmt(s.Else),
+		}
+	case *ast.CaseClause:
+		out = &ast.CaseClause{List: c.cloneExprs(s.List), Body: c.cloneStmts(s.Body)}
+	case *ast.SwitchStmt:
+		out = &ast.SwitchStmt{
+			Init: c.cloneStmt(s.Init),
+			Tag:  c.cloneExpr(s.Tag),
+			Body: c.cloneBlockStmt(s.Body),
+		}
+	case *ast.TypeSwitchStmt:
+		out = &ast.TypeSwitchStmt{
+			Init:   c.cloneStmt(s.Init),
+			Assign: c.cloneStmt(s.Assign),
+			Body:   c.cloneBlockStmt(s.Body),
+		}
+	case *ast.CommClause:
+		out = &ast.CommClause{Comm: c.cloneStmt(s.Comm), Body: c.cloneStmts(s.Body)}
+	case *ast.SelectStmt:
+		out = &ast.SelectStmt{Body: c.cloneBlockStmt(s.Body)}
+	case *ast.ForStmt:
+		out = &ast.ForStmt{
+			Init: c.cloneStmt(s.Init),
+			Cond: c.cloneExpr(s.Cond),
+			Post: c.cloneStmt(s.Post),
+			Body: c.cloneBlockStmt(s.Body),
+		}
+	case *ast.RangeStmt:
+		out = &ast.RangeStmt{
+			Key:   c.cloneExpr(s.Key),
+			Value: c.cloneExpr(s.Value),
+			Tok:   s.Tok,
+			X:     c.cloneExpr(s.X),
+			Body:  c.cloneBlockStmt(s.Body),
+		}
+	default:
+		c.failed = true
+		return nil
+	}
+	c.nodes = append(c.nodes, out)
+	return out
+}
+
+func (c *astExprCloner) cloneDecl(decl ast.Decl) ast.Decl {
+	if decl == nil || c.failed {
+		return nil
+	}
+	switch d := decl.(type) {
+	case *ast.GenDecl:
+		specs := make([]ast.Spec, len(d.Specs))
+		for i, sp := range d.Specs {
+			specs[i] = c.cloneSpec(sp)
+		}
+		out := &ast.GenDecl{Tok: d.Tok, Lparen: d.Lparen, Specs: specs}
+		c.nodes = append(c.nodes, out)
+		return out
+	default:
+		c.failed = true
+		return nil
+	}
+}
+
+func (c *astExprCloner) cloneSpec(spec ast.Spec) ast.Spec {
+	if spec == nil || c.failed {
+		return nil
+	}
+	switch sp := spec.(type) {
+	case *ast.ValueSpec:
+		names := make([]*ast.Ident, len(sp.Names))
+		for i, n := range sp.Names {
+			names[i] = c.cloneIdent(n)
+		}
+		out := &ast.ValueSpec{
+			Names:  names,
+			Type:   c.cloneExpr(sp.Type),
+			Values: c.cloneExprs(sp.Values),
+		}
+		c.nodes = append(c.nodes, out)
+		return out
+	case *ast.TypeSpec:
+		out := &ast.TypeSpec{
+			Name:       c.cloneIdent(sp.Name),
+			TypeParams: c.cloneFieldList(sp.TypeParams),
+			Assign:     sp.Assign,
+			Type:       c.cloneExpr(sp.Type),
+		}
+		c.nodes = append(c.nodes, out)
+		return out
+	default:
+		c.failed = true
+		return nil
+	}
 }
 
 func makeMirrorGoInfo(info *Info) *gotypes.Info {

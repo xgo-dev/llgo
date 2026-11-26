@@ -2505,6 +2505,262 @@ const (
 	}
 }
 
+func TestErasedAliasFuncLitConstArrayLenBatchingParity(t *testing.T) {
+	for _, splitBatches := range []bool{false, true} {
+		name := "SingleBatch"
+		if splitBatches {
+			name = "TwoBatches"
+		}
+		t.Run(name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			fa, err := parser.ParseFile(fset, "a.go", `package p
+import "unsafe"
+type GoFn = func([unsafe.Sizeof(func() { var v = 1; _ = v })]byte)
+`, parser.ParseComments)
+			if err != nil {
+				t.Fatalf("ParseFile a.go: %v", err)
+			}
+			fb, err := parser.ParseFile(fset, "b.go", `package p
+import "unsafe"
+//llgo:cdecl
+type CFn = GoFn
+const (
+	SizeGoFn = unsafe.Sizeof(GoFn(nil))
+	SizeCFn  = unsafe.Sizeof(CFn(nil))
+)
+`, parser.ParseComments)
+			if err != nil {
+				t.Fatalf("ParseFile b.go: %v", err)
+			}
+			ctx := types.NewContextWithConfig(types.ContextConfig{
+				Spec: target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"}),
+			})
+			pkg := types.NewPackage("example.com/funclit", "p")
+			info := &types.Info{
+				Types:     make(map[ast.Expr]types.TypeAndValue),
+				Defs:      make(map[*ast.Ident]types.Object),
+				Uses:      make(map[*ast.Ident]types.Object),
+				Implicits: make(map[ast.Node]types.Object),
+				Scopes:    make(map[ast.Node]*types.Scope),
+			}
+			chk := types.NewChecker(&types.Config{
+				Context:  ctx,
+				Importer: &mapImporter{pkgs: map[string]*types.Package{"unsafe": types.Unsafe}},
+			}, fset, pkg, info)
+
+			if splitBatches {
+				if err := chk.Files([]*ast.File{fa}); err != nil {
+					t.Fatalf("batch 1 Files: %v", err)
+				}
+				if err := chk.Files([]*ast.File{fb}); err != nil {
+					t.Fatalf("batch 2 Files: %v", err)
+				}
+			} else {
+				if err := chk.Files([]*ast.File{fa, fb}); err != nil {
+					t.Fatalf("single-batch Files: %v", err)
+				}
+			}
+
+			for cname, want := range map[string]int64{"SizeGoFn": 16, "SizeCFn": 8} {
+				got, ok := constant.Int64Val(pkg.Scope().Lookup(cname).(*types.Const).Val())
+				if !ok || got != want {
+					t.Fatalf("%s = %v, want %d", cname, got, want)
+				}
+			}
+			goFnSig := types.Unalias(pkg.Scope().Lookup("GoFn").Type()).(*types.Signature)
+			cFnSig := types.Unalias(pkg.Scope().Lookup("CFn").Type()).(*types.Signature)
+			if goFnSig.CallConv() != types.Go || cFnSig.CallConv() != types.CDecl {
+				t.Fatalf("CallConv: GoFn=%v CFn=%v, want Go/CDecl", goFnSig.CallConv(), cFnSig.CallConv())
+			}
+
+			// Verify zero synthetic nodes leaked from the cloned FuncLit body.
+			origNodes := make(map[ast.Node]bool)
+			for _, rf := range []*ast.File{fa, fb} {
+				ast.Inspect(rf, func(n ast.Node) bool {
+					if n != nil {
+						origNodes[n] = true
+					}
+					return true
+				})
+			}
+			for id := range info.Defs {
+				if !origNodes[id] {
+					t.Fatalf("synthetic ident %q leaked into Info.Defs", id.Name)
+				}
+			}
+			for id := range info.Uses {
+				if !origNodes[id] {
+					t.Fatalf("synthetic ident %q leaked into Info.Uses", id.Name)
+				}
+			}
+			for expr := range info.Types {
+				if !origNodes[expr] {
+					t.Fatalf("synthetic expr %T leaked into Info.Types", expr)
+				}
+			}
+			for node := range info.Scopes {
+				if !origNodes[node] {
+					t.Fatalf("synthetic node %T leaked into Info.Scopes", node)
+				}
+			}
+			for node := range info.Implicits {
+				if !origNodes[node] {
+					t.Fatalf("synthetic node %T leaked into Info.Implicits", node)
+				}
+			}
+		})
+	}
+}
+
+func TestSecondCheckerOnSamePackageDoesNotCollideSynthNames(t *testing.T) {
+	fset := token.NewFileSet()
+	ctx := types.NewContextWithConfig(types.ContextConfig{
+		Spec: target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"}),
+	})
+	pkg := types.NewPackage("example.com/twochk", "twochk")
+	conf := &types.Config{
+		Context:  ctx,
+		Importer: &mapImporter{pkgs: map[string]*types.Package{"unsafe": types.Unsafe}},
+	}
+
+	fa, err := parser.ParseFile(fset, "a.go", "package twochk\ntype GoFn1 = func(int)\n", parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile a.go: %v", err)
+	}
+	fb, err := parser.ParseFile(fset, "b.go", "package twochk\nimport \"unsafe\"\n//llgo:cdecl\ntype CFn1 = GoFn1\nconst S1 = unsafe.Sizeof(CFn1(nil))\n", parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile b.go: %v", err)
+	}
+	fc, err := parser.ParseFile(fset, "c.go", "package twochk\ntype GoFn2 = func(string)\n", parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile c.go: %v", err)
+	}
+	fd, err := parser.ParseFile(fset, "d.go", "package twochk\nimport \"unsafe\"\n//llgo:cdecl\ntype CFn2 = GoFn2\nconst S2 = unsafe.Sizeof(CFn2(nil))\n", parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile d.go: %v", err)
+	}
+
+	chk1 := types.NewChecker(conf, fset, pkg, nil)
+	if err := chk1.Files([]*ast.File{fa}); err != nil {
+		t.Fatalf("chk1 batch 1: %v", err)
+	}
+	if err := chk1.Files([]*ast.File{fb}); err != nil {
+		t.Fatalf("chk1 batch 2: %v", err)
+	}
+
+	// Second Checker on the exact same Package (also with nil Context so it must
+	// inherit pkg.ctx and avoid colliding with $llgo_ccalias_0 in pkg.goPkg).
+	chk2 := types.NewChecker(&types.Config{
+		Importer: &mapImporter{pkgs: map[string]*types.Package{"unsafe": types.Unsafe}},
+	}, fset, pkg, nil)
+	if err := chk2.Files([]*ast.File{fc}); err != nil {
+		t.Fatalf("chk2 batch 1: %v", err)
+	}
+	if err := chk2.Files([]*ast.File{fd}); err != nil {
+		t.Fatalf("chk2 batch 2: %v", err)
+	}
+
+	for _, name := range pkg.Scope().Names() {
+		if strings.HasPrefix(name, "$llgo_ccalias_") {
+			t.Fatalf("synthetic alias %q leaked into pkg.Scope()", name)
+		}
+	}
+	cFn1 := types.Unalias(pkg.Scope().Lookup("CFn1").Type()).(*types.Signature)
+	cFn2 := types.Unalias(pkg.Scope().Lookup("CFn2").Type()).(*types.Signature)
+	if cFn1.CallConv() != types.CDecl || cFn1.Params().At(0).Type() != types.Typ[types.Int] {
+		t.Fatalf("CFn1 = %v (cc=%v), want func<cdecl>(int)", cFn1, cFn1.CallConv())
+	}
+	if cFn2.CallConv() != types.CDecl || cFn2.Params().At(0).Type() != types.Typ[types.String] {
+		t.Fatalf("CFn2 = %v (cc=%v), want func<cdecl>(string)", cFn2, cFn2.CallConv())
+	}
+	for _, cname := range []string{"S1", "S2"} {
+		got, ok := constant.Int64Val(pkg.Scope().Lookup(cname).(*types.Const).Val())
+		if !ok || got != 8 {
+			t.Fatalf("%s = %v, want 8", cname, got)
+		}
+	}
+}
+
+func TestDotImportDoesNotMatchUnexportedAlias(t *testing.T) {
+	fset := token.NewFileSet()
+	depSrc := `package dep
+type error = func(int)
+const Exported = 1
+`
+	depFile, err := parser.ParseFile(fset, "dep.go", depSrc, 0)
+	if err != nil {
+		t.Fatalf("ParseFile dep.go: %v", err)
+	}
+	var depCfg types.Config
+	depPkg, err := depCfg.Check("example.com/dep", fset, []*ast.File{depFile}, nil)
+	if err != nil {
+		t.Fatalf("Check dep: %v", err)
+	}
+
+	mainSrc := `package main
+import . "example.com/dep"
+var _ = Exported
+//llgo:cdecl
+type A = error
+var _ error = A(nil)
+`
+	mainFile, err := parser.ParseFile(fset, "main.go", mainSrc, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile main.go: %v", err)
+	}
+	conf := types.Config{
+		Importer: &mapImporter{pkgs: map[string]*types.Package{"example.com/dep": depPkg}},
+	}
+	pkg, err := conf.Check("example.com/main", fset, []*ast.File{mainFile}, nil)
+	if err != nil {
+		t.Fatalf("Config.Check main: %v", err)
+	}
+	aTyp := types.Unalias(pkg.Scope().Lookup("A").Type())
+	if _, isSig := aTyp.(*types.Signature); isSig {
+		t.Fatalf("A bound to unexported dot-imported func alias %v instead of predeclared error", aTyp)
+	}
+	if !types.Identical(aTyp, types.Universe.Lookup("error").Type()) {
+		t.Fatalf("A type = %v, want predeclared error", aTyp)
+	}
+}
+
+func TestCheckExprReusingInfoOverwritesPreviousEntries(t *testing.T) {
+	fset := token.NewFileSet()
+	pkg1 := types.NewPackage("example.com/p1", "p1")
+	x1 := types.NewConst(token.NoPos, pkg1, "X", types.Typ[types.Int], constant.MakeInt64(1))
+	pkg1.Scope().Insert(x1)
+
+	pkg2 := types.NewPackage("example.com/p2", "p2")
+	x2 := types.NewConst(token.NoPos, pkg2, "X", types.Typ[types.String], constant.MakeString("second"))
+	pkg2.Scope().Insert(x2)
+
+	ident := ast.NewIdent("X")
+	info := &types.Info{
+		Types: make(map[ast.Expr]types.TypeAndValue),
+		Uses:  make(map[*ast.Ident]types.Object),
+	}
+
+	if err := types.CheckExpr(fset, pkg1, token.NoPos, ident, info); err != nil {
+		t.Fatalf("first CheckExpr(X) failed: %v", err)
+	}
+	if info.Uses[ident] != x1 {
+		t.Fatalf("first CheckExpr info.Uses[X] = %v, want x1", info.Uses[ident])
+	}
+	if tv := info.Types[ident]; tv.Type != types.Typ[types.Int] || tv.Value.String() != "1" {
+		t.Fatalf("first CheckExpr info.Types[X] = %v (%v), want int (1)", tv.Type, tv.Value)
+	}
+
+	if err := types.CheckExpr(fset, pkg2, token.NoPos, ident, info); err != nil {
+		t.Fatalf("second CheckExpr(X) failed: %v", err)
+	}
+	if info.Uses[ident] != x2 {
+		t.Fatalf("second CheckExpr info.Uses[X] = %v, want x2", info.Uses[ident])
+	}
+	if tv := info.Types[ident]; tv.Type != types.Typ[types.String] || constant.StringVal(tv.Value) != "second" {
+		t.Fatalf("second CheckExpr info.Types[X] = %v (%v), want string (\"second\")", tv.Type, tv.Value)
+	}
+}
+
 func TestConcurrentEvalAndCheckExprAfterPostCheckScopeInsert(t *testing.T) {
 	fset := token.NewFileSet()
 	checkedFile, err := parser.ParseFile(fset, "checked.go", "package checked\nconst Base = 10\n", 0)
