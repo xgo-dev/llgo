@@ -15,7 +15,7 @@ func TestLazyDispatcherPolicy(t *testing.T) {
 	if mod.NamedGlobal("root.__llgo_fmv_slot").IsNil() {
 		t.Fatal("dispatcher must load a cached implementation, initially the resolver")
 	}
-	if mod.NamedFunction("root.__llgo_fmv_baseline").IsNil() {
+	if mod.NamedFunction("root.__llgo_fmv_guard_base").IsNil() {
 		t.Fatal("baseline body must have its own implementation identity")
 	}
 	resolver := mod.NamedFunction("root.__llgo_fmv_resolve")
@@ -38,7 +38,7 @@ func TestLazyDispatcherPolicy(t *testing.T) {
 				continue
 			}
 			calls++
-			if inst.CalledValue() != mod.NamedFunction("root"+baselineSuffix) || inst.TailCallKind() != llvm.TailCallKindMustTail || inst.GetCallSiteEnumAttribute(-1, llvm.AttributeKindID("noinline")).IsNil() {
+			if inst.CalledValue() != mod.NamedFunction("root"+symbolPrefix+"guard_base") || inst.TailCallKind() != llvm.TailCallKindMustTail || inst.GetCallSiteEnumAttribute(-1, llvm.AttributeKindID("noinline")).IsNil() {
 				t.Fatal("pre-initialization fallback must remain an opaque tail transfer")
 			}
 		}
@@ -46,7 +46,7 @@ func TestLazyDispatcherPolicy(t *testing.T) {
 			t.Fatalf("uninitialized resolver has %d calls, want one tail transfer", calls)
 		}
 	}
-	for _, name := range []string{"root", "root.__llgo_fmv_baseline", "root.__llgo_fmv_avx2"} {
+	for _, name := range []string{"root", "root.__llgo_fmv_guard_base", "root.__llgo_fmv_guard_avx2"} {
 		if !mod.NamedFunction(name).GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil() {
 			t.Fatalf("%s must remain eligible for feature-compatible inlining", name)
 		}
@@ -58,17 +58,19 @@ func TestLazyDispatcherPolicy(t *testing.T) {
 
 const inlineFixture = `
 target triple = "x86_64-unknown-linux-gnu"
-declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
-define <4 x float> @helper(<4 x float> %x) "llgo.fmv.avx2-entry" "target-cpu"="x86-64" {
+declare <4 x float> @llvm.fma.v4f32(<4 x float>, <4 x float>, <4 x float>)
+declare i1 @fma() "llgo.cpu.query"="x86.fma"
+define <4 x float> @helper(<4 x float> %x) "target-cpu"="x86-64" {
   %y = fadd <4 x float> %x, %x
   ret <4 x float> %y
 }
 define <4 x float> @root(<4 x float> %x) "target-cpu"="x86-64" {
-  %ok = call i1 @avx2()
+  %ok = call i1 @fma()
   br i1 %ok, label %fast, label %slow
 fast:
   %v = call <4 x float> @helper(<4 x float> %x)
-  ret <4 x float> %v
+  %result = call <4 x float> @llvm.fma.v4f32(<4 x float> %v, <4 x float> %v, <4 x float> %x)
+  ret <4 x float> %result
 slow:
   ret <4 x float> %x
 }
@@ -86,7 +88,7 @@ func TestCompileBaselineElidesVersions(t *testing.T) {
 			if err := Run(mod, baseline); err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(mod.String(), "__llgo_fmv") || strings.Contains(mod.NamedFunction("root").String(), "@avx2(") || !mod.NamedGlobal(featureSymbol).IsNil() {
+			if strings.Contains(mod.String(), "__llgo_fmv") || strings.Contains(mod.NamedFunction("root").String(), "@fma(") || !mod.NamedGlobal(featureSymbol).IsNil() {
 				t.Fatalf("compile baseline retained redundant versioning:\n%s", mod.String())
 			}
 			root := mod.NamedFunction("root").String()
@@ -132,12 +134,12 @@ func TestInliningPolicy(t *testing.T) {
 			ctx := mod.Context()
 			b := ctx.NewBuilder()
 			defer b.Dispose()
-			helper := mod.NamedFunction("helper.__llgo_fmv_avx2")
+			helper := mod.NamedFunction("root.__llgo_fmv_guard_fma")
 			for _, name := range []string{"compatible", "incompatible"} {
 				fn := llvm.AddFunction(mod, name, helper.GlobalValueType())
 				fn.AddFunctionAttr(ctx.CreateStringAttribute("target-cpu", "x86-64"))
 				if name == "compatible" {
-					fn.AddFunctionAttr(ctx.CreateStringAttribute("target-features", "+avx,+avx2"))
+					fn.AddFunctionAttr(ctx.CreateStringAttribute("target-features", "+avx,+fma"))
 				}
 				b.SetInsertPointAtEnd(ctx.AddBasicBlock(fn, "entry"))
 				call := b.CreateCall(helper.GlobalValueType(), helper, fn.Params(), "")
@@ -148,11 +150,11 @@ func TestInliningPolicy(t *testing.T) {
 			if strings.Contains(caller, "@root(") || strings.Contains(caller, "musttail") || !strings.Contains(caller, "fmul") {
 				t.Fatalf("dispatcher did not inline with its caller continuation preserved:\n%s", caller)
 			}
-			if strings.Contains(mod.NamedFunction("compatible").String(), "@helper.__llgo_fmv_avx2(") {
+			if strings.Contains(mod.NamedFunction("compatible").String(), "@root.__llgo_fmv_guard_fma(") {
 				t.Fatal("feature-compatible caller failed to inline the implementation")
 			}
-			if !strings.Contains(mod.NamedFunction("incompatible").String(), "@helper.__llgo_fmv_avx2(") {
-				t.Fatal("AVX2 implementation was inlined into a baseline caller")
+			if !strings.Contains(mod.NamedFunction("incompatible").String(), "@root.__llgo_fmv_guard_fma(") {
+				t.Fatal("FMA implementation was inlined into a baseline caller")
 			}
 		})
 	}
@@ -165,7 +167,7 @@ func TestSourceInliningAttributes(t *testing.T) {
 			if err := Run(mod, "v1"); err != nil {
 				t.Fatal(err)
 			}
-			for _, suffix := range []string{"", baselineSuffix, variantSuffix} {
+			for _, suffix := range []string{"", symbolPrefix + "guard_base", symbolPrefix + "guard_fma"} {
 				if mod.NamedFunction("root" + suffix).GetEnumFunctionAttribute(llvm.AttributeKindID(attr)).IsNil() {
 					t.Fatalf("%s lost source %s policy", "root"+suffix, attr)
 				}
@@ -191,7 +193,7 @@ func TestPhysicalFrameDoesNotPinDispatcher(t *testing.T) {
 			if !mod.NamedFunction("root").GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil() {
 				t.Fatal("physical-frame policy leaked onto the synthetic dispatcher")
 			}
-			for _, suffix := range []string{baselineSuffix, variantSuffix} {
+			for _, suffix := range []string{symbolPrefix + "guard_base", symbolPrefix + "guard_fma"} {
 				impl := mod.NamedFunction("root" + suffix)
 				if impl.GetEnumFunctionAttribute(llvm.AttributeKindID("noinline")).IsNil() || stringAttribute(impl, "disable-tail-calls") != "true" {
 					t.Fatal("dispatcher inlining removed the required physical source frame")
@@ -209,12 +211,13 @@ func TestPhysicalFrameDoesNotPinDispatcher(t *testing.T) {
 func TestDispatcherInlineDebugIdentity(t *testing.T) {
 	mod := parseModule(t, `
 target triple = "x86_64-unknown-linux-gnu"
-declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+declare <4 x float> @llvm.fma.v4f32(<4 x float>, <4 x float>, <4 x float>)
+declare i1 @fma() "llgo.cpu.query"="x86.fma"
 define <4 x float> @root(<4 x float> %x) "target-cpu"="x86-64" !dbg !4 {
-  %ok = call i1 @avx2(), !dbg !5
+  %ok = call i1 @fma(), !dbg !5
   br i1 %ok, label %fast, label %slow, !dbg !5
 fast:
-  %y = fadd <4 x float> %x, %x, !dbg !5
+  %y = call <4 x float> @llvm.fma.v4f32(<4 x float> %x, <4 x float> %x, <4 x float> %x), !dbg !5
   ret <4 x float> %y, !dbg !5
 slow:
   ret <4 x float> %x, !dbg !5

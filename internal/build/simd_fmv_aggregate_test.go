@@ -33,12 +33,12 @@ import "simd/archsimd"
 import "fmvaggregate/kernel"
 //go:noinline
 func guarded(x []float32, label string, b kernel.Block) (kernel.Block, int) {
- if archsimd.X86.AVX2() { b.Label = label; b.Count += len(x); return kernel.Compute(b) }
+ if archsimd.X86.AVX2() { b.Value = b.Value.Add(b.Value); b.Label = label; b.Count += len(x); return kernel.Compute(b) }
  return b, -1
 }
 //go:noinline
 func array(x [2]archsimd.Float32x4) [2]archsimd.Float32x4 {
- if archsimd.X86.AVX2() { return kernel.Array(x) }; return x
+ if archsimd.X86.AVX2() { x[0] = x[0].Add(x[1]); return kernel.Array(x) }; return x
 }
 //go:noinline
 func pair(x string) (float64, int) {
@@ -72,12 +72,12 @@ func main() {}
 				t.Fatal(err)
 			}
 			for _, name := range []string{"main.pair", "main.large"} {
-				if !mod.NamedFunction(name+".__llgo_fmv_avx2").IsNil() || !strings.Contains(mod.NamedFunction(name).String(), "X86Features.AVX2") {
+				if !mod.NamedFunction(name+".__llgo_fmv_guard_avx2").IsNil() || !strings.Contains(mod.NamedFunction(name).String(), "X86Features.AVX2") {
 					t.Fatalf("%s should retain its ordinary CPU query", name)
 				}
 			}
 			for _, name := range []string{"main.guarded", "main.array", "main.one"} {
-				fast := mod.NamedFunction(name + ".__llgo_fmv_avx2")
+				fast := mod.NamedFunction(name + ".__llgo_fmv_guard_avx2")
 				if fast.IsNil() {
 					t.Fatalf("function %s has no AVX2 implementation", name)
 				}
@@ -87,13 +87,11 @@ func main() {}
 				assertAggregateTailForwarding(t, mod.NamedFunction(name))
 				assertAggregateTailForwarding(t, mod.NamedFunction(name+".__llgo_fmv_resolve"))
 			}
-			for _, name := range []string{"Compute", "Array"} {
-				if mod.NamedFunction("fmvaggregate/kernel." + name + ".__llgo_fmv_avx2").IsNil() {
-					t.Fatalf("missing aggregate cross-package variant %s", name)
+			for _, pair := range [][2]string{{"main.guarded", "Compute"}, {"main.array", "Array"}} {
+				imported := "fmvaggregate/kernel." + pair[1]
+				if !strings.Contains(mod.NamedFunction(pair[0]+".__llgo_fmv_guard_avx2").String(), imported) || !mod.NamedFunction(imported+".__llgo_fmv_guard_avx2").IsNil() {
+					t.Fatalf("expected an ordinary cross-package call to %s", imported)
 				}
-			}
-			if !strings.Contains(mod.NamedFunction("main.guarded.__llgo_fmv_avx2").String(), "kernel.Compute.__llgo_fmv_avx2") {
-				t.Fatal("aggregate direct call did not specialize")
 			}
 			kernels, err := Build(Invocation{Args: []string{"./kernel"}, Config: conf, Dir: dir})
 			if err != nil {
@@ -101,9 +99,9 @@ func main() {}
 			}
 			defer kernels[0].LPkg.Prog.Dispose()
 			for _, name := range []string{"Compute", "Array"} {
-				fn := kernels[0].LPkg.Module().NamedFunction("fmvaggregate/kernel." + name + ".__llgo_fmv_avx2")
+				fn := kernels[0].LPkg.Module().NamedFunction("fmvaggregate/kernel." + name)
 				if fn.IsNil() || fn.IsDeclaration() {
-					t.Fatalf("missing aggregate cross-package definition %s", name)
+					t.Fatalf("missing ordinary aggregate cross-package definition %s", name)
 				}
 			}
 			simdCodegenVariants(t, []string{"O0", "O2"}, pkgs, func(t *testing.T, mod llvm.Module, asm string) {

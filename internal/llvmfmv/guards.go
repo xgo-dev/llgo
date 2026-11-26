@@ -1,7 +1,6 @@
 package llvmfmv
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/xgo-dev/llvm"
@@ -106,38 +105,14 @@ func (f *baselineFolds) commit() {
 	}
 }
 
-type guardFacts struct {
-	common uint64 // every bit is known true
-	ymm    uint64 // alternative YMM witnesses on all incoming paths
-	zmm    uint64 // at least one of these ZMM guards is known true, or zero
-}
-
-func (a guardFacts) and(b guardFacts) guardFacts {
-	return guardFacts{common: a.common | b.common, ymm: a.ymm | b.ymm, zmm: a.zmm | b.zmm}
-}
-
-// At a join only common predicates can be folded. Alternate paths can still
-// establish the same register width with different effective Go predicates.
-func (a guardFacts) or(b guardFacts) guardFacts {
-	f := guardFacts{common: a.common & b.common}
-	if a.ymm != 0 && b.ymm != 0 {
-		f.ymm = a.ymm | b.ymm
-	}
-	if a.zmm != 0 && b.zmm != 0 {
-		f.zmm = a.zmm | b.zmm
-	}
-	return f
-}
-
 // positiveGuard returns predicates established on the given branch edge.
 // LLVM commonly represents Go's negated query as xor i1 %query, true.
-func positiveGuard(cond llvm.Value, taken bool, queries map[llvm.Value]uint64) guardFacts {
+func positiveGuard(cond llvm.Value, taken bool, queries map[llvm.Value]uint64) uint64 {
 	if !cond.IsACallInst().IsNil() && taken {
-		mask := queries[cond.CalledValue()]
-		return guardFacts{common: mask, ymm: mask & ymmPredicates, zmm: mask & zmmPredicates}
+		return queries[cond.CalledValue()]
 	}
 	if cond.IsAInstruction().IsNil() {
-		return guardFacts{}
+		return 0
 	}
 	switch op := cond.InstructionOpcode(); op {
 	case llvm.Xor:
@@ -152,11 +127,11 @@ func positiveGuard(cond llvm.Value, taken bool, queries map[llvm.Value]uint64) g
 		b := positiveGuard(cond.Operand(1), taken, queries)
 		// Both operands are true for a taken AND, or false for an untaken OR.
 		if (op == llvm.And) == taken {
-			return a.and(b)
+			return a | b
 		}
-		return a.or(b)
+		return a & b
 	}
-	return guardFacts{}
+	return 0
 }
 
 // directGuardCallee excludes indirect calls even when a function address also
@@ -214,9 +189,9 @@ func (a *wideABI) intrinsicGuards(inst, fn llvm.Value) uint64 {
 	return 0
 }
 
-func blockGuards(fn llvm.Value, queries map[llvm.Value]uint64) map[llvm.BasicBlock]guardFacts {
+func blockGuards(fn llvm.Value, queries map[llvm.Value]uint64) map[llvm.BasicBlock]uint64 {
 	entry := fn.EntryBasicBlock()
-	known := map[llvm.BasicBlock]guardFacts{entry: {}}
+	known := map[llvm.BasicBlock]uint64{entry: 0}
 	queue := []llvm.BasicBlock{entry}
 	for len(queue) != 0 {
 		block := queue[0]
@@ -225,11 +200,11 @@ func blockGuards(fn llvm.Value, queries map[llvm.Value]uint64) map[llvm.BasicBlo
 		for i := 0; i < term.SuccessorsCount(); i++ {
 			f := known[block]
 			if term.InstructionOpcode() == llvm.Br && term.SuccessorsCount() == 2 {
-				f = f.and(positiveGuard(term.Operand(0), i == 0, queries))
+				f |= positiveGuard(term.Operand(0), i == 0, queries)
 			}
 			next := term.Successor(i)
 			if prior, ok := known[next]; ok {
-				f = f.or(prior)
+				f &= prior
 				if f == prior {
 					continue
 				}
@@ -239,26 +214,6 @@ func blockGuards(fn llvm.Value, queries map[llvm.Value]uint64) map[llvm.BasicBlo
 		}
 	}
 	return known
-}
-
-// Independent guarded regions can both execute. Build the distinct unions of
-// their masks so the resolver can select every enabled region together.
-func dispatchMasks(sets map[uint64]bool) []uint64 {
-	unions := []uint64{0}
-	seen := map[uint64]bool{0: true}
-	for mask := range sets {
-		for _, prior := range unions {
-			union := prior | mask
-			if !seen[union] {
-				seen[union] = true
-				unions = append(unions, union)
-			}
-		}
-	}
-	// Every strict superset has a larger unsigned value and wins the select.
-	choices := unions[1:]
-	slices.Sort(choices)
-	return choices
 }
 
 func guardSuffix(mask uint64) string {

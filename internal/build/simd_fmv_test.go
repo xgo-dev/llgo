@@ -24,7 +24,7 @@ func assembly(x archsimd.Float32x4) archsimd.Float32x4
 
 //go:noinline
 func guarded(x, y archsimd.Float32x4) archsimd.Float32x4 {
- if archsimd.X86.AVX2() { return assembly(local(x, kernel.Compute(x, y))) }
+ if archsimd.X86.AVX2() { return assembly(local(x.Add(y), kernel.Compute(x, y))) }
  return x.Sub(y)
 }
 func main() {}
@@ -126,11 +126,11 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 			t.Fatalf("baseline feature generated redundant versions:\n%s", mod.String())
 		}
 	} else {
-		suffix = ".__llgo_fmv_avx2"
-		if !strings.Contains(mod.String(), `linkageName: "main.guarded.__llgo_fmv_avx2"`) {
+		suffix = ".__llgo_fmv_guard_avx2"
+		if !strings.Contains(mod.String(), `linkageName: "main.guarded.__llgo_fmv_guard_avx2"`) {
 			t.Fatal("specialized debug subprogram lost its linker identity")
 		}
-		baselineBody := mod.NamedFunction("main.guarded.__llgo_fmv_baseline").String()
+		baselineBody := mod.NamedFunction("main.guarded.__llgo_fmv_guard_base").String()
 		if goos == "windows" {
 			for _, name := range []string{"main.guarded", "main.guarded.__llgo_fmv_resolve"} {
 				fn := mod.NamedFunction(name)
@@ -141,15 +141,15 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 		}
 		fast = mod.NamedFunction("main.guarded" + suffix).String()
 		if !strings.Contains(guard, "musttail call") || !strings.Contains(guard, "load atomic ptr") ||
-			strings.Contains(guard, "X86Features.AVX2") || strings.Contains(baselineBody, "X86Features.AVX2") || !strings.Contains(baselineBody, "fsub") {
+			strings.Contains(guard, "X86Features.AVX2") || !strings.Contains(baselineBody, "fsub") {
 			t.Fatalf("invalid dispatch or baseline:\n%s\n%s", guard, baselineBody)
 		}
 	}
 	if strings.Contains(fast, "X86Features.AVX2") || strings.Contains(fast, "fsub") ||
-		!strings.Contains(fast, "main.local"+suffix) || !strings.Contains(fast, "fmvtest/kernel.Compute"+suffix) {
+		!strings.Contains(fast, "@main.local(") || !strings.Contains(fast, "fmvtest/kernel.Compute\"(") {
 		t.Fatalf("invalid specialization:\n%s", fast)
 	}
-	if !strings.Contains(fast, "@fmv.externalAssembly(") || !mod.NamedFunction("fmv.externalAssembly.__llgo_fmv_avx2").IsNil() {
+	if !strings.Contains(fast, "@fmv.externalAssembly(") || !mod.NamedFunction("fmv.externalAssembly.__llgo_fmv_guard_avx2").IsNil() {
 		t.Fatal("bodyless assembly declaration must keep its baseline entry")
 	}
 	kernels, err := Build(Invocation{Args: []string{"./kernel"}, Config: conf, Dir: dir})
@@ -157,9 +157,9 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 		t.Fatal(err)
 	}
 	defer kernels[0].LPkg.Prog.Dispose()
-	kernel := kernels[0].LPkg.Module().NamedFunction("fmvtest/kernel.Compute" + suffix)
+	kernel := kernels[0].LPkg.Module().NamedFunction("fmvtest/kernel.Compute")
 	if kernel.IsNil() || kernel.BasicBlocksCount() == 0 {
-		t.Fatal("cross-package specialized definition missing")
+		t.Fatal("ordinary cross-package definition missing")
 	}
 	simdCodegenVariants(t, levels, pkgs, func(t *testing.T, mod llvm.Module, asm string) {
 		if goos == "linux" && baseline == "v1" {

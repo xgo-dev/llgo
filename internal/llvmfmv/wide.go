@@ -10,10 +10,11 @@ import (
 // definitions and calls, including calls through a Go function value. Ordinary
 // aggregate ABI lowering has already handled stack and indirect arguments.
 type wideABI struct {
-	mod    llvm.Module
-	widths map[llvm.Type]int
-	data   llvm.TargetData
-	abi    x86ABI
+	mod      llvm.Module
+	widths   map[llvm.Type]int
+	outlines map[outlineKey]llvm.Value
+	data     llvm.TargetData
+	abi      x86ABI
 }
 
 func (a *wideABI) signature(ft llvm.Type) int {
@@ -114,20 +115,6 @@ func enableWidth(fn llvm.Value, width int) {
 	fn.AddTargetDependentFunctionAttr("target-features", feature)
 }
 
-// The narrow implementation can still take every scalar path. Only reaching
-// a call that requires unavailable registers violates the archsimd precondition.
-func (a *wideABI) removeWiderCalls(fn llvm.Value, width int) {
-	b := a.mod.Context().NewBuilder()
-	defer b.Dispose()
-	a.calls(fn, func(call llvm.Value, need int) {
-		if need > width {
-			b.SetInsertPointBefore(call)
-			b.CreateIntrinsic(a.mod.Context().VoidType(), llvm.LookupIntrinsicID("llvm.trap"), nil, "")
-		}
-	})
-	fn.RemoveUnreachableBlocks()
-}
-
 func registerPredicateBits(width int) uint64 {
 	var bits uint64
 	for _, p := range x86Predicates {
@@ -172,13 +159,4 @@ func (a *wideABI) applyRegisterABI(fn llvm.Value, baseline string) {
 			a.abi.applyWideCallingConvention(call)
 		})
 	}
-}
-
-// Ordinary entries have no caller-proven register capability. Preserve their
-// existing runtime selection separately from proofs on direct guarded edges.
-func ordinaryWidthChoice(width int) dispatchChoice {
-	if width == 256 {
-		return dispatchChoice{anyOf: ymmPredicates}
-	}
-	return dispatchChoice{bits: predicateBits[X86Query("AVX512")]}
 }

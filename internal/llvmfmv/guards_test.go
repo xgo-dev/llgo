@@ -2,67 +2,11 @@ package llvmfmv
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/xgo-dev/llvm"
 )
-
-func TestGuardedFeatureCombinations(t *testing.T) {
-	m := parseModule(t, `
-target triple = "x86_64-unknown-linux-gnu"
-declare i1 @avx512() "llgo.cpu.query"="x86.avx512"
-declare i1 @fma() "llgo.cpu.query"="x86.fma"
-declare <16 x float> @llvm.fma.v16f32(<16 x float>, <16 x float>, <16 x float>)
-define void @helper(ptr %p) "llgo.fmv.avx2-entry" {
- %v=load <16 x float>,ptr %p,align 4
- %r=call <16 x float> @llvm.fma.v16f32(<16 x float> %v, <16 x float> %v, <16 x float> %v)
- store <16 x float> %r,ptr %p,align 4
- ret void
-}
-define i1 @root(ptr %p) {
- %x=call i1 @avx512()
- %off=xor i1 %x,true
- br i1 %off,label %out,label %wide
-wide:
- call void @helper(ptr %p)
- %y=call i1 @fma()
- br i1 %y,label %both,label %out
-both:
- call void @helper(ptr %p)
- br label %out
-out:
- %observable=call i1 @fma()
- ret i1 %observable
-}
-`)
-	if err := Run(m, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
-		t.Fatal(err)
-	}
-	root := m.NamedFunction("root")
-	wide := m.NamedFunction("helper.__llgo_fmv_guard_zmm")
-	both := m.NamedFunction("helper.__llgo_fmv_guard_zmm_fma")
-	if wide.IsNil() || both.IsNil() || !m.NamedGlobal("root"+slotSuffix).IsNil() {
-		t.Fatalf("expected pointer calls specialized at their branch sites:\n%s", m.String())
-	}
-	code := root.String()
-	if !strings.Contains(code, "call i1 @avx512()") || strings.Count(code, "call i1 @fma()") != 2 ||
-		!strings.Contains(code, "call void @"+wide.Name()+"(") || !strings.Contains(code, "call void @"+both.Name()+"(") {
-		t.Fatal(code)
-	}
-	if targetWidth(wide, "v1") != 512 || strings.Contains(stringAttribute(wide, "target-features"), "+fma") ||
-		targetWidth(both, "v1") != 512 || !strings.Contains(stringAttribute(both, "target-features"), "+fma") {
-		t.Fatal("incorrect requirements on the guarded helper bodies")
-	}
-	before := m.String()
-	if err := Run(m, "v1"); err != nil || m.String() != before {
-		t.Fatalf("second run changed module: %v", err)
-	}
-}
 
 const guardedVectorFixture = `
 target triple = "x86_64-unknown-linux-gnu"
@@ -108,8 +52,11 @@ func TestGuardedVectorConjunction(t *testing.T) {
 	if both.IsNil() || !strings.Contains(stringAttribute(both, "target-features"), "+fma") || !strings.Contains(stringAttribute(both, "target-features"), "+avx512f") {
 		t.Fatal("missing specialization for the conjunction")
 	}
-	if !m.NamedFunction("unrelated.__llgo_fmv_guard_base").IsNil() {
-		t.Fatal("a disjunction with an independent flag cannot establish AVX512")
+	for _, suffix := range []string{"guard_base", "guard_ymm", "guard_zmm"} {
+		body := m.NamedFunction("unrelated" + symbolPrefix + suffix)
+		if body.IsNil() || !strings.Contains(body.String(), "call i1 @wide()") || !strings.Contains(body.String(), "or i1") {
+			t.Fatalf("width alone folded the independent branch in %s", suffix)
+		}
 	}
 }
 
@@ -122,7 +69,7 @@ func TestGuardedVectorDisjunction(t *testing.T) {
 	}
 	ext := predicateBits[X86Query("AVX512VBMI2")]
 	body := m.NamedFunction("root" + symbolPrefix + "guard_zmm")
-	if body.IsNil() || !m.NamedGlobal("unrelated"+slotSuffix).IsNil() {
+	if body.IsNil() || !strings.Contains(body.String(), "call i1 @wide()") || !strings.Contains(body.String(), "call i1 @fma()") {
 		t.Fatal(m.String())
 	}
 	checkCachedGuard(t, m, ext, body)
@@ -141,87 +88,6 @@ func TestGuardedSymbolCollision(t *testing.T) {
 				t.Fatalf("expected collision on %s, got %v", symbol, err)
 			}
 		})
-	}
-}
-
-// A Go helper taking array pointers may do SIMD work without a vector in its
-// signature. The guard must reach the actual computation through local calls.
-func TestGuardedScalarSignatureHelpers(t *testing.T) {
-	for _, feature := range []string{"avx512", "avx2"} {
-		t.Run(feature, func(t *testing.T) { testGuardedScalarSignatureHelpers(t, feature) })
-	}
-}
-
-func testGuardedScalarSignatureHelpers(t *testing.T, feature string) {
-	t.Helper()
-	const ir = `
-target triple = "x86_64-unknown-linux-gnu"
-declare i1 @wide() "llgo.cpu.query"="x86.avx512"
-declare void @external(ptr)
-define void @scalar(ptr %p) noinline {
- store i32 9, ptr %p
- ret void
-}
-define void @kernel(ptr %p) noinline {
- %v = load <16 x i32>, ptr %p, align 4
- %r = add <16 x i32> %v, %v
- store <16 x i32> %r, ptr %p, align 4
- ret void
-}
-define void @helper(ptr %p, i1 %again) noinline {
- br i1 %again, label %recurse, label %work
-recurse:
- call void @helper(ptr %p, i1 false)
- br label %work
-work:
- call void @kernel(ptr %p)
- ret void
-}
-define void @root(ptr %p, ptr %callback) {
- %a = call i1 @wide()
- br i1 %a, label %work, label %exit
-work:
- call void @scalar(ptr %p)
- call void @external(ptr %p)
- call void %callback(ptr %p)
- call void @helper(ptr %p, i1 true)
- br label %exit
-exit:
- ret void
-}
-`
-	m := parseModule(t, strings.Replace(ir, "x86.avx512", "x86."+feature, 1))
-	if err := Run(m, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
-		t.Fatal(err)
-	}
-	suffix, width := symbolPrefix+"guard_zmm", 512
-	if feature == "avx2" {
-		suffix, width = symbolPrefix+"guard_avx2", 256
-	}
-	root, helper, kernel := m.NamedFunction("root"), m.NamedFunction("helper"+suffix), m.NamedFunction("kernel"+suffix)
-	if root.IsNil() || helper.IsNil() || kernel.IsNil() {
-		t.Fatalf("guard did not reach scalar-signature helper and kernel:\n%s", m.String())
-	}
-	for _, call := range []string{"@scalar(", "@external(", "%callback(", "@helper" + suffix + "("} {
-		if !strings.Contains(root.String(), "call void "+call) {
-			t.Fatalf("missing call to %s:\n%s", call, root.String())
-		}
-	}
-	if !strings.Contains(helper.String(), "call void @kernel"+suffix) || !strings.Contains(helper.String(), "call void @helper"+suffix) {
-		t.Fatal(helper.String())
-	}
-	if !m.NamedFunction("scalar"+suffix).IsNil() || targetWidth(kernel, "v1") != width {
-		t.Fatalf("incorrect specialization set:\n%s", m.String())
-	}
-	if strings.Contains(m.NamedFunction("helper").String(), suffix) {
-		t.Fatal("unguarded helper calls a specialized entry")
-	}
-	before := m.String()
-	if err := Run(m, "v1"); err != nil || m.String() != before {
-		t.Fatalf("repeated pass changed local guard: %v\n%s", err, m.String())
 	}
 }
 
@@ -273,97 +139,6 @@ exit:
 	}
 }
 
-const mixedAVX2GuardFixture = `
-target triple = "x86_64-unknown-linux-gnu"
-declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
-declare i1 @sha() "llgo.cpu.query"="x86.sha"
-declare i1 @wide() "llgo.cpu.query"="x86.avx512"
-declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
-define void @kernel(ptr %p) "llgo.fmv.avx2-entry" {
- %x = load <16 x i32>, ptr %p
- %y = add <16 x i32> %x, %x
- store <16 x i32> %y, ptr %p
- ret void
-}
-define void @root(ptr %p) {
- %a = call i1 @avx2()
- br i1 %a, label %check, label %slowcheck
-check:
- %b = call i1 @wide()
- br i1 %b, label %fast, label %exit
-fast:
- call void @kernel(ptr %p)
- br label %exit
-slowcheck:
- %s = call i1 @sha()
- br i1 %s, label %slow, label %exit
-slow:
- call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64 128)
- call void @kernel(ptr %p)
- br label %exit
-exit:
- ret void
-}`
-
-func TestMixedAVX2GuardHelper(t *testing.T) {
-	m := parseModule(t, mixedAVX2GuardFixture)
-	if err := Run(m, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
-		t.Fatal(err)
-	}
-	fast := m.NamedFunction("root" + variantSuffix)
-	if fast.IsNil() {
-		t.Fatal("missing canonical AVX2 body")
-	}
-	kernel := guardedCallTarget(t, fast, m.NamedFunction("wide"))
-	if targetWidth(kernel, "v1") != 512 || !strings.Contains(kernel.String(), "add <16 x i32>") {
-		t.Fatal("the AVX512 branch in the canonical AVX2 body must call the ZMM kernel")
-	}
-	// Before CPU initialization, enter the actual baseline implementation directly.
-	resolver := m.NamedFunction("root" + resolverSuffix).String()
-	if !strings.Contains(resolver, "musttail call void @root"+baselineSuffix+symbolPrefix+"guard_base(") {
-		t.Fatalf("pre-initialization call still dispatches:\n%s", resolver)
-	}
-	checkCachedGuard(t, m, featureAVX2|predicateBits["x86.avx512"], fast)
-	before := m.String()
-	if err := Run(m, "v1"); err != nil || m.String() != before {
-		t.Fatalf("repeat: %v\n%s", err, m.String())
-	}
-
-}
-
-func TestGuardHelperCollisionLeavesModuleIntact(t *testing.T) {
-	m := parseModule(t, `
-target triple = "x86_64-unknown-linux-gnu"
-declare i1 @wide() "llgo.cpu.query"="x86.avx512"
-define void @helper(ptr %p) {
- %x = load <16 x float>, ptr %p
- %y = fneg <16 x float> %x
- store <16 x float> %y, ptr %p
- ret void
-}
-define void @root(ptr %p) {
- %c = call i1 @wide()
- br i1 %c, label %yes, label %no
-yes:
- call void @helper(ptr %p)
- br label %no
-no:
- ret void
-}
-@helper.__llgo_fmv_guard_zmm = global i8 0
-`)
-	before := m.String()
-	if err := Run(m, "v1"); err == nil || !strings.Contains(err.Error(), "helper.__llgo_fmv_guard_zmm") {
-		t.Fatalf("collision: %v", err)
-	}
-	if m.String() != before {
-		t.Fatalf("partial transformation:\n%s", m.String())
-	}
-}
-
 func TestOptionalGuardAtV4(t *testing.T) {
 	ir := strings.ReplaceAll(guardedVectorFixture, `"x86.fma"`, `"x86.avx512vnni"`)
 	ir = strings.Replace(ir, "define void @root", `declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
@@ -384,40 +159,16 @@ define void @root`, 1)
 }
 
 func TestGuardBodyEntryAttributes(t *testing.T) {
-	ir := strings.Replace(guardedVectorFixture, "define void @root(ptr %p) {", "define void @root(ptr %p) \""+EntryAttribute+"\" \""+InlineEntryAttribute+"\" {", 1)
+	ir := strings.Replace(guardedVectorFixture, "define void @root(ptr %p) {", "define void @root(ptr %p) \""+InlineEntryAttribute+"\" {", 1)
 	m := parseModule(t, ir)
 	if err := Run(m, "v1"); err != nil {
 		t.Fatal(err)
 	}
 	for _, suffix := range []string{"guard_zmm_fma", "guard_base"} {
 		v := m.NamedFunction("root" + symbolPrefix + suffix)
-		if v.IsNil() || hasAttribute(v, EntryAttribute) || hasAttribute(v, InlineEntryAttribute) {
+		if v.IsNil() || hasAttribute(v, InlineEntryAttribute) {
 			t.Fatal(m.String())
 		}
-	}
-}
-
-func TestMixedGuardCollisionLeavesModuleIntact(t *testing.T) {
-	reference := parseModule(t, mixedAVX2GuardFixture)
-	if err := Run(reference, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	fast := reference.NamedFunction("root" + variantSuffix)
-	collision := guardedCallTarget(t, fast, reference.NamedFunction("wide")).Name()
-	m := parseModule(t, mixedAVX2GuardFixture+"\n@"+collision+" = global i8 0\n")
-	before := m.String()
-	if err := Run(m, "v1"); err == nil || !strings.Contains(err.Error(), collision) {
-		t.Fatalf("expected collision on %s, got %v", collision, err)
-	}
-	if got := m.String(); got != before {
-		t.Fatalf("mixed-pass collision changed module:\n%s", got)
-	}
-	m.NamedGlobal(collision).EraseFromParentAsGlobal()
-	if err := Run(m, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	if m.NamedFunction(collision).IsNil() || m.NamedMetadataNumOperands(moduleDone) != 1 {
-		t.Fatal("retry did not finish guarded specialization")
 	}
 }
 
@@ -464,101 +215,6 @@ func TestBaselineFoldCollisionLeavesModuleIntact(t *testing.T) {
 				t.Fatal(m.String())
 			}
 		})
-	}
-}
-
-func TestIndependentGuardResolver(t *testing.T) {
-	const ir = `
-target triple = "x86_64-unknown-linux-gnu"
-declare i1 @wide() "llgo.cpu.query"="x86.avx512"
-declare i1 @fma() "llgo.cpu.query"="x86.fma"
-declare <4 x float> @llvm.fma.v4f32(<4 x float>, <4 x float>, <4 x float>)
-define void @root(ptr %p, ptr %q) {
- %a = call i1 @fma()
- br i1 %a, label %first, label %next
-first:
- %x = load <4 x float>, ptr %p
- %nx = call <4 x float> @llvm.fma.v4f32(<4 x float> %x, <4 x float> %x, <4 x float> %x)
- store <4 x float> %nx, ptr %p
- br label %next
-next:
- %b = call i1 @wide()
- br i1 %b, label %second, label %exit
-second:
- %y = load <16 x float>, ptr %q
- %ny = fneg <16 x float> %y
- store <16 x float> %ny, ptr %q
- br label %exit
-exit:
- ret void
-}`
-	for _, tc := range []struct {
-		bits   uint64
-		suffix string
-	}{
-		{0, "guard_base"}, {256, "guard_zmm"}, {260, "guard_zmm"}, {512, "guard_fma"}, {516, "guard_fma"}, {768, "guard_zmm_fma"}, {772, "guard_zmm_fma"},
-	} {
-		m := parseModule(t, ir)
-		if err := Run(m, "v1"); err != nil {
-			t.Fatal(err)
-		}
-		want := m.NamedFunction("root" + symbolPrefix + tc.suffix)
-		if want.IsNil() {
-			t.Fatalf("missing %s", tc.suffix)
-		}
-		if tc.bits == 772 {
-			body := want.String()
-			features := stringAttribute(want, "target-features")
-			if !strings.Contains(body, "store <4 x float>") || !strings.Contains(body, "store <16 x float>") || !strings.Contains(features, "+fma") || !strings.Contains(features, "+avx512f") {
-				t.Fatal(body)
-			}
-		}
-		checkCachedGuard(t, m, tc.bits, want)
-	}
-}
-
-func TestGuardProjectsHelperMask(t *testing.T) {
-	m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
-declare i1 @wide() "llgo.cpu.query"="x86.avx512vbmi2"
-declare i1 @fma() "llgo.cpu.query"="x86.fma"
-declare <4 x float> @llvm.fma.v4f32(<4 x float>, <4 x float>, <4 x float>)
-declare void @consume(<16 x i32>)
-define void @fmaOnly(ptr %p) {
- %x = load <4 x float>, ptr %p
- %y = call <4 x float> @llvm.fma.v4f32(<4 x float> %x, <4 x float> %x, <4 x float> %x)
- store <4 x float> %y, ptr %p
- ret void
-}
-define void @wideOnly() {
- call void @consume(<16 x i32> zeroinitializer)
- ret void
-}
-define void @root(ptr %p) {
- %a = call i1 @fma()
- br i1 %a, label %first, label %next
-first: call void @fmaOnly(ptr %p)
- br label %next
-next: %b = call i1 @wide()
- br i1 %b, label %second, label %exit
-second: call void @wideOnly()
- br label %exit
-exit: ret void
-}`)
-	if err := Run(m, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
-		t.Fatal(err)
-	}
-	root := m.NamedFunction("root")
-	for _, tc := range []struct{ guard, helper, suffix string }{
-		{"fma", "fmaOnly", "guard_fma"},
-		{"wide", "wideOnly", "zmm"},
-	} {
-		got := guardedCallTarget(t, root, m.NamedFunction(tc.guard))
-		if got.Name() != tc.helper+symbolPrefix+tc.suffix {
-			t.Fatalf("%s calls %s, want a single-feature %s body", tc.guard, got.Name(), tc.helper)
-		}
 	}
 }
 
@@ -624,9 +280,7 @@ exit:
 					t.Fatal(err)
 				}
 				base, fast := symbolPrefix+"guard_base", symbolPrefix+"guard_"+strings.ToLower(p.method)
-				if p.runtimeBit == featureAVX2 {
-					base, fast = baselineSuffix, variantSuffix
-				} else if !strings.Contains(m.NamedFunction("root"+base).String(), "call i1 @query()") {
+				if !strings.Contains(m.NamedFunction("root"+base).String(), "call i1 @query()") {
 					t.Fatal("baseline lost the observable Go predicate")
 				}
 				want := m.NamedFunction("root" + base)
@@ -639,85 +293,10 @@ exit:
 	}
 }
 
-func TestCanonicalAVX2EntrySharesGuardedKernel(t *testing.T) {
-	m := parseModule(t, `
-target triple = "x86_64-unknown-linux-gnu"
-declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
-define void @leaf(ptr %p) noinline "llgo.fmv.avx2-entry" {
- %v = load <8 x i32>, ptr %p
- %r = add <8 x i32> %v, %v
- store <8 x i32> %r, ptr %p
- ret void
-}
-define void @kernel(ptr %p) noinline {
- call void @leaf(ptr %p)
- ret void
-}
-define void @root(ptr %p) "llgo.fmv.avx2-entry" {
- %q = call i1 @avx2()
- br i1 %q, label %yes, label %exit
-yes:
- call void @kernel(ptr %p)
- br label %exit
-exit:
- ret void
-}
-define void @caller(ptr %p) {
- %q = call i1 @avx2()
- br i1 %q, label %yes, label %no
-yes:
- call void @root(ptr %p)
- ret void
-no:
- call void @root(ptr null)
- ret void
-}`)
-	if err := Run(m, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	root := m.NamedFunction("root")
-	kernel := guardedCallTarget(t, root, m.NamedFunction("avx2"))
-	for _, call := range []struct{ from, to string }{
-		{"root" + variantSuffix, kernel.Name()},
-		{"caller" + variantSuffix, "root" + variantSuffix},
-		{"caller" + baselineSuffix, "root"},
-	} {
-		fn := m.NamedFunction(call.from)
-		if fn.IsNil() || !strings.Contains(fn.String(), "call void @"+call.to+"(") {
-			t.Fatalf("%s did not call %s directly:\n%s", call.from, call.to, m.String())
-		}
-	}
-	if !m.NamedGlobal("root" + slotSuffix).IsNil() {
-		t.Fatal("guard over a scalar-signature helper needs no root dispatcher")
-	}
-	if !strings.Contains(kernel.String(), "call void @leaf") || strings.Contains(kernel.String(), "call void @leaf(") {
-		t.Fatalf("known-width helper lost its specialized leaf:\n%s", kernel.String())
-	}
-}
-
-func TestGuardMaskUnions(t *testing.T) {
-	// Five independent sites have 31 nonempty combinations. A sixth site
-	// checking two of those same bits contributes no new combination.
-	sets := map[uint64]bool{1: true, 2: true, 4: true, 8: true, 16: true, 3: true}
-	choices := dispatchMasks(sets)
-	if len(choices) != 31 {
-		t.Fatalf("got %d choices, want 31", len(choices))
-	}
-	for i, mask := range choices {
-		if mask != uint64(i+1) {
-			t.Fatalf("choice %d = %d, want %d", i, mask, i+1)
-		}
-	}
-	// A conjunction that only occurs as a unit does not request its parts.
-	if got := dispatchMasks(map[uint64]bool{3: true, 7: true}); !slices.Equal(got, []uint64{3, 7}) {
-		t.Fatalf("overlapping guards produced %v", got)
-	}
-}
-
 func TestOpaqueGuardedCallsKeepDirectEntry(t *testing.T) {
 	for _, callee := range []string{
-		`declare void @kernel(ptr) "llgo.fmv.avx2-entry"`,
-		`define void @kernel(ptr %p) "llgo.fmv.avx2-entry" { store i32 7,ptr %p
+		`declare void @kernel(ptr)`,
+		`define void @kernel(ptr %p) { store i32 7,ptr %p
 ret void }`,
 	} {
 		m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
@@ -798,112 +377,20 @@ out: ret void
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
-	suffix := symbolPrefix + "guard_zmm"
-	body := m.NamedFunction("root")
-	if !m.NamedGlobal("root" + slotSuffix).IsNil() {
-		t.Fatal("pointer-only root needs no dispatcher")
-	}
 	for i := 0; i < depth; i++ {
-		if i == depth-1 {
-			// The leaf can reuse its ordinary wide ABI implementation.
-			suffix = symbolPrefix + "zmm"
+		caller := "root"
+		if i > 0 {
+			caller = fmt.Sprintf("kernel%d", i-1)
 		}
-		name := fmt.Sprintf("kernel%d%s", i, suffix)
-		if !strings.Contains(body.String(), "call void @"+name+"(") {
-			t.Fatalf("expected a specialized call to %s in %s", name, body.String())
+		target := fmt.Sprintf("kernel%d", i)
+		fn := m.NamedFunction(caller)
+		if !m.NamedGlobal(caller+slotSuffix).IsNil() || !strings.Contains(fn.String(), "call void @"+target+"(") {
+			t.Fatalf("%s must call the original %s entry:\n%s", caller, target, fn.String())
 		}
-		body = m.NamedFunction(name)
 	}
-	if !strings.Contains(body.String(), "call void @wide(") || targetWidth(body, "v1") != 512 {
-		t.Fatal(body.String())
+	leaf := fmt.Sprintf("kernel%d", depth-1)
+	body := m.NamedFunction(leaf + symbolPrefix + "guard_zmm")
+	if body.IsNil() || targetWidth(body, "v1") != 512 || !strings.Contains(body.String(), "call void @wide(") {
+		t.Fatalf("the final wide call was not lowered at its own site:\n%s", m.NamedFunction(leaf).String())
 	}
-}
-
-func TestAVX2GuardExposedInSpecializedBody(t *testing.T) {
-	m := parseModule(t, `
-target triple = "x86_64-unknown-linux-gnu"
-declare i1 @fma() "llgo.cpu.query"="x86.fma"
-declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
-declare <4 x float> @llvm.fma.v4f32(<4 x float>, <4 x float>, <4 x float>)
-define void @root(ptr %p) {
- %f = call i1 @fma()
- br i1 %f, label %first, label %check
-first:
- %x = load volatile <4 x float>, ptr %p
- %y1 = call <4 x float> @llvm.fma.v4f32(<4 x float> %x, <4 x float> %x, <4 x float> %x)
- store <4 x float> %y1, ptr %p
- br label %check
-check:
- %a = call i1 @avx2()
- %enabled = select i1 %f, i1 %a, i1 false
- br i1 %enabled, label %second, label %exit
-second:
- %y = load volatile <4 x i32>, ptr %p
- br label %exit
-exit:
- ret void
-}`)
-	if err := Run(m, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	fma := m.NamedFunction("root.__llgo_fmv_guard_fma")
-	if fma.IsNil() || !strings.Contains(fma.String(), "br i1 %a,") {
-		t.Fatalf("expected a direct AVX2 guard after folding FMA:\n%s", m.String())
-	}
-	before := m.String()
-	if err := Run(m, "v1"); err != nil || m.String() != before {
-		t.Fatalf("second pass changed the specialized body: %v\n%s", err, m.String())
-	}
-}
-
-// A canonical AVX2 caller cannot choose the best body of a multi-feature root.
-func TestAVX2CallerPreservesWiderGuardChoice(t *testing.T) {
-	m := parseModule(t, `
-target triple = "x86_64-unknown-linux-gnu"
-declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
-declare i1 @wide() "llgo.cpu.query"="x86.avx512"
-define void @kernel(ptr %p) {
- %v = load <8 x i32>, ptr %p
- %r = add <8 x i32> %v, %v
- store <8 x i32> %r, ptr %p
- ret void
-}
-define void @root(ptr %p) {
- %a = call i1 @avx2()
- br i1 %a, label %x, label %next
-x:
- call void @kernel(ptr %p)
- br label %next
-next:
- %w = call i1 @wide()
- br i1 %w, label %y, label %done
-y:
- %v = load <16 x i32>, ptr %p
- %r = add <16 x i32> %v, %v
- store <16 x i32> %r, ptr %p
- br label %done
-done:
- ret void
-}
-define <4 x i32> @caller(<4 x i32> %v, ptr %p) {
- %a = call i1 @avx2()
- br i1 %a, label %yes, label %no
-yes:
- %r = add <4 x i32> %v, %v
- call void @root(ptr %p)
- ret <4 x i32> %r
-no:
- ret <4 x i32> %v
-}`)
-	if err := Run(m, "v1"); err != nil {
-		t.Fatal(err)
-	}
-	caller := m.NamedFunction("caller" + variantSuffix)
-	const knownEntry = "root.__llgo_fmv_guard_avx2_entry"
-	if caller.IsNil() || !strings.Contains(caller.String(), "call void @"+knownEntry+"(ptr") {
-		t.Fatalf("AVX2 caller lost its known-feature entry:\n%s", m.String())
-	}
-	mask := featureAVX2 | predicateBits[X86Query("AVX512")]
-	checkEntryCachedGuard(t, m, knownEntry, mask, m.NamedFunction("root"+symbolPrefix+"guard_zmm_avx2"))
-	checkCachedGuard(t, m, mask, m.NamedFunction("root"+symbolPrefix+"guard_zmm"))
 }
