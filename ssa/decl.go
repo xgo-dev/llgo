@@ -348,6 +348,7 @@ type aFunction struct {
 	blks []BasicBlock
 
 	defer_           *aDefer
+	deferInitBlk     BasicBlock
 	recoverToken     Expr
 	pendingLoopCases []loopDeferCase
 	nextDeferID      uintptr
@@ -727,6 +728,12 @@ func (p Function) Block(idx int) BasicBlock {
 // SetRecover sets the recover block for the function.
 func (p Function) SetRecover(blk BasicBlock) {
 	p.recov = blk
+}
+
+// SetDeferInitBlock sets the dominating block where lazy defer state
+// initialization is anchored instead of the function entry block.
+func (p Function) SetDeferInitBlock(blk BasicBlock) {
+	p.deferInitBlk = blk
 }
 
 // -----------------------------------------------------------------------------

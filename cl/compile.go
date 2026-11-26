@@ -234,6 +234,7 @@ type context struct {
 	options              Options
 	recoverSlots         map[*ssa.Alloc]none
 	implicitDeferResults []llssa.Expr
+	skipRunDefers        map[*ssa.BasicBlock]bool
 
 	patches          Patches
 	blkInfos         []blocks.Info
@@ -857,6 +858,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			oldRecvNilDerefChecks := p.recvNilDerefChecks
 			oldLocalityFunction := p.locality.function
 			oldRecoverSlots, oldImplicitDeferResults := p.recoverSlots, p.implicitDeferResults
+			oldSkipRunDefers := p.skipRunDefers
 			oldGCRoots, oldGCClosureRoot := p.gcRoots, p.gcClosureRoot
 			oldSafepointEntry, oldSafepoints := p.safepointEntry, p.safepoints
 			p.fn = fn
@@ -865,6 +867,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			p.callerFrameMark = llssa.Nil
 			p.locality.function = localityFunction{}
 			p.state = state // restore pkgState when compiling funcBody
+			p.skipRunDefers = nil
 			if f.Recover != nil {
 				p.recoverSlots = make(map[*ssa.Alloc]none)
 			} else {
@@ -876,6 +879,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 				p.locality.function = oldLocalityFunction
 				p.recoverSlots = oldRecoverSlots
 				p.implicitDeferResults = oldImplicitDeferResults
+				p.skipRunDefers = oldSkipRunDefers
 				p.gcRoots, p.gcClosureRoot = oldGCRoots, oldGCClosureRoot
 				p.safepointEntry, p.safepoints = oldSafepointEntry, oldSafepoints
 			}()
@@ -919,6 +923,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 				}
 			}
 			p.blkInfos = blocks.Infos(f.Blocks)
+			if !isCgo {
+				p.prepareLazyDeferInit(f)
+			}
 			i := 0
 			for {
 				block := f.Blocks[i]
@@ -2673,6 +2680,9 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		p.checkMethodCallReceiver(b, &v.Call)
 		p.call(b, llssa.Go, &v.Call)
 	case *ssa.RunDefers:
+		if p.skipRunDefers[v.Block()] {
+			return
+		}
 		p.recordPanicLocation(b, p.deferRunPos(v.Pos()))
 		p.emitPCLineLabel(b, p.deferRunPos(v.Pos()))
 		b.RunDefers()
@@ -2827,6 +2837,129 @@ func isBlankFieldStore(addr ssa.Value) bool {
 }
 
 const rangeOverFuncYieldSynthetic = "range-over-func yield"
+
+// prepareLazyDeferInit moves conditional defer-frame setup from the entry block
+// to the nearest common non-loop dominator dom of all defer-producing blocks
+// whenever at least one RunDefers block is unreachable from dom (so fast-path
+// returns bypass ThreadDeferSlot and setjmp). Unreachable RunDefers blocks are
+// recorded in p.skipRunDefers so compileInstr emits nothing for them; because
+// no path from any defer registration can reach those blocks, no defer can be
+// active when they execute.
+func (p *context) prepareLazyDeferInit(f *ssa.Function) {
+	if f == nil || f.Recover == nil || len(f.Blocks) <= 1 || p.functionHasExplicitStackDeferInAnon(f) {
+		return
+	}
+	var deferBlocks, runDeferBlocks []*ssa.BasicBlock
+	for _, blk := range f.Blocks {
+		if blk.Index != 0 && blk.Idom() == nil {
+			continue
+		}
+		hasDefer := false
+		hasRunDefers := false
+		for _, instr := range blk.Instrs {
+			switch v := instr.(type) {
+			case *ssa.Defer:
+				if v.DeferStack == nil {
+					hasDefer = true
+				}
+			case *ssa.Call:
+				if p.rangeFuncCallNeedsDeferDrain(&v.Call) {
+					hasDefer = true
+				} else if bi, ok := v.Call.Value.(*ssa.Builtin); ok && bi.Name() == "ssa:deferstack" {
+					hasDefer = true
+				}
+			case *ssa.RunDefers:
+				hasRunDefers = true
+			}
+		}
+		if hasDefer {
+			deferBlocks = append(deferBlocks, blk)
+		}
+		if hasRunDefers {
+			runDeferBlocks = append(runDeferBlocks, blk)
+		}
+	}
+	if len(deferBlocks) == 0 || len(runDeferBlocks) == 0 {
+		return
+	}
+	dom := deferBlocks[0]
+	for _, blk := range deferBlocks[1:] {
+		dom = nearestCommonDominator(dom, blk)
+	}
+	reachable := make([]bool, len(f.Blocks))
+	queue := make([]*ssa.BasicBlock, 0, len(f.Blocks))
+	for dom != nil && dom.Index != 0 {
+		if p.blkInfos[dom.Index].Kind == llssa.DeferInLoop {
+			dom = dom.Idom()
+			continue
+		}
+		fillReachableBlocks(dom, reachable, queue)
+		needHoist := false
+		for _, rblk := range runDeferBlocks {
+			if reachable[rblk.Index] && !dom.Dominates(rblk) {
+				needHoist = true
+				break
+			}
+		}
+		if !needHoist {
+			break
+		}
+		dom = dom.Idom()
+	}
+	if dom == nil || dom.Index == 0 {
+		return
+	}
+	hasSkipped := false
+	for _, rblk := range runDeferBlocks {
+		if !reachable[rblk.Index] {
+			hasSkipped = true
+			break
+		}
+	}
+	if !hasSkipped {
+		return
+	}
+	p.fn.SetDeferInitBlock(p.fn.Block(dom.Index))
+	for _, rblk := range runDeferBlocks {
+		if !reachable[rblk.Index] {
+			if p.skipRunDefers == nil {
+				p.skipRunDefers = make(map[*ssa.BasicBlock]bool)
+			}
+			p.skipRunDefers[rblk] = true
+		}
+	}
+}
+
+func nearestCommonDominator(a, b *ssa.BasicBlock) *ssa.BasicBlock {
+	for a != nil && b != nil && a != b {
+		if a.Dominates(b) {
+			return a
+		}
+		if b.Dominates(a) {
+			return b
+		}
+		a = a.Idom()
+	}
+	if a == b {
+		return a
+	}
+	return nil
+}
+
+func fillReachableBlocks(start *ssa.BasicBlock, seen []bool, queue []*ssa.BasicBlock) {
+	clear(seen)
+	queue = append(queue[:0], start)
+	seen[start.Index] = true
+	for head := 0; head < len(queue); head++ {
+		cur := queue[head]
+		for _, succ := range cur.Succs {
+			if !seen[succ.Index] {
+				seen[succ.Index] = true
+				queue = append(queue, succ)
+			}
+		}
+	}
+}
 
 func (p *context) rangeFuncCallNeedsDeferDrain(call *ssa.CallCommon) bool {
 	for _, arg := range call.Args {
