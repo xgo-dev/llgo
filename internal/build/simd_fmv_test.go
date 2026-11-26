@@ -218,3 +218,35 @@ func simdCodegenVariants(t *testing.T, levels []string, pkgs []*aPackage, check 
 		})
 	}
 }
+
+// Exercise the real archsimd lowerings as well as the version planner. Adding
+// an independent extension must not duplicate the kernel for each subset.
+func TestSIMDIndependentInstructionFamilies(t *testing.T) {
+	dir, err := filepath.Abs("testdata/fmv-independent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := NewDefaultConf(ModeGen)
+	conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = "linux", "amd64", "v1", "simd"
+	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pkgs[0].LPkg.Prog.Dispose()
+	mod := pkgs[0].LPkg.Module()
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	var bodies int
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if strings.HasPrefix(fn.Name(), "main.kernel.__llgo_fmv_guard_") {
+			bodies++
+		}
+	}
+	// Of the common ISA levels, only FMA is used behind its own guard.
+	// At most three register widths can pair with its two states.
+	if bodies > 6 || mod.NamedFunction("main.kernel.__llgo_fmv_guard_fma").IsNil() ||
+		mod.NamedFunction("main.kernel.__llgo_fmv_guard_zmm").IsNil() {
+		t.Fatalf("expected FMA and ZMM implementations within six bodies, got %d", bodies)
+	}
+}
