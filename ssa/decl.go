@@ -80,10 +80,12 @@ type aGlobal struct {
 type Global = *aGlobal
 
 const (
-	moduleZeroName              = "__llgo.moduleZeroSizedAlloc$"
-	moduleMapZeroName           = "__llgo.map.zero"
-	directClosureNilEnvName     = "__llgo.directClosureNilEnv$"
-	runtimeZeroSizedAllocSymbol = "zeroSizedAlloc"
+	moduleZeroName               = "__llgo.moduleZeroSizedAlloc$"
+	moduleMapZeroName            = "__llgo.map.zero"
+	directClosureNilEnvName      = "__llgo.directClosureNilEnv$"
+	runtimeZeroSizedAllocSymbol  = "zeroSizedAlloc"
+	runtimeMemProfileShardsSym   = PkgRuntime + ".memProfileShardsData"
+	runtimeMemProfileShardsAlign = 256
 )
 
 func (p Package) directClosureNilEnv() Expr {
@@ -249,6 +251,9 @@ func (p Package) doNewVarEx(name string, t Type, threadLocal bool) Global {
 	gbl := llvm.AddGlobal(p.mod, typ, name)
 	gbl.SetThreadLocal(threadLocal)
 	alignment := int(p.Prog.AlignOf(elem))
+	if !threadLocal && name == runtimeMemProfileShardsSym && alignment < runtimeMemProfileShardsAlign {
+		alignment = runtimeMemProfileShardsAlign
+	}
 	gbl.SetAlignment(alignment)
 	ret := &aGlobal{Expr: Expr{gbl, t}, prog: p.Prog}
 	p.vars[name] = ret

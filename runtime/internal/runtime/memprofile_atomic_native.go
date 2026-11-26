@@ -23,7 +23,15 @@ type memProfileShard struct {
 	padding [5]uint64
 }
 
+// memProfileShardsData is emitted with 256-byte base alignment (see
+// ssa/decl.go) to match memProfileShard's 256-byte stride, ensuring adjacent
+// shards never share a 64-byte or 128-byte cache line.
 var memProfileShardsData [memProfileShards]memProfileShard
+
+// memProfileShardsBaseAddr exposes the linked base address for native layout tests.
+func memProfileShardsBaseAddr() uintptr {
+	return uintptr(unsafe.Pointer(&memProfileShardsData))
+}
 
 func memProfileBucketIndex(size uintptr) int {
 	if size <= 16 {

@@ -24,7 +24,17 @@ func nativeProfileAddBucket(int)
 //go:linkname nativeProfileLoadBucket github.com/xgo-dev/llgo/runtime/internal/runtime.memProfileLoadBucket
 func nativeProfileLoadBucket(int) uint64
 
+//go:linkname nativeProfileShardsBaseAddr github.com/xgo-dev/llgo/runtime/internal/runtime.memProfileShardsBaseAddr
+func nativeProfileShardsBaseAddr() uintptr
+
 const nativeProfileTestBucket = 26 // 1 GiB bucket; unaffected by ordinary test allocations.
+
+func TestNativeProfileShardBaseAlignment(t *testing.T) {
+	base := nativeProfileShardsBaseAddr()
+	if base == 0 || base%128 != 0 || base%256 != 0 {
+		t.Fatalf("memProfileShardsData base address %#x is not aligned to 256-byte shard stride / 128-byte cache lines", base)
+	}
+}
 
 func TestNativeProfileSizeClasses(t *testing.T) {
 	expected := func(size uintptr) (int, uintptr) {
