@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/directive"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -50,9 +51,13 @@ func configureWasmRuntimeFree(ctx *context) {
 		_, locality, ok, err := ctx.prog.ResolveLocalityFor(global.Pkg.Pkg, name)
 		return err == nil && (!ok || locality.Locality == llssa.LocalityNone)
 	}
+	compilerVariable := func(global *ssa.Global) bool {
+		obj, _ := global.Object().(*types.Var)
+		return ctx.prog.VariableDirective(obj).Kind != directive.OrdinaryVariable
+	}
 	// Check reachable globals even inside the trusted runtime tree. Most
 	// programs also fail this proof without needing any filesystem checks.
-	if !wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe) {
+	if !wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe, compilerVariable) {
 		return
 	}
 	// Foreign objects and exported entries can hide calls back into Go.
@@ -135,7 +140,7 @@ func enableWasmRuntimeFree(ctx *context) {
 	}
 }
 
-func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool) bool {
+func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool, compilerVariable func(*ssa.Global) bool) bool {
 	if len(roots) == 0 {
 		return false
 	}
@@ -158,6 +163,11 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 				case *ssa.DebugRef, *ssa.Return, *ssa.Jump, *ssa.If, *ssa.Phi:
 				case *ssa.UnOp:
 					if instr.Op == token.MUL {
+						// FILE is a static pointer and LINE a scalar constant, not storage
+						// requiring runtime initialization or a nil-checking load.
+						if global, ok := instr.X.(*ssa.Global); ok && compilerVariable != nil && compilerVariable(global) {
+							continue
+						}
 						if global, ok := instr.X.(*ssa.Global); !ok || !globalSafe(global) || !runtimeFreeScalar(instr.Type()) {
 							return false
 						}
