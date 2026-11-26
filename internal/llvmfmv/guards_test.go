@@ -48,6 +48,9 @@ func TestGuardedVectorConjunction(t *testing.T) {
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err)
 	}
+	// Raw width is a calling-convention requirement only. Disabling all Go
+	// features still selects the baseline for this pointer-only kernel.
+	checkEntryCachedGuard(t, m, "unrelated", machineZMM, m.NamedFunction("unrelated"+symbolPrefix+"guard_base"))
 	both := m.NamedFunction("root.__llgo_fmv_guard_zmm_fma")
 	if both.IsNil() || !strings.Contains(stringAttribute(both, "target-features"), "+fma") || !strings.Contains(stringAttribute(both, "target-features"), "+avx512f") {
 		t.Fatal("missing specialization for the conjunction")

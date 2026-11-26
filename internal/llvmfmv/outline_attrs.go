@@ -5,7 +5,7 @@ package llvmfmv
 
 // The Go binding exposes individual call-site attribute lookups, but has
 // no enumerator. Use LLVM's stable C API so type and string attributes,
-// including target-specific ABI attributes, survive an invoke-to-call copy.
+// including pointer alignment, survive a copy into a private intrinsic leaf.
 extern unsigned LLVMGetNumOperandBundles(void *);
 extern unsigned LLVMGetCallSiteAttributeCount(void *, unsigned);
 extern void LLVMGetCallSiteAttributes(void *, unsigned, void **);

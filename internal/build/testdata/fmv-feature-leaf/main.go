@@ -11,6 +11,11 @@ func shaKernel(p *[4]uint32) {
 }
 
 //go:noinline
+func roundFixed512(x archsimd.Float32x16) archsimd.Float32x16 {
+	return x.RoundScaled(2)
+}
+
+//go:noinline
 func fmaKernel(p *[4]float32) {
 	if archsimd.X86.FMA() {
 		x := archsimd.LoadFloat32x4Array(p)

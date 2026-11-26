@@ -1,6 +1,7 @@
 package runtime
 
-// CPUFeatures is published by internal/cpu after applying GODEBUG overrides.
+// CPUFeatures records effective Go predicates and the available vector
+// register widths. Only the predicates are subject to GODEBUG overrides.
 // It is immutable after package initialization. Generated FMV resolvers use a
 // baseline without caching while the initialized bit is still clear.
 var CPUFeatures uint64

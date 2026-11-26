@@ -5,6 +5,7 @@ package build
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -282,8 +283,17 @@ func TestSIMDLeafOwnsInstructionFeature(t *testing.T) {
 				}
 			}
 			simdCodegenVariants(t, []string{"O2"}, pkgs, func(t *testing.T, _ llvm.Module, asm string) {
-				if !strings.Contains(asm, "\tsha256rnds2") {
-					t.Fatal("missing SHA instruction in optimized code")
+				// A fixed ZMM signature supplies the register width for the
+				// operation. The caller already passes its operand in ZMM0.
+				round := simdInstructionAssembly(t, asm, "main.roundFixed512")
+				if !regexp.MustCompile(`(?m)^\s*vrndscaleps\s+\$32, %zmm[0-9]+, %zmm[0-9]+$`).MatchString(round) {
+					t.Errorf("expected register-to-register scaled rounding in the Go function:\n%s", round)
+				}
+				// SHA stays in a leaf on the v1 baseline. Its vector inputs
+				// and result fit in XMM registers on both SysV and Win64.
+				sha := simdInstructionAssembly(t, asm, "__llgo_simd_sha256rnds2_0")
+				if !strings.Contains(sha, "\tsha256rnds2") || regexp.MustCompile(`(?m)^\s*[a-z][^\n]*(?:%xmm[^\n]*\(|\([^\n]*%xmm)`).MatchString(sha) {
+					t.Errorf("expected the SHA instruction to operate on register arguments:\n%s", sha)
 				}
 				if goos == "linux" && !strings.Contains(asm, "\tvfmadd") {
 					t.Fatal("missing FMA instruction in optimized code")
@@ -291,4 +301,15 @@ func TestSIMDLeafOwnsInstructionFeature(t *testing.T) {
 			})
 		})
 	}
+}
+
+func simdInstructionAssembly(t *testing.T, asm, name string) string {
+	t.Helper()
+	// Win64 vectorcall appends the byte count to the symbol.
+	label := regexp.MustCompile(`(?m)^"?` + regexp.QuoteMeta(name) + `(?:@@[0-9]+)?"?:.*$`).FindStringIndex(asm)
+	if label == nil {
+		t.Fatalf("missing assembly for %s", name)
+	}
+	body, _, _ := strings.Cut(asm[label[1]:], "\n\n")
+	return body
 }

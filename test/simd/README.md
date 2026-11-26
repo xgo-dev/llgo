@@ -129,11 +129,11 @@ argument rules still apply.
 A Go guard such as `if archsimd.X86.AVX512()` skips the guarded call when
 the effective query is false. If the program reaches an unconditional wide
 call, its caller must have hardware and OS support for the register width.
-For example, with `GOAMD64=v1` and `GODEBUG=cpu.all=off`, a baseline caller
-can still pass a value in ZMM registers on a machine with AVX-512F and OS
-support for ZMM state. A private adapter marshals the value at the call site.
-On a machine without that support, executing the transfer can fault. A scalar
-branch that skips it can run on the lower baseline. Each explicit SIMD
+The runtime records the OS-enabled YMM and ZMM widths before applying Go's
+feature overrides. For example, with `GOAMD64=v1` and `GODEBUG=cpu.all=off`,
+a caller can still use the fixed ZMM ABI on an AVX-512F machine with ZMM
+state enabled. On a narrower machine the caller can take its scalar paths.
+Reaching a call that requires an unavailable register width faults at that site. Each explicit SIMD
 operation in the callee retains its own feature requirements.
 `TestSIMD512FixedRegisterCall` exercises both branches. The Sapphire Rapids
 SDE run also checks all 16 transferred lanes with Go's optional CPU features
@@ -179,10 +179,10 @@ The AMD64 implementation includes compression and expansion, vector and scalar
 funnel shifts, truth tables, widening products, cryptographic rounds and scaled
 floating-point operations. Before calling a private x86 instruction leaf, the
 caller checks the effective CPU features published by the runtime. A missing
-feature takes the recoverable panic path. On SysV amd64, 128-bit operands and
-results cross this private boundary in XMM registers. Win64 uses indirect
-storage for these leaves, as do 256- and 512-bit leaves on both platforms.
-Go functions use the platform ABI for their declared signatures.
+feature takes the recoverable panic path. The instruction function takes and returns vectors
+by value using XMM, YMM or ZMM registers, including on Win64. LLVM can inline
+it into a caller with compatible target features. Go functions use the
+platform ABI for their declared signatures.
 
 For SHA-1 rounds and scaled rounding, a constant selector produces a leaf
 with the immediate encoded in its instruction. A runtime selector uses a
@@ -335,10 +335,9 @@ the original Go display name. These are FMV-specific identity rules; LLGo's
 general runtime inline-frame representation remains separate from GoALLC's
 GoObj inline-tree format.
 
-A private adapter that calls a Go function preserves the frame chain back
-to the original call site. Go's stack walker skips the adapter when counting
-callers, so two calls to the same callback from different source lines keep
-their distinct line numbers under `runtime.CallersFrames`.
+The selected body calls wide Go functions and function values at their source
+call sites. Two calls to the same callback from different lines retain their
+distinct caller PCs under `runtime.CallersFrames`.
 
 Package archives contain a dedicated metadata object with post-backend function
 identities, wrapper flags, and PC-line records. Both fresh and cached archives
@@ -469,7 +468,7 @@ commands above and Wasmer 7.5.0.
 
 On native amd64, compare predictable and deterministic random selectors with
 the same binary. The noinline kernel retains dynamic selectors; its AVX2 guard
-exercises FMV, while `cpu.all=off` selects the baseline implementation.
+exercises FMV. With `cpu.all=off`, the AVX2 query is false.
 
 ```sh
 GOAMD64=v1 GOEXPERIMENT=simd llgo test -O2 -c -o /tmp/simd-half.test ./test/simd
@@ -532,9 +531,10 @@ keeps the Go guard and runtime safety check. These checks alone create no
 SHA version of the caller. A guarded FMA lowered to an instruction in the
 caller can still specialize that function.
 
-A scalar function can isolate a wide call in the same way. Transfer into the
-leaf occurs at the original operation, so scalar exits, faults and observable
-effects keep their order.
+A function with a scalar signature can select a body with enough register
+width for a wide call. Its source guards and scalar exits keep their original
+order. An outlined instruction also uses a register signature compatible
+with its calling body.
 
 Guard recognition uses direct official CPU queries, including negated early
 exits. Saved booleans and predicate-returning helpers retain ordinary Go

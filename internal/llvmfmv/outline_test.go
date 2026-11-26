@@ -7,7 +7,7 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func TestOutlineWideInvoke(t *testing.T) {
+func TestFixedWidthInvoke(t *testing.T) {
 	const ir = `target triple = "x86_64-pc-windows-msvc"
 declare i32 @personality(...)
 define i32 @caller(ptr %target, ptr %data, i1 %take) personality ptr @personality {
@@ -25,25 +25,20 @@ unwind:
  resume {ptr,i32} %ex
 }`
 	m := parseModule(t, ir)
-	abi := newWideABI(m)
-	defer abi.data.Dispose()
-	caller := m.NamedFunction("caller")
-	abi.outlineBody(caller, "v1", nil, 0)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err, m.String())
 	}
-	bridge := m.NamedFunction("caller" + symbolPrefix + "call")
-	if bridge.IsNil() || targetWidth(bridge, "v1") != 512 || abi.signature(bridge.GlobalValueType()) != 0 {
-		t.Fatal(m.String())
+	narrow := m.NamedFunction("caller" + symbolPrefix + "guard_base").String()
+	if !strings.Contains(narrow, "@llvm.trap()") || strings.Contains(narrow, "invoke ") || strings.Contains(narrow, "alloca ") {
+		t.Fatal(narrow)
 	}
-	for _, s := range []string{"call x86_vectorcallcc <16 x i32> %", "ptr byval(i32) align 4", "i16 signext"} {
-		if !strings.Contains(bridge.String(), s) {
-			t.Fatalf("lost %q:\n%s", s, bridge.String())
-		}
-	}
-	for _, s := range []string{"invoke void @caller.", "unwind label %unwind", "%fmv.return ]"} {
-		if !strings.Contains(caller.String(), s) {
-			t.Fatalf("lost %q:\n%s", s, caller.String())
+	wide := m.NamedFunction("caller" + symbolPrefix + "guard_zmm").String()
+	for _, s := range []string{"invoke x86_vectorcallcc <16 x i32> %", "ptr byval(i32) align 4", "i16 signext", "unwind label %unwind"} {
+		if !strings.Contains(wide, s) {
+			t.Fatalf("lost %q:\n%s", s, wide)
 		}
 	}
 }
@@ -68,16 +63,23 @@ out: ret void
 	defer abi.data.Dispose()
 	bit := predicateBits[X86Query("AVX512VBMI2")]
 	caller := m.NamedFunction("caller")
+	// At baseline the generic intrinsic remains available for scalar lowering.
+	queries := map[llvm.Value]uint64{m.NamedFunction("q"): bit}
+	abi.outlineBody(caller, "v1", queries, 0)
+	if !strings.Contains(caller.String(), "call <64 x i8> @llvm.experimental.vector.compress") || strings.Contains(caller.String(), "alloca") {
+		t.Fatal(caller.String())
+	}
+	enableWidth(caller, 512)
 	abi.outlineBody(caller, "v1", map[llvm.Value]uint64{m.NamedFunction("q"): bit}, 0)
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err, m.String())
 	}
 	leaf := m.NamedFunction(symbolPrefix + "op_experimental.vector.compress.v64i8")
-	if leaf.IsNil() || !strings.Contains(stringAttribute(leaf, "target-features"), "+avx512vbmi2") || abi.signature(leaf.GlobalValueType()) != 0 {
+	if leaf.IsNil() || !strings.Contains(stringAttribute(leaf, "target-features"), "+avx512vbmi2") || abi.signature(leaf.GlobalValueType()) != 512 {
 		t.Fatal(m.String())
 	}
 	ts := leaf.GlobalValueType().ParamTypes()
-	if ts[2] != m.Context().Int64Type() || !strings.Contains(leaf.String(), " to <64 x i1>") {
+	if ts[1] != m.Context().Int64Type() || !strings.Contains(leaf.String(), " to <64 x i1>") {
 		t.Fatal(leaf.String())
 	}
 	for _, call := range []string{"@q(", "@" + leaf.Name() + "("} {
@@ -119,7 +121,7 @@ func TestOutlineExpandLoadKeepsPointerAlignment(t *testing.T) {
 	m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
 declare i1 @q()
 declare <64 x i8> @llvm.masked.expandload.v64i8(ptr,<64 x i1>,<64 x i8>)
-define void @caller(ptr %p, ptr %out, i64 %bits) {
+define void @caller(ptr %p, ptr %out, i64 %bits) "target-features"="+avx512f" {
 entry:
  %g=call i1 @q()
  br i1 %g,label %yes,label %outblk
@@ -165,7 +167,7 @@ out: ret void
 	caller := m.NamedFunction("caller")
 	bb := llvm.NextBasicBlock(caller.FirstBasicBlock())
 	call := llvm.NextInstruction(bb.FirstInstruction())
-	a.outlineCall(call, 0, 0, predicateBits[X86Query("AVX512")])
+	a.outlineIntrinsic(call, predicateBits[X86Query("AVX512")])
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err, m.String())
 	}
@@ -175,40 +177,45 @@ out: ret void
 	}
 }
 
-func TestOutlineBundlePreflight(t *testing.T) {
+func TestWideCallRetainsOperandBundles(t *testing.T) {
 	m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
 declare void @wide(<16 x i32>)
-declare void @scalar()
-define void @bad() {
+define void @caller() {
  call void @wide(<16 x i32> zeroinitializer) [ "deopt"(i32 7) ]
  ret void
-}
-define void @emptyBundle() {
- call void @wide(<16 x i32> zeroinitializer) [ "deopt"() ]
- ret void
-}
-define void @ok() {
- call void @scalar() [ "deopt"(i32 7) ]
- call void @wide(<16 x i32> zeroinitializer)
- ret void
 }`)
-	a := newWideABI(m)
-	defer a.data.Dispose()
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err, m.String())
+	}
+	wide := m.NamedFunction("caller" + symbolPrefix + "guard_zmm")
+	if !strings.Contains(wide.String(), `[ "deopt"(i32 7) ]`) {
+		t.Fatal(wide.String())
+	}
+}
+
+func TestOutlineBundlePreflight(t *testing.T) {
+	m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+declare i1 @q() "llgo.cpu.query"="x86.fma"
+declare <16 x float> @llvm.fma.v16f32(<16 x float>, <16 x float>, <16 x float>)
+define void @caller(ptr %p) {
+ %g = call i1 @q()
+ br i1 %g, label %yes, label %out
+yes:
+ %x = load <16 x float>, ptr %p
+ %v = call <16 x float> @llvm.fma.v16f32(<16 x float> %x,<16 x float> %x,<16 x float> %x) [ "deopt"() ]
+ store <16 x float> %v, ptr %p
+ br label %out
+out: ret void
+}`)
 	before := m.String()
-	if err := a.validateOutlines(m.NamedFunction("bad"), "v1", nil, 0); err == nil || !strings.Contains(err.Error(), "operand bundle") {
-		t.Fatal(err)
-	}
-	if err := a.validateOutlines(m.NamedFunction("emptyBundle"), "v1", nil, 0); err == nil || !strings.Contains(err.Error(), "operand bundle") {
-		t.Fatal(err)
-	}
-	if err := a.validateOutlines(m.NamedFunction("ok"), "v1", nil, 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := a.validateOutlines(m.NamedFunction("bad"), "v4", nil, 0); err != nil {
-		t.Fatal(err)
+	if err := Run(m, "v1"); err == nil || !strings.Contains(err.Error(), "operand bundle") {
+		t.Fatalf("expected preflight to reject bundled intrinsic in the ZMM body: %v", err)
 	}
 	if m.String() != before {
-		t.Fatal("preflight mutated bundled call")
+		t.Fatal("preflight mutated the input module")
 	}
 }
 
@@ -225,8 +232,8 @@ define <4 x float> @caller(<4 x float> %x) {
 	first := m.NamedFunction("caller").FirstBasicBlock().FirstInstruction()
 	second := llvm.NextInstruction(first)
 	req := predicateBits[X86Query("FMA")]
-	a.outlineCall(first, 0, 0, req)
-	a.outlineCall(second, 0, 0, req)
+	a.outlineIntrinsic(first, req)
+	a.outlineIntrinsic(second, req)
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err, m.String())
 	}

@@ -17,6 +17,9 @@ func storeFixedSIMD512(dst *archsimd.Int32x16, x archsimd.Int32x16) {
 //go:noinline
 func conditionalFixedSIMD512(take bool, dst, src *archsimd.Int32x16) {
 	if take {
+		if src == nil {
+			panic("missing fixed-call input")
+		}
 		storeFixedSIMD512(dst, *src)
 	}
 }
@@ -24,6 +27,14 @@ func conditionalFixedSIMD512(take bool, dst, src *archsimd.Int32x16) {
 func TestSIMD512FixedRegisterCall(t *testing.T) {
 	// This path must work even on a machine with no ZMM register support.
 	conditionalFixedSIMD512(false, nil, nil)
+	t.Run("panic before the transfer", func(t *testing.T) {
+		defer func() {
+			if got := recover(); got != "missing fixed-call input" {
+				t.Fatalf("recovered %v", got)
+			}
+		}()
+		conditionalFixedSIMD512(true, nil, nil)
+	})
 	t.Run("taken", func(t *testing.T) {
 		available := archsimd.X86.AVX512()
 		if os.Getenv("LLGO_TEST_MASKED_ZMM") == "1" {

@@ -15,7 +15,7 @@ type profile struct {
 
 type localVersion struct {
 	profile
-	witness uint64 // any one of these effective queries guarantees the width
+	witness uint64 // any bit guaranteeing this implementation's register width
 }
 
 type functionPlan struct {
@@ -76,7 +76,7 @@ func planVersions(a *wideABI, baseline string) error {
 		if len(plan.versions) == 0 && !plan.outline {
 			continue
 		}
-		if err := a.validateOutlines(view, baseline, queries, machineFeatures(fn, baseline)); err != nil {
+		if err := a.validateOutlines(view, queries, machineFeatures(fn, baseline)); err != nil {
 			return err
 		}
 		plans = append(plans, plan)

@@ -170,7 +170,7 @@ func TestCPUInitializationTargetHooks(t *testing.T) {
 			}
 			initialized := false
 			for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-				if strings.HasPrefix(fn.Name(), "internal/cpu.init") && strings.Contains(fn.String(), "internal/cpu.Initialize") {
+				if strings.HasPrefix(fn.Name(), "internal/cpu.init") && strings.Contains(fn.String(), "internal/cpu.llgoInitializeCPU") {
 					initialized = strings.Contains(fn.String(), "CPUEnvironment")
 				}
 			}
@@ -185,7 +185,7 @@ func TestCPUInitializationTargetHooks(t *testing.T) {
 				bridge = "internal/cpu.isProcessorFeaturePresent"
 			case "linux":
 				if target.arch == "arm64" {
-					if !strings.Contains(mod.NamedFunction("internal/cpu.llgoPrepareCPU").String(), "@getauxval") {
+					if !strings.Contains(mod.NamedFunction("internal/cpu.llgoInitializeCPU").String(), "@getauxval") {
 						t.Fatal("missing AT_HWCAP initialization")
 					}
 				}

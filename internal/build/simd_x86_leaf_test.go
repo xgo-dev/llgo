@@ -17,7 +17,8 @@ func fixed(o,a *[4]float32){archsimd.LoadFloat32x4Array(a).RoundScaled(18).Store
 func dynamic(o,a *[4]float32,k uint8){archsimd.LoadFloat32x4Array(a).RoundScaled(k).StoreArray(o)}
 func sha(o,a *[4]uint32){x:=archsimd.LoadUint32x4Array(a);x.SHA1FourRounds(7,x).StoreArray(o)}
 func shaDynamic(o,a *[4]uint32,k uint8){x:=archsimd.LoadUint32x4Array(a);x.SHA1FourRounds(k,x).StoreArray(o)}
-func wide(o,a *[16]float32){archsimd.LoadFloat32x16Array(a).RoundScaled(2).StoreArray(o)}
+func wide256(x archsimd.Float32x8) archsimd.Float32x8{return x.RoundScaled(2)}
+func wide512(x archsimd.Float32x16) archsimd.Float32x16{return x.RoundScaled(2)}
 func main(){}
 `
 	dir := t.TempDir()
@@ -40,13 +41,14 @@ func main(){}
 				fn, sym, immediate string
 				mask               uint64
 				cases              int
-				wide               bool
+				lanes              int
 			}{
-				{"fixed", "avx512.mask.rndscale.ps.128_0_imm2", "i32 32,", 256, 1, false},
-				{"dynamic", "avx512.mask.rndscale.ps.128_0", "", 256, 16, false},
-				{"sha", "sha1rnds4_0_imm3", "i8 3)", 128, 1, false},
-				{"shaDynamic", "sha1rnds4_0", "", 128, 4, false},
-				{"wide.__llgo_fmv_guard_base", "avx512.mask.rndscale.ps.512_0_imm2", "i32 32,", 256, 1, true},
+				{"fixed", "avx512.mask.rndscale.ps.128_0_imm2", "i32 32,", 256, 1, 4},
+				{"dynamic", "avx512.mask.rndscale.ps.128_0", "", 256, 16, 4},
+				{"sha", "sha1rnds4_0_imm3", "i8 3)", 128, 1, 4},
+				{"shaDynamic", "sha1rnds4_0", "", 128, 4, 4},
+				{"wide256", "avx512.mask.rndscale.ps.256_0_imm2", "i32 32,", 256, 1, 8},
+				{"wide512", "avx512.mask.rndscale.ps.512_0_imm2", "i32 32,", 256, 1, 16},
 			} {
 				name := "__llgo_simd_" + tc.sym
 				leaf := m.NamedFunction(name)
@@ -62,17 +64,22 @@ func main(){}
 					t.Fatalf("wrong immediate encoding in %s", ir)
 				}
 				ft := leaf.GlobalValueType()
-				if tc.wide || osname == "windows" {
-					if ft.ReturnType().TypeKind() != llvm.VoidTypeKind {
-						t.Fatalf("expected a caller-owned result in %s", ir)
+				if ft.ReturnType().TypeKind() != llvm.VectorTypeKind || ft.ReturnType().VectorSize() != tc.lanes {
+					t.Fatalf("wrong vector result in %s", ir)
+				}
+				for _, param := range ft.ParamTypes() {
+					if param != ft.ReturnType() && !(tc.cases > 1 && param.TypeKind() == llvm.IntegerTypeKind) {
+						t.Fatalf("unexpected vector carrier in %s", ir)
 					}
-					for _, p := range ft.ParamTypes() {
-						if p.TypeKind() != llvm.PointerTypeKind && !(tc.cases > 1 && p.TypeKind() == llvm.IntegerTypeKind) {
-							t.Fatal(ir)
-						}
+				}
+				if (osname == "windows") != strings.Contains(ir, "x86_vectorcallcc") {
+					t.Fatalf("wrong vector calling convention on %s: %s", osname, ir)
+				}
+				for use := leaf.FirstUse(); !use.IsNil(); use = use.NextUse() {
+					call := use.User()
+					if call.IsACallInst().IsNil() || call.InstructionCallConv() != leaf.FunctionCallConv() {
+						t.Fatalf("call does not match the vector leaf ABI: %s", call.String())
 					}
-				} else if ft.ReturnType().TypeKind() != llvm.VectorTypeKind || strings.Contains(ir, "ptr ") {
-					t.Fatal(ir)
 				}
 			}
 			simdCodegenVariants(t, []string{"O0", "O2"}, pkgs[:1], func(t *testing.T, mod llvm.Module, asm string) {

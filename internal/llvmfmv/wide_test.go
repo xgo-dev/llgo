@@ -30,6 +30,10 @@ scalar:
 		suffix string
 	}{
 		{0, "guard_base"},
+		{machineYMM, "guard_ymm"},
+		{machineZMM, "guard_zmm"},
+		{machineYMM | machineZMM, "guard_zmm"},
+		{machineZMM | predicateBits[X86Query("FMA")], "guard_zmm"},
 		{featureAVX, "guard_ymm"},
 		{featureAVX2, "guard_ymm"},
 		{predicateBits[X86Query("FMA")], "guard_ymm"},
@@ -87,6 +91,7 @@ exit:
 		{"vbmi2", bundle, "guard_zmm"},
 		{"vbmi2", 0, "guard_base"},
 		{"opaque", ext, "guard_zmm"},
+		{"opaque", machineZMM, "guard_zmm"},
 		{"opaque", 0, "guard_base"},
 		{"opaque", bundle, "guard_zmm"},
 	} {
@@ -107,11 +112,11 @@ exit:
 		}
 		switch tc.suffix {
 		case "guard_base":
-			if strings.Contains(body.String(), "@llvm.trap(") {
+			if !strings.Contains(body.String(), "@llvm.trap(") || strings.Contains(body.String(), "alloca ") {
 				t.Fatal(body.String())
 			}
 		case "guard_zmm":
-			if !strings.Contains(body.String(), "call void @wide(") {
+			if !strings.Contains(body.String(), "call void @wide(") || strings.Contains(body.String(), "alloca ") {
 				t.Fatal(body.String())
 			}
 		}
@@ -192,8 +197,8 @@ define void @helper(ptr %p) {
 		t.Fatal("missing native wide call from helper")
 	}
 	narrow := m.NamedFunction("helper" + symbolPrefix + "guard_base")
-	if narrow.IsNil() || strings.Contains(narrow.String(), "@llvm.trap") || strings.Contains(narrow.String(), "call void @consume(") {
-		t.Fatal("unconditional wide ABI call must cross a local target boundary in the narrow implementation")
+	if narrow.IsNil() || !strings.Contains(narrow.String(), "@llvm.trap") || strings.Contains(narrow.String(), "call void @consume(") {
+		t.Fatal("a machine without the register width must fault at the wide call")
 	}
 	checkEntryCachedGuard(t, m, "helper", 0, narrow)
 }

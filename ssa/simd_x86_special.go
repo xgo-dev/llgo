@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
-	intllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llgo/internal/llvmfmv"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -71,7 +71,10 @@ func (ins x86SIMDInstruction) encoding(width int, single bool) (name, features s
 	if single {
 		precision = ".ps"
 	}
-	features = "+avx512f,+avx512vl"
+	features = "+avx512f"
+	if width < 512 {
+		features += ",+avx512vl"
+	}
 	if ins.family == x86Reciprocal {
 		if single && width == 128 {
 			return "sse." + ins.name + ".ps", "+sse", 4
@@ -99,52 +102,36 @@ func (ins x86SIMDInstruction) selectorCases() int {
 	return 0
 }
 
-// XMM-sized inputs and results use the same register class on both sides of
-// the feature check. Keep wider values in caller-owned storage so the leaf
-// never depends on agreement about optional YMM or ZMM call carriers.
+// Keep the vector signature visible to FMV so the calling body and the
+// instruction use the same register width. LLVM may inline the instruction
+// when the body already has its target features.
 func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 	ins := x86SIMDInstructions[op]
 	width := int(b.Prog.td.TypeSizeInBits(result.ll))
 	name, features, required := ins.encoding(width, result.ll.ElementType().TypeKind() == llvm.FloatTypeKind)
 	b.requireX86SIMD(required)
 	ctx := b.Prog.ctx
-	ptr := b.Prog.VoidPtr().ll
 	mod := b.Pkg.Module()
 	intrinsic := mod.IntrinsicDeclaration(llvm.LookupIntrinsicID("llvm.x86."+name), nil)
 	it := intrinsic.GlobalValueType()
-	// Win64 passes XMM inputs indirectly under its ordinary calling convention.
-	registers := width == 128 && !intllvm.IsWindowsTarget(mod.Target())
-	ret := ctx.VoidType()
+	ret := it.ReturnType()
 	var operands []llvm.Value
 	var params []llvm.Type
-	if registers {
-		ret = it.ReturnType()
-	} else {
-		operands = append(operands, llvm.CreateAlloca(b.Func.entryAllocaBuilder(), result.ll))
-		params = append(params, ptr)
-	}
 	cases := ins.selectorCases()
 	fixed := -1
 	symbol := fmt.Sprintf("__llgo_simd_%s_%d", name, ins.mode)
 	for _, arg := range args {
-		switch {
-		case arg.ll.TypeKind() != llvm.VectorTypeKind:
-			if k := arg.impl.IsAConstantInt(); cases != 0 && !k.IsNil() {
-				fixed = int(k.ZExtValue() & uint64(cases-1))
-				symbol += "_imm" + strconv.Itoa(fixed)
-				continue
-			}
-			operands = append(operands, arg.impl)
-			params = append(params, arg.ll)
-		case registers:
-			operands = append(operands, b.impl.CreateBitCast(arg.impl, ret, ""))
-			params = append(params, ret)
-		default:
-			storage := llvm.CreateAlloca(b.Func.entryAllocaBuilder(), arg.ll)
-			b.impl.CreateStore(arg.impl, storage)
-			operands = append(operands, storage)
-			params = append(params, ptr)
+		v := arg.impl
+		if arg.ll.TypeKind() == llvm.VectorTypeKind {
+			// The AES and GFNI intrinsics choose their own vector lane type.
+			v = b.impl.CreateBitCast(v, ret, "")
+		} else if k := v.IsAConstantInt(); cases != 0 && !k.IsNil() {
+			fixed = int(k.ZExtValue() & uint64(cases-1))
+			symbol += "_imm" + strconv.Itoa(fixed)
+			continue
 		}
+		operands = append(operands, v)
+		params = append(params, v.Type())
 	}
 	ft := llvm.FunctionType(ret, params, false)
 	leaf := mod.NamedFunction(symbol)
@@ -152,27 +139,17 @@ func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 		leaf = llvm.AddFunction(mod, symbol, ft)
 		leaf.SetLinkage(llvm.InternalLinkage)
 		leaf.AddFunctionAttr(ctx.CreateStringAttribute("target-features", features))
-		leaf.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
+		llvmfmv.SetX86VectorCallConvention(mod, leaf)
 		builder := ctx.NewBuilder()
 		defer builder.Dispose()
 		builder.SetInsertPointAtEnd(ctx.AddBasicBlock(leaf, "entry"))
 		var vectors []llvm.Value
 		var immediate llvm.Value
-		first := 0
-		if !registers {
-			first = 1
-		}
-		for i := first; i < len(params); i++ {
-			param := leaf.Param(i)
-			switch params[i].TypeKind() {
-			case llvm.PointerTypeKind:
-				v := builder.CreateLoad(it.ReturnType(), param, "")
-				v.SetAlignment(1)
-				vectors = append(vectors, v)
-			case llvm.VectorTypeKind:
-				vectors = append(vectors, param)
-			default:
-				immediate = param
+		for i, t := range params {
+			if t.TypeKind() == llvm.VectorTypeKind {
+				vectors = append(vectors, leaf.Param(i))
+			} else {
+				immediate = leaf.Param(i)
 			}
 		}
 		emit := func(k int) {
@@ -209,13 +186,7 @@ func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 				}
 				v = builder.CreateXor(v, builder.CreateBitCast(pattern, v.Type(), ""), "")
 			}
-			if registers {
-				builder.CreateRet(v)
-				return
-			}
-			store := builder.CreateStore(v, leaf.Param(0))
-			store.SetAlignment(1)
-			builder.CreateRetVoid()
+			builder.CreateRet(v)
 		}
 		if immediate.IsNil() || cases == 0 {
 			emit(max(fixed, 0))
@@ -234,10 +205,8 @@ func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 		}
 	}
 	call := b.impl.CreateCall(ft, leaf, operands, "")
-	if registers {
-		return Expr{b.impl.CreateBitCast(call, result.ll, ""), result}
-	}
-	return Expr{b.impl.CreateLoad(result.ll, operands[0], ""), result}
+	call.SetInstructionCallConv(leaf.FunctionCallConv())
+	return Expr{b.impl.CreateBitCast(call, result.ll, ""), result}
 }
 
 // Keep a missing feature recoverable, but avoid a runtime call on every
