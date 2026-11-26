@@ -669,6 +669,17 @@ controller does not model the controller-side connect-duration limit), and the
 host peer must advertise legacy-only, so extended advertising and its 1650-byte
 payloads are out of reach.
 
+**Device status.** Verified on hardware between two ESP32-S31 boards: the
+NimBLE central firmware runs the whole acceptance chain against a Bluedroid
+peripheral — scan, connect, MTU 256, discovery (including the 0xFFFF end
+handle the stack reports for the last primary service by design), read,
+write with read-back, CCCD subscribe with two notifications, unsubscribe,
+write-without-response, the 128-bit service, and a clean terminate. One
+bench rule came out of it: two boards sharing one PC's USB power rail can
+brown each other out when a connection's radio bursts start (both boards
+reset at once; the same firmware passes everything with one board on an
+independent supply) — a power problem, not a package one.
+
 ## pkg/esp/espnow — Espressif's connectionless ESP-NOW protocol over a started WiFi driver
 
 `pkg/esp/espnow` exposes the esp_now stack (which lives inside the esp_wifi

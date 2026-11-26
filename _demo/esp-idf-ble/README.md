@@ -306,6 +306,14 @@ after normalizing the floaters.
 
 ## Notes
 
+* Two boards sharing one PC's USB power rail can brown each other out: the
+current surge when a connection's radio bursts start pulls the shared 5V rail
+low enough to reset both boards at once (one board's USB-UART bridge drops
+off the bus, the other takes a full POWERON reset). Device-verified in both
+directions: with one board on an independent supply, the same central
+firmware that "crashed at read" every time runs the whole acceptance chain
+to `[go] ble PASS`. The package has no role in it; keep two radios on
+separate power when doing connection-heavy tests on a bench.
 * Only this demo's `sdkconfig.defaults` is BLE-shaped; `_demo/esp-idf-wifi` keeps
   its WiFi configuration untouched so its acceptance chain stays valid.
 * The main component is `WHOLE_ARCHIVE` for the reason every demo here is: the
