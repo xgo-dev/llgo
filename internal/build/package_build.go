@@ -335,15 +335,15 @@ func (ctx *context) packageUsesPlan9Asm(pkg *aPackage) (bool, error) {
 }
 
 // isolatedPackageOptLevel bounds peak LLVM optimizer/codegen RAM for outlier
-// monolithic packages (>=500k Go SSA instructions) during non-LTO native builds.
-// Running LLVM's whole-module CGSCC/inliner pipeline on a >1M-SSA module can
-// exceed 9 GB RSS in a single worker; falling back to -O0 for that isolated
-// package cuts peak memory roughly in half without affecting normal packages.
+// monolithic packages (>=500k Go SSA instructions) during non-LTO native builds
+// when the caller did not explicitly choose an optimization level. Explicit
+// -O0/-O1/-O2/-O3/-Os/-Oz flags are always preserved.
 func (ctx *context) isolatedPackageOptLevel(task *packageBuildTask) optlevel.Level {
 	if ctx.buildConf == nil {
 		return optlevel.Unset
 	}
-	if task != nil && task.estimatedBackendCost() >= exclusiveIsolatedPackageSSACost &&
+	if ctx.buildConf.optLevelDefaulted &&
+		task != nil && task.estimatedBackendCost() >= exclusiveIsolatedPackageSSACost &&
 		!ctx.buildConf.ltoEnabled() && ctx.buildConf.Goarch != "wasm" {
 		return optlevel.O0
 	}

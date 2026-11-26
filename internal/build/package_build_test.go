@@ -899,16 +899,29 @@ func TestPreparePackageBuildsSerializesHeavyIsolatedPackages(t *testing.T) {
 		t.Fatalf("heavy cached task = (isolated=%v, parallel=%v), want (true, true)", heavyCached.isolated, heavyCached.parallel)
 	}
 
-	ctx.buildConf.OptLevel = optlevel.Os
+	// Explicit optimization flags must never be silently overridden, even on
+	// outlier monolithic packages.
 	ctx.buildConf.Goarch = "amd64"
+	for _, explicit := range []optlevel.Level{optlevel.O1, optlevel.O2, optlevel.O3, optlevel.Os, optlevel.Oz} {
+		ctx.buildConf.OptLevel = explicit
+		ctx.buildConf.optLevelDefaulted = false
+		if got := ctx.isolatedPackageOptLevel(heavyUncached); got != explicit {
+			t.Fatalf("explicit %v heavy uncached opt level = %v, want %v", explicit, got, explicit)
+		}
+	}
+
+	// Only when the optimization level was defaulted (no explicit -O flag) do
+	// non-LTO native outlier uncached packages drop to O0 to bound peak RAM.
+	ctx.buildConf.OptLevel = optlevel.Os
+	ctx.buildConf.optLevelDefaulted = true
 	if got := ctx.isolatedPackageOptLevel(normal); got != optlevel.Os {
 		t.Fatalf("normal opt level = %v, want Os", got)
 	}
 	if got := ctx.isolatedPackageOptLevel(heavyUncached); got != optlevel.O0 {
-		t.Fatalf("heavy uncached opt level = %v, want O0", got)
+		t.Fatalf("defaulted heavy uncached opt level = %v, want O0", got)
 	}
 	if got := ctx.isolatedPackageOptLevel(heavyCached); got != optlevel.Os {
-		t.Fatalf("heavy cached opt level = %v, want Os", got)
+		t.Fatalf("defaulted heavy cached opt level = %v, want Os", got)
 	}
 	ctx.buildConf.Goarch = "wasm"
 	if got := ctx.isolatedPackageOptLevel(heavyUncached); got != optlevel.Os {
