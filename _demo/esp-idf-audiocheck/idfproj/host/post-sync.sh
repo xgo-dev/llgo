@@ -35,13 +35,19 @@
 # build here instead of silently losing MCLK, the energy hook, the gain or
 # the threshold readback.
 
-cat > "$MAIN/../partitions.csv" <<'CSV'
+# Partition writes are content-guarded: partitions.csv is a CMake configure
+# input, and rewriting it with identical bytes would re-run CMake on every
+# build.
+PARTS="$MAIN/../partitions.csv"
+if [ ! -f "$PARTS" ] || ! grep -q '^model,    data, spiffs,' "$PARTS"; then
+cat > "$PARTS" <<'CSV'
 # Name,   Type, SubType, Offset,  Size, Flags
 nvs,      data, nvs,     0x9000,  0x6000,
 phy_init, data, phy,     0xf000,  0x1000,
 factory,  app,  factory, 0x10000, 8000K,
 model,    data, spiffs,  ,        7900K,
 CSV
+fi
 
 GLUE="$MAIN/wakenet_glue.c"
 grep -q '#include "driver/i2s_std.h"' "$GLUE" \

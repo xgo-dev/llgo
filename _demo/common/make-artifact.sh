@@ -102,6 +102,18 @@ cd "$DIR/../.."
 #     single copy and each project receives a generated one - the same model
 #     as the glue below, and the reason a demo adds no build plumbing of its
 #     own. Generated files are gitignored.
+REPO_ROOT="${REPO_ROOT:-$(cd "$DIR/../../../.." && pwd)}"
+
+# Copies are content-guarded: writing a file with identical bytes still bumps
+# its mtime, and for the CMake configure inputs below (CMakeLists.txt,
+# partitions.csv, the ld fragment) that would re-run CMake - and the whole
+# dependency re-solve with it - on every build.
+copy_if_changed() {
+    if [ ! -f "$2" ] || ! cmp -s "$1" "$2"; then
+        cp "$1" "$2"
+    fi
+}
+
 for pair in "llgo_syms.S:host/llgo_syms.S" \
             "app_main.c:main/app_main.c" \
             "llgo_dram.ld:main/llgo_dram.ld" \
@@ -109,18 +121,17 @@ for pair in "llgo_syms.S:host/llgo_syms.S" \
             "idfproj-CMakeLists.txt:CMakeLists.txt"; do
     src="${pair%%:*}"
     dst="${pair#*:}"
-    cp "$COMMON/$src" "$DIR/../$dst"
+    copy_if_changed "$COMMON/$src" "$DIR/../$dst"
 done
 
 # 0b. Sync the package glues into the main component.
-REPO_ROOT="${REPO_ROOT:-$(cd "$DIR/../../../.." && pwd)}"
 for g in ${GLUES:-}; do
-    cp "$REPO_ROOT/pkg/esp/$g/glue/${g}_glue.c" "$MAIN/${g}_glue.c"
+    copy_if_changed "$REPO_ROOT/pkg/esp/$g/glue/${g}_glue.c" "$MAIN/${g}_glue.c"
 done
 for pair in ${GLUE_MAP:-}; do
     src="${pair%%:*}"
     dst="${pair#*:}"
-    cp "$REPO_ROOT/pkg/esp/$src" "$MAIN/$dst"
+    copy_if_changed "$REPO_ROOT/pkg/esp/$src" "$MAIN/$dst"
 done
 if [[ -f "$DIR/post-sync.sh" ]]; then
     # shellcheck source=/dev/null
