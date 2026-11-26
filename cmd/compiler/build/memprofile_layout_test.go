@@ -41,27 +41,30 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 			}
 			defer pkgs[0].LPkg.Prog.Dispose()
 			mod := pkgs[0].LPkg.Module()
-			buckets := mod.NamedGlobal(llvmgen.PkgRuntime + ".memProfileBuckets")
-			if buckets.IsNil() {
-				t.Fatal("missing memory profile buckets")
+			shards := mod.NamedGlobal(llvmgen.PkgRuntime + ".memProfileShardsData")
+			if shards.IsNil() {
+				t.Fatal("missing memory profile shards")
 			}
 			td := llvm.NewTargetData(mod.DataLayout())
 			defer td.Dispose()
-			array := buckets.GlobalValueType()
+			array := shards.GlobalValueType()
 			if array.TypeKind() != llvm.ArrayTypeKind {
-				t.Fatalf("memory profile buckets are not an array: %s", array.String())
+				t.Fatalf("memory profile shards are not an array: %s", array.String())
 			}
-			bucket := array.ElementType()
-			offset := td.ElementOffset(bucket, 1)
-			stride := td.TypeAllocSize(bucket)
-			if buckets.Alignment() < 8 || offset%8 != 0 || stride%8 != 0 {
-				t.Fatalf("unaligned 64-bit atomic counters: base alignment=%d, field offset=%d, stride=%d", buckets.Alignment(), offset, stride)
+			shard := array.ElementType()
+			offset := td.ElementOffset(shard, 1)
+			stride := td.TypeAllocSize(shard)
+			if shards.Alignment() < 8 || offset%8 != 0 || stride%8 != 0 {
+				t.Fatalf("unaligned 64-bit atomic counters: base alignment=%d, field offset=%d, stride=%d", shards.Alignment(), offset, stride)
+			}
+			if stride != 256 {
+				t.Fatalf("unexpected shard stride: got %d, want 256", stride)
 			}
 			// Allocator accounting must remain an intrinsic at O0 too: an
 			// instrumented stdlib method can allocate and re-enter profiling.
-			add := mod.NamedFunction(llvmgen.PkgRuntime + ".memProfileAddObject")
-			if add.IsNil() || !strings.Contains(add.String(), "atomicrmw add") {
-				t.Fatal("memory profile updates must use the allocation-free runtime intrinsic")
+			add := mod.NamedFunction(llvmgen.PkgRuntime + ".memProfileAddBucket")
+			if add.IsNil() || !strings.Contains(add.String(), "atomicrmw add") || !strings.Contains(add.String(), "monotonic") {
+				t.Fatal("memory profile updates must use the allocation-free relaxed runtime intrinsic")
 			}
 		})
 	}

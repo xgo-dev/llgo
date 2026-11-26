@@ -603,6 +603,13 @@ func (p *context) atomicStore(b llvmgen.Builder, args []llvmgen.Expr) llvmgen.Ex
 	panic("atomicStore(addr *T, val T) T: invalid arguments")
 }
 
+func (p *context) atomicAddRelaxed(b llvmgen.Builder, args []llvmgen.Expr) llvmgen.Expr {
+	if len(args) == 2 {
+		return b.AtomicWithOrdering(llvmgen.OpAdd, args[0], args[1], llvmgen.OrderingMonotonic)
+	}
+	panic("atomicAddRelaxed(addr *T, val T) T: invalid arguments")
+}
+
 func (p *context) atomicStoreUnordered(b llvmgen.Builder, args []llvmgen.Expr) llvmgen.Expr {
 	if len(args) == 2 {
 		return b.Store(args[0], args[1]).SetOrdering(llvmgen.OrderingUnordered)
@@ -681,6 +688,7 @@ var llgoInstrs = map[string]int{
 	"atomicLoad":           llgoAtomicLoad,
 	"atomicStore":          llgoAtomicStore,
 	"atomicStoreUnordered": llgoAtomicStoreUnordered,
+	"atomicAddRelaxed":     llgoAtomicAddRelaxed,
 	"atomicCmpXchg":        llgoAtomicCmpXchg,
 	"atomicCmpXchgOK":      llgoAtomicCmpXchgOK,
 	"atomicAddReturnNew":   llgoAtomicAddReturnNew,
@@ -3021,6 +3029,11 @@ func (p *context) callEx(b llvmgen.Builder, act llvmgen.DoAction, call *ssa.Call
 			args := p.compileValues(b, args, kind)
 			ret = p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
 				return b.BinOp(token.ADD, p.atomic(b, llvmgen.OpAdd, args), args[1])
+			}, args...)
+		case llgoAtomicAddRelaxed:
+			args := p.compileValues(b, args, kind)
+			ret = p.emitDo(b, act, call, ds, false, llvmgen.Nil, func(b llvmgen.Builder, _ llvmgen.Expr, args ...llvmgen.Expr) llvmgen.Expr {
+				return p.atomicAddRelaxed(b, args)
 			}, args...)
 		default:
 			if ftype >= llgoAtomicOpBase && ftype <= llgoAtomicOpLast {

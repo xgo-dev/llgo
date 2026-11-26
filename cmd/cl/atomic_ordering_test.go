@@ -91,6 +91,73 @@ func TestAtomicStoreUnorderedInvalidArity(t *testing.T) {
 	}
 }
 
+func TestAtomicAddRelaxedOrdering(t *testing.T) {
+	const source = `package atomicaddrelaxed
+import _ "unsafe"
+
+//go:linkname addSeq llgo.atomicAdd
+func addSeq(*uint64, uint64) uint64
+
+//go:linkname addRelaxed llgo.atomicAddRelaxed
+func addRelaxed(*uint64, uint64) uint64
+
+func Ordered(p *uint64, v uint64) uint64 { return addSeq(p, v) }
+func Relaxed(p *uint64, v uint64) uint64 { return addRelaxed(p, v) }
+`
+	for _, target := range []llvmgen.Target{
+		{GOOS: "linux", GOARCH: "386"},
+		{GOOS: "linux", GOARCH: "amd64"},
+		{GOOS: "darwin", GOARCH: "arm64"},
+		{GOOS: "wasip1", GOARCH: "wasm"},
+	} {
+		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
+			ssaPkg, _, files := buildGoSSAPkg(t, source)
+			prog := newLLSSAProgForTarget(t, &target)
+			defer prog.Dispose()
+			pkg, err := NewPackage(prog, ssaPkg, files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pkg.Module().Dispose()
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid atomic-add IR: %v\n%s", err, pkg.String())
+			}
+			for _, test := range []struct{ name, ordering string }{
+				{"Ordered", "seq_cst"},
+				{"Relaxed", "monotonic"},
+			} {
+				body := mustNamedFunction(t, pkg.Module(), "atomicaddrelaxed."+test.name).String()
+				rmws := 0
+				for _, line := range strings.Split(body, "\n") {
+					if strings.Contains(line, "atomicrmw add ") {
+						rmws++
+						if !strings.Contains(line, " "+test.ordering+",") {
+							t.Errorf("%s atomicrmw must use %s ordering:\n%s", test.name, test.ordering, body)
+						}
+					}
+				}
+				if rmws != 1 {
+					t.Errorf("%s has %d atomicrmw add instructions, want one:\n%s", test.name, rmws, body)
+				}
+			}
+		})
+	}
+}
+
+func TestAtomicAddRelaxedInvalidArity(t *testing.T) {
+	for _, count := range []int{0, 1, 3} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			defer func() {
+				if got := fmt.Sprint(recover()); got != "atomicAddRelaxed(addr *T, val T) T: invalid arguments" {
+					t.Errorf("invalid-arity panic = %q", got)
+				}
+			}()
+			var ctx context
+			ctx.atomicAddRelaxed(nil, make([]llvmgen.Expr, count))
+		})
+	}
+}
+
 func TestBaremetalItabPointersDoNotRequireLibatomic(t *testing.T) {
 	runtimeDir := filepath.Join("..", "..", "runtime", "internal", "runtime")
 	ctx := gobuild.Default

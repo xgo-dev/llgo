@@ -752,6 +752,7 @@ const (
 	llgoAESAlloca            = llgoInstrBase + 0x53
 	llgoKeepAlive            = llgoInstrBase + 0x54
 	llgoNoEscape             = llgoInstrBase + 0x55
+	llgoAtomicAddRelaxed     = llgoInstrBase + 0x56
 
 	llgoAtomicOpLast = llgoAtomicOpBase + int(llvmgen.OpUMin)
 )

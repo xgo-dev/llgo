@@ -702,7 +702,11 @@ func (b Builder) TypeAssert(x Expr, assertedTyp Type, commaOk bool) Expr {
 		val = func() Expr { return x }
 	} else {
 		if rawIntf, ok := assertedTyp.raw.Type.Underlying().(*types.Interface); ok {
-			eq = b.InlineCall(b.Pkg.rtFunc("Implements"), tabi, tx)
+			if rawIntf.Empty() {
+				eq = b.BinOp(token.NEQ, tx, b.Prog.Zero(b.Prog.AbiTypePtr()))
+			} else {
+				eq = b.InlineCall(b.Pkg.rtFunc("Implements"), tabi, tx)
+			}
 			val = func() Expr { return Expr{b.unsafeInterface(rawIntf, nil, tx, b.faceData(x.impl)), assertedTyp} }
 		} else if assertedTyp.kind == vkClosure {
 			eq = b.InlineCall(b.Pkg.rtFunc("MatchesClosure"), tabi, tx)

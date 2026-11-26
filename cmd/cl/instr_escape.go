@@ -87,6 +87,13 @@ func instructionEscapeContract(kind int, sig *types.Signature) (goescape.Summary
 			s.Parameters[1].Results[0] = 1
 			return s, true
 		}
+	case llgoAtomicAddRelaxed:
+		if n == 2 && results == 1 {
+			s.Parameters[0].Mutator = 1
+			s.Parameters[0].Results[0] = 2
+			s.Parameters[1].Heap = 1
+			return s, true
+		}
 	default:
 		if kind >= llgoAtomicOpBase && kind <= llgoAtomicOpLast && n == 2 && results == 1 {
 			s.Parameters[0].Mutator = 1

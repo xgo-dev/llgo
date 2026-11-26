@@ -5,7 +5,6 @@ package runtime_test
 import (
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"unsafe"
 )
@@ -13,62 +12,86 @@ import (
 //go:linkname nativeProfileSizeClass github.com/xgo-dev/llgo/runtime/internal/runtime.memProfileSizeClass
 func nativeProfileSizeClass(uintptr) uintptr
 
-//go:linkname nativeProfileAdd github.com/xgo-dev/llgo/runtime/internal/runtime.memProfileAddObject
-func nativeProfileAdd(unsafe.Pointer)
+//go:linkname nativeProfileBucketIndex github.com/xgo-dev/llgo/runtime/internal/runtime.memProfileBucketIndex
+func nativeProfileBucketIndex(uintptr) int
 
-//go:linkname nativeProfileLoad github.com/xgo-dev/llgo/runtime/internal/runtime.memProfileLoadObjects
-func nativeProfileLoad(unsafe.Pointer) uint64
+//go:linkname nativeProfileShardIndex github.com/xgo-dev/llgo/runtime/internal/runtime.memProfileShardIndex
+func nativeProfileShardIndex(uint64) uint64
 
-// The opaque storage follows the private native counter's 32 cache-line shards.
-// The alignment marker also covers targets whose ordinary uint64 alignment is 4.
-type nativeProfileCounterStorage struct {
-	_     [0]atomic.Uint64
-	words [32][16]uint64
-}
+//go:linkname nativeProfileAddBucket github.com/xgo-dev/llgo/runtime/internal/runtime.memProfileAddBucket
+func nativeProfileAddBucket(int)
+
+//go:linkname nativeProfileLoadBucket github.com/xgo-dev/llgo/runtime/internal/runtime.memProfileLoadBucket
+func nativeProfileLoadBucket(int) uint64
+
+const nativeProfileTestBucket = 26 // 1 GiB bucket; unaffected by ordinary test allocations.
 
 func TestNativeProfileSizeClasses(t *testing.T) {
-	expected := func(size uintptr) uintptr {
+	expected := func(size uintptr) (int, uintptr) {
+		idx := 0
 		class := uintptr(16)
 		for class < size && class < 1<<30 {
 			class *= 2
+			idx++
 		}
-		return class
+		return idx, class
 	}
 	for size := uintptr(0); size < 131072; size++ {
-		if got := nativeProfileSizeClass(size); got != expected(size) {
-			t.Fatalf("size %d: class %d, expected %d", size, got, expected(size))
+		wantIdx, wantClass := expected(size)
+		if got := nativeProfileBucketIndex(size); got != wantIdx {
+			t.Fatalf("size %d: bucket %d, expected %d", size, got, wantIdx)
+		}
+		if got := nativeProfileSizeClass(size); got != wantClass {
+			t.Fatalf("size %d: class %d, expected %d", size, got, wantClass)
 		}
 	}
 	for bit := uint(4); bit < uint(unsafe.Sizeof(uintptr(0))*8); bit++ {
 		boundary := uintptr(1) << bit
 		for _, size := range []uintptr{boundary - 1, boundary, boundary + 1} {
-			if got := nativeProfileSizeClass(size); got != expected(size) {
-				t.Fatalf("boundary %d: class %d, expected %d", size, got, expected(size))
+			wantIdx, wantClass := expected(size)
+			if got := nativeProfileBucketIndex(size); got != wantIdx {
+				t.Fatalf("boundary %d: bucket %d, expected %d", size, got, wantIdx)
+			}
+			if got := nativeProfileSizeClass(size); got != wantClass {
+				t.Fatalf("boundary %d: class %d, expected %d", size, got, wantClass)
 			}
 		}
+	}
+	if got := nativeProfileBucketIndex(^uintptr(0)); got != nativeProfileTestBucket {
+		t.Fatal("largest bucket", got)
 	}
 	if got := nativeProfileSizeClass(^uintptr(0)); got != 1<<30 {
 		t.Fatal("largest class", got)
 	}
 }
 
+func TestNativeProfileShardSpread(t *testing.T) {
+	for _, stride := range []struct {
+		name  string
+		step  uint64
+		minUn int
+	}{
+		{"macos-512k+16k", 0x84000, 20},
+		{"linux-2m", 0x200000, 20},
+		{"linux-8m", 0x800000, 20},
+	} {
+		seen := make(map[uint64]bool)
+		base := uint64(0x16f000000)
+		for i := uint64(0); i < 32; i++ {
+			shard := nativeProfileShardIndex(base + i*stride.step)
+			if shard >= 64 {
+				t.Fatalf("%s: shard %d out of range", stride.name, shard)
+			}
+			seen[shard] = true
+		}
+		if len(seen) < stride.minUn {
+			t.Fatalf("%s: only %d unique shards across 32 threads, want >= %d", stride.name, len(seen), stride.minUn)
+		}
+	}
+}
+
 func TestNativeProfileConcurrentCounterSnapshots(t *testing.T) {
-	var guarded struct {
-		before  [16]uint64
-		counter nativeProfileCounterStorage
-		after   [16]uint64
-	}
-	for i := range guarded.before {
-		guarded.before[i] = 0x123456789abcdef0
-		guarded.after[i] = 0xfedcba9876543210
-	}
-	ptr := unsafe.Pointer(&guarded.counter)
-	if uintptr(ptr)%8 != 0 || unsafe.Sizeof(guarded.counter) != 4096 {
-		t.Fatal("native counter alignment or size")
-	}
-	if got := nativeProfileLoad(ptr); got != 0 {
-		t.Fatal("initial counter", got)
-	}
+	base := nativeProfileLoadBucket(nativeProfileTestBucket)
 	const workers, iterations = 8, 20000
 	for round := uint64(0); round < 3; round++ {
 		var done sync.WaitGroup
@@ -77,18 +100,19 @@ func TestNativeProfileConcurrentCounterSnapshots(t *testing.T) {
 			go func() {
 				defer done.Done()
 				for range iterations {
-					nativeProfileAdd(ptr)
+					nativeProfileAddBucket(nativeProfileTestBucket)
 				}
 			}()
 		}
 		joined := make(chan struct{})
 		go func() { done.Wait(); close(joined) }()
-		previous := round * workers * iterations
+		previous := base + round*workers*iterations
+		limit := base + (round+1)*workers*iterations
 	polling:
 		for {
-			current := nativeProfileLoad(ptr)
-			if current < previous || current > (round+1)*workers*iterations {
-				t.Fatal("nonmonotonic snapshot", previous, current)
+			current := nativeProfileLoadBucket(nativeProfileTestBucket)
+			if current < previous || current > limit {
+				t.Fatal("nonmonotonic snapshot", previous, current, limit)
 			}
 			previous = current
 			select {
@@ -98,16 +122,10 @@ func TestNativeProfileConcurrentCounterSnapshots(t *testing.T) {
 				runtime.Gosched()
 			}
 		}
-		if got := nativeProfileLoad(ptr); got != (round+1)*workers*iterations {
-			t.Fatal("lost events after worker exit", round, got)
+		if got := nativeProfileLoadBucket(nativeProfileTestBucket); got != limit {
+			t.Fatal("lost events after worker exit", round, got, limit)
 		}
 	}
-	for i := range guarded.before {
-		if guarded.before[i] != 0x123456789abcdef0 || guarded.after[i] != 0xfedcba9876543210 {
-			t.Fatal("counter escaped opaque storage", i)
-		}
-	}
-	runtime.KeepAlive(&guarded)
 }
 
 var nativeProfileRetained [16]*[262144]byte
@@ -147,8 +165,7 @@ func BenchmarkNativeProfileCounter(b *testing.B) {
 			name = "four-workers"
 		}
 		b.Run(name, func(b *testing.B) {
-			var counter nativeProfileCounterStorage
-			ptr := unsafe.Pointer(&counter)
+			before := nativeProfileLoadBucket(nativeProfileTestBucket)
 			var ready, done sync.WaitGroup
 			ready.Add(workers)
 			done.Add(workers)
@@ -163,7 +180,7 @@ func BenchmarkNativeProfileCounter(b *testing.B) {
 					ready.Done()
 					<-start
 					for range count {
-						nativeProfileAdd(ptr)
+						nativeProfileAddBucket(nativeProfileTestBucket)
 					}
 				}()
 			}
@@ -172,10 +189,9 @@ func BenchmarkNativeProfileCounter(b *testing.B) {
 			close(start)
 			done.Wait()
 			b.StopTimer()
-			if got := nativeProfileLoad(ptr); got != uint64(b.N) {
+			if got := nativeProfileLoadBucket(nativeProfileTestBucket) - before; got != uint64(b.N) {
 				b.Fatal("counter events", got, b.N)
 			}
-			runtime.KeepAlive(&counter)
 		})
 	}
 }

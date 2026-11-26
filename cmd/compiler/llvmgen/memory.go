@@ -433,12 +433,17 @@ const (
 
 // Atomic performs an atomic operation on the memory location pointed to by ptr.
 func (b Builder) Atomic(op AtomicOp, ptr, val Expr) Expr {
+	return b.AtomicWithOrdering(op, ptr, val, OrderingSeqConsistent)
+}
+
+// AtomicWithOrdering performs an atomic RMW operation with an explicit memory ordering.
+func (b Builder) AtomicWithOrdering(op AtomicOp, ptr, val Expr, ordering AtomicOrdering) Expr {
 	dbgInstrf("Atomic %v, %v, %v\n", op, ptr.impl, val.impl)
 	storageType := b.Prog.Elem(ptr.Type)
 	t := b.Prog.withoutNativeStorage(storageType)
 	val = b.ChangeType(t, val)
 	stored := b.toAtomicStorageValue(storageType, val.impl)
-	ret := b.impl.CreateAtomicRMW(op, ptr.impl, stored, llvm.AtomicOrderingSequentiallyConsistent, false)
+	ret := b.impl.CreateAtomicRMW(op, ptr.impl, stored, ordering, false)
 	return Expr{b.fromAtomicStorageValue(storageType, ret), t}
 }
 

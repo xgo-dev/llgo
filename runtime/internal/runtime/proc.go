@@ -133,7 +133,6 @@ func releaseGAndCheckDeadlock() {
 	remaining, mainExited := releaseG()
 	if remaining == 0 && mainExited {
 		fatal("no goroutines (main called runtime.Goexit) - deadlock!")
-		c.Exit(2)
 	}
 }
 

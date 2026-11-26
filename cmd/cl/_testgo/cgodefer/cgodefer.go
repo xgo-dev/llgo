@@ -82,12 +82,10 @@ import "C"
 
 // ARM64-LABEL: define void @"main.main$1$1"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.main$1$1"(ptr nest %0){{.*}} {
-// CHECK: [[KEEPALIVE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
-// CHECK-NEXT: [[KEEPALIVE:%[0-9]+]] = load ptr, ptr [[KEEPALIVE_SLOT]]
-// CHECK-NEXT: insertvalue %"{{.*}}eface" { ptr @_llgo_Pointer, ptr undef }, ptr [[KEEPALIVE]], 1
-// CHECK-NEXT: [[DEFER_ARG_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %0, i32 0, i32 0
-// CHECK-NEXT: [[DEFER_ARG:%[0-9]+]] = load ptr, ptr [[DEFER_ARG_SLOT]]
-// CHECK-NEXT: call [0 x i8] @main._Cfunc_free(ptr [[DEFER_ARG]])
+// CHECK: [[FREE_IS_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[FREE_PTR:%[0-9]+]] = select i1 [[FREE_IS_NIL]], ptr null, ptr %0
+// CHECK-NEXT: insertvalue %"{{.*}}eface" { ptr @_llgo_Pointer, ptr undef }, ptr [[FREE_PTR]], 1
+// CHECK-NEXT: call [0 x i8] @main._Cfunc_free(ptr [[FREE_PTR]])
 
 //export go_callback
 func go_callback(value C.int) C.int {

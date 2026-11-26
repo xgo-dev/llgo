@@ -132,7 +132,7 @@ func main() {
 // CHECK: store %main.C1 zeroinitializer, ptr [[C1_DATA]]
 // CHECK: [[C1_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[C1_DATA]], 1
 // CHECK: [[C1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C1_IFACE]])
-// CHECK: [[C1_IS_I0:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.I0, ptr [[C1_TYPE]])
+// CHECK: [[C1_IS_I0:%.*]] = icmp ne ptr [[C1_TYPE]], null
 // CHECK: br i1 [[C1_IS_I0]], label %{{.*}}, label %{{.*}}
 // CHECK: [[C1_I1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C1_IFACE]])
 // CHECK: [[C1_IS_I1:%.*]] = icmp ne ptr [[C1_I1_TYPE]], null
@@ -145,7 +145,7 @@ func main() {
 // CHECK: store %main.C2 zeroinitializer, ptr [[C2_DATA]]
 // CHECK: [[C2_IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[C2_DATA]], 1
 // CHECK: [[C2_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C2_IFACE]])
-// CHECK: [[C2_IS_I0:%.*]] = call i1 @"{{.*}}/runtime/internal/runtime.Implements"(ptr @_llgo_main.I0, ptr [[C2_TYPE]])
+// CHECK: [[C2_IS_I0:%.*]] = icmp ne ptr [[C2_TYPE]], null
 // CHECK: br i1 [[C2_IS_I0]], label %{{.*}}, label %{{.*}}
 // CHECK: [[C2_I1_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[C2_IFACE]])
 // CHECK: [[C2_IS_I1:%.*]] = icmp ne ptr [[C2_I1_TYPE]], null
