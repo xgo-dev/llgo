@@ -19,12 +19,16 @@ func Rethrow(link *Defer) {
 	if ptr := gp.panic_; ptr != nil {
 		node := (*panicNode)(ptr)
 		gp.movePanicToDefer(node, link)
-		if link == nil {
-			TracePanic(node.arg)
-			FreeRoot(unsafe.Pointer(node))
-			c.Printf(c.Str("fatal error\n"))
-			c.Exit(2)
-		}
+	if link == nil {
+		// Early diagnostics first: the USB-Serial/JTAG banner works before
+		// stdio exists, while the prints below can die silently when a panic
+		// lands during package init (see earlypanic_baremetal.go).
+		earlyPanicReport(node.arg)
+		TracePanic(node.arg)
+		FreeRoot(unsafe.Pointer(node))
+		c.Printf(c.Str("fatal error\n"))
+		c.Exit(2)
+	}
 		setjmp.Longjmp((*setjmp.JmpBuf)(link.Addr), 1)
 	}
 	if gp.goexit {

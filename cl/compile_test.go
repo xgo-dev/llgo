@@ -403,6 +403,12 @@ func TestRunAndTestFromTestgo(t *testing.T) {
 		// guard: hosted stacks grow, and stackover would run away.
 		"./_testgo/stacksafe",
 		"./_testgo/stackover",
+		// The early-panic fixtures end in a panic or a native fault by
+		// design, and their diagnostics live in cl/embed_earlypanic_test.go:
+		// hosted IR checks would only re-verify a deliberate crash.
+		"./_testgo/earlypanicinit",
+		"./_testgo/earlypanicgs",
+		"./_testgo/earlypanicfault",
 		"./_testgo/gotask",
 		"./_testgo/hexpkg",
 		"./_testgo/fmtall",
