@@ -25,6 +25,7 @@ usable from Go with hours-scale effort instead of a porting project:
 | `pkg/esp/touch` | `driver/touch_sens.h` (touch hardware v3, `esp_driver_touch_sens`) | touch sensor controller: single-instance bring-up (Init→Config→Start lifecycle), 14 channels mapped onto GPIO6..19, channel data + hardware benchmark reads, active-threshold events (ISR callbacks → static ring → Go poll), benchmark recalibration, calibration flow documented on the package |
 | `pkg/esp/temp` | `driver/temperature_sensor.h` (`esp_driver_tsens`) | built-in temperature sensor (±1 °C): install/start/read/stop/uninstall lifecycle, range-span config, float reading carried across the boundary as integer milli-degrees |
 | `pkg/esp/nvs` | `nvs.h` + `nvs_flash.h` | non-volatile key-value store: namespaces as read-write handles, typed values (u8/i32/u64/string/blob), Delete/Commit, `Keys()` over the entry iterator, partition-wide `ReadStats()`; explicit-commit durability boundary, static-buffer capacity contract (0x75xx segment) |
+| `pkg/esp/spi` | `driver/spi_master.h` (`esp_driver_spi`, GPSPI2_HOST) | SPI master: bus init with DMA (`SPI_DMA_CH_AUTO`) + one device (mode 0, hardware CS or NoCS), one-transaction full-duplex `Transfer`, MOSI-only `Write`, two-half `WriteRead`, `SetFrequency` over the four exact power-of-two rates (10/20/40/80 MHz, `ErrBadFrequency` otherwise), `AcquireBus`/`ReleaseBus` CS-pinned transaction sequences, `Deinit`; polling-path transfers with a bounded completion wait (0x71xx segment) |
 
 | `pkg/esp/espnow` | `esp_now.h` (inside the esp_wifi library; rides a started WiFi driver) | Espressif's connectionless low-latency MAC-layer protocol: bring-up over the wifi package's radio (STA/AP started, no association), peer list (add/delete/known/count, optional per-peer LMK encryption + PMK), `Send` with the driver's synchronous verdict + asynchronous `SendResult.Wait` confirmation per destination MAC, `Broadcast`, recv frames through a static ring + pump goroutine into `SetRecvHandler`, `SetChannel` for unassociated nodes, protocol-version and own-MAC queries |
 
@@ -127,6 +128,7 @@ annotation each sentinel carries:
 
 | Segment | Package | Values |
 |---------|---------|--------|
+| `0x71xx` | `spi` | `ErrNotInit` (`0x7101`, the glue's refusal for calls before Init), `ErrBadFrequency` (`0x7102`, a rate outside the four exact 10/20/40/80 MHz values, refused Go-side and repeated by the glue), `ErrBusy` (`0x7103`, wrong bus-lock state: double AcquireBus, ReleaseBus without a held bus, SetFrequency while held) |
 | `0x72xx` | `temp` | `ErrNotInstalled` (`0x7201`, the glue's refusal for calls before Install) |
 | `0x73xx` | `touch` | `ErrNotInit` (`0x7301`, the glue's refusal for calls before Init) |
 | `0x74xx` | `espnow` | `ErrGlueABI` (`0x7401`; `0x7402+` reserved) |
