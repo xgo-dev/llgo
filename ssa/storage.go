@@ -227,6 +227,11 @@ func (b Builder) fitLLVMResult(value llvm.Value, logical Type) llvm.Value {
 	return b.aggregateValue(logical, values...).impl
 }
 
+// ValueType returns the logical value type produced when loading storage type t.
+func (p Program) ValueType(t Type) Type {
+	return p.withoutNativeStorage(t)
+}
+
 func (p Program) withoutNativeStorage(t Type) Type {
 	if p.isNativeStorage(t) {
 		return p.rawType(t.raw.Type)

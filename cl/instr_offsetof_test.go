@@ -552,6 +552,7 @@ func buildOffsetofPackage(t *testing.T, src string) (*gossa.Package, *token.File
 	return ssaPkg, fset
 }
 
+// buildPackageWithFiles leaves Offsetof operands intact to test the raw SSA fallback.
 func buildPackageWithFiles(t *testing.T, src string) (*gossa.Package, *token.FileSet, []*ast.File) {
 	t.Helper()
 	dir := t.TempDir()

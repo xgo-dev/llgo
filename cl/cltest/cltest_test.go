@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -280,5 +281,25 @@ func TestCaptureDWARFMode(t *testing.T) {
 		if conf.LinkOptions.DWARF != mode {
 			t.Fatal("capture changed caller options")
 		}
+	}
+}
+
+func TestCompileIRExRewritesUnsafeOperands(t *testing.T) {
+	const src = `package foo
+import "unsafe"
+type Box[T any] struct { Pad byte; Value T }
+func pointer[T any]() *Box[T] { panic("operand evaluated") }
+func offset[T any]() uintptr {
+ return unsafe.Offsetof(pointer[T]().Value) + unsafe.Sizeof(pointer[T]().Value) + unsafe.Alignof(pointer[T]().Value)
+}
+func Result() uintptr { return offset[int64]() }
+`
+	for _, debug := range []bool{false, true} {
+		t.Run(fmt.Sprintf("debug=%v", debug), func(t *testing.T) {
+			ir := CompileIREx(t, src, "foo.go", debug, nil)
+			if strings.Contains(ir, "operand evaluated") || strings.Contains(ir, "foo.pointer[") {
+				t.Fatal("CompileIREx emitted an unsafe layout operand")
+			}
+		})
 	}
 }

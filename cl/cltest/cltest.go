@@ -47,7 +47,6 @@ import (
 	"github.com/xgo-dev/llgo/internal/mockable"
 	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
@@ -903,11 +902,33 @@ func CompileIREx(t *testing.T, src any, fname string, dbg bool, configure func(l
 	if dbg {
 		mode |= ssa.GlobalDebug
 	}
-	foo, _, err := ssautil.BuildPackage(
-		&types.Config{Importer: imp}, fset, pkg, files, mode)
-	if err != nil {
-		t.Fatal("BuildPackage failed:", err)
+	info := &types.Info{
+		Types:        make(map[ast.Expr]types.TypeAndValue),
+		Defs:         make(map[*ast.Ident]types.Object),
+		Uses:         make(map[*ast.Ident]types.Object),
+		Implicits:    make(map[ast.Node]types.Object),
+		Instances:    make(map[*ast.Ident]types.Instance),
+		Scopes:       make(map[ast.Node]*types.Scope),
+		Selections:   make(map[*ast.SelectorExpr]*types.Selection),
+		FileVersions: make(map[*ast.File]string),
 	}
+	if err := types.NewChecker(&types.Config{Importer: imp}, fset, pkg, info).Files(files); err != nil {
+		t.Fatal("type checking failed:", err)
+	}
+	cl.RewriteUnsafeOperands(files, info)
+	ssaProg := ssa.NewProgram(fset, mode)
+	var createImports func(*types.Package)
+	createImports = func(pkg *types.Package) {
+		for _, imported := range pkg.Imports() {
+			if ssaProg.Package(imported) == nil {
+				ssaProg.CreatePackage(imported, nil, nil, true)
+				createImports(imported)
+			}
+		}
+	}
+	createImports(pkg)
+	foo := ssaProg.CreatePackage(pkg, files, info, false)
+	foo.Build()
 	foo.WriteTo(os.Stderr)
 	prog := ssatest.NewProgramEx(t, nil, imp)
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))

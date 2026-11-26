@@ -2780,7 +2780,49 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				ret = n
 				return
 			}
+		} else if (fn == "Sizeof" || fn == "Alignof") && len(args) >= 2 && act == llssa.Call {
+			// RewriteUnsafeOperands carries an operand type or a receiver and field path.
+			typ := args[0].Type().Underlying().(*types.Pointer).Elem()
+			// Preserve the existing generic builtin layout semantics without
+			// generating the unevaluated operand.
+			storage := p.type_(typ, llssa.GoDecl)
+			for i := 1; i < len(args); i++ {
+				switch intVal(args[i]) {
+				case unsafeValue:
+					storage = p.prog.ValueType(storage)
+				case unsafeField:
+					i++
+					storage = p.prog.Field(storage, int(intVal(args[i])))
+				case unsafeIndex:
+					storage = p.prog.Index(storage)
+				case unsafeGenericIndex:
+					if _, ok := types.Unalias(storage.RawType()).Underlying().(*types.Pointer); ok {
+						storage = p.prog.Elem(storage)
+					}
+					storage = p.prog.Index(storage)
+				case unsafePointer:
+					storage = p.prog.Pointer(storage)
+				case unsafeElem:
+					storage = p.prog.Elem(storage)
+				}
+			}
+			if fn == "Alignof" {
+				return p.prog.IntVal(p.prog.AlignOf(storage), p.prog.Uintptr())
+			}
+			return p.prog.IntVal(p.prog.SizeOf(storage), p.prog.Uintptr())
 		} else if fn == "Offsetof" && act == llssa.Call {
+			// RewriteUnsafeOperands produces a typed pointer and constant representation-path markers.
+			if len(args) > 1 {
+				typ := args[0].Type().Underlying().(*types.Pointer).Elem()
+				var offset uint64
+				for _, arg := range args[1:] {
+					index := int(intVal(arg))
+					offset += p.prog.OffsetOf(p.type_(typ, llssa.GoDecl), index)
+					typ = typ.Underlying().(*types.Struct).Field(index).Type()
+				}
+				return p.prog.IntVal(offset, p.prog.Uintptr())
+			}
+			// Keep supporting one-argument SSA built without the frontend rewrite.
 			if offset, ok := p.offsetOfBuiltinArg(args[0]); ok {
 				ret = offset
 				return
