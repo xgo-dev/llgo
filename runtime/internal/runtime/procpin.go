@@ -15,8 +15,8 @@ func initProcPinMu() {
 	procPinMu.Init(nil)
 }
 
-// LLGo has no Go P to pin a goroutine to. Serialize procPin regions instead,
-// preserving the exclusion that sync.Pool and sync/atomic.Value require.
+// LLGo has no Go P to pin a goroutine to. Serialize sync.Pool procPin regions
+// so poolLocal access remains mutually exclusive on hosted backends.
 func procPin() int {
 	procPinOnce.Do(initProcPinMu)
 	procPinMu.Lock()
@@ -37,12 +37,14 @@ func sync_runtime_procUnpin() {
 	procUnpin()
 }
 
+// sync/atomic.Value uses procPin only to prevent M:N goroutine preemption
+// during its initial type-store CAS, never for cross-thread mutual exclusion.
+// Hosted LLGo goroutines run on OS threads without cooperative preemption.
+//
 //go:linkname sync_atomic_runtime_procPin sync/atomic.runtime_procPin
 func sync_atomic_runtime_procPin() int {
-	return procPin()
+	return 0
 }
 
 //go:linkname sync_atomic_runtime_procUnpin sync/atomic.runtime_procUnpin
-func sync_atomic_runtime_procUnpin() {
-	procUnpin()
-}
+func sync_atomic_runtime_procUnpin() {}
