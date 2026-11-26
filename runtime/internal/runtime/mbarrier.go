@@ -157,7 +157,8 @@ func Typedmemmove(typ *Type, dst, src unsafe.Pointer) {
 	// other goroutine must also be accompanied by a write
 	// barrier, so at worst we've unnecessarily greyed the old
 	// pointer that was in src.
-	c.Memmove(dst, src, typ.Size_)
+	// dst and src may overlap, so this must stay a memmove.
+	llgoMemmove(dst, src, typ.Size_)
 	if wideGoHeaderSlots {
 		clearTypedHeaderRange(typ, dst, 1, typ.Size_)
 	}
@@ -172,7 +173,8 @@ func typedSliceCopy(typ *_type, dstPtr unsafe.Pointer, dstLen int, srcPtr unsafe
 	if n == 0 || dstPtr == srcPtr {
 		return n
 	}
-	c.Memmove(dstPtr, srcPtr, uintptr(n)*typ.Size_)
+	// reflect.Copy allows overlapping ranges, so this must stay a memmove.
+	llgoMemmove(dstPtr, srcPtr, uintptr(n)*typ.Size_)
 	if wideGoHeaderSlots {
 		clearTypedHeaderRange(typ, dstPtr, uintptr(n), typ.Size_)
 	}

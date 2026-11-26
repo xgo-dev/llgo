@@ -151,6 +151,11 @@ func TestResolveExternalPCLNTargetPolicy(t *testing.T) {
 }
 
 func TestEffectivePCLNModeLegacyPrecedence(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", repoRoot)
 	tests := []struct {
 		name     string
 		funcInfo string
@@ -165,6 +170,12 @@ func TestEffectivePCLNModeLegacyPrecedence(t *testing.T) {
 		{name: "explicit none wins", funcInfo: "1", conf: Config{PCLNMode: PCLNNone, PCLNModeSet: true}, want: PCLNNone},
 		{name: "typed external is authoritative", funcInfo: "0", conf: Config{PCLNMode: PCLNExternal}, want: PCLNExternal},
 		{name: "typed none is authoritative", funcInfo: "1", conf: Config{PCLNMode: PCLNNone}, want: PCLNNone},
+		{name: "baremetal target default none", conf: Config{Target: "esp32c3"}, want: PCLNNone},
+		{name: "baremetal target legacy disabled", funcInfo: "0", conf: Config{Target: "esp32c3"}, want: PCLNNone},
+		{name: "baremetal target explicit opt-in", funcInfo: "1", conf: Config{Target: "esp32c3"}, want: PCLNEmbedded},
+		{name: "baremetal target explicit embedded wins", conf: Config{Target: "esp32c3", PCLNMode: PCLNEmbedded, PCLNModeSet: true}, want: PCLNEmbedded},
+		{name: "baremetal target typed external is authoritative", funcInfo: "0", conf: Config{Target: "esp32c3", PCLNMode: PCLNExternal}, want: PCLNExternal},
+		{name: "hosted target default embedded", conf: Config{Target: "wasi"}, want: PCLNEmbedded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -234,17 +245,25 @@ func TestDoValidatesPCLNMode(t *testing.T) {
 }
 
 func TestDoNormalizesLegacyPCLNMode(t *testing.T) {
-	t.Setenv(llgoFuncInfo, "0")
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", repoRoot)
 	tests := []struct {
-		name string
-		conf Config
-		want PCLNMode
+		name     string
+		funcInfo string
+		conf     Config
+		want     PCLNMode
 	}{
-		{name: "legacy default", conf: Config{}, want: PCLNNone},
-		{name: "explicit embedded", conf: Config{PCLNMode: PCLNEmbedded, PCLNModeSet: true}, want: PCLNEmbedded},
+		{name: "legacy default", funcInfo: "0", conf: Config{}, want: PCLNNone},
+		{name: "explicit embedded", funcInfo: "0", conf: Config{PCLNMode: PCLNEmbedded, PCLNModeSet: true}, want: PCLNEmbedded},
+		{name: "hosted target default embedded", funcInfo: "", conf: Config{Target: "wasi"}, want: PCLNEmbedded},
+		{name: "hosted target explicit opt-in", funcInfo: "1", conf: Config{Target: "wasi"}, want: PCLNEmbedded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(llgoFuncInfo, tt.funcInfo)
 			conf := tt.conf
 			before := conf
 			// Stop after PCLN normalization without setting up a toolchain.

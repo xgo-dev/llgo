@@ -1,9 +1,10 @@
-//go:build baremetal && !nogc && llgo.baremetal.stdio
+//go:build baremetal && !nogc && !llgo.baremetal.stdio
 
 package runtime
 
-func SetFinalizer(_ any, finalizer any) {
-	if finalizer != nil {
-		panic("runtime.SetFinalizer: no finalizer dispatch on bare metal")
-	}
+// The tinygogc finalizer bridge is only wired for WebAssembly. Baremetal
+// builds still provide the entry point so finalizer calls type-check and
+// link; registration is a no-op until that bridge is ported.
+func SetFinalizer(obj any, finalizer any) {
+	_, _ = obj, finalizer
 }

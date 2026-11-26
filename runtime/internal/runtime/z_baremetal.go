@@ -3,6 +3,8 @@
 package runtime
 
 import (
+	"unsafe"
+
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/clite/setjmp"
 )
@@ -15,17 +17,30 @@ func Rethrow(link *Defer) {
 		return
 	}
 	if ptr := gp.panic_; ptr != nil {
-		gp.movePanicToDefer((*panicNode)(ptr), link)
-	} else {
-		gp.defer_ = link
-	}
+		node := (*panicNode)(ptr)
+		gp.movePanicToDefer(node, link)
 	if link == nil {
-		// Bare-metal has one execution context and no goroutine-exit
-		// transition. Goexit still drains every defer through the longjmp
-		// path, then retains the backend's existing fatal termination here.
+		// Early diagnostics first: the USB-Serial/JTAG banner works before
+		// stdio exists, while the prints below can die silently when a panic
+		// lands during package init (see earlypanic_baremetal.go).
+		earlyPanicReport(node.arg)
+		TracePanic(node.arg)
+		FreeRoot(unsafe.Pointer(node))
 		c.Printf(c.Str("fatal error\n"))
 		c.Exit(2)
-	} else {
+	}
 		setjmp.Longjmp((*setjmp.JmpBuf)(link.Addr), 1)
 	}
+	if gp.goexit {
+		gp.defer_ = link
+		if link != nil {
+			setjmp.Longjmp((*setjmp.JmpBuf)(link.Addr), 1)
+		}
+		// Every deferred function has run; the selected backend terminates
+		// this G (and, when it is main and no other G remains, the program).
+		goexitBaremetal(gp)
+	}
+	// The deferred call recovered the panic and the unwound activation is
+	// gone: returning lets the caller's recovery block resume normal
+	// execution, matching the hosted backend.
 }

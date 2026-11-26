@@ -53,6 +53,9 @@ type Export struct {
 	ExtraFiles     []string // Extra files to compile and link (e.g., .s, .c files)
 	ClangRoot      string   // Root directory of custom clang installation
 	ClangBinPath   string   // Path to clang binary directory
+	// DefaultStackSize is the target's default-stack-size, used by the
+	// baremetal fiber scheduler as its goroutine stack default.
+	DefaultStackSize uint64
 
 	LLVMTarget   string   // LLVM Target
 	TargetABI    string   // RISC-V Target ABI (e.g., "lp64", "lp64d")
@@ -1008,6 +1011,7 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 	export.BuildTags = config.BuildTags
 	export.GOOS = config.GOOS
 	export.GOARCH = config.GOARCH
+	export.DefaultStackSize = config.DefaultStackSize
 	export.WasmProfile = wasmProfile
 	export.WasmProvider = wasmProvider
 	export.ExtraFiles = config.ExtraFiles
@@ -1101,14 +1105,27 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 		// double.
 		ccflags = append(ccflags, "-mdouble=64")
 	case "riscv32":
-		// Check llvm-target to distinguish ESP RISC-V chips from others
-		// ESP series (riscv32-esp-elf) only supports RV32IMC (no A/D/F extensions)
-		// Other RISC-V32 targets support RV32IMAC (with A extension)
-		if config.LLVMTarget == "riscv32-esp-elf" {
-			ccflags = append(ccflags, "-march=rv32imc")
-		} else {
-			ccflags = append(ccflags, "-march=rv32imac")
+		// Check llvm-target to distinguish ESP RISC-V chips from others. ESP
+		// series (riscv32-esp-elf) defaults to RV32IMC (no A/D/F extensions);
+		// other RISC-V32 targets default to RV32IMAC (with A extension). A
+		// target whose cflags carry an explicit -march= (e.g. the hard-float
+		// esp32s31-f variant, rv32imafc) overrides the default: target json
+		// inheritance appends child cflags after the parent's, so the last
+		// -march= is the effective one.
+		march := ""
+		for _, flag := range config.CFlags {
+			if strings.HasPrefix(flag, "-march=") {
+				march = strings.TrimPrefix(flag, "-march=")
+			}
 		}
+		if march == "" {
+			if config.LLVMTarget == "riscv32-esp-elf" {
+				march = "rv32imc"
+			} else {
+				march = "rv32imac"
+			}
+		}
+		ccflags = append(ccflags, "-march="+march)
 		ccflags = append(ccflags, "-fforce-enable-int128")
 	case "riscv64":
 		ccflags = append(ccflags, "-march=rv64gc")
@@ -1176,6 +1193,7 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 	}
 	var libcIncludeDir []string
 	var compiledLibraryKey string
+	var rtLibraryKey string
 	if config.Libc != "" || config.RTLib != "" {
 		var compilerKey string
 		compilerKey, err = compilerCacheKey(export.CC)
@@ -1183,8 +1201,33 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 			return
 		}
 		compiledLibraryKey = compiledLibraryCacheKey(compilerKey, ccflags, ldflags)
+		if config.RTLib != "" {
+			// The rtlib archive identity must cover its source-file list:
+			// the compile step only stats the archive, so a changed file
+			// list would otherwise keep serving a stale archive.
+			var rtGroups [][]string
+			rtGroups, err = rtlibCacheKeyGroups(cacheDir(), config.RTLib, target)
+			if err != nil {
+				return
+			}
+			rtKeyGroups := append([][]string{ccflags, ldflags}, rtGroups...)
+			rtLibraryKey = compiledLibraryCacheKey(compilerKey, rtKeyGroups...)
+		}
 	}
 	ldflags = append(ldflags, "-L", env.LLGoROOT()) // search targets/*.ld
+	if slices.Contains(config.BuildTags, "baremetal") && strings.HasPrefix(config.LLVMTarget, "riscv32") {
+		// reflect's native call bridge links the vendored riscv32 libffi
+		// through ffi's "link: -lffi": the ilp32 soft-float archive under
+		// riscv32, or the ilp32f hard-float archive under riscv32-f for
+		// hard-float targets (the linker rejects mixing the two ABIs).
+		ffiDir := "riscv32"
+		if config.TargetABI == "ilp32f" {
+			ffiDir = "riscv32-f"
+		}
+		if root := env.LLGoROOT(); root != "" {
+			ldflags = append(ldflags, "-L", filepath.Join(root, "runtime", "internal", "clite", "ffi", ffiDir))
+		}
+	}
 
 	if config.Libc != "" {
 		var outputDir string
@@ -1218,8 +1261,11 @@ func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
 		var compileConfig compile.CompileConfig
 		baseDir := filepath.Join(cacheRoot(), "crosscompile")
 
-		rtKey := compiledLibraryCacheKey(compiledLibraryKey, libcIncludeDir)
-		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, config.LLVMTarget, rtKey)
+		// The RT lib compile consumes the libc include flags, and its archive
+		// identity must also cover the rtlib source list (see rtlibCacheKeyGroups),
+		// so both feed the cache key.
+		rtKey := compiledLibraryCacheKey(rtLibraryKey, libcIncludeDir)
+		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, target, rtKey)
 		if err != nil {
 			return
 		}

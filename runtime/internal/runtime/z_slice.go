@@ -107,8 +107,9 @@ func SliceAppendAligned(src Slice, data unsafe.Pointer, num, etSize, etAlign int
 	if etSize == 0 {
 		return src
 	}
-	// An in-capacity append may take its arguments from the same backing array.
-	c.Memmove(c.Advance(src.data, oldLen*etSize), data, uintptr(num*etSize))
+	// An in-capacity append may take its arguments from the same backing
+	// array, so the copy must stay a memmove.
+	llgoMemmove(c.Advance(src.data, oldLen*etSize), data, uintptr(num*etSize))
 	return src
 }
 
@@ -131,6 +132,10 @@ func GrowSliceAligned(src Slice, num, etSize, etAlign int, hasPointers bool) Sli
 		}
 		var p unsafe.Pointer
 		if hasPointers {
+			// Fresh AllocZ storage is zeroed by every collector, so the newly
+			// exposed slots — including the high words of widened pointer slots
+			// — need no clearTypedHeaderRange pass; only copies into existing
+			// memory do (Typedmemmove, typedSliceCopy, ReflectGrowSlice).
 			p = AllocZAligned(mem, uintptr(etAlign))
 		} else {
 			p = AllocAtomicUAligned(mem, uintptr(etAlign))
@@ -141,7 +146,7 @@ func GrowSliceAligned(src Slice, num, etSize, etAlign int, hasPointers bool) Sli
 			c.Memset(unsafe.Add(p, copied), 0, mem-copied)
 		}
 		if oldLen != 0 {
-			c.Memcpy(p, src.data, uintptr(oldLen*etSize))
+			llgoMemcpy(p, src.data, uintptr(oldLen*etSize))
 		}
 		src.data = p
 		src.cap = newCap
@@ -207,7 +212,7 @@ func SliceCopy(dst Slice, data unsafe.Pointer, num int, etSize int) int {
 		n = num
 	}
 	if n > 0 {
-		c.Memmove(dst.data, data, uintptr(n*etSize))
+		llgoMemmove(dst.data, data, uintptr(n*etSize))
 	}
 	return n
 }
@@ -241,6 +246,16 @@ func makeSliceMemory(len, cap, etSize int) uintptr {
 	return mem
 }
 
+// MakeSliceStackGuard is installed by scheduler backends whose goroutine
+// stacks are fixed-size fibers (the baremetal fiber scheduler). MakeSliceBuffer
+// runs it before trusting caller-owned stack storage, so a caller whose frame
+// already crossed the fiber floor fatals deterministically instead of
+// silently writing below it: the swap-point guard only checks at cooperative
+// yields, and a function whose non-escaping make overflowed never yields. It
+// stays nil on backends with growable or large stacks (hosted, wasm), making
+// the check a single nil comparison.
+var MakeSliceStackGuard func(mem uintptr, buffer unsafe.Pointer)
+
 // MakeSliceBuffer uses caller-owned aligned storage for a valid small make.
 // Fallbacks enter the original helper, preserving both its checks and the
 // existing heap allocation path for callers without an escape proof.
@@ -248,6 +263,9 @@ func MakeSliceBuffer(len, cap, etSize, etAlign int, buffer unsafe.Pointer, buffe
 	if buffer != nil && len >= 0 && len <= cap && cap <= bufferCap {
 		mem, overflow := math.MulUintptr(uintptr(etSize), uintptr(cap))
 		if !overflow && mem <= maxAlloc {
+			if MakeSliceStackGuard != nil {
+				MakeSliceStackGuard(mem, buffer)
+			}
 			c.Memset(buffer, 0, mem)
 			return Slice{buffer, len, cap}
 		}

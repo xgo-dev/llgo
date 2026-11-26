@@ -1,0 +1,522 @@
+# llgo × ESP-IDF WiFi pipeline (ESP32-S31)
+
+A self-contained pipeline that drives the ESP-IDF `esp_wifi` stack from
+Go code compiled by llgo: setup → start → scan → connect → DHCP, with the
+acceptance run automated under esp-emu. The Go bindings live in the llgo
+repository (`pkg/esp/{wifi,gpio,i2c,i2s,net,tls,ws}`), consumed through the
+module require + replace in `go.mod`; this directory owns the acceptance program
+and the IDF project. The Go heap's growth into PSRAM that the acceptance
+program exercises is an llgo runtime feature, described under
+[PSRAM and the Go heap](#psram-and-the-go-heap).
+
+## Layout
+
+```
+esp-idf-wifi/
+├── go.mod                  Go module (module llgoidf; requires + replaces
+│                           github.com/xgo-dev/llgo, the binding packages' home)
+├── goapp/main.go           Acceptance program (println + WiFi + Go heap probe
+│                           + GPIO/I2C/I2S peripheral probes + TCP net probe
+│                           + TLS probe: VERIFY_NONE / VERIFY_REQUIRED / wrong-CA
+│                           / SNI Config+Dial directions
+│                           + WebSocket probe: plain ws + wss permissive/strict)
+├── goapp/hosted.go         Host-build push-linkname stubs for the FreeRTOS/C/
+│                           tinygogc externs in main.go, so `go build` links
+└── idfproj/                Minimal ESP-IDF project
+    ├── CMakeLists.txt
+    ├── sdkconfig.defaults  8 KiB main task, 240 MHz, Go on CPU1 / radio on CPU0, PSRAM
+    ├── host/               Host-side artifact pipeline (one command)
+    │   ├── make-artifact.sh  llgo build -> IDF-linkable relocatable object;
+    │   │                     also syncs the pkg/esp/*/glue templates into main/
+    │   ├── gencert.sh        Local PKI for the TLS probe: 100-year CA + server
+    │   │                     cert (valid from 1970 - the guest has no wall
+    │   │                     clock), wrong-CA for the negative test; writes
+    │   │                     main/tls_ca.h + main/tls_ca_wrong.h (gitignored)
+    │   ├── llgo_syms.S       GC heap + bootstrap stack window providers
+    │   ├── echosrv/          Host-side TCP echo peer for the net probe's emu
+    │   │                     acceptance run (listens on 127.0.0.1:9000; the
+    │   │                     emulator's NAT forwards 192.168.4.1:9000 to it)
+    │   ├── tlssrv/           Host-side TLS echo peer for the tls probe (TCP
+    │   │                     + crypto/tls on 127.0.0.1:9443, cert/key from
+    │   │                     tlssrv/certs/, gitignored). Its log line
+    │   │                     "peer sent TLS close_notify" is the host-side
+    │   │                     close evidence.
+    │   └── wssrv/            Host-side peer for the full acceptance run: one
+    │                         process serving the raw echo (9000), the TLS
+    │                         echo (9443) and the two WebSocket endpoints
+    │                         (ws://9000, wss://9443), sniffed per
+    │                         connection. Its "close handshake (close code
+    │                         1000)" log line is the host-side evidence for
+    │                         the WebSocket closing handshake.
+    └── main/               The main component
+        ├── CMakeLists.txt  Sources + WHOLE_ARCHIVE + link options
+        ├── app_main.c      app_main -> llgo entry; _write/_exit shims; Go
+        │                    heap PSRAM budget (llgo_gc_ext_heap_cap)
+        ├── demo_glue.c     Demo-local glue (cycle counter for the benchmarks,
+│                            CA PEM accessors for the tls probe)
+        ├── *_glue.c        Package glues, synced from
+        │                    github.com/xgo-dev/llgo/pkg/esp/*/glue at build time
+        │                    (gitignored; boundary rules: pkg/esp/README.md)
+        └── llgo_dram.ld    _globals_start/_globals_end for tinygogc
+```
+
+The Go binding packages themselves live in the llgo repo:
+`github.com/xgo-dev/llgo/pkg/esp/{wifi,gpio,i2c,i2s,net,tls,ws}` - the wifi one grew
+out of this demo's former `goapp/espwifi` directory (same API, same
+mailbox glue; see `pkg/esp/README.md` for the package template, the
+go↔C boundary rules and both glue integration recipes).
+
+## Architecture
+
+ESP-IDF/FreeRTOS owns the platform; llgo compiles `goapp` into a
+relocatable object (`-target esp32s31-idf`, `ld.lld -r`) that the main
+component links into the firmware. `app_main` calls the generated C entry,
+which hands package init and `main.main` to the llgo fiber scheduler on the
+FreeRTOS main task.
+
+The Go ↔ C boundary follows three rules:
+
+1. **Integer-and-pointer-only signatures.** llgo's RV32 codegen is
+   soft-float; the object's ABI flag is patched to single-float because no
+   float value ever crosses the link (see `make-artifact.sh` step 4).
+2. **Events travel through a C-side mailbox, never callbacks.** esp_event
+   handlers run on the event-loop task; the llgo fiber scheduler is
+   single-task global state, so no second FreeRTOS task may enter Go. The
+   handler copies into a 16-slot single-producer/single-consumer ring and Go
+   polls it paced by `vTaskDelay(10)` = 100 ms — which also keeps the idle
+   tasks fed for the watchdog. Overflow drops the newest event and is
+   reported once.
+3. **No large stack buffers in glue.** Go goroutines run on 8 KiB fiber
+   stacks, so bulk data (scan records) lives in static storage, and
+   `WIFI_INIT_CONFIG_DEFAULT()` stays in C (it embeds Kconfig constants and
+   function pointers Go cannot spell).
+
+The full discipline (handles as uintptr, linkname naming, the package
+template, both glue integration recipes, how to add a new peripheral) is
+fixed in [`pkg/esp/README.md`](../../pkg/esp/README.md).
+
+Every binding returns the raw `esp_err` code (0 = ESP_OK);
+`wifi.ErrName` maps the codes this pipeline can hit to their IDF names.
+
+### Why the main component is WHOLE_ARCHIVE
+
+`llgo_out.o` is the last item on the final link line and the ESP-IDF link
+uses no `--start-group`, so each archive is scanned only against the
+undefined symbols known at its position. The glue (`wifi_glue.c`) is
+referenced solely from `llgo_out.o`, and a plain archive would never pull
+it — the same reason the `llgo_syms.S` runtime providers are merged inside
+`llgo_out.o` itself. `WHOLE_ARCHIVE` keeps every main-component object in
+the link unconditionally. (The baseline demo resolved `vTaskDelay` from
+`libmain.a` only by accident: `app_main.c` itself references FreeRTOS
+symbols and was pulled early by the IDF startup, and its undefineds then
+pulled `libfreertos.a` in a later archive round.)
+
+## Build and run
+
+Prerequisites: llgo compiler (`/tmp/llgo-wifi` below), Docker image
+`espressif/idf:latest`, `esp-emu` v1.2.0 on the host (the first release
+with the user-mode NAT the net probe relies on), and `openssl` on PATH
+(for `gencert.sh`).
+
+```
+# 0. Station credentials: copy the placeholder and fill in myssid/mypassword
+#    (the emulator's built-in soft AP). Without this file the glue compiles
+#    empty strings and the run stays scan-only: it never associates, so a
+#    --exit-on "[go] net PASS" acceptance would run to the 150 s timeout
+#    instead of exiting.
+cp idfproj/main/wifi_creds.h.example idfproj/main/wifi_creds.h
+#    ... edit in myssid / mypassword ...
+
+# 0b. TLS probe PKI: generate the local CA + server cert (100-year validity,
+#     valid from 1970 because the guest has no wall clock), the wrong-CA for
+#     the negative test, and the two headers the demo glue compiles in.
+#     Without this step the firmware still builds, but the tls probe reports
+#     "required SKIP: no CA compiled in" and stops at "[go] tls done" -
+#     "[go] tls PASS" is never printed, so a --exit-on "[go] tls PASS"
+#     acceptance in that shape runs to the 150 s timeout (use --exit-on
+#     "[go] tls done" for the run that reports the SKIP). Rerunning
+#     gencert.sh rewrites the two headers: rerun make-artifact.sh and
+#     idf.py build afterwards, or the firmware keeps verifying against the
+#     stale compiled-in CA.
+./idfproj/host/gencert.sh
+
+# 1. Go -> relocatable object (prints the remaining undefined symbols;
+#    llgo_wifi_* / llgo_gpio_* / llgo_i2c_* / llgo_i2s_* / llgo_net_* /
+#    llgo_tls_* / vTaskDelay / stdio must all be in that list - the script
+#    echoes the llgo_net_* and llgo_tls_* sets separately; the ws package
+#    is pure Go and contributes no glue symbols). It also syncs the
+#    pkg/esp/*/glue templates into main/ - run it before every idf.py
+#    build.
+cd idfproj/host && ./make-artifact.sh /tmp/llgo-wifi
+
+# 2. IDF firmware (merge-bin takes -o relative to the build/ directory:
+#    the image lands in build/merged-binary.bin)
+cd .. && docker run --rm -v "$PWD":/project -w /project \
+    espressif/idf:latest bash -c \
+    'idf.py set-target esp32s31 && idf.py build && idf.py merge-bin -o merged-binary.bin'
+
+# 3. Back at the demo root: host-side peer(s) for the probes. For a full
+#    run (net + tls + ws), wssrv alone covers everything: it sniffs each
+#    connection and serves the raw echo (9000), the TLS echo (9443) and
+#    the two WebSocket endpoints (ws://9000, wss://9443). wssrv is a
+#    deliberately lenient acceptance peer: it does not validate
+#    Sec-WebSocket-Version (the client always sends 13; a strict peer may
+#    reject a wrong version - recorded as a known peer property, see
+#    P6-NOTES). For a
+#    net/tls-only run the dedicated echosrv/tlssrv of the earlier phases
+#    work unchanged. The firmware connects to the emulator's NAT gateway
+#    alias 192.168.4.1:<port>, which lands on these listeners.
+cd .. && go run ./idfproj/host/wssrv &
+#    ... or, for a net/tls-only run:
+#      go run ./idfproj/host/echosrv 127.0.0.1:9000 &
+#      go run ./idfproj/host/tlssrv &
+
+# 4. Acceptance run under esp-emu (emu's built-in soft AP is myssid/mypassword;
+#    --psram-size matches the board's 16 MiB PSRAM, without it the Go heap
+#    cannot grow). The PASS gate exits as soon as the ws probe has verified
+#    all three sessions (which implies net and tls passed ahead of it); a
+#    full-coverage run (net resolve + loopback + every heap mark, plus the
+#    ws probe's post-close marks) exits on "[go] ws done" instead - the
+#    PASS-gate string kills the run before those trailing marks execute.
+while ! mkdir /tmp/esp-emu.lock; do sleep 5; done
+~/.local/bin/esp-emu --chip esp32s31 --firmware idfproj/build/merged-binary.bin \
+    --console usb-jtag --timeout 150s --psram-size 16M \
+    --wifi-ssid myssid --wifi-password mypassword \
+    --exit-on "[go] ws PASS"
+#    ... or: --exit-on "[go] ws done"  (full coverage)
+rmdir /tmp/esp-emu.lock
+kill %1   # wssrv (or %1 %2 %3 for the echosrv/tlssrv pair)
+
+# 4b. Recorded negative shapes (reproduction runs, NOT acceptance runs -
+#     both are expected to fail):
+#     - no WebSocket peer: replace wssrv with the echosrv/tlssrv pair
+#       (step 3's alt) and run with --exit-on "[go] ws done". The ws
+#       probe's GET lands on the raw echo, the plain session fails with
+#       WS_ERR_NOT_WEBSOCKET and "[go] ws FAIL plain"; PASS and done
+#       never print and the run ends at the 150 s timeout
+#       (logs/p6c-emu-negws.log in P6-NOTES).
+#     - no PSRAM: add --psram-size 0. net/tls/plain-ws pass, the wss
+#       handshake succeeds, and the first wss write fails with -132 (PSA
+#       AES context allocation under the tight heap - a known
+#       configuration limitation, see P6-NOTES; logs/p6c-emu-nopsram.log).
+```
+
+Subnet note: the probe hardcodes the emulator's NAT addresses
+(192.168.4.1 gateway alias, station 192.168.4.2), which are esp-emu's
+defaults. esp-emu v1.2.0 prints a startup WARN that a future release
+changes the default subnet to 10.0.2.0/24 (`the emulator's network
+defaults to 192.168.4.0/24 ... a future release changes the default to
+10.0.2.0/24. Add net=192.168.4.0/24 to --net to keep it, or
+net=10.0.2.0/24 to switch now`); if that lands, pass
+`--net 192.168.4.0/24` or the probe's hardcoded addresses stop matching.
+
+Golden: `idfproj/host/golden/emu-net-probe.txt` pins the probe lines that
+must not drift between runs - the net, udp and reconnect sections plus the
+two power-save sections (every `[go] net` / `[go] wifi ps` / `[go] wifi
+reconn` line except the heap marks). Regression check after an emu run:
+
+    grep -E '^\[go\] (net|wifi ps|wifi reconn)' <emu log> | grep -v 'heap '
+
+and byte-diff against the golden (comments excluded). New lines may only be
+appended at the end of their own section; every existing line must stay
+byte-identical - a diff is a behavior change in a pre-existing path, not a
+cosmetic rename.
+
+Expected console output (interleaved with the IDF boot log):
+
+```
+[c] wifi glue: IDF v6.3-dev-..., free heap ... bytes
+[go] wifi setup err=0
+[go] wifi STA_START
+[go] wifi scan n = 1
+[go] wifi ap ssid=myssid ch = 1 rssi = -30
+[go] wifi scan done
+[go] wifi STA_CONNECTED
+[go] wifi GOT_IP ip=192.168.4.2
+[go] wifi PASS ip=192.168.4.2
+```
+
+`main.go` runs the whole acceptance sequence: one-shot setup, event mailbox,
+station config (`myssid`/`mypassword`), start, blocking scan with the AP list
+print, connect with up to three attempts (disconnect reason codes arrive
+through the mailbox), and the DHCP wait. A wrong password ends in three
+`[go] wifi disconnect reason = 202` lines (auth fail) and
+`[go] wifi FAIL no_ap`.
+
+After the heap probes, the scan-only run exercises the three peripheral
+packages (`[go] periph ...` lines): a GPIO set→get→toggle round-trip on
+GPIO4, an I2C master bus install plus one read from an absent address (the
+emulator does not model ACK/NACK, so the read reports `err = 0` and a
+`0xFF` byte there; on hardware it fails with an explicit error within the
+1 s driver timeout), and an I2S TX channel
+alloc → std init → enable → one silence write. Each probe prints its own
+esp_err code; the `probeGPIO`/`probeI2C`/`probeI2S` switches in `main.go`
+skip a peripheral that hangs a given target.
+
+The power-save surface is exercised twice (`[go] wifi ps ...` lines). Before
+any mode is picked, `psGuardProbe` proves the surface is station-only:
+both `SetPowerSave` and `GetPowerSave` must be refused with ESP_ERR_WIFI_MODE
+while the driver still has no mode (the driver itself would swallow the call
+there - esp_wifi_set_ps validates only the enum range - so a named refusal
+is the proof the glue guard fired). On the associated station, `psProbe`
+reads the driver default (MIN_MODEM, `esp_wifi.h`), flips to NONE and back,
+and leaves MIN_MODEM - the state every earlier acceptance run saw - so the
+net/udp probes that follow run under the same power-save condition as
+before, and their PASS lines double as the proof the association still
+passes traffic after the flips. What the emulator cannot say anything about
+is the point of the feature: idle current and downlink latency (the numbers
+live in `pkg/esp/wifi`'s PowerSaveMode doc; esp-emu does not model RF
+power), which stay a real-board measurement item.
+
+After the association (the net probe needs the DHCP lease), `netProbe`
+exercises `pkg/esp/net` over the emulator's NAT (`[go] net ...` lines):
+it dials the NAT gateway alias 192.168.4.1:9000 - which the emulator
+forwards to the host's 127.0.0.1:9000, i.e. the echosrv above - writes a
+256-byte pseudo-random pattern, reads it back and compares; that echo is
+the `[go] net PASS` gate and the acceptance exit marker. Two best-effort
+items follow: `Resolve("localhost")` through the emulator's DNS proxy,
+and a strictly sequential loopback Listen/Accept self-connect on
+127.0.0.1. Every wait is bounded (20 ms select quanta under explicit
+deadlines), so a missing peer surfaces as an errno, never a hang; see
+`pkg/esp/README.md` for the bounded-quantum model and the scheduling
+note that keeps this probe on one goroutine.
+
+After the datagram probes, `reconnProbe` cycles the WiFi association
+itself (`[go] wifi reconn ...` lines) against `pkg/esp/wifi`'s
+auto-reconnect state machine (`SetAutoReconnect` / `ReconnectState`, see
+`pkg/esp/wifi/reconnect.go`): enable + user `Disconnect` (the machine
+must stay idle - an intentional disconnect never schedules a retry), a
+manual reconnect (its GOT_IP resets the backoff), then the unexpected
+disconnection shape - the station is pointed at an SSID nobody serves,
+the association fails, and the machine (nobody else calls `Connect` in
+that window) drives the esp_wifi_connect retries on its own 1 s→2 s→4 s
+backoff - then restoring the real credentials lets the machine's next
+attempt recover, and the off switch is proven by a final user disconnect
+that stays down. A last manual Connect restores the association for the
+transport probes that follow; `[go] wifi reconn: PASS` fires only when
+every phase held, and every phase is emu-runnable: the emulator cannot
+inject a router power loss, so a driven failed association stands in for
+the DISCONNECTED a lost router delivers - from the machine's point of
+view the two are the same event. The hardware-only variant (AP vanishing
+while the station sits associated) is a pending verification item, to be
+run on a real board with a real router; the emu run makes no claim about
+it. The machine emits no synthetic event kinds: DISCONNECTED / CONNECTED /
+GOT_IP keep telling the whole story through the regular fan-out, and
+`ReconnectState()` names the retry window itself.
+
+After the net probe, `tlsProbe` runs the same NAT path one layer up
+against `idfproj/host/tlssrv` (`[go] tls ...` lines): a VERIFY_NONE dial
+(192.168.4.1:9443, no CA), a VERIFY_REQUIRED dial with the CA PEM that
+`gencert.sh` compiled into the firmware, and a negative dial with a CA
+that signed nothing - which must fail with the certificate-verify error.
+Each dial writes a 256-byte pseudo-random pattern, reads the echo back in
+short reads, compares, and closes with a graceful TLS close_notify (the
+host side records it as "peer sent TLS close_notify" in the tlssrv log -
+an abrupt TCP close would instead show up as a connection-reset error).
+`[go] tls PASS` is the tls probe's gate; without a compiled-in CA the
+VERIFY_REQUIRED phase reports SKIP and the probe ends at "[go] tls done"
+without printing PASS, so a gate run in that shape times out at the 150 s
+limit instead of exiting (the overall acceptance gate is the ws probe's,
+see below), the same convention as the scan-only wifi run. A FAIL line
+ends the probe without the done marker, so that shape also ends at the
+150 s timeout - a missing "[go] tls done" means something real broke. The
+certificates are valid from 1970 so the guest's frozen epoch wall clock
+passes the validity check.
+
+After the tls probe's legacy phases (VERIFY_NONE, VERIFY_REQUIRED,
+wrong-CA rejection - all through the deprecated `TLSDial`, byte-identical
+prints), `tlsProbe` runs the SNI probes through the `Config`+`Dial` path
+(`[go] tls sni ...` / `[go] tls skip ...` lines): the firmware dials the
+NAT alias 192.168.4.1:9443 while naming the service behind it in
+`Config.ServerName` (the cert's SAN DNS:localhost - gencert.sh also puts
+IP:127.0.0.1 there for hosted clients), and the four acceptance
+directions must all hold: correct name + CA passes (with a quiet echo
+round and a `ConnectionState` check: version, cipher suite and the peer
+certificate's DER exported), wrong name rejected, wrong CA rejected,
+InsecureSkipVerify passes. `[go] tls PASS` now only fires when the legacy
+phases AND the four SNI directions are right - the gate covers the
+identity checks that catch the MITM a same-CA certificate would otherwise
+slip through.
+
+After the tls probe, `wsProbe` runs `pkg/esp/ws` - the pure-Go RFC 6455
+client - over the transports the earlier probes already proved
+(`[go] ws ...` lines): first a crypto smoke of the in-package SHA-1 and
+base64 (`sha1("abc")`, the RFC 6455 section 1.3 accept-key example, RFC
+4648 vectors - the stdlib versions are unlinkable on this target), then
+three sessions, each handshake + 256-byte binary echo + ping/pong +
+closing handshake: `ws://192.168.4.1:9000/ws` over a plain TCP dial,
+`wss://192.168.4.1:9443/ws` with a VERIFY_NONE TLSDial, and the same with
+the compiled-in CA (VERIFY_REQUIRED, SKIP without a compiled-in CA).
+The VERIFY_REQUIRED session verifies the certificate chain only: the tls
+package pins no hostname (`set_hostname(NULL)`, its documented
+intentional exemption), so the acceptance cert's SAN of 127.0.0.1 never
+conflicts with the 192.168.4.1 the firmware dials - a hostname match
+would fail there, and that mismatch is by design. The
+sessions run strictly sequentially on one goroutine. `[go] ws PASS` is
+the overall acceptance gate: it fires only when all three sessions
+verified (net and tls have already passed ahead of it). The FAIL and
+SKIP conventions are the same as the tls probe's: a FAIL or a missing CA
+never prints PASS; the SKIP shape ends at "[go] ws done" (use
+`--exit-on "[go] ws done"` to capture it), a FAIL ends at the 150 s
+timeout. The host-side evidence for each closing handshake is the wssrv
+log line "close handshake (close code 1000)"; the echo and pong show up
+as "echoed 256 bytes" / the upgraded line in the same log.
+
+Without credentials the run is scan-only: after the scan, and with PSRAM
+enabled, the program keeps 6 MiB live in the Go heap with a collection
+after every block, verifies it, starts goroutines on top of it, and
+returns:
+
+```
+[go] wifi: scan-only, no credentials compiled in
+...
+[go] wifi scan done
+[go] bench static heap: 4x 16 KiB | internal blocks =4 at2f028680(alloc102196write98313read114700cycles) | psram blocks =0 | gc cycles = 3764814
+[go] psram: budget = 75% of the free spiram (auto)
+[go] gc heap before psram probe usable = 258096 reserved = 262144 segments = 1 | psram bytes = 0 (c side = 0 )
+[go] psram: live = 6291456 bytes in 96 blocks | checksum = 16ca9dc5 mismatches = 0
+[go] psram: 6 MiB live and verified across collections
+[go] bench psram segments: 12x 16 KiB | internal blocks =0 | psram blocks =12 at505f0cc0(alloc101683write98374read114761cycles) | gc cycles = 177030373
+[go] psram: 8 of 8 goroutines started with the static window full ran on a psram stack
+[go] bench word read internal (16 KiB at 2e000b04): 20487 cycles, 5 per word
+[go] bench word read psram (16 KiB at 50700c1c): 20487 cycles, 5 per word
+[go] wifi: scan-only run complete, no association attempted
+[c] gc ext heap: cap = 4294967295, bytes = 7340032 | idf internal free = 57999, psram free = 9434088
+[c] app_main: llgo main returned, deleting main task
+```
+
+## Credentials
+
+Station credentials are compiled in from `idfproj/main/wifi_creds.h`, a
+file kept out of version control (the `.gitignore` in `idfproj/` lists
+`wifi_creds.h`, which covers `idfproj/main/wifi_creds.h`;
+`wifi_creds.h.example` is the placeholder). The glue falls back to empty
+strings when the file is absent, and an empty SSID selects the scan-only
+run (`[go] wifi: scan-only, no credentials compiled in`): the driver is
+set to station mode, scans once, never configures or associates with an
+AP, and the program returns after the Go heap probe. The Go side reads
+the values through `wifi.DefaultSTA()` - nothing is hardcoded in
+committed code.
+
+## Memory: two non-overlapping layers
+
+- **llgo GC heap (tinygogc)**: a static 256 KiB window in `.dram0.bss`
+  (`host/llgo_syms.S`: 2 KiB runtime reserve + 262,144 bytes + 4 KiB
+  bootstrap-stack window). It sits below the IDF heap's `_heap_start` and
+  is never managed by the IDF allocator, so it never shows up in
+  `esp_get_free_heap_size()`. Once the window is used up, the collector
+  takes further segments from the PSRAM heap (see
+  [PSRAM and the Go heap](#psram-and-the-go-heap)).
+- **IDF heap pool**: everything `esp_get_free_heap_size()` /
+  `esp_get_minimum_free_heap_size()` report. The WiFi stack lives entirely
+  here (~50 KiB at init, ~55 KiB steady-state connected).
+
+`wifi.HeapFree()`/`wifi.HeapMin()` expose the watermarks and
+`wifi.HeapInternalFree()`/`wifi.HeapSpiramFree()` the two pools;
+`main.go` prints them at every pipeline stage (`baseline`, `init`,
+`start`, `scan`, before and after the PSRAM probe, `dhcp`,
+`steady+10s`), so a shrinking internal heap is attributable to the WiFi
+stack or IDF itself - never to the Go runtime. PSRAM taken by the Go heap
+is reported separately (`psram bytes = N (c side = N)`).
+
+## PSRAM and the Go heap
+
+With PSRAM enabled (`CONFIG_SPIRAM=y` in `sdkconfig.defaults`) the llgo GC
+heap is not limited to its static 256 KiB window: when the window is used
+up, tinygogc asks IDF for more memory
+(`heap_caps_malloc(size, MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)`) and links it
+in as a further heap segment (runtime:
+`runtime/internal/runtime/tinygogc/gc_segment_idf.go`).
+
+- **Enabling.** `CONFIG_SPIRAM=y` is all it takes. The collector probes
+  `heap_caps_get_free_size(MALLOC_CAP_SPIRAM)` the first time the window is
+  exhausted; less than 256 KiB free (no PSRAM, or `CONFIG_SPIRAM` off)
+  means "no external heap": the Go heap stays in the static window and an
+  exhausted window fails exactly as before. `CONFIG_SPIRAM_IGNORE_NOTFOUND=y`
+  (set in `sdkconfig.defaults`) keeps the firmware bootable on boards without
+  PSRAM chips: IDF then reports zero SPIRAM and the same static-window
+  behavior applies.
+- **Segment sizes.** 1 MiB, 2 MiB, 4 MiB, then 4 MiB per segment, each
+  enlarged when the allocation that triggered the growth needs more. A
+  failed `heap_caps_malloc` halves the request, down to 64 KiB; below that
+  the growth fails and the collector takes its out-of-memory path.
+- **Budget.** How much of PSRAM the Go heap may take is the C variable
+  `llgo_gc_ext_heap_cap`, read once, when the collector first grows:
+
+  | value                     | meaning                                          |
+  |---------------------------|--------------------------------------------------|
+  | `(uintptr_t)-1` (default) | 75% of the PSRAM free at the first growth        |
+  | `0`                       | disabled: the Go heap stays in its static window |
+  | any other byte count      | at most this many bytes of PSRAM                 |
+
+  The runtime ships a weak definition; an application overrides it with a
+  strong one, as `app_main.c` does through the `LLGO_GC_PSRAM_CAP` macro.
+- **Ledger.** After every successful segment the collector publishes the
+  bytes taken so far in `llgo_gc_ext_bytes`. `app_main.c` prints it next
+  to the budget and both IDF pools when `main` returns
+  (`[c] gc ext heap: cap = ..., bytes = ... | idf internal free = ..., psram free = ...`),
+  and the Go side prints the same number through `tinygogc.HeapStats()`
+  (`[go] gc heap ... usable/reserved/segments | psram bytes = N (c side = N)`).
+
+Measured under esp-emu (16 MiB PSRAM, scan-only run, bytes; the exact IDF
+internal figures drift run-to-run with the linked driver set — P5 measures
+58,135 after the scan vs P4's 62,055 before the peripheral drivers joined):
+
+| state                              | IDF internal free | IDF PSRAM free | Go heap reserved | segments | PSRAM taken |
+|------------------------------------|------------------:|---------------:|-----------------:|---------:|------------:|
+| after the scan, static window only |            58,135 |     16,774,132 |          262,144 |        1 |           0 |
+| 6 MiB live, automatic budget       |            58,135 |      9,434,088 |        7,602,144 |        4 |   7,340,032 |
+| 6 MiB live, budget 6.5 MiB         |            58,135 |      9,958,376 |        7,077,856 |        4 |   6,815,744 |
+
+The internal IDF heap is untouched: the price of Go heap growth is paid
+from PSRAM only. With PSRAM disabled the run prints
+`[go] psram: external heap unavailable (spiram free = 0 ), the Go heap stays in its static window`
+and goes on unchanged.
+
+Cycles per 16 KiB block (esp-emu, `rdcycle`): alloc/write/read cost
+102,196/98,313/114,700 in the static window and
+101,683/98,374/114,700 in a PSRAM segment, and a word-wise read takes
+5 cycles per word in both. **The emulator does not model PSRAM latency**,
+so these numbers show the allocator's overhead only; real PSRAM access
+costs have to be measured on hardware. What the emulator does show is the
+collector: one stop-the-world collection costs 3.8 M cycles with the
+static window alone and 70-180 M with 6 MiB live in a 7 MiB heap.
+
+Known limitations:
+
+- Only the `esp32s31-idf` target grows into PSRAM. The baremetal
+  `esp32s31` target has no `heap_caps` allocator and keeps the static
+  window alone.
+- Goroutine (fiber) stacks are allocated from the Go heap, so once the
+  window is exhausted new goroutine stacks land in PSRAM too (the scan-only
+  run starts eight at that point and reports where their stacks are).
+- Collections are stop-the-world and walk every segment: the pause grows
+  with the live set, on top of slower PSRAM access on real hardware.
+- The budget is read at the first growth and never revisited; memory
+  handed to the Go heap is never returned to IDF.
+
+## Notes
+
+- **Multi-core layout (TinyGo-style hardware isolation)**: the llgo scheduler
+  and all Go code run on **CPU1** (`CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1`), the
+  radio stack on **CPU0** - WiFi tasks (`CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0`),
+  lwip's tcpip task (`CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0`; its IDF default is
+  no affinity), BT and esp_timer (CPU0 by default). Scan/association bursts,
+  protocol timers and the interrupts that follow the radio tasks never preempt
+  the Go control loop, which is exactly the Core0-wireless / Core1-control
+  split multi-core embedded runtimes advertise - achieved with plain FreeRTOS
+  task affinity while the Go scheduler itself stays a single cooperative task
+  (a Go-visible `LockCore` API or true two-core scheduling would be separate
+  projects).
+- The IDF heap must absorb the WiFi allocations (~100-150 KiB) next to the
+  static 256 KiB llgo GC heap; the glue prints the free heap before setup to
+  make that budget visible.
+- Host builds compile entirely against the stub side (`go build`, `go vet`,
+  gopls): `pkg/esp/*` through their `_stub.go` files, `goapp/main.go`
+  through `goapp/hosted.go`, whose push linknames define the FreeRTOS/C
+  externs inertly on the host.
+- `goapp/main.go` triggers collections through
+  `//go:linkname gcCollect .../tinygogc.GC` instead of `runtime.GC()`: in
+  an `esp32s31-idf` build `import "runtime"` drags in the runtime's
+  finalizer support and with it libffi, whose C sources do not compile for
+  this target.

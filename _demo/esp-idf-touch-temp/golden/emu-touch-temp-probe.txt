@@ -1,0 +1,85 @@
+# Golden for the touch/temp probe ([go] tt ...) of _demo/esp-idf-touch-temp,
+# captured from an acceptance run (esp-emu v1.2.0, esp32s31, IDF
+# espressif/idf:latest = v6.3-dev, esp-clang toolchain from llgo's cache).
+#
+# Scope: every [go] tt line the probe prints. The [c]/[INFO]/ROM lines (the
+# emulator's own chatter and app_main's reports) are not part of the golden.
+#
+# Everything in this golden is exact - there is NO floater rule. The probe
+# prints no wall-clock values and no addresses; every number is either a
+# build fact (the channel ids, the GPIO map, the threshold), an emu-constant
+# sensor reading (see below), or a derived zero (the deltas).
+#
+# The sensor readings are the run's fidelity statement, and they are exact:
+#   temp read milli=32000  the temperature sensor is NOT modeled by the
+#                          emulator: the driver's conversion table maps the
+#                          unmapped-register fixed state to one range step,
+#                          so all five reads print the same 32000 (32.0 C).
+#                          On hardware these lines read the die temperature
+#                          (+/-1 C accuracy) and legitimately vary.
+#   touch data=0 base=0    the touch controller is NOT modeled either: the
+#                          measurement counters read zero, so data, baseline
+#                          and delta stay at 0 across all rounds. On
+#                          hardware these are charge-discharge counts in the
+#                          tens of thousands, and delta moves when a pad is
+#                          touched.
+#   (no touch event lines) the honest consequence: with the counters stuck
+#                          at zero nothing can cross the active threshold, so
+#                          the event drain stays empty. On hardware a pad
+#                          touch interleaves `touch event ch=... active`
+#                          and later `... inactive` lines here.
+#
+# The PASS gate itself is real end-to-end signal: every binding and driver
+# call on the path (heap allocation, interrupt allocation for the touch
+# callbacks, the state machine transitions, the filter and benchmark
+# configuration, the scan start/stop) returned esp_err 0. The link from Go,
+# through the glue, through the IDF drivers, to the (unmodeled) register
+# window is exercised and green; only the physical measurement is absent,
+# which is an environment property, not a binding property. Verify the
+# readings on hardware before trusting any of them.
+#
+# Regression check (the console is a USB-Serial/JTAG stream, so its lines end
+# in CR/LF: strip the CR before comparing):
+#   grep -E '^\[go\] tt' <emu log> | tr -d '\r' \
+#     | diff - <this file, comments excluded>
+# A diff means the probe's surface behavior changed. The golden only grows by
+# appending rounds/events (e.g. hardware runs with real readings), never by
+# editing an existing line.
+[go] tt: start
+[go] tt temp install ok
+[go] tt temp start ok
+[go] tt temp read i=0 milli=32000
+[go] tt temp read i=1 milli=32000
+[go] tt temp read i=2 milli=32000
+[go] tt temp read i=3 milli=32000
+[go] tt temp read i=4 milli=32000
+[go] tt temp stop ok
+[go] tt temp uninstall ok
+[go] tt touch init ok
+[go] tt touch config ch=4 gpio=10 thresh=200 ok
+[go] tt touch config ch=6 gpio=12 thresh=200 ok
+[go] tt touch start ok
+[go] tt touch round=0 ch=4 data=0 base=0 delta=0
+[go] tt touch round=0 ch=6 data=0 base=0 delta=0
+[go] tt touch round=1 ch=4 data=0 base=0 delta=0
+[go] tt touch round=1 ch=6 data=0 base=0 delta=0
+[go] tt touch round=2 ch=4 data=0 base=0 delta=0
+[go] tt touch round=2 ch=6 data=0 base=0 delta=0
+[go] tt touch round=3 ch=4 data=0 base=0 delta=0
+[go] tt touch round=3 ch=6 data=0 base=0 delta=0
+[go] tt touch round=4 ch=4 data=0 base=0 delta=0
+[go] tt touch round=4 ch=6 data=0 base=0 delta=0
+[go] tt touch round=5 ch=4 data=0 base=0 delta=0
+[go] tt touch round=5 ch=6 data=0 base=0 delta=0
+[go] tt touch round=6 ch=4 data=0 base=0 delta=0
+[go] tt touch round=6 ch=6 data=0 base=0 delta=0
+[go] tt touch round=7 ch=4 data=0 base=0 delta=0
+[go] tt touch round=7 ch=6 data=0 base=0 delta=0
+[go] tt touch round=8 ch=4 data=0 base=0 delta=0
+[go] tt touch round=8 ch=6 data=0 base=0 delta=0
+[go] tt touch round=9 ch=4 data=0 base=0 delta=0
+[go] tt touch round=9 ch=6 data=0 base=0 delta=0
+[go] tt touch recalibrate ch=4 ok
+[go] tt touch stop ok
+[go] tt touch deinit ok
+[go] tt PASS[INFO  cli::run] Exit-on string '[go] tt PASS' found in output

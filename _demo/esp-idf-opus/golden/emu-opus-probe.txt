@@ -1,0 +1,49 @@
+# Golden for the opus codec acceptance probe ([go] opus ...) of
+# _demo/esp-idf-opus, captured from an esp-emu run (esp32s31, 16 MiB PSRAM,
+# console uart0, esp-emu v1.2.0). The firmware gates itself: the PASS/FAIL
+# verdicts below are exact, the raw measurements float.
+#
+# Scope: every [go] opus line the probe prints. The [c] lines (the C-side
+# heap marks) are not part of the golden: the heap byte counts legitimately
+# vary between runs.
+#
+# Floater rule. The `*` values are the segment measurements (enc = encoded
+# byte total, snr/max/rms = the aligned roundtrip comparison): they are
+# deterministic for a given codec binary in principle, but they are exactly
+# the numbers a component upgrade or compiler drift may legitimately move,
+# so they float and the firmware's own gates carry the verdict instead
+# (snr gate + max-error gate, printed in every FAIL line). Everything else
+# is exact on purpose:
+#
+#   states ...               opus_encoder_get_size / opus_decoder_get_size,
+#                            arithmetic constants of the component version -
+#                            a pin of which codec build is linked
+#   dec = 48000 / 16000      the decoded sample count = frames x frame
+#                            exactly: a pin of the decode path's completeness
+#   delay = 312 / 104        OPUS_GET_LOOKAHEAD of this build (6.5 ms in
+#                            samples at 48 kHz / 16 kHz): a pin of the
+#                            alignment the compare uses
+#   plc conceal = 960 of 960 packet-loss concealment fills exactly the
+#                            requested frame (the codec's own rule)
+#   PASS / FAIL, and the
+#   validation/ctl lines     the firmware's own verdicts, exact
+#
+# Regression check (the console is a UART stream; strip CR before comparing):
+#   grep -E '^\[go\] opus' <emu log> | tr -d '\r' \
+#     | sed -E 's/enc = [0-9]+/enc = */; s/snr = [0-9.]+/snr = */; \
+#               s/max = [0-9]+/max = */; s/rms = [0-9]+/rms = */' \
+#     | diff - <(grep -v '^#' golden/emu-opus-probe.txt)
+# A diff means the codec behavior changed: the golden only grows by
+# appending a phase, never by editing an existing line.
+[go] opus start
+[go] opus validation ok rate44100+ch3-refused
+[go] opus states enc1 = 24716 dec1 = 18136 enc2 = 29628 dec2 = 26856
+[go] opus seg tone48k frames = 50 enc = * dec = 48000 snr = * dB max = * rms = * delay = 312
+[go] opus plc conceal = 960 of 960
+[go] opus plc ok resync = 960
+[go] opus seg tone48k PASS
+[go] opus seg voip16k frames = 50 enc = * dec = 16000 snr = * dB max = * rms = * delay = 104
+[go] opus seg voip16k PASS
+[go] opus ctl ok bad-arg frame-table length-guard
+[go] opus PASS
+[go] opus done

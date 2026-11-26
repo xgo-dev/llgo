@@ -233,10 +233,20 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 		data := c.Advance(ptr, int(itabHdrSize))
 		mthds := u.Methods()
 		for i, m := range inter.Methods {
-			fn, matched := findMethod(mthds, m)
+			ifn, tfn, matched := findMethod(mthds, m)
 			if !matched {
 				ret.fun[0] = 0
 				break
+			}
+			// itab fun entries take the raw data word as their receiver
+			// argument. For direct non-pointer types the word is a
+			// pointer-class value that fills the method's own receiver slot, so
+			// the method itself (Tfn) is the entry; everything else keeps the
+			// one-word-receiver wrapper. This mirrors the static itab
+			// selection in ssa.itabFunEntry.
+			fn := ifn
+			if DirectIfaceData(typ) {
+				fn = tfn
 			}
 			if fn == nil {
 				// matched but no function pointer (e.g. stripped/unreachable after DCE);
@@ -255,21 +265,23 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 }
 
 // findMethod searches for an interface method in the type's method set.
-// Returns (fn, matched) where:
-//   - fn: the function pointer (may be nil even when matched=true for promoted unexported methods)
+// Returns (ifn, tfn, matched) where:
+//   - ifn: the one-word-receiver wrapper (may be nil even when matched=true for
+//     promoted unexported methods)
+//   - tfn: the method itself with its declared receiver as first parameter
 //   - matched: true if a method with matching name and type signature exists
-func findMethod(mthds []abi.Method, im abi.Imethod) (abi.Text, bool) {
+func findMethod(mthds []abi.Method, im abi.Imethod) (ifn, tfn abi.Text, matched bool) {
 	imName := im.Name_
 	for _, m := range mthds {
 		mName := m.Name_
 		if mName >= imName {
 			if mName == imName && m.Mtyp_ == im.Typ_ {
-				return m.Ifn_, true
+				return m.Ifn_, m.Tfn_, true
 			}
 			break
 		}
 	}
-	return nil, false
+	return nil, nil, false
 }
 
 // unreachableMethod matches Go's runtime.unreachableMethod: method entries
@@ -283,33 +295,6 @@ func IfaceType(i iface) *abi.Type {
 		return nil
 	}
 	return i.tab._type
-}
-
-func IfacePtrData(i iface) unsafe.Pointer {
-	if i.tab == nil {
-		panic(errorString("invalid memory address or nil pointer dereference"))
-	}
-	if DirectIfaceData(i.tab._type) {
-		// For direct-iface values, i.data holds the value bits (not a stable
-		// pointer). Interface method calls use the "one-word receiver" ABI which
-		// expects a pointer to the receiver value. We must return a stable
-		// address, not the address of a stack copy of i.
-		p := AllocU(pointerSize)
-		*(*unsafe.Pointer)(p) = i.data
-		return p
-	}
-	return i.data
-}
-
-func IfacePtrDataBuffer(i iface, buffer *unsafe.Pointer) unsafe.Pointer {
-	if i.tab == nil {
-		panic(errorString("invalid memory address or nil pointer dereference"))
-	}
-	if DirectIfaceData(i.tab._type) {
-		*buffer = i.data
-		return unsafe.Pointer(buffer)
-	}
-	return i.data
 }
 
 func DirectIfaceData(typ *abi.Type) bool {

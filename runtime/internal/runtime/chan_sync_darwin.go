@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && !(llgo && baremetal && tinygo.riscv32 && !nogc)
 
 // Copyright 2026 The XGo Authors (xgo.dev). All rights reserved.
 // Use of this source code is governed by the Apache License, Version 2.0.

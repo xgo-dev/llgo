@@ -18,6 +18,7 @@ package cl_test
 
 import (
 	"context"
+	"errors"
 	"go/token"
 	"go/types"
 	"os"
@@ -29,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/qiniu/x/test"
 	"github.com/xgo-dev/llgo/cl/cltest"
 	"github.com/xgo-dev/llgo/internal/build"
 	"github.com/xgo-dev/llgo/internal/buildenv"
@@ -61,7 +63,11 @@ type embedTestSuite struct {
 }
 
 type embedTargetConfig struct {
-	target      string
+	target string
+	// espEmu, when set, runs the whole suite through esp-emu when the
+	// emulator is available; hosts without it fall back to the target json
+	// emulator (espressif QEMU on the Linux CI runners).
+	espEmu      *espEmuTarget
 	ignoreByDir map[string][]string
 }
 
@@ -75,42 +81,72 @@ var embedTestSuites = []embedTestSuite{
 var embedTargetConfigs = []embedTargetConfig{
 	{
 		target: "esp32c3-basic",
+		espEmu: &esp32c3BasicTarget,
 		ignoreByDir: map[string][]string{
 			"./_testgo": {
-				"./_testgo/abimethod",     // llgo panic: unsatisfied import internal/runtime/sys
-				"./_testgo/arith-divrem",  // embedded int64 min/-1 division returns 0 instead of Go's defined minInt result
-				"./_testgo/cgobasic",      // fast fail: build constraints exclude all Go files (cgo)
-				"./_testgo/cgocfiles",     // fast fail: build constraints exclude all Go files (cgo)
-				"./_testgo/cgodefer",      // fast fail: build constraints exclude all Go files (cgo)
-				"./_testgo/chan",          // timeout: emulator did not auto-exit
-				"./_testgo/complitassign", // baremetal terminates on the merged nil-destination panic before deferred recovery
-				"./_testgo/defer4",        // unexpected output: got "fatal error", expected "recover: panic message"
-				"./_testgo/goroutine",     // channel synchronization prints fatal error despite successful emulator exit
-				"./_testgo/indexerr",      // unexpected output: len(dst)=12, len(src)=0 (got "fatal error")
-				"./_testgo/makeslice",     // unexpected output: len(dst)=23, len(src)=0 (got "fatal error\\nmust error")
-				"./_testgo/mapindirect",   // ld.lld: error: undefined symbol: __atomic_fetch_or_4
-				"./_testgo/reflect",       // llgo panic: unsatisfied import internal/runtime/sys
-				"./_testgo/reflectconv",   // llgo panic: unsatisfied import internal/sync
+				"./_testgo/abimethod", // llgo panic: unsatisfied import internal/runtime/sys
+				"./_testgo/cgobasic",  // fast fail: build constraints exclude all Go files (cgo)
+				"./_testgo/cgocfiles", // fast fail: build constraints exclude all Go files (cgo)
+				"./_testgo/cgodefer",  // fast fail: build constraints exclude all Go files (cgo)
+				// chan, goroutine and select run on the RV32 baremetal fiber
+				// scheduler (cooperative single-hart goroutines, chan and select).
+				"./_testgo/reflect",       // text+rodata overflow the 256 KiB C3 IRAM at link time
 				"./_testgo/reflectmk",     // baremetal runtime cannot build the reflect constructor path
 				"./_testgo/reflectmkfn",   // llgo panic: unsatisfied import internal/runtime/sys
 				"./_testgo/repeatedfault", // baremetal cannot recover native hardware faults
 				"./_testgo/rewrite",       // llgo panic: unsatisfied import internal/sync
 				"./_testgo/runextest",     // package-selection fixture owned by internal/build
 				"./_testgo/runtest",       // package-selection fixture owned by internal/build
-				"./_testgo/select",        // timeout: emulator did not auto-exit
+				// esp-emu's esp32c3 model implements no clock source, so the time
+				// fixtures cannot run under emulation (real C3 hardware has the
+				// cycle CSR; the S31 emu suite covers them instead). The timer
+				// fixtures additionally rely on the callback timer list that
+				// only live-clock fiber targets register.
+				"./_testgo/timesleep",
+				"./_testgo/sleepgoroutine",
+				"./_testgo/timerafter",
+				"./_testgo/timertick",
+				"./_testgo/timerfunc",
+				"./_testgo/time_after",
+				"./_testgo/time_tick",
+				"./_testgo/time_stop",
+				"./_testgo/time_gckeep",
+				"./_testgo/time_wall",
+				// stackover ends in the runtime's stack-overflow fatal, which the
+				// emu firmware runner rejects; TestFiberStackGuardEmu runs it
+				// with a fatal-tolerant runner instead. stacksafe stays here and
+				// joins the auto-walk like every other fixture.
+				"./_testgo/stackover",
+				// stdlib fixtures that exceed what the C3-basic budget allows:
+				// hexpkg/fmtall/osfile overflow the 256 KiB IRAM at link time;
+				// bufiopkg/iopkg link but leave no runtime heap (out of memory);
+				// jsonpkg is far beyond both limits.
+				"./_testgo/hexpkg",
+				"./_testgo/fmtall",
+				"./_testgo/osfile",
+				"./_testgo/bufiopkg",
+				"./_testgo/iopkg",
+				"./_testgo/jsonpkg",
+				// strings/bytes/errors/binary pull enough runtime state to exhaust
+				// the small C3 heap; they run on the 512 KiB S31 SRAM target.
+				"./_testgo/strpkg",
+				"./_testgo/errspkg",
+				"./_testgo/bytespkg",
+				"./_testgo/binpkg",
+				// reflectconv sat within a few hundred bytes of the IRAM ceiling;
+				// the vendored riscv32 memmove and 64-bit-division shims pushed it
+				// ~2.5 KiB over. It runs in the S31 emu smoke suite instead.
+				"./_testgo/reflectconv",
 			},
 			"./_testlibc": {
-				"./_testlibc/argv",    // timeout: emulator panic (Load access fault), no auto-exit
-				"./_testlibc/atomic",  // link error: ld.lld: error: undefined symbol: __atomic_store
-				"./_testlibc/complex", // link error: ld.lld: error: undefined symbol: cabsf
-				"./_testlibc/cppabi",  // C++ standard headers are unavailable in the baremetal sysroot
-				"./_testlibc/once",    // fast fail: build constraints exclude all Go files (pthread/sync)
-				"./_testlibc/setjmp",  // link error: ld.lld: error: undefined symbol: stderr
+				"./_testlibc/atomic", // output mismatch: baremetal newlib printf is the nano variant, which has no %lld support (fixture itself links; llgo's i64 vararg lowering is verified correct)
+				"./_testlibc/cppabi", // C++ standard headers are unavailable in the baremetal sysroot
+				"./_testlibc/once",   // fast fail: build constraints exclude all Go files (pthread/sync)
+				"./_testlibc/setjmp", // link error: ld.lld: error: undefined symbol: stderr
 			},
 			"./_testrt": {
 				"./_testrt/asmfull",  // compile/asm error: unrecognized instruction mnemonic
 				"./_testrt/linkname", // unexpected output: line order mismatch ("hello" appears first)
-				"./_testrt/makemap",  // link error: ld.lld: error: undefined symbol: __atomic_fetch_or_4
 				"./_testrt/struct",   // fast fail: build constraints exclude all Go files
 				"./_testrt/tpfunc",   // unexpected output: type size mismatch (got 8 4 4, expected 16 8 8)
 				"./_testrt/typalias", // fast fail: build constraints exclude all Go files
@@ -133,10 +169,12 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/cgobasic",      // build constraints exclude cgo source on bare metal
 				"./_testgo/cgocfiles",     // host CGo errno/aggregate ABI; cgo source is excluded on bare metal
 				"./_testgo/cgodefer",      // panic: cannot build SSA for packages
+				"./_testgo/chanclose",     // xtensa keeps the pthread scheduler: no goroutines
 				"./_testgo/chan",          // ESP32 channel goroutine exits with a fatal error
 				"./_testgo/complitassign", // baremetal terminates on the merged nil-destination panic before deferred recovery
 				"./_testgo/defer4",        // runtime output: fatal error
 				"./_testgo/goroutine",     // ESP32 channel synchronization exits with a fatal error
+				"./_testgo/gcstack",       // xtensa keeps the pthread scheduler: no goroutines
 				"./_testgo/indexerr",      // runtime output: fatal error
 				"./_testgo/invoke",        // unexpected output
 				"./_testgo/makeslice",     // runtime output: fatal error
@@ -151,10 +189,33 @@ var embedTargetConfigs = []embedTargetConfig{
 				"./_testgo/runextest",     // package-selection fixture owned by internal/build
 				"./_testgo/runtest",       // package-selection fixture owned by internal/build
 				"./_testgo/select",        // timeout: emulator did not auto-exit
+				"./_testgo/gosched",       // xtensa keeps the pthread scheduler: no goroutines
 				"./_testgo/struczero",     // timeout: emulator did not auto-exit
+				"./_testgo/wakefan",       // xtensa keeps the pthread scheduler: no goroutines
+				// The xtensa target keeps the pthread scheduler's timer stub, which
+				// never delivers a live timer: these fixtures would park forever.
+				"./_testgo/timerafter",
+				"./_testgo/timertick",
+				"./_testgo/timerfunc",
+				"./_testgo/time_after",
+				"./_testgo/time_tick",
+				"./_testgo/time_stop",
+				"./_testgo/time_gckeep",
+				// The ESP32 classic chip has two cores and no pinning facility is
+				// wired up for it, so LockCore reports an explicit refusal here;
+				// the single-core always-locked golden belongs to the RV32 targets.
+				"./_testgo/lockcore",
+				// The xtensa Sleep stub returns immediately, so timing-dependent
+				// output (ordering and relative durations) cannot match the golden.
+				"./_testgo/timesleep",
+				"./_testgo/sleepgoroutine",
+				"./_testgo/time_wall",
+				// xtensa keeps the pthread scheduler: no fiber swap guard runs here.
+				"./_testgo/stacksafe",
+				"./_testgo/stackover",
 			},
 			"./_testlibc": {
-				"./_testlibc/atomic",  // unexpected output
+				"./_testlibc/atomic",  // output mismatch: baremetal newlib nano printf has no %lld support
 				"./_testlibc/complex", // baremetal libc does not provide cabsf
 				"./_testlibc/cppabi",  // C++ standard headers are unavailable in the baremetal sysroot
 				"./_testlibc/once",    // panic: cannot build SSA for packages
@@ -192,12 +253,176 @@ func runEmbedTargetSuite(t *testing.T, target, relDir string, ignore []string) {
 	)
 }
 
+// runEmbedTargetSuiteEspEmu drives one target's embed suites through esp-emu.
+// The fixture harness cannot inject a runner into the target json emulator
+// command, so each fixture is linked with ModeBuild, converted to an ESP
+// flash image and booted directly. Fixture discovery and the expect.txt
+// comparison mirror cltest.RunAndTestFromDir with the IR and metadata checks
+// the embed suite leaves disabled.
+func runEmbedTargetSuiteEspEmu(t *testing.T, targetConf embedTargetConfig, emu string) {
+	t.Helper()
+	tgt := *targetConf.espEmu
+	rootDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal("Getwd failed:", err)
+	}
+	for _, suite := range embedTestSuites {
+		t.Run(suite.name, func(t *testing.T) {
+			ignore := make(map[string]struct{}, len(targetConf.ignoreByDir[suite.relDir]))
+			for _, item := range targetConf.ignoreByDir[suite.relDir] {
+				ignore[item] = struct{}{}
+			}
+			dir := filepath.Join(rootDir, suite.relDir)
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal("ReadDir failed:", err)
+			}
+			for _, entry := range entries {
+				name := entry.Name()
+				if !entry.IsDir() || strings.HasPrefix(name, "_") {
+					continue
+				}
+				pkgDir := filepath.Join(dir, name)
+				rel, err := filepath.Rel(rootDir, pkgDir)
+				if err != nil {
+					t.Fatal("Rel failed:", err)
+				}
+				relPkg := "./" + filepath.ToSlash(rel)
+				if _, ok := ignore[relPkg]; ok {
+					t.Run(name, func(t *testing.T) {
+						t.Skip("skip platform-specific fixture")
+					})
+					continue
+				}
+				t.Run(name, func(t *testing.T) {
+					runEspEmuFixture(t, tgt, emu, pkgDir, relPkg)
+				})
+			}
+		})
+	}
+}
+
+// runEspEmuFixture links one fixture for the target, boots it under esp-emu
+// and compares the filtered output with expect.txt. Fixtures without a
+// runnable golden stay with the IR suites, like the shared harness.
+func runEspEmuFixture(t *testing.T, tgt espEmuTarget, emu, pkgDir, relPkg string) {
+	t.Helper()
+	_, expected, err := cltest.ReadGolden(filepath.Join(pkgDir, "expect.txt"))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return
+	case err != nil:
+		t.Fatal("ReadFile failed:", err)
+	case isGoldenMarker(string(expected), "; ir-only"):
+		return
+	}
+	elfPath := buildESPEmuELF(t, tgt, relPkg, t.TempDir())
+	var raw string
+	if _, err := os.Stat(elfPath); err == nil {
+		raw = runEspEmuFirmware(t, emu, tgt, elfPath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	// else: a library fixture links no executable; the shared harness also
+	// runs nothing and compares empty output.
+	if isGoldenMarker(string(expected), ";") {
+		// Run-only golden: execution itself is the assertion, and the raw
+		// fatal/panic scan in runEspEmuFirmware already rejected runtime traps.
+		return
+	}
+	filtered := filterEspEmuOutput(cltest.FilterEmulatorOutput(raw))
+	if test.Diff(t, filepath.Join(pkgDir, "expect.txt.new"),
+		normalizeGoldenOutput(filtered), normalizeGoldenOutput(string(expected))) {
+		t.Fatal("unexpected output")
+	}
+}
+
+// isGoldenMarker reports whether the golden file content is exactly the
+// marker, allowing one final newline. cltest keeps this logic private.
+func isGoldenMarker(data, marker string) bool {
+	data = strings.ReplaceAll(data, "\r\n", "\n")
+	data = strings.ReplaceAll(data, "\r", "\n")
+	return strings.TrimSuffix(data, "\n") == marker
+}
+
+// normalizeGoldenOutput makes comparisons independent of checkout newlines,
+// mirroring the shared harness.
+func normalizeGoldenOutput(s string) []byte {
+	return []byte(strings.ReplaceAll(s, "\r\n", "\n"))
+}
+
 func TestRunAndTestFromTestgo(t *testing.T) {
 	// Package-selection fixtures remain in place for internal/build, but none
 	// of the compiler runners treat them as lowering owners.
 	ignore := []string{
 		"./_testgo/runextest",
 		"./_testgo/runtest",
+		// The fixtures below pull internal/bytealg (strings, strconv, sort,
+		// math, runtime, sync, fmt, ...), whose plan9asm translation crashes
+		// clang on darwin/arm64 (same preexisting failure as internal/build's
+		// TestTest). The embed emulator suites run them.
+		"./_testgo/strpkg",
+		"./_testgo/strcv",
+		"./_testgo/sortpkg",
+		"./_testgo/slicepkg",
+		"./_testgo/mapspkg",
+		"./_testgo/errspkg",
+		"./_testgo/bytespkg",
+		"./_testgo/mathpkg",
+		"./_testgo/randpkg",
+		"./_testgo/binpkg",
+		"./_testgo/heappkg",
+		"./_testgo/timepkg",
+		"./_testgo/syncpkg",
+		// The sync contention fixtures import "sync" like syncpkg above, and
+		// the embed emulator suites run them against the fiber scheduler.
+		"./_testgo/syncmutex",
+		"./_testgo/syncrwcond",
+		"./_testgo/synconce",
+		"./_testgo/syncpoolret",
+		"./_testgo/syncgcfight",
+		// mutexstarve imports "sync" like syncpkg above; its long critical
+		// sections push waiters past the starvation threshold on every backend.
+		"./_testgo/mutexstarve",
+		"./_testgo/timesleep",
+		"./_testgo/sleepgoroutine",
+		// The timer fixtures import "time" like timepkg above; the embed
+		// emulator suites run them against the fiber scheduler.
+		"./_testgo/timerafter",
+		"./_testgo/timertick",
+		"./_testgo/timerfunc",
+		"./_testgo/time_after",
+		"./_testgo/time_tick",
+		"./_testgo/time_stop",
+		"./_testgo/time_gckeep",
+		// time_wall imports "time" (plus the runtime/wallclock API package)
+		// like timepkg above; the embed emulator suites run it against the
+		// fiber scheduler.
+		"./_testgo/time_wall",
+		// The stack-guard fixtures need the fiber scheduler's swap-point
+		// guard: hosted stacks grow, and stackover would run away.
+		"./_testgo/stacksafe",
+		"./_testgo/stackover",
+		// The early-panic fixtures end in a panic or a native fault by
+		// design, and their diagnostics live in cl/embed_earlypanic_test.go:
+		// hosted IR checks would only re-verify a deliberate crash.
+		"./_testgo/earlypanicinit",
+		"./_testgo/earlypanicgs",
+		"./_testgo/earlypanicfault",
+		"./_testgo/gotask",
+		"./_testgo/hexpkg",
+		"./_testgo/fmtall",
+		"./_testgo/osfile",
+		"./_testgo/bufiopkg",
+		"./_testgo/iopkg",
+		"./_testgo/jsonpkg",
+		// gosched imports "runtime", which pulls internal/bytealg whose plan9asm
+		// translation crashes clang on darwin/arm64 (same preexisting failure as
+		// internal/build's TestTest). The embed emulator suites run it.
+		"./_testgo/gosched",
+		// lockcore imports "runtime" like gosched above; the embed emulator
+		// suites run it against the baremetal backends.
+		"./_testgo/lockcore",
 	}
 	cltest.RunAndTestFromDir(t, "", "./_testgo", ignore)
 }
@@ -764,6 +989,17 @@ func TestRunEmbedEmulator(t *testing.T) {
 	for _, targetConf := range embedTargetConfigs {
 		targetConf := targetConf
 		t.Run(targetConf.target, func(t *testing.T) {
+			if targetConf.espEmu != nil {
+				if emu, ok := findEspEmu(); ok {
+					runEmbedTargetSuiteEspEmu(t, targetConf, emu)
+					return
+				}
+				if runtime.GOOS == "darwin" {
+					// espressif QEMU publishes no darwin payload, so the
+					// target json emulator cannot run here either.
+					t.Skip("neither esp-emu nor espressif QEMU is available; set ESP_EMU to run the suite")
+				}
+			}
 			for _, suite := range embedTestSuites {
 				suite := suite
 				t.Run(suite.name, func(t *testing.T) {

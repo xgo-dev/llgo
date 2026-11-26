@@ -6,7 +6,56 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
+	"github.com/xgo-dev/llgo/internal/env"
 )
+
+// espAtomicRiscv32File is LLGo's vendored __atomic_* fallback for riscv32-esp
+// targets (RV32IMC, no A extension). It ships with the llgo root, like
+// targets/*.ld, because it is repo source rather than part of the downloaded
+// compiler-rt tree.
+func espAtomicRiscv32File() string {
+	return filepath.Join(env.LLGoROOT(), "internal", "crosscompile", "rtlib", "atomic_esp_rv32.c")
+}
+
+// divRiscv32File is LLGo's vendored 64-bit integer division for riscv32
+// targets (RV32IMC: no 64-bit divide instruction). compiler-rt's di-division
+// builtins are shift-subtract loops (~1050 cycles/divide for large operands);
+// the vendored implementation uses the hardware divider on 32-bit-friendly
+// shapes and Knuth algorithm D otherwise (~230 cycles/divide), with weak
+// symbols so pure-C links still resolve against it via the builtins archive.
+func divRiscv32File() string {
+	return filepath.Join(env.LLGoROOT(), "runtime", "internal", "runtime", "_wrap", "divdi3_riscv32.c")
+}
+
+// divExcludedBuiltins lists the compiler-rt di-division members replaced by
+// divRiscv32File. Exclusion is required, not just the weak override: lld
+// registers lazy archive symbols in link-line order, and -lclang_builtins
+// precedes the llgo runtime archives, so a strong member would win the race
+// against the runtime's weak definition.
+var divExcludedBuiltins = map[string]bool{
+	"divdi3.c":     true,
+	"divmoddi4.c":  true,
+	"moddi3.c":     true,
+	"udivdi3.c":    true,
+	"udivmoddi4.c": true,
+	"umoddi3.c":    true,
+}
+
+// llgoRiscv32DivFiles swaps the compiler-rt di-division builtins for
+// divRiscv32File on riscv32 targets.
+func llgoRiscv32DivFiles(target string, files []string) []string {
+	if !strings.Contains(target, "riscv32") {
+		return files
+	}
+	out := files[:0]
+	for _, f := range files {
+		if divExcludedBuiltins[filepath.Base(f)] {
+			continue
+		}
+		out = append(out, f)
+	}
+	return append(out, divRiscv32File())
+}
 
 func platformSpecifiedFiles(builtinsDir, target string) []string {
 	switch {
@@ -17,10 +66,12 @@ func platformSpecifiedFiles(builtinsDir, target string) []string {
 			filepath.Join(builtinsDir, "riscv", "save.S"),
 			filepath.Join(builtinsDir, "riscv", "restore.S"),
 		}
-		// Only add atomic.c for non-ESP targets (ESP doesn't support A extension)
-		if target != "riscv32-esp-elf" {
-			files = append(files, filepath.Join(builtinsDir, "atomic.c"))
-		}
+		// compiler-rt's atomic.c is excluded for all riscv32 targets: its
+		// spinlocks deadlock when an interrupt interrupts a holder. LLGo's
+		// vendored interrupt-masked implementation covers the libcall set
+		// instead; its symbols are weak so llgo's Go runtime wins when both
+		// link, and pure-C links keep a fallback.
+		files = append(files, espAtomicRiscv32File())
 		return files
 	case strings.Contains(target, "riscv64"):
 		return []string{
@@ -119,7 +170,7 @@ func GetCompilerRTCompileConfig(baseDir, target string) compile.CompileConfig {
 		Groups: []compile.CompileGroup{
 			{
 				OutputFileName: fmt.Sprintf("libclang_builtins-%s.a", target),
-				Files: withPlatformSpecifiedFiles(baseDir, target, []string{
+				Files: llgoRiscv32DivFiles(target, withPlatformSpecifiedFiles(baseDir, target, []string{
 					filepath.Join(baseDir, "lib", "builtins", "absvdi2.c"),
 					filepath.Join(baseDir, "lib", "builtins", "absvsi2.c"),
 					filepath.Join(baseDir, "lib", "builtins", "absvti2.c"),
@@ -267,7 +318,7 @@ func GetCompilerRTCompileConfig(baseDir, target string) compile.CompileConfig {
 					filepath.Join(baseDir, "lib", "builtins", "trunctfdf2.c"),
 					filepath.Join(baseDir, "lib", "builtins", "trunctfhf2.c"),
 					filepath.Join(baseDir, "lib", "builtins", "trunctfsf2.c"),
-				}),
+				})),
 				CFlags: []string{
 					"-DNDEBUG",
 					"-DVISIBILITY_HIDDEN",

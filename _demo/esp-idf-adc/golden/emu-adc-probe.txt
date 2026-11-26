@@ -1,0 +1,68 @@
+# Golden for the ADC probe ([go] adc ...) of _demo/esp-idf-adc, captured
+# from an acceptance run (esp-emu v1.2.0, esp32s31, IDF
+# espressif/idf:latest = v6.3-dev, esp-clang toolchain from llgo's cache).
+#
+# Scope: every [go] adc line the probe prints. The [INFO]/ROM lines (the
+# emulator's own chatter and app_main's reports) are not part of the golden.
+#
+# Everything in this golden is exact - there is NO floater rule. The probe
+# prints no wall-clock values and no addresses; every number is either a
+# build fact (the pads, the efuse regime, the esp_err verdicts, the sentinel
+# codes) or the emulator's reading shape (below).
+#
+# The readings are the run's one fidelity caveat, and they are exact: the
+# emu chip has no calibration eFuse burnt (efuse ver=0 -> the nominal-scale
+# regime of the line-fitting scheme) and nothing drives the analog pads, so
+# every conversion returns the emulator's fixed floating-input vector
+# (raw=67729, inside the 17-bit range) and the nominal model converts that
+# vector to 0 mV. The five read rounds and five millivolt rounds pin the
+# path - conversion completes, values are stable, the channel-aware
+# calibration conversion runs for both sides (pin42 = N, pin43 = P) - the
+# values themselves are the floating input, not a real signal. On hardware
+# expect raw to track the applied voltage and mv to read the actual
+# millivolts (efuse ver>=1 on a production board): verify on the board.
+#
+# The PASS gate is real end-to-end signal: every binding, glue and driver
+# call on the path (unit claim + handle alloc, io->channel map, per-channel
+# config, oneshot conversion through the weight-accumulator bypass, lazy
+# line-fitting scheme creation with the nominal eFuse fallback, the
+# channel-aware millivolt conversion for both the N and P side, calibration
+# + unit handle release) returned esp_err 0; the refusal lines pin the
+# binding's honest error surface (0x7001/0x7003/0x7004 sentinels, the glue's
+# bookkeeping 0x103 for a never-configured pad, and the double-Init 0x103).
+# Reading real voltages needs a signal on a pad, which is an environment
+# property, not a binding property.
+#
+# Regression check (the console is a USB-Serial/JTAG stream, so its lines end
+# in CR/LF: strip the CR before comparing):
+#   grep -E '^\[go\] adc' <emu log> | tr -d '\r' \
+#     | diff - <this file, comments excluded>
+# A diff means the probe's surface behavior changed. The golden only grows by
+# appending rounds (e.g. hardware runs with a real signal), never by editing
+# an existing line.
+[go] adc: start
+[go] adc efuse ver=0 (0=nominal scale, >=1 burnt characteristics)
+[go] adc init unit1 ok
+[go] adc second init refused err=259 (ESP_ERR_INVALID_STATE)
+[go] adc config pin42 atten0 ok
+[go] adc config pin43 atten0 ok
+[go] adc config atten11 refused err=28676 (ErrBadAtten)
+[go] adc config pin3 refused err=28675 (ErrBadPin: not an adc pad)
+[go] adc read pin42 1 raw=67729
+[go] adc read pin42 2 raw=67729
+[go] adc read pin42 3 raw=67729
+[go] adc read pin42 4 raw=67729
+[go] adc read pin42 5 raw=67729
+[go] adc read pin43 raw=67729
+[go] adc read pin44 unconfigured refused err=259 (ESP_ERR_INVALID_STATE)
+[go] adc millivolts pin42 1 mv=0
+[go] adc millivolts pin42 2 mv=0
+[go] adc millivolts pin42 3 mv=0
+[go] adc millivolts pin42 4 mv=0
+[go] adc millivolts pin42 5 mv=0
+[go] adc millivolts pin43 mv=0
+[go] adc deinit unit2 refused err=28673 (ErrNotInit)
+[go] adc deinit unit1 ok
+[go] adc read after deinit refused err=28673 (ErrNotInit)
+[go] adc PASS
+[INFO  cli::run] Exit-on string '[go] adc PASS' found in output

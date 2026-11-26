@@ -1,0 +1,30 @@
+# Build outputs and per-machine configuration.
+build/
+sdkconfig
+sdkconfig.old
+main/llgo_out.o
+host/llgo_syms.o
+host/logs/
+
+# Glue sources are build inputs, synced from pkg/esp/*/glue by
+# host/make-artifact.sh on every run. Edit the package template, not these
+# copies. ble_glue.c is deliberately absent from this list: it carries this
+# firmware's local patches and is checked in (see its file header).
+main/wifi_glue.c
+main/net_glue.c
+main/gpio_glue.c
+main/i2c_glue.c
+main/i2s_glue.c
+main/bt_glue.c
+main/a2dp_glue.c
+
+# Station credentials, when the net probe is enabled.
+main/wifi_creds.h
+
+# Generated scaffold, synced from _demo/common/ by make-artifact.sh.
+CMakeLists.txt
+partitions.csv
+host/llgo_syms.S
+main/app_main.c
+main/llgo_dram.ld
+host/make-artifact.sh

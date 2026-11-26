@@ -2294,7 +2294,7 @@ func TestIfaceMethodClosureCallIR(t *testing.T) {
 	defer pm.Close()
 	const wantMeta = `[OrdinaryEdges]
 caller:
-    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
 
 [UseIfaceMethod]
 caller:
@@ -2317,20 +2317,28 @@ source_filename = "foo/bar"
 ; Function Attrs: null_pointer_is_valid
 define i64 @caller(%"github.com/xgo-dev/llgo/runtime/internal/runtime.iface" %0) #0 {
 _llgo_0:
-  %1 = call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData"(%"github.com/xgo-dev/llgo/runtime/internal/runtime.iface" %0)
-  %2 = extractvalue %"github.com/xgo-dev/llgo/runtime/internal/runtime.iface" %0, 0
-  %3 = getelementptr ptr, ptr %2, i64 3
-  %4 = load ptr, ptr %3, align 8
-  %5 = insertvalue { ptr, ptr } undef, ptr %4, 0
-  %6 = insertvalue { ptr, ptr } %5, ptr %1, 1
-  %7 = extractvalue { ptr, ptr } %6, 1
-  %8 = extractvalue { ptr, ptr } %6, 0
-  %9 = call i64 (ptr, ...) %8(ptr %7, i64 100, i64 200)
-  ret i64 %9
+  %1 = extractvalue %"github.com/xgo-dev/llgo/runtime/internal/runtime.iface" %0, 0
+  %2 = icmp eq ptr %1, null
+  br i1 %2, label %_llgo_1, label %_llgo_2
+
+_llgo_1:                                          ; preds = %_llgo_0
+  call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref"(i1 true)
+  ret i64 undef
+
+_llgo_2:                                          ; preds = %_llgo_0
+  %3 = extractvalue %"github.com/xgo-dev/llgo/runtime/internal/runtime.iface" %0, 1
+  %4 = getelementptr ptr, ptr %1, i64 3
+  %5 = load ptr, ptr %4, align 8
+  %6 = insertvalue { ptr, ptr } undef, ptr %5, 0
+  %7 = insertvalue { ptr, ptr } %6, ptr %3, 1
+  %8 = extractvalue { ptr, ptr } %7, 1
+  %9 = extractvalue { ptr, ptr } %7, 0
+  %10 = call i64 (ptr, ...) %9(ptr %8, i64 100, i64 200)
+  ret i64 %10
 }
 
 ; Function Attrs: null_pointer_is_valid
-declare ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrData"(%"github.com/xgo-dev/llgo/runtime/internal/runtime.iface") #0
+declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref"(i1) #0
 
 attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 `)

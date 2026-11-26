@@ -72,3 +72,38 @@ func syscall_runtime_BeforeExec() {}
 
 //go:linkname syscall_runtime_AfterExec syscall.runtime_AfterExec
 func syscall_runtime_AfterExec() {}
+
+// The masqueraded GOOS=linux also expects the OS bridges that hosted
+// link_linux files supply. There is no kernel here: report ENOSYS instead of
+// routing through the C syscall bridge. cmpstring replaces the GOROOT bytealg
+// assembly that the translator does not provide for this target; it is pure
+// computation and keeps the real stdlib comparison semantics.
+
+func cmpstring(x, y string) int {
+	l := len(x)
+	if len(y) < l {
+		l = len(y)
+	}
+	for i := 0; i < l; i++ {
+		c1, c2 := uint32(x[i]), uint32(y[i])
+		if c1 != c2 {
+			if c1 < c2 {
+				return -1
+			}
+			return +1
+		}
+	}
+	if len(x) < len(y) {
+		return -1
+	}
+	if len(x) > len(y) {
+		return +1
+	}
+	return 0
+}
+
+//go:linkname syscall_seek syscall.seek
+func syscall_seek(fd int32, offset int64, whence int32) (newoffset int64, errno uintptr) {
+	_, _, _ = fd, offset, whence
+	return 0, 38 // ENOSYS
+}

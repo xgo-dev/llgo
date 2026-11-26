@@ -206,7 +206,8 @@ type receiver struct {
 
 // CHECK-LABEL: define i64 @"main.(*receiver).Sum"(ptr %0, i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9){{.*}} {
 // CHECK: [[RECEIVER_NIL:%.*]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[RECEIVER_NIL]], %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
+// CHECK: br i1 [[RECEIVER_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true, %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
 // CHECK: [[RECEIVER_VALUE_LOAD:%.*]] = load %main.receiver, ptr %0
 // CHECK: [[RECEIVER_WRAPPER_RESULT:%.*]] = call i64 @main.receiver.Sum(%main.receiver [[RECEIVER_VALUE_LOAD]], i64 %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, i64 %7, i64 %8, i64 %9)
 // CHECK: ret i64 [[RECEIVER_WRAPPER_RESULT]]

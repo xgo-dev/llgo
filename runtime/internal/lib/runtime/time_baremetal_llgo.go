@@ -1,4 +1,8 @@
-//go:build baremetal && go1.23
+//go:build baremetal && go1.23 && (!llgo || !tinygo.riscv32 || nogc)
+
+// The llgo RV32 fiber-scheduler baremetal targets (llgo && baremetal &&
+// tinygo.riscv32 && !nogc) compile time_fiber_baremetal_llgo.go instead: a
+// real cycle-clock nanotime and a scheduler-parked time.Sleep.
 
 package runtime
 
@@ -55,6 +59,15 @@ func resetRuntimeTimer(r *runtimeTimer, when, period int64, f func(any, uintptr,
 func time_now() (sec int64, nsec int32, mono int64) {
 	return 0, 0, 0
 }
+
+// SetWallTime is a no-op: these targets have no clock the runtime reads, so
+// time.Now keeps reporting the zero instant with no monotonic reading. The
+// API exists everywhere so programs written against the fiber targets stay
+// linkable; the def-side linkname renames the symbol to runtime.SetWallTime
+// for the runtime/wallclock package's pull declaration.
+//
+//go:linkname SetWallTime runtime.SetWallTime
+func SetWallTime(now int64) {}
 
 //go:linkname time_runtimeNow time.runtimeNow
 func time_runtimeNow() (sec int64, nsec int32, mono int64) {

@@ -25,6 +25,11 @@ type Config struct {
 	WasmMaxMemory     uint64 `json:"wasm-max-memory"`
 	WasmStackSize     uint64 `json:"wasm-stack-size"`
 
+	// DefaultStackSize is the target's default goroutine/pthread stack size
+	// (TinyGo heritage). Zero inherits the parent's value. The baremetal fiber
+	// scheduler uses it as its goroutine stack default.
+	DefaultStackSize uint64 `json:"default-stack-size"`
+
 	// Compiler and linker configuration
 	Libc         string   `json:"libc"`
 	RTLib        string   `json:"rtlib"`

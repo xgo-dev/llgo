@@ -61,7 +61,11 @@ func mask_shr8u(x uint8, y int) uint8 {
 // CHECK-SAME: i64 %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = icmp slt i64 %[[TMP1]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %[[TMP2]])
+// CHECK-NEXT:   br i1 %[[TMP2]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: _llgo_{{[0-9]+}}:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 true)
+// CHECK-NEXT:   ret {{[^ ]+}} undef
+// CHECK: _llgo_{{[0-9]+}}:
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp uge i64 %[[TMP1]], 64
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = shl i64 %[[TMP0]], %[[TMP1]]
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = select i1 %[[TMP3]], i64 0, i64 %[[TMP4]]
@@ -72,7 +76,11 @@ func mask_shr8u(x uint8, y int) uint8 {
 // CHECK-SAME: i8 %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = icmp slt i64 %[[TMP1]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %[[TMP2]])
+// CHECK-NEXT:   br i1 %[[TMP2]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: _llgo_{{[0-9]+}}:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 true)
+// CHECK-NEXT:   ret {{[^ ]+}} undef
+// CHECK: _llgo_{{[0-9]+}}:
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp uge i64 %[[TMP1]], 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = trunc i64 %[[TMP1]] to i8
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = shl i8 %[[TMP0]], %[[TMP4]]
@@ -84,7 +92,11 @@ func mask_shr8u(x uint8, y int) uint8 {
 // CHECK-SAME: i8 %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = icmp slt i64 %[[TMP1]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %[[TMP2]])
+// CHECK-NEXT:   br i1 %[[TMP2]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: _llgo_{{[0-9]+}}:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 true)
+// CHECK-NEXT:   ret {{[^ ]+}} undef
+// CHECK: _llgo_{{[0-9]+}}:
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp uge i64 %[[TMP1]], 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = trunc i64 %[[TMP1]] to i8
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = shl i8 %[[TMP0]], %[[TMP4]]
@@ -96,7 +108,11 @@ func mask_shr8u(x uint8, y int) uint8 {
 // CHECK-SAME: i64 %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = icmp slt i64 %[[TMP1]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %[[TMP2]])
+// CHECK-NEXT:   br i1 %[[TMP2]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: _llgo_{{[0-9]+}}:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 true)
+// CHECK-NEXT:   ret {{[^ ]+}} undef
+// CHECK: _llgo_{{[0-9]+}}:
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp uge i64 %[[TMP1]], 64
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = select i1 %[[TMP3]], i64 63, i64 %[[TMP1]]
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = ashr i64 %[[TMP0]], %[[TMP4]]
@@ -107,7 +123,11 @@ func mask_shr8u(x uint8, y int) uint8 {
 // CHECK-SAME: i8 %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = icmp slt i64 %[[TMP1]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %[[TMP2]])
+// CHECK-NEXT:   br i1 %[[TMP2]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: _llgo_{{[0-9]+}}:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 true)
+// CHECK-NEXT:   ret {{[^ ]+}} undef
+// CHECK: _llgo_{{[0-9]+}}:
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp uge i64 %[[TMP1]], 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = trunc i64 %[[TMP1]] to i8
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = select i1 %[[TMP3]], i8 7, i8 %[[TMP4]]
@@ -119,7 +139,11 @@ func mask_shr8u(x uint8, y int) uint8 {
 // CHECK-SAME: i8 %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP2:[0-9]+]] = icmp slt i64 %[[TMP1]], 0
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 %[[TMP2]])
+// CHECK-NEXT:   br i1 %[[TMP2]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: _llgo_{{[0-9]+}}:
+// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.AssertNegativeShift"(i1 true)
+// CHECK-NEXT:   ret {{[^ ]+}} undef
+// CHECK: _llgo_{{[0-9]+}}:
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = icmp uge i64 %[[TMP1]], 8
 // CHECK-NEXT:   %[[TMP4:[0-9]+]] = trunc i64 %[[TMP1]] to i8
 // CHECK-NEXT:   %[[TMP5:[0-9]+]] = lshr i8 %[[TMP0]], %[[TMP4]]

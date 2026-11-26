@@ -39,8 +39,10 @@ type String struct {
 func StringCat(a, b String) String {
 	n := a.len + b.len
 	dest := AllocAtomicU(uintptr(n))
-	c.Memcpy(dest, a.data, uintptr(a.len))
-	c.Memcpy(c.Advance(dest, a.len), b.data, uintptr(b.len))
+	// dest is a fresh allocation and cannot overlap a or b, so the
+	// word-block memcpy (z_memmove_riscv32.go) is safe here.
+	llgoMemcpy(dest, a.data, uintptr(a.len))
+	llgoMemcpy(c.Advance(dest, a.len), b.data, uintptr(b.len))
 	return String{dest, n}
 }
 
@@ -49,7 +51,7 @@ func StringCat(a, b String) String {
 // CStrCopy copies a Go string to a C string buffer and returns it.
 func CStrCopy(dest unsafe.Pointer, s String) *int8 {
 	n := s.len
-	c.Memcpy(dest, s.data, uintptr(n))
+	llgoMemcpy(dest, s.data, uintptr(n))
 	*(*int8)(c.Advance(dest, n)) = 0
 	return (*int8)(dest)
 }
@@ -128,7 +130,7 @@ func StringToBytes(s String) []byte {
 		return []byte{}
 	}
 	data := make([]byte, s.len)
-	c.Memcpy(unsafe.Pointer(&data[0]), s.data, uintptr(s.len))
+	llgoMemcpy(unsafe.Pointer(&data[0]), s.data, uintptr(s.len))
 	return data
 }
 
@@ -167,7 +169,7 @@ func StringFrom(data unsafe.Pointer, n int) (s String) {
 	}
 	s.len = n
 	s.data = AllocAtomicU(uintptr(n))
-	c.Memcpy(s.data, data, uintptr(n))
+	llgoMemcpy(s.data, data, uintptr(n))
 	return
 }
 

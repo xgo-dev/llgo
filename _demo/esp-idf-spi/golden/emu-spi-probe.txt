@@ -1,0 +1,63 @@
+# Golden for the SPI probe ([go] spi ...) of _demo/esp-idf-spi, captured
+# from an acceptance run (esp-emu v1.2.0, esp32s31, IDF
+# espressif/idf:latest = v6.3-dev, esp-clang toolchain from llgo's cache).
+#
+# Scope: every [go] spi line the probe prints. The [c]/[INFO]/ROM lines (the
+# emulator's own chatter and app_main's reports) are not part of the golden.
+#
+# Everything in this golden is exact - there is NO floater rule. The probe
+# prints no wall-clock values and no addresses; every number is either a
+# build fact (the pins, the kHz the driver's clock divider produces, the
+# esp_err verdicts, the sentinel codes), or the received-byte shape (below).
+#
+# The received bytes are the run's one fidelity caveat, and they are exact:
+# every rx= line reads ff (all ones). esp-emu DOES complete GPSPI polling
+# transactions - the trans-done interrupt fires, so Write/Transfer/WriteRead
+# and the CS-pinned session all run the real driver path green end to end -
+# but nothing drives MISO on the emulated bus, so the sampled line floats
+# high and every received byte is 0xff. On hardware these lines carry the
+# actual device answer (e.g. a JEDEC ID in response to 0x9F); verify them on
+# the board.
+#
+# The PASS gate is real end-to-end signal: every binding, glue and driver
+# call on the path (bus init with DMA channel allocation, device add, the
+# clock-divider math echoed back as 10000/20000 kHz, polling transactions
+# through DMA, the bus-acquire lock, the CS-pinned keep-active session with
+# its zero-phase CS drop, remove/free) returned esp_err 0; the refusal
+# lines pin the binding's honest error surface (0x7101/0x7102/0x7103
+# sentinels and the driver's own 0x103). The link from Go, through the
+# glue, through the IDF driver, to the (slave-less) bus is exercised and
+# green; reading real data needs a device on the bus, which is an
+# environment property, not a binding property.
+#
+# Regression check (the console is a USB-Serial/JTAG stream, so its lines end
+# in CR/LF: strip the CR before comparing):
+#   grep -E '^\[go\] spi' <emu log> | tr -d '\r' \
+#     | diff - <this file, comments excluded>
+# A diff means the probe's surface behavior changed. The golden only grows by
+# appending rounds (e.g. hardware runs with real device answers), never by
+# editing an existing line.
+[go] spi: start
+[go] spi init ok
+[go] spi actual freq khz=10000 (10 MHz exact)
+[go] spi set freq 20m ok khz=20000
+[go] spi set freq 8m refused err=28930 (ErrBadFrequency)
+[go] spi set freq 10m ok
+[go] spi write n=4
+[go] spi transfer n=8 rx=ff ff ff ff ff ff ff ff (emu: floating MISO reads ff)
+[go] spi transfer pad n=8 rx=ff ff ff ff ff ff ff ff
+[go] spi transfer rx5 n=5 rx=ff ff ff ff ff
+[go] spi writeread rx=ff ff ff ff ff ff ff ff
+[go] spi second init refused err=259 (ESP_ERR_INVALID_STATE)
+[go] spi release unheld refused err=28931 (ErrBusy)
+[go] spi acquire ok
+[go] spi acquire twice refused err=28931 (ErrBusy)
+[go] spi set freq held refused err=28931 (ErrBusy)
+[go] spi held write n=4
+[go] spi held transfer n=8 rx=ff ff ff ff ff ff ff ff
+[go] spi held writeread rx=ff ff ff ff ff ff ff ff
+[go] spi deinit held refused err=28931 (ErrBusy)
+[go] spi release ok (zero-phase CS drop)
+[go] spi deinit ok
+[go] spi after deinit refused err=28929 (ErrNotInit)
+[go] spi PASS

@@ -494,7 +494,12 @@ func (b Builder) checkUnsafeBuiltinBounds(name string, data, size Expr, elemSize
 }
 
 func (b Builder) assertRuntimeError(check llvm.Value, msg string) {
-	b.InlineCall(b.Pkg.rtFunc("AssertRuntimeError"), Expr{check, b.Prog.Bool()}, b.Str(msg))
+	// Keep the success path free of an opaque runtime call (see branchyAssert):
+	// bounds checks fold to false only after LLVM optimization, and the call
+	// still forces spills across it. The cold path reports the identical error.
+	b.branchyAssert(Expr{check, b.Prog.Bool()}, func() {
+		b.Call(b.Pkg.rtFunc("AssertRuntimeError"), b.Prog.BoolVal(true), b.Str(msg))
+	})
 }
 
 // -----------------------------------------------------------------------------
@@ -663,8 +668,12 @@ func (b Builder) BinOpEx(op token.Token, x, y Expr, heap bool) Expr {
 					if needsCheck {
 						zero := llvm.ConstInt(y.ll, 0, false)
 						isZero := llvm.CreateICmp(b.impl, llvm.IntEQ, y.impl, zero)
-						check := Expr{isZero, b.Prog.Bool()}
-						b.InlineCall(b.Pkg.rtFunc("AssertDivideByZero"), check)
+						// Keep the divide free of an opaque runtime call on the hot
+						// path (see branchyAssert); isZero stays usable for the
+						// safe-divisor select below.
+						b.branchyAssert(Expr{isZero, b.Prog.Bool()}, func() {
+							b.Call(b.Pkg.rtFunc("AssertDivideByZero"), b.Prog.BoolVal(true))
+						})
 						safeY = llvm.CreateSelect(b.impl, isZero, llvm.ConstInt(y.ll, 1, false), y.impl)
 					}
 				}
@@ -723,8 +732,12 @@ func (b Builder) BinOpEx(op token.Token, x, y Expr, heap bool) Expr {
 		case token.SHL, token.SHR:
 			if needsNegativeCheck(y) {
 				zero := llvm.ConstInt(y.ll, 0, false)
-				check := Expr{llvm.CreateICmp(b.impl, llvm.IntSLT, y.impl, zero), b.Prog.Bool()}
-				b.InlineCall(b.Pkg.rtFunc("AssertNegativeShift"), check)
+				isNegative := llvm.CreateICmp(b.impl, llvm.IntSLT, y.impl, zero)
+				// Keep the shift free of an opaque runtime call on the hot path
+				// (see branchyAssert).
+				b.branchyAssert(Expr{isNegative, b.Prog.Bool()}, func() {
+					b.Call(b.Pkg.rtFunc("AssertNegativeShift"), b.Prog.BoolVal(true))
+				})
 			}
 			xsize, ysize := b.Prog.SizeOf(x.Type), b.Prog.SizeOf(y.Type)
 			// Compare before narrowing the count: on 386, a count of 1<<32

@@ -8,9 +8,15 @@ import (
 )
 
 // LLGoPackage instructs the LLGo linker to wrap C standard library memory allocation
-// functions (malloc, realloc, calloc) so they use the tinygogc allocator instead.
-// This ensures all memory allocations go through the GC, including C library calls.
-const LLGoPackage = "link: --wrap=malloc --wrap=realloc --wrap=calloc"
+// functions (malloc, realloc, calloc, free) so they use the tinygogc allocator
+// instead. This ensures all memory allocations go through the GC, including C
+// library calls. free belongs to the set: a buffer allocated through
+// __wrap_malloc lives in the GC heap, so releasing it through the platform's
+// free would hand a GC address to an allocator that never owns it (on ESP-IDF
+// that corrupts TLSF metadata; tinygogc itself reports "freeing pointer outside
+// heap"). The wrapped pair is what keeps C-requested buffers reachable: the
+// collector scans the GC heap, not the platform heap.
+const LLGoPackage = "link: --wrap=malloc --wrap=realloc --wrap=calloc --wrap=free"
 
 //export __wrap_malloc
 func __wrap_malloc(size uintptr) unsafe.Pointer {
@@ -30,6 +36,11 @@ func __wrap_calloc(nmemb, size uintptr) unsafe.Pointer {
 //export __wrap_realloc
 func __wrap_realloc(ptr unsafe.Pointer, size uintptr) unsafe.Pointer {
 	return Realloc(ptr, size)
+}
+
+//export __wrap_free
+func __wrap_free(ptr unsafe.Pointer) {
+	Free(ptr)
 }
 
 //go:linkname _heapStart C._heapStart
@@ -67,13 +78,23 @@ func gcGrowMemory(oldHeapEnd uintptr) uintptr {
 	return oldHeapEnd
 }
 
+// StackRootsHook is installed by scheduler backends that own additional
+// execution stacks (the baremetal fiber scheduler). When set, it replaces the
+// default single-context stack scan and reports every mapped stack range
+// through the mark callback.
+var StackRootsHook func(mark func(start, end uintptr))
+
 func gcMarkReachable() {
+	if globalsStart < globalsEnd {
+		markRoots(globalsStart, globalsEnd)
+	}
+	if StackRootsHook != nil {
+		StackRootsHook(markRoots)
+		return
+	}
 	sp := uintptr(getsp())
 	if sp < stackTop {
 		markRoots(sp, stackTop)
-	}
-	if globalsStart < globalsEnd {
-		markRoots(globalsStart, globalsEnd)
 	}
 }
 

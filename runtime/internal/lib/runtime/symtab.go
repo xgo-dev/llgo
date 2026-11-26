@@ -128,8 +128,9 @@ type frameSymbolCacheEntry struct {
 // Sized for whole-stack re-walks: CallersFrames over a deep stack touches
 // one entry per distinct return pc, and a 128-entry table thrashed on
 // 32-frame stacks (adjacent return pcs share high bits, and repeated walks
-// paid a pcline search per frame per walk).
-const frameSymbolCacheSize = 4096
+// paid a pcline search per frame per walk). Baremetal builds keep a small
+// table: SRAM budgets there cannot spare a whole-stack-sized cache.
+const frameSymbolCacheSize = frameSymbolCacheCapacity
 
 var frameSymbolCache [frameSymbolCacheSize]frameSymbolCacheEntry
 
@@ -2080,7 +2081,7 @@ type frameSymbolResult struct {
 	sym pcSymbol
 }
 
-const frameSymbolResultCacheSize = 4096
+const frameSymbolResultCacheSize = frameSymbolResultCacheCapacity
 
 var frameSymbolResultCache [frameSymbolResultCacheSize]*frameSymbolResult
 

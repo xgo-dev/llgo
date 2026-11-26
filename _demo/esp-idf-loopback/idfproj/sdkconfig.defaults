@@ -1,0 +1,42 @@
+# Main task stack headroom for the llgo scheduler (the fiber stacks
+# themselves come from the llgo GC heap).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# llgo's esp32s31 clock gate assumes a 240 MHz CPU (baremetalCpuMHz in
+# runtime/internal/runtime/z_clock_freq_esp32s31.go). Keep the IDF frequency
+# matched so cycle-domain deadlines (time.Sleep, timers) read true seconds.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# The llgo fiber scheduler swaps the task's SP out of the FreeRTOS task stack
+# onto GC-heap-allocated fiber stacks on every scheduling point. That is
+# exactly what the stack guards look for: the ASSIST_DEBUG hardware guard
+# panics as soon as SP leaves the task's registered bounds, and the canary
+# checker runs on every context switch. Disable both - llgo guards its own
+# stacks with a canary + SP bound at every cooperative swap
+# (_wrap/context_riscv32.c), so fiber overflows stay detected inside the Go
+# runtime itself.
+CONFIG_ESP_SYSTEM_HW_STACK_GUARD=n
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_NONE=y
+
+# External PSRAM: the S31 die defaults to octal mode at 200 MHz. malloc may
+# serve from it, but allocations that must be DMA-visible or touched by IDF
+# internals stay internal, hence the 32 KiB reserve below.
+CONFIG_SPIRAM=y
+# Also boot on boards with no PSRAM fitted: IDF then reports zero SPIRAM and
+# llgo keeps the Go heap in its static window.
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MEMTEST=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+
+# App partition: 3.9375 MiB of the 4 MB flash (see partitions.csv) - the
+# family layout.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ---- SPI master ----
+# The GPSPI master driver is a plain component (esp_driver_spi) pulled in by
+# the main component's REQUIRES; it has no functional sdkconfig switch (only
+# debug-log options, left at defaults).

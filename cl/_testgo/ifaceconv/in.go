@@ -90,7 +90,8 @@ func main() {
 
 // CHECK-LABEL: define void @"main.(*C1).f"(ptr %0){{.*}} {
 // CHECK: [[C1_NIL:%.*]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[C1_NIL]], %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
+// CHECK: br i1 [[C1_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true, %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
 // CHECK: [[C1_DEREF_NIL:%.*]] = icmp eq ptr %0, null
 // CHECK: br i1 [[C1_DEREF_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
@@ -104,12 +105,14 @@ func main() {
 
 // CHECK-LABEL: define void @"main.(*C2).f"(ptr %0){{.*}} {
 // CHECK: [[C2_F_NIL:%.*]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[C2_F_NIL]], %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
+// CHECK: br i1 [[C2_F_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true, %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
 // CHECK: call void @main.C2.f(%main.C2 zeroinitializer)
 
 // CHECK-LABEL: define void @"main.(*C2).g"(ptr %0){{.*}} {
 // CHECK: [[C2_G_NIL:%.*]] = icmp eq ptr %0, null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 [[C2_G_NIL]], %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
+// CHECK: br i1 [[C2_G_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true, %"{{.*}}String" {{.*}}, %"{{.*}}String" {{.*}})
 // CHECK: call void @main.C2.g(%main.C2 zeroinitializer)
 
 // CHECK-LABEL: define void @main.main(){{.*}} {

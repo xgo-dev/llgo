@@ -1,0 +1,14 @@
+build/
+sdkconfig
+sdkconfig.old
+main/llgo_out.o
+main/ble_glue.c
+host/llgo_syms.o
+host/logs/
+
+# Generated scaffold, synced from _demo/common/ by make-artifact.sh.
+/CMakeLists.txt
+partitions.csv
+host/llgo_syms.S
+main/app_main.c
+main/llgo_dram.ld

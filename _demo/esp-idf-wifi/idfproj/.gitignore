@@ -1,0 +1,23 @@
+wifi_creds.h
+build/
+sdkconfig
+sdkconfig.old
+main/llgo_out.o
+main/wifi_glue.c
+main/gpio_glue.c
+main/i2c_glue.c
+main/i2s_glue.c
+main/net_glue.c
+main/tls_glue.c
+main/tls_ca.h
+main/tls_ca_wrong.h
+host/llgo_syms.o
+host/tlssrv/certs/
+
+# Generated scaffold, synced from _demo/common/ by make-artifact.sh.
+CMakeLists.txt
+partitions.csv
+host/llgo_syms.S
+main/app_main.c
+main/llgo_dram.ld
+host/make-artifact.sh

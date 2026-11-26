@@ -1,0 +1,63 @@
+# Golden for the UART probe ([go] uart ...) of _demo/esp-idf-uart, captured
+# from an acceptance run (esp-emu v1.2.0, esp32s31, IDF espressif/idf:latest =
+# v6.3-dev, esp-clang toolchain from llgo's cache).
+#
+# Scope: every [go] uart line the probe prints. The [c]/[INFO]/ROM lines (the
+# emulator's own chatter and app_main's reports) are not part of the golden.
+#
+# Everything in this golden is exact - there is NO floater rule. Every number
+# is a build fact (port ids, pins, baud rates, the 9-byte payload) or an
+# esperr pipeline code the probe prints in decimal:
+#   30721 = 0x7801 ErrConsoleReserved (the binding's console refusal)
+#   30722 = 0x7802 ErrNotInit (the glue's not-initialized refusal)
+#     263 = 0x107 ESP_ERR_TIMEOUT (Read's expired budget -> uart.ErrTimeout)
+#
+# The run's fidelity statement, and what is honest about it:
+#   available n=0        the emulator models no UART peer and no wire: the
+#                        driver install, the pin routing (GPIO17/18) and the
+#                        TX enqueue all run green, but nothing is ever
+#                        received, so the RX ring stays empty. The written
+#                        9 bytes sit in the TX ring/FIFO with nowhere to go.
+#   read n=0 err=263     the honest consequence: Read's 200 ms budget expires
+#                        against an empty ring and surfaces ErrTimeout - the
+#                        idiomatic (0, ErrTimeout) empty-read shape, exercised
+#                        for real (the budget is a real 20-tick semaphore
+#                        wait under the emulator's scheduler).
+#   flush output err=0   uart_wait_tx_done finds the TX FIFO already empty
+#                        and returns immediately: the emulator's fixed
+#                        register state reads as drained. Deterministic
+#                        either way (an expired budget would print 263).
+#
+# The PASS gate itself is real end-to-end signal: every binding and driver
+# call on the path (the install's object and ring-buffer allocations, the
+# interrupt allocation, the pin matrix routing, the param/word-length/parity
+# config writes, the baud change, the flushes, the driver delete) returned
+# esp_err 0. The link from Go, through the glue, through the IDF driver, to
+# the (peerless) register window is exercised and green; only the wire is
+# absent, which is an environment property, not a binding property. Verify
+# the loopback bytes on hardware before trusting the RX path's data.
+#
+# Regression check (the console is a USB-Serial/JTAG stream, so its lines end
+# in CR/LF: strip the CR before comparing):
+#   grep -E '^\[go\] uart' <emu log> | tr -d '\r' \
+#     | diff - <this file, comments excluded>
+# A diff means the probe's surface behavior changed. The golden only grows by
+# appending rounds (e.g. a hardware loopback run's read-back lines), never by
+# editing an existing line.
+[go] uart: start
+[go] uart console init err=30721
+[go] uart console refused ok
+[go] uart notinit available err=30722
+[go] uart notinit refused ok
+[go] uart init port=1 tx=17 rx=18 baud=115200 ok
+[go] uart write n=9 ok
+[go] uart available n=0
+[go] uart read n=0 err=263 timeout ok
+[go] uart flush input ok
+[go] uart flush output err=0 drained
+[go] uart set config 8N1 ok
+[go] uart set baud 9600 ok
+[go] uart deinit ok
+[go] uart post-deinit read err=30722
+[go] uart post-deinit refused ok
+[go] uart PASS

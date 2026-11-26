@@ -20,6 +20,7 @@ func semaAcquireWaitGroup(addr *uint32, _ bool) {
 	semaAcquire(addr)
 }
 
-func semaRelease(addr *uint32) {
+func semaRelease(addr *uint32, handoff bool) {
+	_ = handoff // the semaphore never blocks, so handoff has no effect
 	atomic.AddUint32(addr, 1)
 }

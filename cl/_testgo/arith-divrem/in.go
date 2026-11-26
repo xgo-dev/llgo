@@ -7,7 +7,8 @@ package main
 
 // CHECK-LABEL: define i64 @main.signedDiv(
 // CHECK: [[SD_ZERO:%[0-9]+]] = icmp eq i64 %1, 0
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertDivideByZero"(i1 [[SD_ZERO]])
+// CHECK: br i1 [[SD_ZERO]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertDivideByZero"(i1 true)
 // CHECK: [[SD_ZERO_SAFE:%[0-9]+]] = select i1 [[SD_ZERO]], i64 1, i64 %1
 // CHECK: [[SD_MIN:%[0-9]+]] = icmp eq i64 %0, -9223372036854775808
 // CHECK: [[SD_NEG_ONE:%[0-9]+]] = icmp eq i64 %1, -1
@@ -20,7 +21,8 @@ func signedDiv(x, y int64) int64 { return x / y }
 
 // CHECK-LABEL: define i64 @main.signedRem(
 // CHECK: [[SR_ZERO:%[0-9]+]] = icmp eq i64 %1, 0
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertDivideByZero"(i1 [[SR_ZERO]])
+// CHECK: br i1 [[SR_ZERO]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertDivideByZero"(i1 true)
 // CHECK: [[SR_ZERO_SAFE:%[0-9]+]] = select i1 [[SR_ZERO]], i64 1, i64 %1
 // CHECK: [[SR_MIN:%[0-9]+]] = icmp eq i64 %0, -9223372036854775808
 // CHECK: [[SR_NEG_ONE:%[0-9]+]] = icmp eq i64 %1, -1
@@ -33,14 +35,16 @@ func signedRem(x, y int64) int64 { return x % y }
 
 // CHECK-LABEL: define i64 @main.unsignedDiv(
 // CHECK: [[UD_ZERO:%[0-9]+]] = icmp eq i64 %1, 0
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertDivideByZero"(i1 [[UD_ZERO]])
+// CHECK: br i1 [[UD_ZERO]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertDivideByZero"(i1 true)
 // CHECK: [[UD_SAFE_Y:%[0-9]+]] = select i1 [[UD_ZERO]], i64 1, i64 %1
 // CHECK: udiv i64 %0, [[UD_SAFE_Y]]
 func unsignedDiv(x, y uint64) uint64 { return x / y }
 
 // CHECK-LABEL: define i64 @main.unsignedRem(
 // CHECK: [[UR_ZERO:%[0-9]+]] = icmp eq i64 %1, 0
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertDivideByZero"(i1 [[UR_ZERO]])
+// CHECK: br i1 [[UR_ZERO]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertDivideByZero"(i1 true)
 // CHECK: [[UR_SAFE_Y:%[0-9]+]] = select i1 [[UR_ZERO]], i64 1, i64 %1
 // CHECK: urem i64 %0, [[UR_SAFE_Y]]
 func unsignedRem(x, y uint64) uint64 { return x % y }

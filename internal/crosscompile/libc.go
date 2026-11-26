@@ -13,6 +13,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile"
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/libc"
 	"github.com/xgo-dev/llgo/internal/crosscompile/compile/rtlib"
+	"github.com/xgo-dev/llgo/internal/env"
 )
 
 // for testing, in testing env, we use fake path, it will cause downloading failure
@@ -103,34 +104,80 @@ func getLibcCompileConfigByName(baseDir, libcName, target, mcpu, compiledLibrary
 		return
 	}
 
+	if config.Name == "newlib-esp32" {
+		// The RISC-V setjmp.S float block needs a source-level fixup before
+		// any hard-float target can assemble it with the LLVM integrated
+		// assembler (see newlibsetjmp.go). Soft-float targets are unaffected:
+		// the block is preprocessed out for them either way.
+		if err = patchNewlibRVSetjmp(sourceDir); err != nil {
+			return
+		}
+	}
+
 	return outputDir, compileConfig, nil
+}
+
+// rtCompileConfigByName builds the rtlib compile configuration by name.
+// Pure path construction: it never downloads or compiles.
+func rtCompileConfigByName(baseDir, rtName, target string) (config compile.LibConfig, compileConfig compile.CompileConfig, err error) {
+	switch rtName {
+	case "compiler-rt":
+		config = rtlib.GetCompilerRTConfig()
+		sourceDir := filepath.Join(baseDir, config.String())
+		compileConfig = rtlib.GetCompilerRTCompileConfig(sourceDir, target)
+	default:
+		err = fmt.Errorf("unsupported rt: %s", rtName)
+	}
+	return
+}
+
+// rtlibCacheKeyGroups returns the rtlib source-file list as cache-key flag
+// groups. The archive identity must cover the source file list and the
+// contents of repo-vendored sources (unlike the version-pinned downloads,
+// those can change between builds): the compile step only stats the archive,
+// so a changed list or file would otherwise keep serving a stale archive.
+func rtlibCacheKeyGroups(baseDir, rtName, target string) ([][]string, error) {
+	_, compileConfig, err := rtCompileConfigByName(baseDir, rtName, target)
+	if err != nil {
+		return nil, err
+	}
+	root := env.LLGoROOT()
+	groups := make([][]string, 0, len(compileConfig.Groups))
+	for _, group := range compileConfig.Groups {
+		files := append([]string(nil), group.Files...)
+		for _, file := range group.Files {
+			if root == "" || !strings.HasPrefix(file, root) {
+				continue // downloaded sources are pinned by the version tag
+			}
+			content, err := os.ReadFile(file)
+			if err != nil {
+				return nil, err
+			}
+			sum := sha256.Sum256(content)
+			files = append(files, fmt.Sprintf("content:%x", sum))
+		}
+		groups = append(groups, files)
+	}
+	return groups, nil
 }
 
 // getRTCompileConfigByName retrieves runtime library compilation configuration by name
 // Returns the actual libc output dir, compilation config and err
-func getRTCompileConfigByName(baseDir, rtName, target, compiledLibraryKey string) (outputDir string, cfg compile.CompileConfig, err error) {
+func getRTCompileConfigByName(baseDir, rtName, target, compiledLibraryKey string) (outputDir string, compileConfig compile.CompileConfig, err error) {
 	if rtName == "" {
 		err = fmt.Errorf("rt name cannot be empty")
 		return
 	}
-	var sourceDir string
-	var config compile.LibConfig
-	var compileConfig compile.CompileConfig
-
-	switch rtName {
-	case "compiler-rt":
-		config = rtlib.GetCompilerRTConfig()
-		sourceDir = filepath.Join(baseDir, config.String())
-		compileConfig = rtlib.GetCompilerRTCompileConfig(sourceDir, target)
-	default:
-		err = fmt.Errorf("unsupported rt: %s", rtName)
+	config, compileConfig, err := rtCompileConfigByName(baseDir, rtName, target)
+	if err != nil {
 		return
 	}
 	outputDir = compiledLibraryDir(baseDir, config, compiledLibraryKey, compileConfig)
 	if needSkipDownload {
-		return outputDir, compileConfig, err
+		return
 	}
 
+	sourceDir := filepath.Join(baseDir, config.String())
 	if err = checkDownloadAndExtractLib(config.Url, sourceDir, config.ResourceSubDir); err != nil {
 		return
 	}

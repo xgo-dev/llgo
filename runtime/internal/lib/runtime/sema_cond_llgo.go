@@ -1,4 +1,10 @@
-//go:build darwin || (linux && baremetal && !llgo.singlecontext)
+//go:build (darwin && !(llgo && baremetal && tinygo.riscv32 && !nogc)) || (linux && baremetal && (!llgo || !tinygo.riscv32 || nogc) && !llgo.singlecontext)
+
+// The llgo baremetal RV32 fiber targets (llgo && baremetal && tinygo.riscv32
+// && !nogc) compile sema_baremetal_llgo.go instead: pthread_once and the
+// pthread condition behind this file are libnosys stubs there. The
+// single-context Cortex-M runtime (llgo.singlecontext) compiles
+// sema_cortexqemu.go instead: it never parks.
 
 package runtime
 
@@ -66,7 +72,8 @@ func semaAcquire(addr *uint32) {
 	}
 }
 
-func semaReleaseNative(addr *uint32) {
+func semaReleaseNative(addr *uint32, handoff bool) {
+	_ = handoff // the host scheduler orders wakeups; handoff needs no yield
 	latomic.AddUint32(addr, 1)
 	st := getSemaState(addr)
 	st.mu.Lock()

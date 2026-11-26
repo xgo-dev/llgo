@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Generate the local PKI material for the TLS acceptance run:
+#
+#   certs/ca.crt + ca.key        self-signed CA (basicConstraints CA:TRUE),
+#                                100-year validity so the acceptance never
+#                                depends on the wall clock (the emulator
+#                                boots with an arbitrary RTC state)
+#   certs/tls.crt + tls.key      server certificate signed by that CA,
+#                                SAN IP:127.0.0.1 + DNS:localhost, 100-year
+#                                validity
+#   certs/ca_wrong.crt + key     a second CA that signed nothing - the
+#                                negative test's "wrong CA": a dial with it
+#                                must fail with the certificate-verify error
+#   ../../main/tls_ca.h          the CA PEM as a C string literal, compiled
+#                                into the firmware for the VERIFY_REQUIRED
+#                                dial (gitignored, like wifi_creds.h)
+#   ../../main/tls_ca_wrong.h    the wrong-CA PEM as a C string literal
+#
+# All key material stays under idfproj/host/tlssrv/certs/ (gitignored, the
+# directory tlssrv loads them from); only the two generated headers leave
+# it, and both are gitignored too. Rerunning the script regenerates
+# everything consistently, so the compiled-in CA always matches the
+# certificate tlssrv serves.
+#
+# Requires openssl on PATH (OpenSSL or LibreSSL; uses a config file rather
+# than -addext so both work).
+set -euo pipefail
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+CERTS="$DIR/tlssrv/certs"
+CAHDR="$DIR/../main/tls_ca.h"
+CAWRONGHDR="$DIR/../main/tls_ca_wrong.h"
+
+command -v openssl >/dev/null || { echo "error: openssl not found on PATH" >&2; exit 1; }
+mkdir -p "$CERTS"
+
+# Self-signed CA: valid from the epoch (1970) so a device with no wall
+# clock (the default IDF state: time() starts at 0) still sees the chain as
+# already valid, through 2126 (100 years). -not_before needs OpenSSL >= 3.0;
+# without it the certificates start now and the run additionally needs a
+# wall clock past the generation moment, so warn loudly in that case.
+STARTARGS=()
+if openssl req -x509 -help 2>&1 | grep -q -- '-not_before'; then
+    STARTARGS=(-not_before 19700101000000Z)
+else
+    echo "warning: this openssl cannot backdate notBefore; the certificates" >&2
+    echo "         start now - the device under test needs a wall clock at or" >&2
+    echo "         past the generation moment for VERIFY_REQUIRED" >&2
+fi
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$CERTS/ca.key" \
+    -out "$CERTS/ca.crt" -days 36500 -sha256 "${STARTARGS[@]}" \
+    -subj "/CN=llgo-tls-acceptance-ca" \
+    -config <(cat <<'EOF'
+[req]
+distinguished_name = dn
+x509_extensions = v3
+prompt = no
+[dn]
+CN = llgo-tls-acceptance-ca
+[v3]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+EOF
+)
+
+# Server certificate signed by the CA: SAN must name the identities the
+# acceptance dials verify against - IP:127.0.0.1 (the loopback address the
+# emulator's NAT forwards to; also the address a hosted curl against
+# tlssrv uses) and DNS:localhost (the name pkg/esp/tls's SNI probe sends
+# as its ServerName, and what a hosted https://localhost:9443 checks).
+openssl req -newkey rsa:2048 -nodes -keyout "$CERTS/tls.key" \
+    -out "$CERTS/tls.csr" \
+    -subj "/CN=127.0.0.1" \
+    -config <(cat <<'EOF'
+[req]
+distinguished_name = dn
+prompt = no
+[dn]
+CN = 127.0.0.1
+EOF
+)
+openssl x509 -req -in "$CERTS/tls.csr" -CA "$CERTS/ca.crt" -CAkey "$CERTS/ca.key" \
+    -CAcreateserial -out "$CERTS/tls.crt" -days 36500 -sha256 "${STARTARGS[@]}" \
+    -extfile <(cat <<'EOF'
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = IP:127.0.0.1,DNS:localhost
+EOF
+)
+rm -f "$CERTS/tls.csr"
+
+# The negative-test CA: another valid self-signed CA, but it signed nothing,
+# so a chain verified against it cannot build.
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$CERTS/ca_wrong.key" \
+    -out "$CERTS/ca_wrong.crt" -days 36500 -sha256 "${STARTARGS[@]}" \
+    -subj "/CN=llgo-tls-acceptance-wrong-ca" \
+    -config <(cat <<'EOF'
+[req]
+distinguished_name = dn
+x509_extensions = v3
+prompt = no
+[dn]
+CN = llgo-tls-acceptance-wrong-ca
+[v3]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+EOF
+)
+
+# C string literals (PEM bodies carry no characters needing escapes beyond
+# newlines, which \n handles; quotes never appear in PEM text).
+# Rerun discipline: the two headers below are compile-time inputs - after
+# ANY regeneration (or a half-finished run: under set -e an openssl failure
+# can leave the PREVIOUS run's headers in place, and the GENERATED marker
+# inside does not date them) rerun make-artifact.sh + idf.py build, or the
+# firmware keeps verifying against the stale compiled-in CA.
+pem_to_c_string() {
+    awk 'BEGIN{printf "\""} {gsub(/\r/,""); printf "%s\\n", $0} END{printf "\""}' "$1"
+}
+{
+    echo "/* GENERATED by idfproj/host/gencert.sh - do not edit; gitignored."
+    echo " * The acceptance CA (certs/ca.crt) as a PEM C string. */"
+    echo "#define LLGO_TLS_CA_PEM $(pem_to_c_string "$CERTS/ca.crt")"
+} > "$CAHDR"
+{
+    echo "/* GENERATED by idfproj/host/gencert.sh - do not edit; gitignored."
+    echo " * A CA that signed nothing (certs/ca_wrong.crt): the negative"
+    echo " * test's CA - a chain verified against it must fail. */"
+    echo "#define LLGO_TLS_CA_WRONG_PEM $(pem_to_c_string "$CERTS/ca_wrong.crt")"
+} > "$CAWRONGHDR"
+
+echo "generated:"
+for f in ca.crt ca.key tls.crt tls.key ca_wrong.crt ca_wrong.key; do
+    echo "  $CERTS/$f"
+done
+echo "  $CAHDR"
+echo "  $CAWRONGHDR"
+echo "rerun idfproj/host/make-artifact.sh + idf.py build so the firmware recompiles these headers"

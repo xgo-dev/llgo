@@ -1,4 +1,4 @@
-//go:build baremetal
+//go:build baremetal && go1.23 && (!llgo || !tinygo.riscv32 || nogc)
 
 package runtime
 

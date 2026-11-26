@@ -176,7 +176,10 @@ func (b Builder) allocEx(elem Type, heap, hoistToEntry, volatile bool) (ret Expr
 	prog := b.Prog
 	pkg := b.Pkg
 	size := SizeOf(prog, elem)
-	if !heap && prog.SizeOf(elem) > llabi.MaxStackVarSize {
+	// The stack-variable gate shares the fixed-stack budget with make backing
+	// arrays: an alloca larger than the goroutine stack itself would overflow
+	// before any yield-point guard could run (see Program.stackVarBudget).
+	if !heap && prog.SizeOf(elem) > prog.stackVarBudget(llabi.MaxStackVarSize) {
 		heap = true
 	}
 	if heap {
@@ -532,8 +535,66 @@ func (b Builder) assertStaticNilDeref(ptr Expr) {
 
 func (b Builder) WrapNilCheck(ptr, recvType, methodName Expr) Expr {
 	isNil := b.BinOp(token.EQL, ptr, b.Prog.Nil(ptr.Type))
-	b.Call(b.Pkg.rtFunc("PanicWrapNilPointer"), isNil, recvType, methodName)
+	// Keep the taken path free of an opaque runtime call: loading the receiver
+	// type and method name strings for every call costs far more than the
+	// branch, and the unconditional helper call blocks tail-call optimization
+	// of generated method wrappers. The cold path reports the identical panic.
+	// Unlike AssertNilDeref there is no constant early-exit for statically
+	// non-nil pointers: instcombine folds the icmp and the branch away, so the
+	// generic form costs nothing. PanicSite stays unset because cl does not
+	// record panic sites at ssa:wrapnilchk builtin positions, matching the
+	// original lowering.
+	blks := b.Func.MakeBlocks(2)
+	b.If(isNil, blks[0], blks[1])
+	b.SetBlockEx(blks[0], AtEnd, false)
+	b.Call(b.Pkg.rtFunc("PanicWrapNilPointer"), b.Prog.BoolVal(true), recvType, methodName)
+	if b.Prog.NeedsFramePointer() {
+		// The helper never returns. Keep a formal return so statically nil
+		// callers keep their return PCs inside this function, mirroring
+		// AssertNilDeref.
+		ret := b.Func.impl.GlobalValueType().ReturnType()
+		if ret.TypeKind() == llvm.VoidTypeKind {
+			b.impl.CreateRetVoid()
+		} else {
+			b.impl.CreateRet(llvm.Undef(ret))
+		}
+	} else {
+		b.Jump(blks[0])
+	}
+	b.SetBlockEx(blks[1], AtEnd, false)
+	b.blk.last = blks[1].last
 	return ptr
+}
+
+// branchyAssert lowers a runtime assertion branchy like WrapNilCheck: the hot
+// path is compare-and-branch, and the panic call - first argument now the
+// constant true the helper re-tests - moves to a cold block that ends in a
+// formal return or self-loop per the frame-pointer target policy. The caller's
+// condition keeps its original meaning and stays usable after the guard: the
+// icmp dominates both blocks. Like WrapNilCheck there is no constant early-exit
+// (instcombine folds the branch away, so the generic form costs nothing), and
+// PanicSite stays unset because cl does not record panic sites at these
+// builtin positions, matching the original lowerings.
+func (b Builder) branchyAssert(check Expr, panicCall func()) {
+	blks := b.Func.MakeBlocks(2)
+	b.If(check, blks[0], blks[1])
+	b.SetBlockEx(blks[0], AtEnd, false)
+	panicCall()
+	if b.Prog.NeedsFramePointer() {
+		// The helper never returns. Keep a formal return so statically failing
+		// callers keep their return PCs inside this function, mirroring
+		// AssertNilDeref.
+		ret := b.Func.impl.GlobalValueType().ReturnType()
+		if ret.TypeKind() == llvm.VoidTypeKind {
+			b.impl.CreateRetVoid()
+		} else {
+			b.impl.CreateRet(llvm.Undef(ret))
+		}
+	} else {
+		b.Jump(blks[0])
+	}
+	b.SetBlockEx(blks[1], AtEnd, false)
+	b.blk.last = blks[1].last
 }
 
 // Load returns the value at the pointer ptr.

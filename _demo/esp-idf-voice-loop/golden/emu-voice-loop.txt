@@ -1,0 +1,65 @@
+# Golden for the voice loop ([go] vloop ...) of _demo/esp-idf-voice-loop,
+# captured from an esp-emu run (esp32s31, 16 MiB PSRAM, console uart0,
+# esp-emu v1.2.0). The firmware gates itself: the PASS/FAIL verdicts below
+# are exact, the raw measurements float.
+#
+# Scope: every [go] vloop line the demo prints in EMU mode (the emulator
+# has no ES8311, so the run exercises the synthetic scene through the same
+# VAD → Opus → decode → sink path the board runs). The [c] lines (the
+# C-side heap marks) are not part of the golden: the heap byte counts
+# legitimately vary between runs.
+#
+# Floater rule. The `*` values are measurements: rms/floor (VAD frame
+# statistics), encode ms / bytes / ratio (the realtime budget), decode-play
+# ms, snr/max/rms (the aligned roundtrip comparison) and rmsout (the sink
+# RMS). They are deterministic in principle but are exactly the numbers an
+# emulator version or compiler drift may legitimately move, so they float
+# and the firmware's own gates carry the verdict instead (snr gate + max
+# error gate, printed in every FAIL line; the HW-only encode-budget gate is
+# not exercised here). Everything else is exact on purpose:
+#
+#   mode EMU                the auto-detection: no codec at 0x18
+#   vad cfg                 the tunables this Go source sets
+#   lookahead = 104         OPUS_GET_LOOKAHEAD of this build (6.5 ms at
+#                           16 kHz): a pin of the alignment the compare uses
+#   preroll = 15            frames the pre-roll ring held at speech-open:
+#                           lead silence (13) + the 2 speech frames before
+#                           the 3rd consecutive one opened the utterance
+#   speech-close ms/samples the scene layout through the VAD: utterance
+#                           capture stops on the 17th consecutive quiet
+#                           frame (the hangover), deterministic for this
+#                           scene; 106 frames x 480 samples = 50880
+#   packets = 159           ceil(50880/320): one packet per 20 ms frame
+#   samples = 50880         the decode emitted exactly packets x 320
+#   PASS / FAIL, and the
+#   seg PASS lines          the firmware's own verdicts, exact
+#
+# Verification (run from the demo directory):
+#   grep -E '^\[go\] vloop' <emu log> | tr -d '\r' | \
+#     sed -E 's/rms = [0-9]+/rms = */; s/floor = [0-9]+/floor = */;
+#             s/encode ms = [0-9]+/encode ms = */; s/bytes = [0-9]+/bytes = */;
+#             s/ratio = [0-9]+ %/ratio = */; s/decode-play ms = [0-9]+/decode-play ms = */;
+#             s/snr = [-0-9.]+ dB max = [0-9]+/snr = * dB max = */;
+#             s/rmsout = [0-9]+/rmsout = */' | diff - golden/emu-voice-loop.txt
+[go] vloop start
+[go] vloop mode EMU (no ES8311 at 0x18; synthetic source, playback sink drops output)
+[go] vloop vad cfg open = 2 x frames = 3 hangover = 17 floor = [ 60 , 4000 ] frame = 480 @ 30 ms rate = 16000
+[go] vloop codec ok bitrate = 24000 frame-ms = 20 lookahead = 104
+[go] vloop cycle = 1 listening
+[go] vloop cycle = 1 speech-open rms = * floor = * preroll = 15
+[go] vloop cycle = 1 speech-close ms = 3180 samples = 50880 quiet = 17
+[go] vloop cycle = 1 encode ms = * packets = 159 bytes = * ratio = *
+[go] vloop cycle = 1 decode-play ms = * packets = 159 samples = 50880
+[go] vloop cycle = 1 snr = * dB max = * rms = * (gate 10.0 dB max 6000 )
+[go] vloop cycle = 1 seg PASS (gate 10.0 dB)
+[go] vloop cycle = 1 played samples = 50880 rmsout = *
+[go] vloop cycle = 2 listening
+[go] vloop cycle = 2 speech-open rms = * floor = * preroll = 15
+[go] vloop cycle = 2 speech-close ms = 3180 samples = 50880 quiet = 17
+[go] vloop cycle = 2 encode ms = * packets = 159 bytes = * ratio = *
+[go] vloop cycle = 2 decode-play ms = * packets = 159 samples = 50880
+[go] vloop cycle = 2 snr = * dB max = * rms = * (gate 10.0 dB max 6000 )
+[go] vloop cycle = 2 seg PASS (gate 10.0 dB)
+[go] vloop cycle = 2 played samples = 50880 rmsout = *
+[go] vloop PASS
+[go] vloop done

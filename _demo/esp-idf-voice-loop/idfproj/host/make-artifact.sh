@@ -1,0 +1,1 @@
+../../../common/make-artifact.sh

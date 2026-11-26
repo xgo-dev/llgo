@@ -1,0 +1,7 @@
+## The esp-sr managed component: the WakeNet engine (precompiled esp32s31
+## libraries), the srmodel partition enumeration API and the build-time model
+## packaging (CONFIG_SR_WN_WN9_HILEXIN -> srmodels.bin, flashed into the
+## partition named "model"). Its transitive dependencies (dl_fft, esp-dl,
+## cjson) come with it.
+dependencies:
+  espressif/esp-sr: "^2.6.2"

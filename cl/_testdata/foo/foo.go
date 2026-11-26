@@ -78,8 +78,9 @@ func (g *Game) Load() {
 // CHECK-SAME: ptr %[[TMP0:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
 // CHECK-NEXT:   %[[TMP1:[0-9]+]] = icmp eq ptr %[[TMP0]], null
-// CHECK-NEXT:   call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[TMP1]], %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB6]], i64 44 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB7]], i64 2 })
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = load %"{{.*}}/cl/_testdata/foo.Foo", ptr %[[TMP0]], align 8
+// CHECK-NEXT:   br i1 %[[TMP1]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true, %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB6]], i64 44 }, %"{{.*}}/runtime/internal/runtime.String" { ptr @[[GLOB7]], i64 2 })
+// CHECK: %[[TMP2:[0-9]+]] = load %"{{.*}}/cl/_testdata/foo.Foo", ptr %[[TMP0]], align 8
 // CHECK-NEXT:   %[[TMP3:[0-9]+]] = call ptr @"{{.*}}/cl/_testdata/foo.Foo.Pb"(%"{{.*}}/cl/_testdata/foo.Foo" %[[TMP2]])
 // CHECK-NEXT:   ret ptr %[[TMP3]]
 // CHECK-NEXT: }

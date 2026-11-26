@@ -54,11 +54,13 @@ _llgo_int:
 _llgo_itab$ARsbupbM5LJaIg5IQKIp4jqIVyeW-KWKFWg1yvba33A:
     _llgo_github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source
     _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
-    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.(*Source).Read
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source.Read$dfn
 _llgo_string:
     github.com/xgo-dev/llgo/runtime/internal/runtime.strequal
 _llgo_uint8:
     github.com/xgo-dev/llgo/runtime/internal/runtime.memequal8
+github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source.Read$dfn:
+    github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.Source.Read
 main.init:
     github.com/xgo-dev/llgo/cl/_testmeta/interface_imported/api.init
     main.init$guard
@@ -67,7 +69,7 @@ main.main:
     github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
     main.use
 main.use:
-    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AssertNilDeref
 
 [UseIface]
 main.main:

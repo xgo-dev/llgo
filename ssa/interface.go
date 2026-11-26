@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/meta"
+	rtabi "github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llgo/ssa/abi"
 	"github.com/xgo-dev/llvm"
 )
@@ -112,11 +113,11 @@ func (b Builder) staticItab(rawIntf *types.Interface, concrete types.Type, tintf
 	}, nil))
 	funcs := make([]llvm.Value, len(methods))
 	for i, method := range methods {
-		ifn, _ := b.abiMethodFuncs(concrete, method)
+		ifn, tfn := b.abiMethodFuncs(concrete, method)
 		if ifn.IsNil() {
 			return Expr{}, false
 		}
-		funcs[i] = ifn
+		funcs[i] = b.itabFunEntry(concrete, method, ifn, tfn)
 	}
 	// abiType returns a pointer derived from the descriptor global, so the
 	// descriptor's nested layout is not available here. Use the same stable
@@ -170,6 +171,105 @@ func (p Package) cacheStaticItab(key staticItabKey, itab Expr) {
 		p.staticItabByType = make(map[staticItabKey]Expr)
 	}
 	p.staticItabByType[key] = itab
+}
+
+// itabFunEntry returns the itab fun-slot entry for (concrete, method) under
+// the data-word calling convention: the entry receives the raw interface data
+// word as its first argument instead of a pointer to an addressable copy. It
+// mirrors runtime.NewItab's DirectIfaceData(typ) ? Tfn : Ifn selection (the
+// final branch below) so static and dynamic itabs expose one ABI to callers
+// and to reflection. The two pointer-receiver guards above are ssa-only: the
+// dynamic side folds them into DirectIfaceData's non-pointer rule.
+func (b Builder) itabFunEntry(concrete types.Type, m *types.Selection, ifn, tfn llvm.Value) llvm.Value {
+	declaredRecv := m.Obj().(*types.Func).Type().(*types.Signature).Recv()
+	if _, ok := types.Unalias(declaredRecv.Type()).(*types.Pointer); ok {
+		// Pointer-receiver methods take the raw pointer as their first
+		// argument; the method itself already matches the call site.
+		return ifn
+	}
+	if _, ok := types.Unalias(m.Recv().Underlying()).(*types.Pointer); ok {
+		// Selected from a pointer method set: the entry is the deref wrapper,
+		// whose nil check stays live because the data word may box a nil
+		// pointer.
+		return ifn
+	}
+	if directIfaceType(concrete) && b.Prog.abi.Kind(concrete) != rtabi.Pointer {
+		// Direct non-pointer named types (e.g. [1]*T, struct{*T}, named chan
+		// or unsafe.Pointer): the data word is a pointer-class value that
+		// fills the method's single receiver slot, so the method itself is the
+		// entry. Such leaves are never floats, so no hard-float register
+		// class can mismatch between call site and entry.
+		return tfn
+	}
+	// Boxed concrete values: MakeInterface always allocates the box, so a
+	// dedicated entry may load through the data word without a nil check and
+	// keep its hot path a tail call.
+	return b.itabDataFunc(concrete, m, tfn)
+}
+
+// itabDataFunc synthesizes the boxed-receiver itab entry. It takes the raw
+// data word (the box pointer), loads the concrete value and forwards to the
+// method. Unlike the shared (*T) wrapper it performs no nil check — the box
+// exists for every boxed interface value — so its hot path stays a tail call.
+func (b Builder) itabDataFunc(concrete types.Type, m *types.Selection, tfn llvm.Value) llvm.Value {
+	mSig := m.Type().(*types.Signature)
+	pkg, _ := b.abiUncommonPkg(concrete)
+	anonymous := pkg == nil
+	if anonymous {
+		pkg = types.NewPackage(b.Pkg.Path(), "")
+	}
+	obj := m.Obj().(*types.Func)
+	fullBase := FuncName(pkg, MethodSymbolName(pkg, obj, obj.Name()), mSig.Recv(), false)
+	if b.Pkg.fnlink != nil {
+		fullBase = b.Pkg.fnlink(fullBase)
+	}
+	fullName := fullBase + "$dfn"
+	if fn := b.Pkg.FuncOf(fullName); fn != nil {
+		return fn.impl
+	}
+	// The entry signature carries the data word as its first parameter; the
+	// call site (vkIfaceMethod) builds exactly this shape.
+	n := mSig.Params().Len()
+	params := make([]*types.Var, n+1)
+	params[0] = types.NewVar(token.NoPos, nil, "$data", types.Typ[types.UnsafePointer])
+	for i := 0; i < n; i++ {
+		params[i+1] = mSig.Params().At(i)
+	}
+	entrySig := types.NewSignatureType(nil, nil, nil, types.NewTuple(params...), mSig.Results(), mSig.Variadic())
+	fn := b.Pkg.NewFunc(fullName, entrySig, GoDecl)
+	// Internal linkage: llgo compiles the whole program into one module, so
+	// same-named adapters in different packages cannot collide and LLVM is
+	// free to emit a direct tail jump instead of an auipc/jr pair.
+	fn.impl.SetLinkage(llvm.InternalLinkage)
+	body := fn.MakeBody(1)
+	var args []Expr
+	recvT := b.Prog.Type(mSig.Recv().Type(), GoDecl)
+	if b.Prog.SizeOf(recvT) != 0 {
+		dataPtr := Expr{body.Param(0).impl, b.Prog.Pointer(recvT)}
+		args = append(args, body.Load(dataPtr))
+	} else {
+		// Zero-sized values occupy a (register-free) parameter slot in the
+		// method's declaration type; keep the arity without a load.
+		args = append(args, b.Prog.Zero(recvT))
+	}
+	for i := 0; i < n; i++ {
+		args = append(args, body.Param(i+1))
+	}
+	target := Expr{tfn, b.Prog.FuncDecl(mSig, GoDecl)}
+	ret := body.Call(target, args...)
+	switch rn := mSig.Results().Len(); rn {
+	case 0:
+		body.Return()
+	case 1:
+		body.Return(ret)
+	default:
+		results := make([]Expr, rn)
+		for i := range results {
+			results[i] = body.Extract(ret, i)
+		}
+		body.Return(results...)
+	}
+	return fn.impl
 }
 
 // staticIfaceBox puts a compile-time constant in a read-only global and
@@ -373,10 +473,11 @@ func (b Builder) ImethodWithRecoverToken(intf Expr, method *types.Func) Expr {
 	return b.imethod(intf, method, true, false)
 }
 
-// ImethodBorrowed reserves a caller-owned receiver word for a synchronous
-// invocation. go/defer registrations must retain their longer-lived storage.
+// ImethodBorrowed mirrors the historical borrowed-receiver-word entry point.
+// itab fun entries now take the raw data word, so no caller-owned receiver
+// storage exists; the signature is kept for call-site compatibility.
 func (b Builder) ImethodBorrowed(intf Expr, method *types.Func, recoverToken bool) Expr {
-	return b.imethod(intf, method, recoverToken, true)
+	return b.imethod(intf, method, recoverToken, false)
 }
 
 func (b Builder) imethod(intf Expr, method *types.Func, recoverToken, borrowed bool) Expr {
@@ -399,15 +500,14 @@ func (b Builder) imethod(intf Expr, method *types.Func, recoverToken, borrowed b
 	tclosure := prog.Type(sig, GoDecl)
 	i := iMethodOf(rawIntf, method)
 	b.recordUseIfaceMethod(rawIntf, i)
-	var data Expr
-	if borrowed && b.Func.reserveEscapeStack(prog.VoidPtr()) {
-		buffer := b.uninitializedStackSlot(prog.VoidPtr())
-		data = b.InlineCall(b.Pkg.rtFunc("IfacePtrDataBuffer"), intf, buffer)
-	} else {
-		data = b.InlineCall(b.Pkg.rtFunc("IfacePtrData"), intf)
-	}
 	impl := intf.impl
 	itab := Expr{b.faceItab(impl), prog.VoidPtrPtr()}
+	// itab fun entries take the raw data word as their receiver argument, so no
+	// runtime kind dispatch is needed here. Nil interfaces must still panic:
+	// some targets map low addresses to readable memory, so the fun load below
+	// cannot rely on a fault.
+	b.AssertNilDeref(itab)
+	data := b.faceData(impl)
 	pfn := b.Advance(itab, prog.IntVal(uint64(i+3), prog.Int()))
 	var fn Expr
 	if prog.enableGoGlobalDCE && !recoverToken {
@@ -429,7 +529,7 @@ func (b Builder) imethod(intf Expr, method *types.Func, recoverToken, borrowed b
 	// This is a transient interface invocation pair, not a first-class
 	// funcval. The method receiver remains an ordinary ABI parameter.
 	tmethod := &aType{tclosure.ll, tclosure.raw, vkIfaceMethod}
-	ret := b.aggregateValue(tmethod, fn.impl, data.impl)
+	ret := b.aggregateValue(tmethod, fn.impl, data)
 	return ret
 }
 

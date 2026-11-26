@@ -96,6 +96,8 @@ func SourcePatchReplacesAsm(path, goarch string, tags []string) bool {
 }
 
 var sourcePatchPkgs = map[string]struct{}{
+	"crypto/internal/boring/sig":     {},
+	"crypto/internal/entropy/v1.0.0": {},
 	"crypto/internal/fips140/aes":    {},
 	"crypto/internal/constanttime":   {},
 	"crypto/internal/sysrand":        {},
@@ -107,9 +109,10 @@ var sourcePatchPkgs = map[string]struct{}{
 	"internal/cpu":                   {},
 	"internal/runtime/atomic":        {},
 	"internal/runtime/maps":          {},
+	"internal/runtime/sys":           {},
 	"internal/runtime/syscall":       {},
 	"internal/runtime/syscall/linux": {},
-	"internal/runtime/sys":           {},
+	"internal/strconv":               {},
 	"internal/sync":                  {},
 	"iter":                           {},
 	"math/bits":                      {},
@@ -121,6 +124,7 @@ var sourcePatchPkgs = map[string]struct{}{
 	"runtime/metrics":                {},
 	"simd":                           {},
 	"simd/internal/bridge":           {},
+	"strconv":                        {},
 	"sync":                           {},
 	"sync/atomic":                    {},
 	"syscall":                        {},
@@ -129,9 +133,13 @@ var sourcePatchPkgs = map[string]struct{}{
 }
 
 var sourcePatchAsmPkgs = map[string]map[string]struct{}{
-	"crypto/internal/fips140/aes": {"amd64": {}, "386": {}, "arm64": {}, "arm": {}, "ppc64": {}, "ppc64le": {}, "riscv64": {}},
-	"internal/runtime/atomic":     {"arm": {}},
-	"runtime/internal/atomic":     {"arm": {}},
-	"sync/atomic":                 {"*": {}},
-	"syscall":                     {"*": {}},
+	"crypto/internal/boring/sig":     {"*": {}},
+	"crypto/internal/fips140/aes":    {"amd64": {}, "386": {}, "arm64": {}, "arm": {}, "ppc64": {}, "ppc64le": {}, "riscv64": {}},
+	"internal/bytealg":               {"arm": {}},
+	"internal/chacha8rand":           {"*": {}},
+	"internal/runtime/atomic":        {"arm": {}},
+	"internal/runtime/syscall/linux": {"arm": {}},
+	"runtime/internal/atomic":        {"arm": {}},
+	"sync/atomic":                    {"*": {}},
+	"syscall":                        {"*": {}},
 }

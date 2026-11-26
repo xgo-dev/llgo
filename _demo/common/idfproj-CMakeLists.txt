@@ -1,0 +1,16 @@
+# Minimal ESP-IDF project whose application logic is an llgo build artifact.
+#
+# llgo compiles the Go program into a relocatable object (targets/esp32s31-idf,
+# ld.lld -r); the main component links that object into the IDF firmware and
+# calls the generated C entry from app_main.
+cmake_minimum_required(VERSION 3.16)
+
+# bfd's RISC-V linker-relaxation pass is quadratic on this link (a 30 MB
+# input with the esp-sr archives linked in rounds took ~8 minutes on an
+# M-series host); --no-relax brings the same link to ~1 second at a ~0.2 %
+# size cost. lld is not an alternative: the esp-sr prebuilt archives carry
+# an Espressif vendor relocation upstream lld rejects.
+add_link_options(-Wl,--no-relax)
+
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+project(llgo_idf_s31)

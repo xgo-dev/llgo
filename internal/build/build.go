@@ -685,6 +685,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err := validatePCLNMode(conf); err != nil {
 		return nil, err
 	}
+	if err := validateBaremetalFiber(conf, &export); err != nil {
+		return nil, err
+	}
 	resolveTestPthreadStackSize(conf)
 	if err := validateWASIThreads(conf); err != nil {
 		return nil, err
@@ -758,6 +761,35 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	goBuildFlags = append(goBuildFlags, loaderFlags...)
 	ownsOverlay := conf.sourceOverlayFile == ""
+	// Resolve the source toolchain before the overlay is materialized: the
+	// driver-visible runtime patches (//llgo:driver) join conf.SourceOverlay
+	// and must be part of this one materialization. The result is reused for
+	// the patch wiring below, so both views select identical files.
+	sourceGo, err := resolveSourceGoConfig(commandEnv{dir: dir, environ: withEnv(commands.environ, "GOOS="+conf.Goos, "GOARCH="+conf.Goarch)}, conf.GOEXPERIMENT, goBuildFlags...)
+	if err != nil {
+		return nil, err
+	}
+	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
+	driverPatchFiles, driverDelivered, err := driverPatchOverlayForRuntime(env.LLGoRuntimeDir(), sourceGo.GOROOT, sourcePatchBuildContext{
+		goos:       conf.Goos,
+		goarch:     conf.Goarch,
+		goversion:  sourceGo.GOVERSION,
+		toolTags:   sourceGo.toolTags,
+		buildFlags: goBuildFlags,
+		targetTags: export.BuildTags,
+		cgoEnabled: &sourceCgoEnabled,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(driverPatchFiles) != 0 {
+		if conf.SourceOverlay == nil {
+			conf.SourceOverlay = make(map[string]SourceOverlayFile, len(driverPatchFiles))
+		}
+		for name, file := range driverPatchFiles {
+			conf.SourceOverlay[name] = file
+		}
+	}
 	overlayFile, err := prepareSourceOverlay(conf)
 	if err != nil {
 		return nil, err
@@ -819,6 +851,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	prog.EnableCooperativeSafepoints(wasmGC || wasmWorkers.Enabled())
 	if conf.PthreadStackSize > 0 {
 		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
+	} else if stack := fiberDefaultGoroutineStackSize(conf, &export); stack > 0 {
+		// Baremetal fiber targets take their goroutine stack size from the
+		// target default-stack-size; an explicit stack size always wins.
+		prog.SetPthreadStackSize(stack)
 	}
 	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled())
 	prog.EnableCodeViewDebugInfo(emitCodeView)
@@ -868,10 +904,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if conf.GoFlagsParsed {
 		cfg.Env = withEnv(cfg.Env, "GOFLAGS= ")
 	}
-	sourceGo, err := resolveSourceGoConfig(commandEnv{dir: cfg.Dir, environ: cfg.Env}, conf.GOEXPERIMENT, cfg.BuildFlags...)
-	if err != nil {
-		return nil, err
-	}
 	sourcePatchGOROOT, sourcePatchGoVersion := sourceGo.GOROOT, sourceGo.GOVERSION
 	conf.GOEXPERIMENT = sourceGo.GOEXPERIMENT
 	conf.sourceGoVersion = sourceGo.GOVERSION
@@ -889,7 +921,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	commands.environ = sourceGo.apply(commands.environ)
 	var llgoFiles map[string][]string
-	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
 		goos:       conf.Goos,
 		goarch:     conf.Goarch,
@@ -907,6 +938,23 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	dedup.SetLLGoFiles(llgoFiles)
+
+	// Patch files marked //llgo:driver were already folded into the driver's
+	// -overlay view before it materialized (see the sourceGo hoist above);
+	// the driver delivers them to the parser through CompiledGoFiles, so the
+	// LLGo-only llgoFiles list must not repeat them - a second copy would
+	// redeclare the declarations.
+	if len(driverDelivered) != 0 {
+		if files := llgoFiles["runtime"]; len(files) != 0 {
+			kept := files[:0]
+			for _, file := range files {
+				if !slices.Contains(driverDelivered, file) {
+					kept = append(kept, file)
+				}
+			}
+			llgoFiles["runtime"] = kept
+		}
+	}
 	cfg.ParseFile = func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
 		if data, ok := conf.Overlay[filename]; ok {
 			src = data
@@ -2301,12 +2349,14 @@ func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, er
 
 	// Cross builds still defer all runtime preparation until ordinary package
 	// results show it is needed; unused target runtimes must remain untouched.
+	// The baremetal fiber scheduler always links the runtime for RunMain, so
+	// its targets always build it.
 	if err := buildPackageGroup(ctx, normalTasks, verbose); err != nil {
 		return nil, err
 	}
 	needRuntime, needPyInit := packageRuntimeNeeds(normalTasks)
 
-	if needRuntime || needPyInit {
+	if needRuntime || needPyInit || needsBaremetalFiberScheduler(ctx) {
 		if err := buildPackageGroup(ctx, runtimeTasks, verbose); err != nil {
 			return nil, err
 		}
@@ -2728,7 +2778,9 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	needRuntime = needRuntime || len(cExports) != 0
 
 	// Only link runtime objects when needed (or for host builds where runtime is always required).
-	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
+	// The baremetal fiber scheduler's RunMain lives in the runtime package, so
+	// its targets always link it.
+	if needRuntime || needPyInit || needsBaremetalFiberScheduler(ctx) || ctx.buildConf.Target == "" {
 		linkArgs = append(linkArgs, rtLinkArgs...)
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
@@ -2747,7 +2799,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 		// rather than by the presence of those archives on the link command.
 		// genMainModule supplies runtime.main/runtime.goexit records separately.
 		metadataOrder := linkedOrder
-		if !needRuntime && !needPyInit && !needsWasmRuntimeScheduler(ctx) && (ctx.prog == nil || !ctx.prog.NeedsLocalContext()) {
+		if !needRuntime && !needPyInit && !needsWasmRuntimeScheduler(ctx) && !needsBaremetalFiberScheduler(ctx) && (ctx.prog == nil || !ctx.prog.NeedsLocalContext()) {
 			metadataOrder = filterOutRuntimePkgs(linkedOrder)
 		}
 		funcInfo = prepareFuncInfoTableRecords(collectFuncInfo(metadataOrder), nil)
@@ -4741,6 +4793,14 @@ func isEnvOn(env string, defVal bool) bool {
 	if envVal == "" {
 		return defVal
 	}
+	return envVal == "1" || envVal == "true" || envVal == "on"
+}
+
+// isEnvExplicitlyOn reports whether env is set to an affirmative value.
+// Unlike isEnvOn with a default, leaving the variable unset fails the check,
+// letting callers distinguish the documented default from an explicit opt-in.
+func isEnvExplicitlyOn(env string) bool {
+	envVal := strings.ToLower(os.Getenv(env))
 	return envVal == "1" || envVal == "true" || envVal == "on"
 }
 

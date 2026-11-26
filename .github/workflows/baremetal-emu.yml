@@ -1,0 +1,111 @@
+name: Baremetal emulator
+
+# Regression gate for the baremetal ESP targets under esp-emu (ESP32-S31
+# SRAM and flash/XIP targets, ESP32-C3 embed suite, fiber stack guards).
+# esp-emu instances cannot run concurrently — concurrent emulators interfere
+# with each other and fail spuriously — so the emu job runs every suite in
+# serial steps: no matrix fan-out, no parallel jobs sharing an emulator.
+on:
+  push:
+    branches:
+      - main
+      - s31
+  pull_request:
+    branches: ["**"]
+
+concurrency:
+  group: baremetal-emu.yml-${{ github.event_name }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    uses: ./.github/workflows/ci-prepare.yml
+
+  ci-gate:
+    name: CI gate (Baremetal emulator)
+    needs: prepare
+    if: always() && !cancelled()
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner || '["ubuntu-24.04"]') }}
+    steps:
+      - name: Verify CI preparation succeeded
+        run: test "${{ needs.prepare.result }}" = "success"
+
+  emu:
+    if: needs.prepare.outputs.run_code_ci == 'true'
+    needs: prepare
+    name: baremetal emu regression
+    timeout-minutes: 30
+    runs-on: ${{ fromJSON(needs.prepare.outputs.linux_runner) }}
+    env:
+      LLGO_ROOT: ${{ github.workspace }}
+      LLGO_EMBED_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        uses: ./.github/actions/setup-deps
+        with:
+          llvm-version: '22'
+
+      - name: Set up Go
+        uses: ./.github/actions/setup-go
+
+      - name: Set up LLGo CI cache
+        uses: ./.github/actions/setup-llgo-cache
+        with:
+          build-cache-mode: readwrite
+          build-cache-scope: baremetal-emu
+          crosscompile-cache-mode: readwrite
+
+      # esp-emu is a user-space emulator (no tun/KVM/special privileges), so
+      # failures here block the gate like any other test failure. The pinned
+      # release ships a single self-contained binary; verify it against the
+      # SHA-256 published with the release before use.
+      - name: Install esp-emu
+        id: emu
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64) ;;
+            *) echo "unexpected runner architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+          esp_emu_version=1.2.0
+          esp_emu_sha256=560236344fd69dc8d74bc862c79aea01f7a69ac626ae3f54b1b0946bbce078c1
+          archive="esp-emu-${esp_emu_version}-x86_64-unknown-linux-gnu.tar.gz"
+          url="https://github.com/espressif/esp-emulator/releases/download/v${esp_emu_version}/${archive}"
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/$archive" "$url"
+          echo "${esp_emu_sha256}  ${RUNNER_TEMP}/${archive}" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/esp-emu"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/esp-emu" --strip-components=1
+          chmod +x "$RUNNER_TEMP/esp-emu/esp-emu"
+          "$RUNNER_TEMP/esp-emu/esp-emu" --help >/dev/null
+          {
+            echo "ESP_EMU=$RUNNER_TEMP/esp-emu/esp-emu"
+            echo "LLGO_S31_XIP_BOOTLOADER=$GITHUB_WORKSPACE/cl/testdata/s31-xip/bootloader.bin"
+            echo "LLGO_S31_XIP_PARTTABLE=$GITHUB_WORKSPACE/cl/testdata/s31-xip/partition-table.bin"
+          } >> "$GITHUB_ENV"
+
+      # Every suite below is one serial step. A failing suite does not mask
+      # the others: each step runs whenever its emulator dependency succeeded.
+      - name: S31 emu regression suite
+        if: ${{ !cancelled() && steps.emu.outcome == 'success' }}
+        run: go test ./cl/ -run 'TestS31ReflectSmoke' -count=1
+
+      - name: S31 flash (XIP) emu tests
+        if: ${{ !cancelled() && steps.emu.outcome == 'success' }}
+        run: go test ./cl/ -run 'TestS31XIP' -count=1
+
+      - name: C3 emu embed suite
+        if: ${{ !cancelled() && steps.emu.outcome == 'success' }}
+        run: go test ./cl/ -run 'TestRunEmbedEmulator/esp32c3-basic' -count=1
+
+      - name: Fiber stack guard emu tests
+        if: ${{ !cancelled() && steps.emu.outcome == 'success' }}
+        run: go test ./cl/ -run 'TestFiberStackGuardEmu|TestS31FiberStackSafe' -count=1
+
+      - name: Baremetal sync backend selection matrix
+        if: ${{ !cancelled() }}
+        run: go test ./internal/build/ -run 'TestBaremetalSyncBackendSelection' -count=1

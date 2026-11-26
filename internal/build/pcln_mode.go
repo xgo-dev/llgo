@@ -16,7 +16,12 @@
 
 package build
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+
+	"github.com/xgo-dev/llgo/internal/targets"
+)
 
 // PCLNMode controls how Go program counter and line metadata is packaged.
 type PCLNMode uint8
@@ -84,10 +89,35 @@ func (m PCLNMode) validate() error {
 // effectivePCLNMode translates the legacy environment escape hatch once at
 // the configuration boundary. An explicit -pclntab value always wins.
 func effectivePCLNMode(conf *Config) PCLNMode {
-	if !conf.PCLNModeSet && conf.PCLNMode == PCLNEmbedded && !IsFuncInfoEnabled() {
+	if conf.PCLNModeSet || conf.PCLNMode != PCLNEmbedded {
+		return conf.PCLNMode
+	}
+	if !IsFuncInfoEnabled() {
 		return PCLNNone
 	}
-	return conf.PCLNMode
+	// Baremetal runtimes cannot consume embedded funcinfo tables: the
+	// baremetal site object format is unsupported, so entry-site records
+	// never resolve and traceback lookups always fail. Emitting the tables
+	// is pure dead weight there, so default baremetal builds to no
+	// metadata; an explicit LLGO_FUNCINFO=1 (1, true or on) opts back in.
+	// Hosted builds and non-baremetal targets keep the embedded default:
+	// their runtimes link the tables (e.g. wasi via runtime/internal/pcln's
+	// wasm ABI).
+	if conf.Target != "" && isBaremetalTarget(conf.Target) && !isEnvExplicitlyOn(llgoFuncInfo) {
+		return PCLNNone
+	}
+	return PCLNEmbedded
+}
+
+// isBaremetalTarget reports whether the named target declares the baremetal
+// build tag. Targets that fail to resolve keep the baremetal assumption;
+// they are rejected by target resolution later regardless.
+func isBaremetalTarget(name string) bool {
+	config, err := targets.NewDefaultResolver().Resolve(name)
+	if err != nil {
+		return true
+	}
+	return slices.Contains(config.BuildTags, "baremetal")
 }
 
 // shouldEnablePCLNSites reports whether compiler-emitted PC anchor records are

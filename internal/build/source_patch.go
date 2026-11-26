@@ -61,6 +61,70 @@ func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot
 	return out, pkgFiles, nil
 }
 
+// driverPatchOverlayForRuntime returns driver overlay entries for the
+// runtime patch files marked `//llgo:driver`. The metadata driver builds
+// export data of every loaded package with the source toolchain, and user
+// code calling a patch-added runtime API only type-checks if that view
+// carries the declaration too - the LLGo parser view alone (conf.Overlay)
+// is not enough. Each marked file joins the GOROOT runtime package under
+// its z_llgo_patch_ name, exactly where the parser patch puts it, so both
+// views stay consistent. The second return lists the patch source files
+// now delivered through the driver, so the caller can drop them from the
+// LLGo-only llgoFiles list - a second copy would redeclare the decls.
+func driverPatchOverlayForRuntime(runtimeDir, goroot string, ctx sourcePatchBuildContext) (map[string]SourceOverlayFile, []string, error) {
+	patchDir := filepath.Join(runtimeDir, "_patch", "runtime")
+	entries, err := os.ReadDir(patchDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("read runtime source patch dir: %w", err)
+	}
+	buildCtx, err := newSourcePatchMatchContext(goroot, ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var out map[string]SourceOverlayFile
+	var delivered []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		match, err := buildCtx.MatchFile(patchDir, name)
+		if err != nil {
+			return nil, nil, fmt.Errorf("match runtime source patch file %s: %w", name, err)
+		}
+		if !match {
+			continue
+		}
+		filename := filepath.Join(patchDir, name)
+		src, err := os.ReadFile(filename)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read runtime source patch file %s: %w", filename, err)
+		}
+		directives, err := collectSourcePatchDirectives(src)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse runtime source patch directives %s: %w", filename, err)
+		}
+		if !directives.driver {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]SourceOverlayFile)
+		}
+		out[filepath.Join(goroot, "src", "runtime", "z_llgo_patch_"+name)] = SourceOverlayFile{
+			BackingFile: filename,
+			Contents:    buildInjectedSourcePatchFile(filename, src),
+		}
+		delivered = append(delivered, filename)
+	}
+	return out, delivered, nil
+}
+
 func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot, pkgPath string, ctx sourcePatchBuildContext) (bool, map[string][]byte, []string, error) {
 	patchPath := pkgPath
 	// Go 1.23 moved these packages out of runtime without changing the
@@ -390,6 +454,13 @@ func packageStubSource(src []byte) ([]byte, error) {
 type sourcePatchDirectives struct {
 	skipAll bool
 	skips   map[string]struct{}
+	// driver marks a patch file for delivery into the metadata driver's
+	// GOROOT runtime view as well, so user code can type-check APIs the
+	// patch adds. The driver view carries no skip processing: a marked
+	// file must be additive-only declarations (no //llgo:skip, no edits
+	// to existing stdlib symbols), or the source toolchain's export build
+	// fails on the redeclaration.
+	driver bool
 }
 
 func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
@@ -402,6 +473,10 @@ func collectSourcePatchDirectives(src []byte) (sourcePatchDirectives, error) {
 	for _, group := range file.Comments {
 		for _, comment := range group.List {
 			line := strings.TrimSpace(comment.Text)
+			if line == "//llgo:driver" || line == "// llgo:driver" {
+				d.driver = true
+				continue
+			}
 			skipAll, names, ok := parseSourcePatchDirective(line)
 			if !ok {
 				continue

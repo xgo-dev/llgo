@@ -43,6 +43,7 @@ func TestPlatformSpecifiedFiles(t *testing.T) {
 		expected int // Number of expected files
 	}{
 		{"riscv32-unknown-elf", 5},
+		{"riscv32-esp-elf", 5},
 		{"riscv64-unknown-elf", 27},
 		{"arm-none-eabi", 19},
 		{"thumbv7m-unknown-unknown-eabi", 19},
@@ -57,6 +58,32 @@ func TestPlatformSpecifiedFiles(t *testing.T) {
 			result := platformSpecifiedFiles(builtinsDir, tt.target)
 			if len(result) != tt.expected {
 				t.Errorf("For target %s, expected %d files, got %d", tt.target, tt.expected, len(result))
+			}
+		})
+	}
+}
+
+// TestRiscv32UsesVendoredAtomic pins the riscv32 exclusion of compiler-rt's
+// atomic.c: every riscv32 rtlib must link the vendored interrupt-masked
+// fallback, whose symbols are weak, in its place.
+func TestRiscv32UsesVendoredAtomic(t *testing.T) {
+	for _, target := range []string{"riscv32-unknown-elf", "riscv32-esp-elf"} {
+		t.Run(target, func(t *testing.T) {
+			result := platformSpecifiedFiles(filepath.FromSlash("/test/builtins"), target)
+			var hasVendored, hasCompilerRtAtomic bool
+			for _, file := range result {
+				if file == espAtomicRiscv32File() {
+					hasVendored = true
+				}
+				if strings.HasSuffix(file, "atomic.c") {
+					hasCompilerRtAtomic = true
+				}
+			}
+			if hasCompilerRtAtomic {
+				t.Errorf("target %s still links compiler-rt atomic.c", target)
+			}
+			if !hasVendored {
+				t.Errorf("target %s misses the vendored atomic fallback", target)
 			}
 		})
 	}

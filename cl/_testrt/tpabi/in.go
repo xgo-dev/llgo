@@ -58,8 +58,11 @@ func main() {
 // CHECK: %[[ETYPE:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.eface" %[[EBOX]], 0
 // CHECK: icmp eq ptr %[[ETYPE]], @"_llgo_main.T[string,int]"
 // CHECK: %[[IFACE:[0-9]+]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr %[[OBJ:[0-9]+]], 1
-// CHECK: %[[DATA:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[IFACE]], ptr %{{[0-9]+}})
 // CHECK: %[[VTAB:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[IFACE]], 0
+// CHECK: %[[VTAB_NIL:[0-9]+]] = icmp eq ptr %[[VTAB]], null
+// CHECK: br i1 %[[VTAB_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK: %[[DATA:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[IFACE]], 1
 // CHECK: %[[SLOT:[0-9]+]] = getelementptr ptr, ptr %[[VTAB]], i64 3
 // CHECK: %[[METHOD:[0-9]+]] = load ptr, ptr %[[SLOT]], align 8
 // CHECK: %[[METHOD0:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[METHOD]], 0
@@ -89,6 +92,7 @@ func main() {
 // CHECK-LABEL: define linkonce void @"main.(*T[string,int]).Info"(
 // CHECK-SAME: ptr %[[WRAPPED:[0-9]+]]){{.*}} {
 // CHECK: %[[ISNIL:[0-9]+]] = icmp eq ptr %[[WRAPPED]], null
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 %[[ISNIL]], {{.*}})
+// CHECK: br i1 %[[ISNIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicWrapNilPointer"(i1 true, {{.*}})
 // CHECK: %[[LOADED:[0-9]+]] = load %"main.T[string,int]", ptr %[[WRAPPED]], align 8
 // CHECK: call void @"main.T[string,int].Info"(%"main.T[string,int]" %[[LOADED]])

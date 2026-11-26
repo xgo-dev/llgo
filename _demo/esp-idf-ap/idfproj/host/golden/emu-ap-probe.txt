@@ -1,0 +1,63 @@
+# Golden for the llgo soft-AP probe ([go] ap ... lines) of _demo/esp-idf-ap,
+# captured from an acceptance run (esp-emu v1.2.0, esp32s31-idf firmware,
+# 16 MiB PSRAM, emulator joining the firmware's own AP with
+# --wifi-fw-ap-password llgoappass, hostfwd tcp::18080-:8000, host client
+# idfproj/host/apclient).
+#
+# Scope: every [go] ap line except the heap marks ([go] ap heap ... carries
+# IDF-heap byte counts that move by a few dozen bytes between runs) and the
+# one informational count documented below. Everything else is byte-stable
+# across runs: five recorded runs differ only in the heap-mark arithmetic.
+# The station MAC and both addresses are part of the golden because the
+# emulator's station and the firmware's netif are deterministic
+# (02:e5:00:00:00:02, AP 192.168.4.1, first lease 192.168.4.2).
+#
+# "stations on start n = 1" is the one timing-dependent line: the emulator
+# joins as soon as it sees the beacons, so an earlier or later boot can report
+# 0 there. Treat 0 or 1 as a pass; the gated shape is the later, post-association
+# list.
+#
+# The comparison is automated: run-acceptance.sh normalizes exactly four values
+# before diffing (the initial station count, "aid = N", "rssi = N", "reason = N"),
+# so those may differ freely and everything else must match byte for byte.
+# Discipline: lines may only be APPENDED at the end of a section, and an
+# existing line changes only when the probe's contract changes.
+[go] wifi: setup ...
+[go] wifi setup err=0
+[go] wifi reconn armed, phase = idle
+[go] ap pre-config get_ap_ip err = 12293 ESP_ERR_WIFI_MODE
+[go] ap pre-config stations err = 12293 ESP_ERR_WIFI_MODE
+[go] wifi set_ap err=0
+[go] ap config ssid=llgo-ap ch = 6 maxsta = 2 auth = 3 hidden = 0
+[go] ap config readback ok
+[go] ap START
+[go] ap ip = 192.168.4.1
+[go] ap ip PASS
+[go] ap stations on start n = 1
+[go] ap STA_CONNECTED aid = 1 mac = 02:e5:00:00:00:02
+[go] ap STA_IPASSIGNED ip = 192.168.4.2
+[go] ap stations n = 1
+[go] ap station mac = 02:e5:00:00:00:02 rssi = -30 ip = 192.168.4.2
+[go] ap station list PASS
+[go] ap ready
+[go] ap tcp listen port = 8000
+[go] ap tcp request = hello llgo-ap
+[go] ap tcp reply sent
+[go] ap TCP PASS
+[go] ap PASS
+[go] ap STA_DISCONNECTED mac = 02:e5:00:00:00:02 reason = 2
+[go] ap deauth PASS
+[go] ap empty station list PASS
+[go] ap deauth unknown mac err = 261 ESP_ERR_NOT_FOUND
+[go] ap deauth unknown mac PASS
+[go] ap STOP
+[go] ap mode APSTA
+[go] ap sta configured (no connect attempted)
+[go] ap APSTA restart ok, ap ip = 192.168.4.1
+[go] ap APSTA station interface started
+[go] ap reconn: phase = idle sta link events = 0
+[go] ap sta quiet PASS
+[go] ap final stop ok
+[go] ap mode-conflict set_ap err = 12293 ESP_ERR_WIFI_MODE
+[go] ap mode-conflict PASS
+[go] ap done

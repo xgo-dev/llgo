@@ -1,0 +1,21 @@
+build/
+sdkconfig
+sdkconfig.old
+main/llgo_out.o
+main/opus_glue.c
+main/gpio_glue.c
+main/i2c_glue.c
+main/i2s_glue.c
+managed_components/
+host/llgo_syms.o
+host/logs/
+
+# Generated scaffold, synced from _demo/common/ by make-artifact.sh.
+# (main/CMakeLists.txt is NOT generated - it is this demo's own component
+# registration, checked in.)
+/CMakeLists.txt
+/partitions.csv
+host/llgo_syms.S
+main/app_main.c
+main/llgo_dram.ld
+host/make-artifact.sh

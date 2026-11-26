@@ -1,4 +1,8 @@
-//go:build darwin || linux || windows || (llgo && wasip1 && wasm && llgo.wasi_threads)
+//go:build (darwin && !(llgo && baremetal && tinygo.riscv32 && !nogc)) || (linux && (!baremetal || !llgo || !tinygo.riscv32 || nogc)) || windows || (llgo && wasip1 && wasm && llgo.wasi_threads)
+
+// The llgo baremetal RV32 fiber targets (llgo && baremetal && tinygo.riscv32
+// && !nogc) compile sema_baremetal_llgo.go instead: the pthread condition and
+// psync.Once behind the notify list below are libnosys stubs there.
 
 package runtime
 
@@ -26,8 +30,8 @@ func poll_runtime_Semacquire(addr *uint32) {
 }
 
 //go:linkname sync_runtime_Semrelease sync.runtime_Semrelease
-func sync_runtime_Semrelease(addr *uint32, _ bool, _ int) {
-	semaRelease(addr)
+func sync_runtime_Semrelease(addr *uint32, handoff bool, _ int) {
+	semaRelease(addr, handoff)
 }
 
 //go:linkname sync_runtime_SemacquireRWMutexR sync.runtime_SemacquireRWMutexR
@@ -58,13 +62,13 @@ func sync_runtime_SemacquireMutex(addr *uint32, lifo bool, skipframes int) {
 }
 
 // runtime_Semrelease is used by internal/sync via linkname.
-func runtime_Semrelease(addr *uint32, _ bool, _ int) {
-	semaRelease(addr)
+func runtime_Semrelease(addr *uint32, handoff bool, _ int) {
+	semaRelease(addr, handoff)
 }
 
 //go:linkname poll_runtime_Semrelease internal/poll.runtime_Semrelease
 func poll_runtime_Semrelease(addr *uint32) {
-	semaRelease(addr)
+	semaRelease(addr, false)
 }
 
 // runtime_canSpin/runtime_doSpin/runtime_nanotime are used by internal/sync.

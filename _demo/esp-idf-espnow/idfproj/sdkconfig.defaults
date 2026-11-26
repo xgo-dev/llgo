@@ -1,0 +1,31 @@
+# The ESP-NOW probe firmware. esp32s31 (the binding's target); the llgo
+# scheduler needs the main-task headroom, the 240 MHz clock match and the
+# stack-guard opt-outs (see esp-idf-ap's sdkconfig.defaults for the full
+# reasoning of every line kept here).
+CONFIG_IDF_TARGET="esp32s31"
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_SYSTEM_HW_STACK_GUARD=n
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_NONE=y
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_1=y
+
+# ESP-NOW encryption capacity: how many peers may carry an LMK
+# (ESP_NOW_MAX_ENCRYPT_PEER_NUM follows this Kconfig). The default is fine
+# for the probe; spelled out because the binding docs name the switch.
+CONFIG_ESP_WIFI_ESPNOW_MAX_ENCRYPT_NUM=7
+
+# External PSRAM: the S31 die defaults to octal mode at 200 MHz. IGNORE_NOTFOUND
+# keeps boards without a PSRAM chip bootable; llgo then keeps the Go heap in
+# its static window.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+
+# Widen the factory app partition to the rest of the 4 MB flash (see
+# partitions.csv): the WiFi driver code does not fit the default 1 MiB once
+# the llgo runtime is linked in.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

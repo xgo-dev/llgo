@@ -86,10 +86,12 @@ func (r *Rectangle) validate() bool { return r.Width > 0 && r.Height > 0 }
 // CHECK-LABEL: define void @"{{.*}}/cl/_testdata/geometry1370.RegisterShape"(
 // CHECK-SAME: %"{{.*}}/runtime/internal/runtime.iface" %[[TMP0:[0-9]+]], i64 %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = alloca ptr, align 8
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfacePtrDataBuffer"(%"{{.*}}/runtime/internal/runtime.iface" %[[TMP0]], ptr %[[TMP2]])
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP0]], 0
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = getelementptr ptr, ptr %[[TMP4]], i64 4
+// CHECK-NEXT:   %[[TMP2:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP0]], 0
+// CHECK-NEXT:   %[[TMP2_NIL:[0-9]+]] = icmp eq ptr %[[TMP2]], null
+// CHECK-NEXT:   br i1 %[[TMP2_NIL]], label %{{[^,]+}}, label %{{[^ ]+}}
+// CHECK:   call void @"{{.*}}/runtime/internal/runtime.AssertNilDeref"(i1 true)
+// CHECK:   %[[TMP3:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP0]], 1
+// CHECK-NEXT:   %[[TMP5:[0-9]+]] = getelementptr ptr, ptr %[[TMP2]], i64 4
 // CHECK-NEXT:   %[[TMP6:[0-9]+]] = load ptr, ptr %[[TMP5]], align 8
 // CHECK-NEXT:   %[[TMP7:[0-9]+]] = insertvalue { ptr, ptr } undef, ptr %[[TMP6]], 0
 // CHECK-NEXT:   %[[TMP8:[0-9]+]] = insertvalue { ptr, ptr } %[[TMP7]], ptr %[[TMP3]], 1

@@ -198,3 +198,80 @@ func TestAssertNilDerefColdCall(t *testing.T) {
 		})
 	}
 }
+
+func TestWrapNilCheckBranchy(t *testing.T) {
+	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs | InitAllAsmPrinters)
+	for _, target := range []*Target{
+		{GOOS: "linux", GOARCH: "amd64", LLVMTarget: "x86_64-unknown-linux"},
+		{GOOS: "darwin", GOARCH: "arm64", LLVMTarget: "aarch64-apple-darwin"},
+		{GOOS: "windows", GOARCH: "amd64", LLVMTarget: "x86_64-pc-windows-msvc"},
+		{GOOS: "windows", GOARCH: "386", LLVMTarget: "i686-pc-windows-msvc"},
+		{GOOS: "windows", GOARCH: "arm64", LLVMTarget: "aarch64-pc-windows-msvc"},
+		{GOOS: "js", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-emscripten"},
+		{GOOS: "js", GOARCH: "wasm", LLVMTarget: "wasm64-unknown-emscripten"},
+		{GOOS: "wasip1", GOARCH: "wasm", LLVMTarget: "wasm32-unknown-wasip1"},
+	} {
+		t.Run(target.LLVMTarget, func(t *testing.T) {
+			prog := NewProgram(target)
+			defer prog.Dispose()
+			prog.SetRuntime(func() *types.Package {
+				rt := types.NewPackage(PkgRuntime, "runtime")
+				// The harness has no pre-built runtime types, so the string
+				// descriptor parameters of the real helper are modeled as plain
+				// pointer words. WrapNilCheck forwards them unchanged; the real
+				// string spelling is covered by the IR fixtures.
+				params := types.NewTuple(
+					types.NewVar(token.NoPos, nil, "nil", types.Typ[types.Bool]),
+					types.NewVar(token.NoPos, nil, "recvType", types.Typ[types.UnsafePointer]),
+					types.NewVar(token.NoPos, nil, "methodName", types.Typ[types.UnsafePointer]),
+				)
+				sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
+				rt.Scope().Insert(types.NewFunc(token.NoPos, rt, "PanicWrapNilPointer", sig))
+				return rt
+			})
+			pkg := prog.NewPackage("p", "example.com/nilcheck")
+			params := types.NewTuple(types.NewVar(token.NoPos, nil, "p", types.Typ[types.UnsafePointer]))
+			sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
+			fn := pkg.NewFunc("dynamic", sig, GoDecl)
+			b := fn.MakeBody(1)
+			ptr := b.Convert(prog.VoidPtr(), fn.Param(0))
+			b.WrapNilCheck(ptr, prog.Nil(prog.VoidPtr()), prog.Nil(prog.VoidPtr()))
+			b.Return()
+			b.EndBuild()
+			entry := fn.impl.EntryBasicBlock()
+			branch := entry.LastInstruction()
+			if branch.InstructionOpcode() != llvm.Br || branch.SuccessorsCount() != 2 {
+				t.Fatalf("wrapnil check must branch before calling runtime:\n%s", fn.impl.String())
+			}
+			for inst := entry.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+				if inst.InstructionOpcode() == llvm.Call {
+					t.Fatalf("wrapnil check calls runtime unconditionally:\n%s", fn.impl.String())
+				}
+			}
+			failure := branch.Successor(0)
+			first := failure.FirstInstruction()
+			if first.InstructionOpcode() != llvm.Call {
+				t.Fatalf("failure block must open with the runtime call:\n%s", fn.impl.String())
+			}
+			callee := first.CalledValue().IsAFunction()
+			if callee.IsNil() || callee.Name() != PkgRuntime+".PanicWrapNilPointer" {
+				t.Fatalf("unexpected wrapnil failure callee:\n%s", fn.impl.String())
+			}
+			arg0 := first.Operand(0)
+			if arg0.IsAConstantInt().IsNil() || arg0.Type().String() != "i1" || arg0.ZExtValue() != 1 {
+				t.Fatalf("wrapnil failure must pass constant i1 true:\n%s", fn.impl.String())
+			}
+			next := failure.LastInstruction()
+			if prog.NeedsFramePointer() {
+				if next.InstructionOpcode() != llvm.Ret {
+					t.Fatalf("native wrapnil failure must retain a separate formal return:\n%s", fn.impl.String())
+				}
+			} else if next.InstructionOpcode() != llvm.Br || next.SuccessorsCount() != 1 || next.Successor(0) != failure {
+				t.Fatalf("non-native wrapnil failure must not rejoin the success path:\n%s", fn.impl.String())
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

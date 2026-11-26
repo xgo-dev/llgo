@@ -1,4 +1,4 @@
-//go:build (darwin || linux) && !(linux && baremetal && llgo.baremetal.stdio)
+//go:build (darwin || linux) && !baremetal
 
 package runtime
 

@@ -1,0 +1,5 @@
+dependencies:
+  # Vanilla upstream Opus, compiled fixed-point (-DFIXED_POINT=1
+  # -DDISABLE_FLOAT_API) by the component itself. This is the codec
+  # pkg/esp/opus binds; the registry has no "espressif/opus" component.
+  "78/esp-opus": "1.0.5"
