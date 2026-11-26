@@ -29,6 +29,8 @@
 package main
 
 import (
+	_ "unsafe" // for go:linkname
+
 	"github.com/xgo-dev/llgo/pkg/esp/esperr"
 	"github.com/xgo-dev/llgo/pkg/esp/espnow"
 	"github.com/xgo-dev/llgo/pkg/esp/wifi"
@@ -42,6 +44,28 @@ func errText(err error) string {
 		return "ok"
 	}
 	return err.Error()
+}
+
+// vTaskDelay yields the CPU for FreeRTOS ticks (10 ms each): the pacing
+// between the exchange-mode beacons.
+//
+//go:linkname vTaskDelay C.vTaskDelay
+func vTaskDelay(ticks uint32)
+
+// dec32 formats v in decimal (no strconv: the stdlib drags reflect machinery
+// into a bare-metal image, the family rule every pkg/esp probe follows).
+func dec32(v uint32) string {
+	if v == 0 {
+		return "0"
+	}
+	var buf [10]byte
+	i := len(buf)
+	for v > 0 {
+		i--
+		buf[i] = byte('0' + v%10)
+		v /= 10
+	}
+	return string(buf[i:])
 }
 
 // want checks one probe step: on an unexpected code it prints a FAIL line
@@ -255,7 +279,29 @@ func main() {
 	println("[go] espnow confirm after re-init:", status.String())
 
 	println("[go] espnow PASS")
-	println("[go] espnow done")
+
+	// ---- two-board exchange mode (real-device verification) ----
+	// After the lifecycle probe passes, both boards enter this loop:
+	// broadcast a sequenced beacon every second and print every frame
+	// received off the air. Two boards on a bench thus verify each other:
+	// each console shows its own sent seq and the peer's recv seq, and
+	// the recv seq numbers climbing without gaps is the loss-free proof.
+	seq := uint32(0)
+	for {
+		payload := "seq-" + dec32(seq) + " "
+		res, serr := espnow.Broadcast([]byte(payload))
+		if serr == nil {
+			if st, werr := res.Wait(500); werr == nil {
+				println("[go] espnow sent seq=" + dec32(seq) + " status=" + st.String())
+			} else {
+				println("[go] espnow sent seq=" + dec32(seq) + " confirm=" + errText(werr))
+			}
+		} else {
+			println("[go] espnow send err=" + errText(serr))
+		}
+		seq++
+		vTaskDelay(1000)
+	}
 }
 
 // must flattens Send's (result, error) into the error alone, for the refusal
