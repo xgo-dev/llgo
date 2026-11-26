@@ -14,8 +14,9 @@ import (
 )
 
 func TestSIMDPairShuffleLLVM(t *testing.T) {
-	for _, goos := range []string{"linux", "windows"} {
-		t.Run(goos, func(t *testing.T) {
+	for _, target := range []struct{ os, baseline string }{{"linux", "v1"}, {"linux", "v3"}, {"windows", "v1"}} {
+		goos := target.os
+		t.Run(goos+"/"+target.baseline, func(t *testing.T) {
 			source := "package main\nimport \"simd/archsimd\"\nfunc main() {}\n"
 			var intrinsics []string
 			for _, width := range []int{128, 256} {
@@ -61,7 +62,7 @@ func halvesUint8x32Guarded(x,y archsimd.Uint8x32,lo,hi uint8) archsimd.Uint8x32 
 				}
 			}
 			conf := NewDefaultConf(ModeGen)
-			conf.Goos, conf.Goarch, conf.GOEXPERIMENT, conf.GOAMD64 = goos, "amd64", "simd", "v1"
+			conf.Goos, conf.Goarch, conf.GOEXPERIMENT, conf.GOAMD64 = goos, "amd64", "simd", target.baseline
 			var callers []*aPackage
 			for _, arg := range []string{".", "simd/archsimd"} {
 				pkgs, err := Build(Invocation{Args: []string{arg}, Config: conf, Dir: dir})
@@ -114,25 +115,23 @@ func halvesUint8x32Guarded(x,y archsimd.Uint8x32,lo,hi uint8) archsimd.Uint8x32 
 			}
 			simdCodegenVariants(t, []string{"O0", "O2"}, callers, func(t *testing.T, mod llvm.Module, asm string) {
 				if goos == "linux" {
-					assertSIMDBaselineAssembly(t, mod, asm)
+					if target.baseline == "v1" {
+						assertSIMDBaselineAssembly(t, mod, asm)
+					}
 					bodies := regexp.MustCompile(`(?ms)^\s*\.type\s+([^\n]+),@function\n(.*?)^\s*\.size\s+[^\n]+`).FindAllStringSubmatch(asm, -1)
-					foundBaseline, foundAVX2 := false, false
+					found := false
 					byteLoad := regexp.MustCompile(`(?m)\bmovzbl\s+[^\n]*\([^\n]*%rsp`)
 					for _, body := range bodies {
 						if !strings.Contains(body[1], "main.halvesUint8x32") {
 							continue
 						}
-						if strings.Contains(body[1], ".__llgo_fmv_avx2") {
-							foundAVX2 = true
-						} else {
-							foundBaseline = true
-						}
+						found = true
 						if strings.Contains(body[2], "pinsrb") || byteLoad.MatchString(body[2]) {
 							t.Fatalf("half shuffle reconstructed bytes from the stack in %s:\n%s", body[1], body[2])
 						}
 					}
-					if !foundBaseline || !foundAVX2 {
-						t.Fatal("missing baseline or AVX2 Uint8x32 half-shuffle assembly")
+					if !found {
+						t.Fatal("missing Uint8x32 half-shuffle assembly")
 					}
 				}
 			})

@@ -14,22 +14,19 @@ const (
 	symbolPrefix    = ".__llgo_fmv_"
 
 	// Shared with the frontend that emits the FMV attributes and CPU queries.
-	EntryAttribute       = attributePrefix + "avx2-entry"
 	InlineEntryAttribute = attributePrefix + "inline-entry"
 	QueryAttribute       = "llgo.cpu.query"
+	PreferFeatureMD      = attributePrefix + "prefer-feature"
 	AVX2Query            = "x86.avx2"
 
-	doneAttribute  = attributePrefix + "processed"
-	variantSuffix  = symbolPrefix + "avx2"
-	baselineSuffix = symbolPrefix + "baseline"
+	moduleDone     = "llgo.fmv.done"
 	resolverSuffix = symbolPrefix + "resolve"
 	slotSuffix     = symbolPrefix + "slot"
 	featureSymbol  = "github.com/xgo-dev/llgo/runtime/internal/runtime.CPUFeatures"
 	// Keep these bits in sync with runtime/_patch/internal/cpu/init_llgo.go.
 	featureInitialized = 1
-	moduleDone         = "llgo.fmv.done"
-	featureAVX         = 4
 	featureAVX2        = 2
+	featureAVX         = 4
 )
 
 func stringAttribute(fn llvm.Value, name string) string {
@@ -43,9 +40,6 @@ func hasAttribute(fn llvm.Value, name string) bool {
 	return !fn.GetStringAttributeAtIndex(-1, name).IsNil()
 }
 
-func isQuery(fn llvm.Value) bool {
-	return checkedQuery(fn) == AVX2Query
-}
 func checkedQuery(fn llvm.Value) string {
 	if fn.IsNil() || fn.IsAFunction().IsNil() {
 		return ""
@@ -129,8 +123,9 @@ func supported(fn llvm.Value) bool {
 }
 
 // Run folds x86 CPU predicates guaranteed by the resolved GOAMD64 baseline
-// and specializes AVX2 entries and guarded SIMD work. It runs after ABI
+// and specializes local SIMD work. It runs after ABI
 // lowering and before target optimization, including in O0 and ModeGen builds.
+// baseline is the resolved compilation target, independent of the host CPU.
 // A successful run marks the module after wide ABI lowering. Later calls
 // skip the module, including its generated dispatchers and implementations.
 func Run(mod llvm.Module, baseline string) error {
@@ -145,183 +140,18 @@ func Run(mod llvm.Module, baseline string) error {
 		(mask.IsAGlobalVariable().IsNil() || mask.GlobalValueType() != mod.Context().Int64Type()) {
 		return fmt.Errorf("SIMD FMV symbol collision: %s", featureSymbol)
 	}
-	var avx2 *avx2Plan
+	abi := newWideABI(mod)
+	defer abi.data.Dispose()
 	switch baseline {
-	case "v3", "v4":
-		// AVX2 is guaranteed. Only optional features need dispatch.
-	case "", "v1", "v2":
-		var err error
-		avx2, err = stageAVX2(mod)
-		if err != nil {
-			return err
-		}
+	case "", "v1", "v2", "v3", "v4":
 	default:
 		return fmt.Errorf("SIMD FMV invalid GOAMD64 baseline: %s", baseline)
 	}
-	if err := runGuardedFeatures(mod, avx2, baseline); err != nil {
-		if avx2 != nil {
-			for _, fn := range avx2.originals {
-				for _, copy := range []llvm.Value{avx2.variants[fn], avx2.baselines[fn]} {
-					if !copy.IsNil() {
-						copy.ReplaceAllUsesWith(llvm.Undef(copy.Type()))
-						copy.EraseFromParentAsFunction()
-					}
-				}
-			}
-		}
+	if err := planVersions(abi, baseline); err != nil {
 		return err
 	}
-	applyWideABI(mod, baseline)
 	mod.AddNamedMetadataOperand(moduleDone, mod.Context().MDNode(nil))
 	return nil
-}
-
-// Stage private AVX2 bodies so the guard pass can discover collisions on the
-// simplified call graph before editing public entries or source metadata.
-type avx2Plan struct {
-	originals           []llvm.Value
-	variants, baselines map[llvm.Value]llvm.Value
-	origins             map[llvm.Value]llvm.Value
-}
-
-func stageAVX2(mod llvm.Module) (*avx2Plan, error) {
-	// Discover roots from direct uses of trusted queries. Ordinary packages
-	// without SIMD must not pay for a scan of every instruction in the module.
-	roots := make(map[llvm.Value]llvm.Value)
-	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-		if !isQuery(fn) {
-			continue
-		}
-		for use := fn.FirstUse(); !use.IsNil(); use = use.NextUse() {
-			call := use.User()
-			if !call.IsACallInst().IsNil() && call.CalledValue() == fn {
-				roots[call.InstructionParent().Parent()] = fn
-			}
-		}
-	}
-	var originals []llvm.Value
-	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-		if hasAttribute(fn, doneAttribute) {
-			continue
-		}
-		if !hasAttribute(fn, EntryAttribute) && roots[fn].IsNil() {
-			continue
-		}
-		if !supported(fn) {
-			continue
-		}
-		suffixes := []string{variantSuffix}
-		if !roots[fn].IsNil() {
-			suffixes = append(suffixes, baselineSuffix, resolverSuffix, slotSuffix)
-		}
-		for _, suffix := range suffixes {
-			name := fn.Name() + suffix
-			// Check all names before modifying any function in the module.
-			if !mod.NamedValue(name).IsNil() {
-				return nil, fmt.Errorf("SIMD FMV symbol collision: %s", name)
-			}
-		}
-		originals = append(originals, fn)
-	}
-	if len(originals) == 0 {
-		return nil, nil
-	}
-
-	ctx := mod.Context()
-	origins := make(map[llvm.Value]llvm.Value)
-	variants := make(map[llvm.Value]llvm.Value, len(originals))
-	baselines := make(map[llvm.Value]llvm.Value, len(roots))
-	for _, fn := range originals {
-		variant := fn.CloneFunction()
-		variant.SetName(fn.Name() + variantSuffix)
-		origins[variant] = fn
-		features := stringAttribute(fn, "target-features")
-		if features != "" {
-			features += ","
-		}
-		variant.AddFunctionAttr(ctx.CreateStringAttribute("target-features", features+"+avx,+avx2"))
-		variant.RemoveStringAttributeAtIndex(-1, EntryAttribute)
-		variant.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
-		variant.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
-		variants[fn] = variant
-		if !roots[fn].IsNil() {
-			baseline := fn.CloneFunction()
-			baseline.SetName(fn.Name() + baselineSuffix)
-			baseline.SetLinkage(llvm.InternalLinkage)
-			baseline.RemoveStringAttributeAtIndex(-1, EntryAttribute)
-			baseline.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
-			baseline.AddFunctionAttr(ctx.CreateStringAttribute(doneAttribute, ""))
-			origins[baseline] = fn
-			baselines[fn] = baseline
-		}
-	}
-	for _, fn := range originals {
-		if fn.IsDeclaration() {
-			continue
-		}
-		variant := variants[fn]
-		specialize(ctx, variant, variants, true)
-		if baseline := baselines[fn]; !baseline.IsNil() {
-			specialize(ctx, baseline, baselines, false)
-		}
-	}
-	return &avx2Plan{originals, variants, baselines, origins}, nil
-}
-
-func (p *avx2Plan) commit(mod llvm.Module) []dispatchSite {
-	if p == nil {
-		return nil
-	}
-	source := newSourceInfo(mod)
-	var sites []dispatchSite
-	for _, fn := range p.originals {
-		fn.AddFunctionAttr(mod.Context().CreateStringAttribute(doneAttribute, ""))
-		variant := p.variants[fn]
-		if !fn.IsDeclaration() {
-			// CloneFunction preserves linkage but drops COMDAT. Give the
-			// variant its own group so generic instances merge independently
-			// of their original definitions when linking COFF objects.
-			if original := fn.Comdat(); original.C != nil {
-				group := mod.Comdat(variant.Name())
-				group.SetSelectionKind(original.SelectionKind())
-				variant.SetComdat(group)
-			}
-			source.clone(fn, variant)
-		}
-		if baseline := p.baselines[fn]; !baseline.IsNil() {
-			source.clone(fn, baseline)
-			sites = append(sites, dispatch(mod, source, fn, baseline, []dispatchChoice{{bits: featureAVX2, fn: variant}}))
-		}
-	}
-	return sites
-}
-
-func specialize(ctx llvm.Context, fn llvm.Value, variants map[llvm.Value]llvm.Value, enabled bool) {
-	var queries []llvm.Value
-	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
-		for inst := bb.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
-			if inst.IsACallInst().IsNil() && inst.IsAInvokeInst().IsNil() {
-				continue
-			}
-			callee := inst.CalledValue()
-			if isQuery(callee) {
-				if !inst.IsACallInst().IsNil() {
-					queries = append(queries, inst)
-				}
-			} else if variant := variants[callee]; !variant.IsNil() {
-				inst.SetOperand(inst.OperandsCount()-1, variant)
-			}
-		}
-	}
-	for _, query := range queries {
-		var bit uint64
-		if enabled {
-			bit = 1
-		}
-		query.ReplaceAllUsesWith(llvm.ConstInt(ctx.Int1Type(), bit, false))
-		query.EraseFromParentAsInstruction()
-	}
-	simplifyGuards(fn)
 }
 
 func simplifyGuards(fn llvm.Value) {
@@ -347,39 +177,49 @@ func simplifyGuards(fn llvm.Value) {
 	}
 }
 
+// A choice requires all bits and, if specified, at least one of anyOf.
 type dispatchChoice struct {
-	bits   uint64
-	fn     llvm.Value
-	anyBit bool // alternative predicates can guarantee the same register width
+	bits, anyOf uint64
+	fn          llvm.Value
 }
 
-// The AVX2 resolver has one select between its two implementations. If
-// either gets further variants, select its physical body here as well.
-type dispatchSite struct {
-	features, selection, uninitializedCall llvm.Value
+type dispatchPlan struct {
+	baseline llvm.Value
+	choices  []dispatchChoice
 }
 
-func selectDispatchBody(b llvm.Builder, features, baseline llvm.Value, choices []dispatchChoice) llvm.Value {
-	selected := baseline
-	for _, choice := range choices {
-		required := llvm.ConstInt(features.Type(), choice.bits, false)
-		enabled := b.CreateAnd(features, required, "")
-		op, compare := llvm.IntEQ, required
-		if choice.anyBit {
-			op, compare = llvm.IntNE, llvm.ConstInt(features.Type(), 0, false)
+func (p dispatchPlan) selectBody(b llvm.Builder, features llvm.Value) llvm.Value {
+	selected := p.baseline
+	for _, choice := range p.choices {
+		var condition llvm.Value
+		if choice.bits != 0 {
+			required := llvm.ConstInt(features.Type(), choice.bits, false)
+			condition = b.CreateICmp(llvm.IntEQ, b.CreateAnd(features, required, ""), required, "")
 		}
-		check := b.CreateICmp(op, enabled, compare, "")
-		selected = b.CreateSelect(check, choice.fn, selected, "selected")
+		if choice.anyOf != 0 {
+			alternatives := llvm.ConstInt(features.Type(), choice.anyOf, false)
+			present := b.CreateICmp(llvm.IntNE, b.CreateAnd(features, alternatives, ""), llvm.ConstNull(features.Type()), "")
+			if condition.IsNil() {
+				condition = present
+			} else {
+				condition = b.CreateAnd(condition, present, "")
+			}
+		}
+		target := choice.fn
+		if condition.IsNil() {
+			selected = target
+		} else {
+			selected = b.CreateSelect(condition, target, selected, "selected")
+		}
 	}
 	return selected
 }
 
-func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline llvm.Value, choices []dispatchChoice) dispatchSite {
+func emitDispatch(mod llvm.Module, source *sourceInfo, fn llvm.Value, plan dispatchPlan) {
 	ctx := mod.Context()
 	resolver := fn.CloneFunction()
 	resolver.SetName(fn.Name() + resolverSuffix)
 	resolver.SetLinkage(llvm.InternalLinkage)
-	resolver.RemoveStringAttributeAtIndex(-1, EntryAttribute)
 	resolver.RemoveStringAttributeAtIndex(-1, InlineEntryAttribute)
 	resolver.RemoveEnumAttributeAtIndex(-1, llvm.AttributeKindID("alwaysinline"))
 	resolver.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
@@ -435,16 +275,15 @@ func dispatch(mod llvm.Module, source *sourceInfo, fn, baseline llvm.Value, choi
 	// Do not cache a pre-initialization fallback. Keep only this edge opaque:
 	// the resolver must remain tail-only, while ordinary callers may inline
 	// either implementation when their target features are compatible.
-	call := tailReturn(b, resolver, baseline)
+	call := tailReturn(b, resolver, plan.baseline)
 	call.AddCallSiteAttribute(-1, ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
 	b.SetInsertPointAtEnd(selectImpl)
-	selected := selectDispatchBody(b, features, baseline, choices)
+	selected := plan.selectBody(b, features)
 	publish := b.CreateStore(selected, slot)
 	publish.SetAlignment(8)
 	publish.SetOrdering(llvm.AtomicOrderingMonotonic)
 	tailReturn(b, resolver, selected)
 	resolver.RemoveUnreachableBlocks()
-	return dispatchSite{features, selected, call}
 }
 
 func tailReturn(b llvm.Builder, fn, target llvm.Value) llvm.Value {
