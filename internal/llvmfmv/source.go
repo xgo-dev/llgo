@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -113,4 +114,15 @@ func (s *sourceInfo) clone(fn, variant llvm.Value) {
 			inst.SetOperand(inst.OperandsCount()-1, cloned)
 		}
 	}
+}
+
+// Use the v2 llgo.funcinfo wrapper flag from ssa/funcinfo.go. The physical
+// adapter has no Go source frame; its caller already retains its PC-line site.
+func markOutlineWrapper(mod llvm.Module, fn llvm.Value) {
+	ctx := mod.Context()
+	num := func(n uint64) llvm.Metadata { return llvm.ConstInt(ctx.Int32Type(), n, false).AsMetadata() }
+	name := ctx.MDString(fn.Name())
+	mod.AddNamedMetadataOperand("llgo.funcinfo", ctx.MDNode([]llvm.Metadata{
+		num(funcinfo.MetadataFlagsVersion), name, name, ctx.MDString(""), num(0), num(0), num(uint64(funcinfo.RecordFlagWrapper)),
+	}))
 }

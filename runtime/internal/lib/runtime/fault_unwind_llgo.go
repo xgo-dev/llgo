@@ -94,6 +94,7 @@ func fpCallers(skip int, pc []uintptr) int {
 	stacktrace.Bounds(&low, &high)
 	fp := uintptr(c_framepointer())
 	n, lastGo := 0, 0
+	var callee uintptr
 	const maxFrames = maxPanicSpliceFrames
 	for i := 0; fp != 0 && n < len(pc) && i < maxFrames; i++ {
 		if high != 0 && (fp < low || fp > high-2*unsafe.Sizeof(uintptr(0))) {
@@ -105,15 +106,18 @@ func fpCallers(skip int, pc []uintptr) int {
 		if ret < minLegalPC || high == 0 && !inGo {
 			break
 		}
-		if skip > 0 {
-			skip--
-		} else {
-			pc[n] = ret
-			n++
-			if inGo {
-				lastGo = n
+		if runtimeFPChain&fpHasWrappers == 0 || !inGo || !elideWrapperPC(ret-1, callee) {
+			if skip > 0 {
+				skip--
+			} else {
+				pc[n] = ret
+				n++
+				if inGo {
+					lastGo = n
+				}
 			}
 		}
+		callee = ret - 1
 		if prev <= fp || prev-fp > maxFPStride || prev&(unsafe.Sizeof(uintptr(0))-1) != 0 {
 			break
 		}
@@ -240,6 +244,9 @@ func faultTraceback(skip int) bool {
 	count := 0
 	for i, pc := range pcs {
 		if ready {
+			if runtimeFPChain&fpHasWrappers != 0 && elideFaultWrapper(pcs, i) {
+				continue
+			}
 			sym := faultPCSymbol(pc, i)
 			if stringContainsDot(sym.function) && !visibleTracebackFrame(sym.function, system) {
 				continue
@@ -252,6 +259,9 @@ func faultTraceback(skip int) bool {
 	for i, pc := range pcs {
 		var sym pcSymbol
 		if ready {
+			if runtimeFPChain&fpHasWrappers != 0 && elideFaultWrapper(pcs, i) {
+				continue
+			}
 			sym = faultPCSymbol(pc, i)
 		}
 		if ready && stringContainsDot(sym.function) && !visibleTracebackFrame(sym.function, system) {

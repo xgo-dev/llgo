@@ -164,6 +164,13 @@ func (a *wideABI) outlineCall(inst llvm.Value, floor, width int, required uint64
 		leaf = llvm.AddFunction(a.mod, name, ft)
 		leaf.SetLinkage(llvm.InternalLinkage)
 		leaf.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
+		if callee.IsAFunction().IsNil() || callee.IntrinsicID() == 0 {
+			// A Go callee can inspect its callers before a wide result is
+			// copied back. Keep the original call-site PC on the frame
+			// chain and mark the adapter for logical traceback elision.
+			leaf.AddTargetDependentFunctionAttr("frame-pointer", "non-leaf")
+			markOutlineWrapper(a.mod, leaf)
+		}
 		profile{width: max(width, a.signature(ft)), isa: required}.attributes(leaf)
 		if a.signature(ft) != 0 {
 			a.abi.applyWideCallingConvention(leaf)
