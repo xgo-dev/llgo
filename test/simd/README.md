@@ -177,8 +177,17 @@ the 256-bit family. Grouped permutations and saturating packing operate within
 
 The AMD64 implementation includes compression and expansion, vector and scalar
 funnel shifts, truth tables, widening products, cryptographic rounds and scaled
-floating-point operations. Instruction-specific leaves check the effective CPU
-predicate before loading their vector operands from caller-owned storage.
+floating-point operations. Before calling a private x86 instruction leaf, the
+caller checks the effective CPU features published by the runtime. A missing
+feature takes the recoverable panic path. On SysV amd64, 128-bit operands and
+results cross this private boundary in XMM registers. Win64 uses indirect
+storage for these leaves, as do 256- and 512-bit leaves on both platforms.
+Go functions use the platform ABI for their declared signatures.
+
+For SHA-1 rounds and scaled rounding, a constant selector produces a leaf
+with the immediate encoded in its instruction. A runtime selector uses a
+shared leaf that switches on the selector bits. Both paths use the same CPU
+feature check.
 `GODEBUG=simd=512` selects the 512-bit portable representation when eligible.
 
 On Linux/amd64, run the Sapphire Rapids instruction tests with Intel SDE:
@@ -485,8 +494,9 @@ go test ./cl ./ssa ./internal/build -run '^(TestSIMD|TestCPUInitialization|TestE
 Generic LLVM legalization handles baseline operations. CPU-guarded leaves
 carry the features required by instruction-specific operations. The amd64
 assembly check uses `GOAMD64=v1` and rejects AVX instructions in baseline
-functions. The native gate exercises AVX512 paths on capable hosts and the
-guard tests exercise scalar branches on lower baselines.
+functions. The Linux O2 portable integer-add test also checks for YMM and ZMM
+adds in the respective Midway implementations. The native gate exercises
+AVX512 paths on capable hosts and scalar branches on lower baselines.
 For emulated AVX512 execution, run `dev/test_simd_amd64_sde.sh` on Linux/amd64.
 
 Reference boundaries:

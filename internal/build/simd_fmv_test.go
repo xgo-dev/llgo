@@ -270,11 +270,10 @@ func TestSIMDLeafOwnsInstructionFeature(t *testing.T) {
 				t.Fatal("leaf-owned SHA instruction introduced a caller dispatcher")
 			}
 			caller := mod.NamedFunction("main.shaKernel").String()
-			for _, want := range []string{"X86Features.SHA", "SIMDRequireX86Features", "call void @__llgo_simd_sha256rnds2_"} {
-				if !strings.Contains(caller, want) {
-					t.Fatalf("SHA caller lost %s:\n%s", want, caller)
-				}
+			if !strings.Contains(caller, "X86Features.SHA") {
+				t.Fatalf("SHA caller lost the source feature query:\n%s", caller)
 			}
+			assertX86LeafGuard(t, mod.NamedFunction("main.shaKernel"), "__llgo_simd_sha256rnds2_0", 128)
 			if goos == "linux" {
 				// On SysV, MulAdd lowers to an FMA intrinsic in the caller.
 				fast := mod.NamedFunction("main.fmaKernel.__llgo_fmv_guard_fma")

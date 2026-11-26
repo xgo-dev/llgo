@@ -5,6 +5,7 @@ package build
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -22,6 +23,7 @@ import "simd"
 type Block struct { V simd.Uint32s; N int }
 var global = makeBlock(3)
 func makeBlock(x uint32) Block { return Block{simd.BroadcastUint32s(x), 7} }
+//go:noinline
 func sum(xs []uint32) uint32 {
  v:=global.V
  for len(xs)>=v.Len() { v=v.Add(simd.LoadUint32s(xs)); xs=xs[v.Len():] }
@@ -76,6 +78,12 @@ func main() { println(sum([]uint32{1,2,3,4}),width()) }
 				if !strings.Contains(mod.NamedFunction("main.sum").String(), "simd.Emulated") {
 					t.Fatal("scalar boundary lost runtime selection")
 				}
+				if target.arch == "amd64" {
+					attr := mod.NamedFunction("main.sum").GetStringAttributeAtIndex(-1, "target-features")
+					if !attr.IsNil() && strings.Contains(attr.GetStringValue(), "+avx") {
+						t.Fatalf("portable dispatcher requires %s at GOAMD64=v1", attr.GetStringValue())
+					}
+				}
 				mod.SetTarget(pkg.Prog.Target().Spec().Triple)
 				mod.SetDataLayout(pkg.Prog.DataLayout())
 				for _, level := range []string{"O0", "O2"} {
@@ -92,8 +100,17 @@ func main() { println(sum([]uint32{1,2,3,4}),width()) }
 					if err != nil {
 						t.Fatal(err)
 					}
-					if target.os == "linux" {
-						assertSIMDBaselineAssembly(t, mod, string(asm.Bytes()))
+					if target.os == "linux" && target.arch == "amd64" {
+						code := string(asm.Bytes())
+						assertSIMDBaselineAssembly(t, mod, code)
+						if level == "O2" {
+							for _, width := range []struct{ name, register string }{{"256", "%ymm"}, {"512", "%zmm"}} {
+								body := regexp.MustCompile(`(?ms)^"main\.sum@simd` + width.name + `":[^\n]*\n(.*?)^\s*\.size\s`).FindStringSubmatch(code)
+								if body == nil || !regexp.MustCompile(`(?m)^\s*vpaddd\s+[^\n]*`+width.register).MatchString(body[1]) {
+									t.Errorf("main.sum@simd%s must use %s for packed addition", width.name, width.register)
+								}
+							}
+						}
 					}
 					asm.Dispose()
 				}

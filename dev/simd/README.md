@@ -19,8 +19,9 @@ profile on Linux/amd64 with Intel SDE:
 LLGO=/path/to/llgo SDE=/path/to/sde64 bash dev/test_simd_amd64_sde.sh
 ```
 
-The Sapphire Rapids profile exercises all 184 cases and the portable 512-bit
-tests. The ARM64 list contains 87 cases. The compiler declaration tests
+The Sapphire Rapids profile exercises all 184 cases, the portable 512-bit
+tests and the x86 instruction leaf tests. The ARM64 list contains 87 cases.
+The compiler declaration tests
 independently check the bodyless intrinsics for AMD64, ARM64 and Wasm.
 
 The SDE runner preserves caller-supplied CPU overrides in `GODEBUG` and

@@ -12,7 +12,7 @@ for compiler in go "$LLGO"; do
   for package in ./test/simd ./test/simd/portable ./test/std/simd simd/archsimd/internal/simd_test; do
     "${build[@]}" -c -o "$output/test" "$package"
     filter=.
-    if [[ "$package" == ./test/simd ]]; then filter='^TestSIMD512'; fi
+    if [[ "$package" == ./test/simd ]]; then filter='^TestSIMD(512|X86)'; fi
     GODEBUG="${GODEBUG:+$GODEBUG,}simd=512" "$SDE" -spr -- "$output/test" -test.count=1 -test.timeout="${SDE_TIMEOUT:-60m}" -test.v -test.run="$filter" >"$output/result" || { cat "$output/result"; exit 1; }
     cat "$output/result"
     if [[ "$package" == ./test/simd ]]; then
