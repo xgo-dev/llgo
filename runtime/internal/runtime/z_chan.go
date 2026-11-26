@@ -51,6 +51,8 @@ type chanWaitq struct {
 	last  *chanWaiter
 }
 
+// When adding fields, update the reset in (*chanWaiter).wait. It preserves
+// signal in place because initialized native mutexes and conditions cannot be copied.
 type chanWaiter struct {
 	synctest *SynctestWaiter
 	prev     *chanWaiter
@@ -222,6 +224,7 @@ func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanW
 	}
 	if w == nil {
 		w = new(chanWaiter)
+		w.signal.init()
 	}
 	if ch.bubble != nil {
 		w.synctest = NewSynctestWaiter()
@@ -230,7 +233,6 @@ func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanW
 	w.elem = elem
 	w.size = eltSize
 	w.send = send
-	w.signal.init()
 	w.signal.lock()
 	return w
 }
@@ -280,22 +282,32 @@ func (w *chanWaiter) wait() waitStatus {
 		w.signal.park()
 	}
 	w.signal.unlock()
-	w.signal.destroy()
 	status := w.status
 	// finish holds the signal lock through notification. After reacquiring it,
-	// no further users remain: mutex destruction/reuse is permitted after
-	// release even if the previous unlock call has not returned yet.
-	// Clear channel/element pointers before caching, including on panic wakes.
-	*w = chanWaiter{}
-	// A nested operation may already have filled this one-entry cache.
+	// no further users remain. Keep the initialized signal with the cached
+	// waiter so the next wait avoids pthread condition setup.
 	if gp := getg(); gp != nil && gp.chanWaiter == nil {
+		w.synctest = nil
+		w.prev = nil
+		w.next = nil
+		w.all = nil
+		w.ch = nil
+		w.elem = nil
+		w.size = 0
+		w.send = false
+		w.queued = false
+		w.status = waitPending
+		w.sel = nil
+		w.caseIndex = 0
 		gp.chanWaiter = w
+	} else {
+		w.signal.destroy()
 	}
 	return status
 }
 
 // finish keeps the signal locked through ready. An ordinary waiter can otherwise
-// wake spuriously, observe completion, and destroy its signal before ready runs.
+// wake spuriously, observe completion, and release its signal before ready runs.
 // Select cleanup also acquires the channel lock held by finish's caller, which
 // protects its signal's lifetime. Use the same ordering so notification completes
 // under the signal lock in both branches.

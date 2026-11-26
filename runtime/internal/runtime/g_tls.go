@@ -142,6 +142,10 @@ func destroyG(ptr c.Pointer) {
 		gp.panic_ = node.prev
 		FreeRoot(unsafe.Pointer(node))
 	}
+	if w := gp.chanWaiter; w != nil {
+		w.signal.destroy()
+		gp.chanWaiter = nil
+	}
 	ctx := gp.context
 	unregisterTraceback(gp)
 	if ctx != nil && ctx.root != nil {
