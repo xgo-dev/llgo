@@ -9,7 +9,44 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	llssa "github.com/xgo-dev/llgo/ssa"
 )
+
+func TestNewItabSlowReleasesMethodIndex(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", root)
+	for _, tags := range []string{"", "nogc"} {
+		name := "gc"
+		if tags != "" {
+			name = tags
+		}
+		t.Run(name, func(t *testing.T) {
+			conf := NewDefaultConf(ModeGen)
+			conf.Tags = tags
+			pkgs, err := Build(Invocation{Args: []string{llssa.PkgRuntime}, Config: conf})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pkgs) != 1 || pkgs[0].LPkg == nil {
+				t.Fatal("missing compiled runtime package")
+			}
+			defer pkgs[0].LPkg.Prog.Dispose()
+			mod := pkgs[0].LPkg.Module()
+			idxFn := mod.NamedFunction(llssa.PkgRuntime + ".buildItabMethodIndex")
+			if idxFn.IsNil() || !strings.Contains(idxFn.String(), "runtime.AllocRoot") {
+				t.Fatalf("buildItabMethodIndex missing AllocRoot:\n%s", idxFn.String())
+			}
+			slowFn := mod.NamedFunction(llssa.PkgRuntime + ".newItabSlow")
+			if slowFn.IsNil() || !strings.Contains(slowFn.String(), "runtime.FreeRoot") {
+				t.Fatalf("newItabSlow missing FreeRoot release for scratch index:\n%s", slowFn.String())
+			}
+		})
+	}
+}
 
 func TestItabEmbeddedUnexportedMethodInMain(t *testing.T) {
 	if testing.Short() {
@@ -217,16 +254,27 @@ func main() {
 		}
 	}
 
-	conf := NewDefaultConf(ModeBuild)
-	conf.OutFile = filepath.Join(dir, "testitab")
-	if runtime.GOOS == "windows" {
-		conf.OutFile += ".exe"
-	}
-	if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.CommandContext(t.Context(), conf.OutFile).CombinedOutput()
-	if err != nil || strings.TrimSpace(string(out)) != "itab-embedded-ok" {
-		t.Fatalf("testitab execution: %v\n%s", err, out)
+	for _, tc := range []struct {
+		name string
+		tags string
+	}{
+		{name: "gc", tags: ""},
+		{name: "nogc", tags: "nogc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := NewDefaultConf(ModeBuild)
+			conf.Tags = tc.tags
+			conf.OutFile = filepath.Join(dir, "testitab-"+tc.name)
+			if runtime.GOOS == "windows" {
+				conf.OutFile += ".exe"
+			}
+			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.CommandContext(t.Context(), conf.OutFile).CombinedOutput()
+			if err != nil || strings.TrimSpace(string(out)) != "itab-embedded-ok" {
+				t.Fatalf("testitab (%s) execution: %v\n%s", tc.name, err, out)
+			}
+		})
 	}
 }

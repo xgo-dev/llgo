@@ -228,21 +228,24 @@ func itabMethodHash(name string, typ *abi.FuncType) uintptr {
 	return h ^ (h >> 16)
 }
 
-func buildItabMethodIndex(mthds []abi.Method) ([]int, uintptr) {
+func buildItabMethodIndex(mthds []abi.Method) (unsafe.Pointer, []uint32, uintptr) {
 	cap := 1
 	for cap < len(mthds)*2 {
 		cap <<= 1
 	}
+	bytes := uintptr(cap) * unsafe.Sizeof(uint32(0))
+	raw := AllocRoot(bytes)
+	c.Memset(raw, 0, bytes)
 	mask := uintptr(cap - 1)
-	slots := make([]int, cap)
+	slots := unsafe.Slice((*uint32)(raw), cap)
 	for idx := range mthds {
 		pos := itabMethodHash(mthds[idx].Name_, mthds[idx].Mtyp_) & mask
 		for slots[pos] != 0 {
 			pos = (pos + 1) & mask
 		}
-		slots[pos] = idx + 1
+		slots[pos] = uint32(idx + 1)
 	}
-	return slots, mask
+	return raw, slots, mask
 }
 
 //go:noinline
@@ -279,7 +282,8 @@ func newItabSlow(inter *InterfaceType, typ *Type) *Itab {
 	// multi-package unexported method sets also stay O(n+m).
 	mthds := u.Methods()
 	j := 0
-	var indexSlots []int
+	var indexRaw unsafe.Pointer
+	var indexSlots []uint32
 	var indexMask uintptr
 	for i, m := range inter.Methods {
 		imName := m.Name_
@@ -317,7 +321,7 @@ func newItabSlow(inter *InterfaceType, typ *Type) *Itab {
 						matched = true
 						j = k + 1
 						if i+1 < len(inter.Methods) {
-							indexSlots, indexMask = buildItabMethodIndex(mthds)
+							indexRaw, indexSlots, indexMask = buildItabMethodIndex(mthds)
 						}
 						break
 					}
@@ -336,6 +340,9 @@ func newItabSlow(inter *InterfaceType, typ *Type) *Itab {
 		}
 		slot := unsafe.Add(data, uintptr(i)*unsafe.Sizeof(uintptr(0)))
 		*(*uintptr)(slot) = uintptr(fn)
+	}
+	if indexRaw != nil {
+		FreeRoot(indexRaw)
 	}
 	return addItab(ret)
 }
