@@ -121,13 +121,23 @@ invalid floating-to-integer inputs retain the architecture's defined results.
 The same group boundaries apply to SIMD512.
 
 On amd64, 256-bit and 512-bit Go vector parameters and results use the native
-vector types through package boundaries and function values. LLVM uses AVX for YMM registers and AVX-512F for ZMM registers.
+vector types through package boundaries and function values. YMM arguments
+and results require AVX, and ZMM arguments and results require AVX-512F.
 Win64 uses vectorcall for these signatures. Ordinary aggregate and stack
-argument rules still apply. Executing a fixed-width call requires hardware
-and OS support for its carrier. A scalar path that skips the call can run
-on a lower baseline. When a narrow function reaches a wide call, a local
-outlined call site can marshal the arguments into the fixed register ABI.
-The Go callee and separately compiled callers keep the same signature.
+argument rules still apply.
+
+A Go guard such as `if archsimd.X86.AVX512()` skips the guarded call when
+the effective query is false. If the program reaches an unconditional wide
+call, its caller must have hardware and OS support for the register width.
+For example, with `GOAMD64=v1` and `GODEBUG=cpu.all=off`, a baseline caller
+can still pass a value in ZMM registers on a machine with AVX-512F and OS
+support for ZMM state. A private adapter marshals the value at the call site.
+On a machine without that support, executing the transfer can fault. A scalar
+branch that skips it can run on the lower baseline. Each explicit SIMD
+operation in the callee retains its own feature requirements.
+`TestSIMD512FixedRegisterCall` exercises both branches. The Sapphire Rapids
+SDE run also checks all 16 transferred lanes with Go's optional CPU features
+disabled.
 
 Runtime tests cover scalar-reference arithmetic, distinct upper/lower halves,
 mask bitmaps, partial stores at a guard page, initialization, many arguments,
@@ -316,6 +326,11 @@ the original Go display name. These are FMV-specific identity rules; LLGo's
 general runtime inline-frame representation remains separate from GoALLC's
 GoObj inline-tree format.
 
+A private adapter that calls a Go function preserves the frame chain back
+to the original call site. Go's stack walker skips the adapter when counting
+callers, so two calls to the same callback from different source lines keep
+their distinct line numbers under `runtime.CallersFrames`.
+
 Package archives contain a dedicated metadata object with post-backend function
 identities, wrapper flags, and PC-line records. Both fresh and cached archives
 supply these mappings to the linker; reconstructed frontend modules and frontend
@@ -501,9 +516,15 @@ register widths, independently of how many source checks occur.
 
 Independent extensions keep their effective Go branches. Where a selected
 body needs an instruction beyond its target features, the guarded operation
-can execute in a private outlined leaf. The same principle isolates a wide
-call in a scalar function. Transfer into the leaf occurs at the original
-operation, so scalar exits, faults and observable effects keep their order.
+can execute in a private outlined leaf. For example, `SHA256TwoRounds`
+already runs in a private function compiled with SHA support. Its caller
+keeps the Go guard and runtime safety check. These checks alone create no
+SHA version of the caller. A guarded FMA lowered to an instruction in the
+caller can still specialize that function.
+
+A scalar function can isolate a wide call in the same way. Transfer into the
+leaf occurs at the original operation, so scalar exits, faults and observable
+effects keep their order.
 
 Guard recognition uses direct official CPU queries, including negated early
 exits. Saved booleans and predicate-returning helpers retain ordinary Go

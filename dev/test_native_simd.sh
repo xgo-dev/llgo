@@ -61,7 +61,15 @@ for profile in O0-off O2-off O2-thin O2-full; do
     binary="$output/simd-$suite-$profile.exe"
     "$LLGO" test "${flags[@]}" -c -o "$binary" "$package"
     "$binary" -test.v -test.count=1 -test.timeout=2m
-    if [[ "$suite" == portable ]]; then
+    if [[ "$suite" == arch ]]; then
+      selection=$("$binary" -test.v -test.run='^TestSIMD(FMVOutlineCallers|512FixedRegisterCall)$')
+      if [[ "$selection" == *"--- PASS: TestSIMDFMVOutlineCallers ("* ]]; then
+        GODEBUG=cpu.all=off LLGO_TEST_MASKED_YMM=1 "$binary" -test.v -test.run='^TestSIMDFMVOutlineCallers$'
+      fi
+      if [[ "$selection" == *"--- PASS: TestSIMD512FixedRegisterCall/taken"* ]]; then
+        GODEBUG=cpu.all=off LLGO_TEST_MASKED_ZMM=1 "$binary" -test.v -test.run='^TestSIMD512FixedRegisterCall$'
+      fi
+    else
       upstream_binary="$output/simd-std-$profile.exe"
       "$LLGO" test "${flags[@]}" -c -o "$upstream_binary" ./test/std/simd
       "$upstream_binary" -test.v -test.count=1 -test.timeout=2m
