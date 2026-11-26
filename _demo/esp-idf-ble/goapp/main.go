@@ -28,7 +28,7 @@ func heapPrint(tag *byte, n int32)
 const (
 	// peerName is the local name the host-side Bumble peer advertises
 	// (idfproj/host/bumble_peer.py).
-	peerName = "llgo-peer"
+	peerName = "llgo-periph"
 
 	// The peer's attribute table (bumble_peer.py): a 16-bit echo service with
 	// an echo and a notify characteristic, and a 128-bit service with a second
@@ -37,14 +37,14 @@ const (
 	echoSvcText = "fff0"
 	echoChrText = "fff1"
 	notifyText  = "fff2"
-	wideSvcText = "6c6c676f-1111-2222-3344-556677889900"
-	wideChrText = "6c6c676f-1111-2222-3344-556677889901"
+	wideSvcText = "6c6c676f-2222-3333-4444-556677889900"
+	wideChrText = "6c6c676f-2222-3333-4444-556677889901"
 
 	// stepWaitMs is the bound of one event wait inside a retry loop, and
 	// stepTries turns it into the phase's overall budget.
 	stepWaitMs = 500
 
-	scanTries       = 20 // 10 s to find the peer
+	scanTries       = 120 // 60 s to find the peer (the Bluedroid peer boots slower)
 	connectTries    = 24 // 12 s to connect
 	mtuTries        = 10 // 5 s for the MTU exchange the glue starts on connect
 	disconnectTries = 10 // 5 s to see the disconnection

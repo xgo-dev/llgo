@@ -27,9 +27,9 @@
 # hardware v3 API (touch_sens.h) and the temperature sensor API
 # (temperature_sensor.h). esp_timer: app_main's park loop and the probe's
 # tick pacing sit on FreeRTOS time.
-idf_component_register(SRCS app_main.c demo_glue.c touch_glue.c temp_glue.c
+idf_component_register(SRCS app_main.c demo_glue.c touch_glue.c temp_glue.c nvs_glue.c
                        INCLUDE_DIRS "."
-                       REQUIRES esp_driver_touch_sens esp_driver_tsens esp_timer
+                       REQUIRES esp_driver_touch_sens esp_driver_tsens nvs_flash esp_timer
                        WHOLE_ARCHIVE)
 
 # The llgo object must be a PUBLIC (interface) link item so CMake places it as

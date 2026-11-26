@@ -27,6 +27,7 @@ import (
 	_ "unsafe" // for go:linkname
 
 	"github.com/xgo-dev/llgo/pkg/esp/esperr"
+	"github.com/xgo-dev/llgo/pkg/esp/nvs"
 	"github.com/xgo-dev/llgo/pkg/esp/temp"
 	"github.com/xgo-dev/llgo/pkg/esp/touch"
 )
@@ -105,6 +106,37 @@ func fail(what string, err error) {
 
 func main() {
 	println("[go] tt: start")
+
+	// ---- NVS boot counter (power-cycle persistence) ----
+	// Every boot reads the stored count, prints it, then stores count+1
+	// with an explicit Commit. Watching this line climb across hard
+	// power-off cycles is the persistence proof - flash outlives reset.
+	if err := nvs.Init(); err != nil {
+		fail("nvs init", err)
+		return
+	}
+	ns, err := nvs.Open("boottt")
+	if err != nil {
+		fail("nvs open", err)
+		return
+	}
+	boots, err := ns.GetU8("boot")
+	if err != nil && esperr.Code(err) != 0x1102 { // ESP_ERR_NVS_NOT_FOUND: first ever boot
+		fail("nvs get", err)
+		return
+	}
+	println("[go] tt boot count = " + dec32(uint32(boots)) +
+		" (increments every power cycle)")
+	if err := ns.SetU8("boot", boots+1); err != nil {
+		fail("nvs set", err)
+		return
+	}
+	if err := ns.Commit(); err != nil {
+		fail("nvs commit", err)
+		return
+	}
+	ns.Close()
+	println("[go] tt nvs store ok")
 
 	// ---- temperature sensor ----
 	if err := temp.Install(temp.DefaultOpts()); err != nil {

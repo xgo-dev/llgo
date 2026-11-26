@@ -51,10 +51,10 @@ const (
 	// stepTries turns it into the phase's overall budget.
 	stepWaitMs = 500
 
-	connectTries    = 30 // 15 s for the central to find us and connect
-	subscribeTries  = 20 // 10 s for the CCCD write to arrive
-	subWatchTries   = 30 // 15 s per subscription/unsubscription notice
-	disconnectTries = 20 // 10 s to see the disconnection
+	connectTries    = 240 // 120 s for the central to find us and connect
+	subscribeTries  = 240 // 120 s for the CCCD write to arrive (manual phone ops)
+	subWatchTries   = 30  // 15 s per subscription/unsubscription notice
+	disconnectTries = 240 // 120 s to see the disconnection (manual phone ops)
 )
 
 // heapMark prints the IDF heap watermarks at one probe stage. The label is a
