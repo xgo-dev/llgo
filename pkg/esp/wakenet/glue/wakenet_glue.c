@@ -116,6 +116,13 @@ static srmodel_list_t *s_models;
 static const esp_wn_iface_t *s_wn;
 static model_iface_data_t *s_md;
 static int16_t *s_chunk;
+/* I2S capture staging: the ES8311 sends stereo frames even with one
+ * microphone (the idle slot repeats the active one - measured: the read
+ * completed at 2x the expected rate with a mono slot config, i.e. the
+ * driver kept both slots). The capture reads stereo into this buffer and
+ * deinterleaves the left slot into s_chunk, so the engine always sees
+ * contiguous 16 kHz mono. */
+static int16_t *s_chunk_raw;
 static int32_t s_chunk_samples;
 static int32_t s_rate;
 
@@ -226,6 +233,20 @@ static void wakenet_task(void *arg)
         xEventGroupSetBits(s_ev, WN_BIT_FAIL);
         goto done;
     }
+    if (s_source == WN_SRC_I2S) {
+        s_chunk_raw = (int16_t *)heap_caps_malloc(
+            (size_t)s_chunk_samples * 2 * sizeof(int16_t),
+            MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (s_chunk_raw == NULL) {
+            heap_caps_free(s_chunk);
+            s_chunk = NULL;
+            s_wn->destroy(s_md);
+            s_md = NULL;
+            s_init_err = ESP_ERR_NO_MEM;
+            xEventGroupSetBits(s_ev, WN_BIT_FAIL);
+            goto done;
+        }
+    }
 
     /* optional detection threshold, in thousandths (floats never cross the
      * llgo soft-float / IDF hard-float boundary; the Go side validated the
@@ -271,13 +292,22 @@ static void wakenet_task(void *arg)
              * ring of our own (the internal-RAM budget this engine runs in
              * is ~16 KB). */
             if (s_source == WN_SRC_I2S) {
+                /* The bus carries stereo frames (16-bit, 2 slots), so one
+                 * engine chunk is chunk_bytes * 2 on the wire. Reading only
+                 * chunk_bytes made the loop run at twice the chunk rate and
+                 * handed the engine an interleaved L/R stream - both break
+                 * detection (measured on hardware: 2x frame rate, zero
+                 * hits). Read stereo, then take the left slot. */
                 size_t br = 0;
-                esp_err_t e = i2s_channel_read(s_i2s, s_chunk, chunk_bytes, &br,
+                esp_err_t e = i2s_channel_read(s_i2s, s_chunk_raw, chunk_bytes * 2, &br,
                                                pdMS_TO_TICKS(WN_I2S_READ_TIMEOUT_MS));
-                if (e != ESP_OK || br != chunk_bytes) {
+                if (e != ESP_OK || br != chunk_bytes * 2) {
                     wn_post_event(WN_EV_ERROR, (e != ESP_OK) ? (int32_t)e : ESP_ERR_INVALID_SIZE);
                     vTaskDelay(pdMS_TO_TICKS(100)); /* back off a dying bus */
                     continue;
+                }
+                for (int32_t i = 0; i < s_chunk_samples; i++) {
+                    s_chunk[i] = s_chunk_raw[i * 2];
                 }
             } else {
                 wn_test_fill(s_chunk, s_chunk_samples);
@@ -408,8 +438,10 @@ int32_t llgo_wakenet_init(const uint8_t *model, int32_t model_len,
     if (source == WN_SRC_I2S) {
         /* The DMA descriptor ring is the capture buffer the task reads from:
          * 8 descriptors x 256 frames = 2048 samples = 128 ms of slack at
-         * 16 kHz, far above the worst single-detect time. Mono takes the
-         * left slot (WS low) - the conventional digital-mic wiring. */
+         * 16 kHz, far above the worst single-detect time. The bus is
+         * configured STEREO because that is what the codec actually drives
+         * (measured: a mono slot config still delivered 2 bytes per frame per
+         * slot, doubling the read rate); the task deinterleaves slot 0. */
         i2s_chan_config_t ch_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
         ch_cfg.dma_desc_num = 8;
         ch_cfg.dma_frame_num = 256;
@@ -427,7 +459,7 @@ int32_t llgo_wakenet_init(const uint8_t *model, int32_t model_len,
         i2s_std_config_t std_cfg = {
             .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
             .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
-                                                            I2S_SLOT_MODE_MONO),
+                                                            I2S_SLOT_MODE_STEREO),
             .gpio_cfg = {
                 .mclk = I2S_GPIO_UNUSED,
                 .bclk = (bclk >= 0) ? (gpio_num_t)bclk : I2S_GPIO_UNUSED,
@@ -549,6 +581,10 @@ int32_t llgo_wakenet_close(void)
     if (s_md != NULL) {
         s_wn->destroy(s_md);
         s_md = NULL;
+    }
+    if (s_chunk_raw != NULL) {
+        heap_caps_free(s_chunk_raw);
+        s_chunk_raw = NULL;
     }
     if (s_chunk != NULL) {
         heap_caps_free(s_chunk);

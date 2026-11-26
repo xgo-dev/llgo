@@ -1,0 +1,84 @@
+# Golden for the audiocheck firmware ([go] ac ... lines), captured from an
+# esp-emu run (esp32s31, 16 MiB PSRAM, console uart0, esp-emu v1.2.0,
+# espressif/idf:latest = IDF 6.3, esp-sr 2.6.2, 78/esp-opus 1.0.5).
+#
+# Scope: every [go] ac line the demo prints in EMU mode except the HIT and
+# beep-skip lines (their count follows emulator drift - one hit per ~2.2 s
+# of test-source replay inside the 12 s window - so the documented
+# verification filters them out; the PASS lines carry the gate verdicts,
+# and the wakenet side has its own pins: model name, chunk, rate, the
+# detect-call cost in the final line). The [c] lines (the C-side heap
+# marks) are not part of the golden: the heap byte counts legitimately
+# vary between runs.
+#
+# Floater rule. The `*` values are measurements: rms/floor (the VAD's
+# speech-open frame statistics), encode/decode wall times (enc-ms, dec-ms,
+# encode ms, decode-play ms), encoded bytes (VBR; codec-build dependent),
+# the encode budget ratio (emu timing is not wall-real anyway), snr / corr /
+# max (the aligned roundtrip comparisons), hits / frames / avg_us / max_us
+# (the detect counters). They are deterministic in principle but are
+# exactly the numbers an emulator version or compiler drift may legitimately
+# move, so they float and the firmware's own gates carry the verdict.
+#
+# Everything else is exact on purpose:
+#
+#   mode EMU                   the auto-detection: no codec at 0x18
+#   A packets = 50/75/150      48000 samples at 60/40/20 ms frames
+#   A PASS lines               the firmware's own verdicts (gate 8.0 dB,
+#                              max 6000)
+#   B preroll = 15             lead silence (13) + the 2 speech frames
+#                              before the 3rd consecutive one opened
+#   B speech-cap ms = 2010     the fixed window: 67 x 30 ms frames
+#   B samples = 39360          preroll (7200) + window (32160)
+#   B packets = 123            39360 / 320 (20 ms opus frames)
+#   B decode samples = 39360   the decode emitted exactly packets x 320
+#   B lookahead = 104          OPUS_GET_LOOKAHEAD (6.5 ms at 16 kHz)
+#   C test pcm samples = 60392 the generated hilexin utterance
+#   C init ok model/chunk/rate the wn9_hilexin engine's shape
+#   C closed, PASS, done       the firmware's own verdicts (gates: hits
+#                              >= 2, accumulated frames >= 220)
+#
+# Verification (run from the demo directory):
+#   grep -E '^\[go\] ac' <emu log> | tr -d '\r' \
+#     | grep -vE 'HIT n =|beep skip' \
+#     | sed -E 's/rms = [0-9]+ floor = [0-9]+/rms = * floor = */;
+#               s/enc-ms = [0-9]+/enc-ms = */; s/dec-ms = [0-9]+/dec-ms = */;
+#               s/encode ms = [0-9]+/encode ms = */; s/decode-play ms = [0-9]+/decode-play ms = */;
+#               s/bytes = [0-9]+/bytes = */; s/ratio = [0-9]+/ratio = */;
+#               s/snr = [-0-9.]+/snr = */; s/corr = [0-9.]+/corr = */;
+#               s/max = [0-9]+/max = */;
+#               s/final hits = [0-9]+ frames = [0-9]+/final hits = * frames = */;
+#               s/s frames = [0-9]+/s frames = */; s/hits = [0-9]+/hits = */;
+#               s/avg_us = [0-9]+/avg_us = */; s/max_us = [0-9]+/max_us = */' \
+#     | diff - <(grep -v '^#' golden/emu-audiocheck.txt)
+[go] ac start
+[go] ac mode EMU (no ES8311 at 0x18; synthetic sources, playback sink drops output)
+[go] ac A start tone = 1000 Hz + noise samples = 48000 rate = 16000 bitrate = 24000 (timings via esp_timer; emu values not meaningful, HW carries them)
+[go] ac A frame-ms = 60 packets = 50 bytes = * enc-ms = * dec-ms = * snr = * dB corr = * max = *
+[go] ac A frame-ms = 60 PASS
+[go] ac A frame-ms = 40 packets = 75 bytes = * enc-ms = * dec-ms = * snr = * dB corr = * max = *
+[go] ac A frame-ms = 40 PASS
+[go] ac A frame-ms = 20 packets = 150 bytes = * enc-ms = * dec-ms = * snr = * dB corr = * max = *
+[go] ac A frame-ms = 20 PASS
+[go] ac A PASS
+[go] ac B start (voice-loop one cycle, capture 2 s + preroll)
+[go] ac B vad cfg open = 2 x frames = 3 floor = [ 60 , 4000 ] frame = 480 @ 30 ms rate = 16000
+[go] ac B codec ok bitrate = 24000 frame-ms = 20 lookahead = 104
+[go] ac B listening
+[go] ac B speech-open rms = * floor = * preroll = 15
+[go] ac B speech-cap ms = 2010 samples = 39360 preroll = 15
+[go] ac B encode ms = * packets = 123 bytes = * ratio = * %
+[go] ac B decode-play ms = * packets = 123 samples = 39360
+[go] ac B snr = * dB max = * (gate 10.0 dB max 6000 )
+[go] ac B seg PASS (gate 10.0 dB)
+[go] ac B PASS
+[go] ac C start mode = TEST
+[go] ac C test pcm samples = 60392
+[go] ac C init ok model = wn9_hilexin chunk = 512 rate = 16000
+[go] ac C start ok
+[go] ac C listening... t = 5 s frames = * hits = *
+[go] ac C listening... t = 10 s frames = * hits = *
+[go] ac C final hits = * frames = * avg_us = * max_us = *
+[go] ac C closed
+[go] ac PASS
+[go] ac done

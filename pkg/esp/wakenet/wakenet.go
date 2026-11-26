@@ -109,6 +109,13 @@
 // plain Philips standard mode with three pins (BCLK/WS/DIN); a codec that
 // needs MCLK or a shared full-duplex bus with a playback path is not wired
 // yet - the pins are the whole configuration surface.
+//
+// The capture reads the bus as STEREO and keeps slot 0, because that is what
+// a mono-slot configuration actually delivered on hardware: the codec drove
+// two bytes per frame per slot regardless, so the mono-shaped read ran at
+// twice the chunk rate and handed the engine interleaved channels - measured
+// on S31 as 62.5 frames/s instead of 31.25 with zero detections, and
+// 31.25 frames/s with the first detection right after the deinterleave fix.
 package wakenet
 
 import "github.com/xgo-dev/llgo/pkg/esp/esperr"

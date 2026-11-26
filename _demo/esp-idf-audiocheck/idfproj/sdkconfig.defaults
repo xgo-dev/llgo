@@ -1,0 +1,57 @@
+# llgo runs its scheduler and package init on the FreeRTOS main task; give it
+# headroom (the fiber stacks themselves come from the llgo GC heap).
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# llgo's esp32s31 clock gate assumes a 240 MHz CPU (baremetalCpuMHz in
+# runtime/internal/runtime/z_clock_freq_esp32s31.go). Keep the IDF frequency
+# matched so cycle-domain deadlines (time.Sleep, timers) read true seconds.
+# 240 MHz is also the low end of the range esp-sr's S31 benchmark numbers
+# were taken at (the official table does not state its clock; IDF's other
+# default is 320).
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# The llgo fiber scheduler swaps the task's SP out of the FreeRTOS task stack
+# onto GC-heap-allocated fiber stacks on every scheduling point. That is
+# exactly what the stack guards look for: the ASSIST_DEBUG hardware guard
+# panics as soon as SP leaves the task's registered bounds, and the canary
+# checker runs on every context switch. Disable both - llgo guards its own
+# stacks with a canary + SP bound at every cooperative swap
+# (_wrap/context_riscv32.c), so fiber overflows stay detected inside the Go
+# runtime itself.
+CONFIG_ESP_SYSTEM_HW_STACK_GUARD=n
+CONFIG_FREERTOS_CHECK_STACKOVERFLOW_NONE=y
+
+# External PSRAM: the S31 die defaults to octal mode at 200 MHz. malloc may
+# serve from it, but allocations that must be DMA-visible or touched by IDF
+# internals stay internal, hence the 32 KiB reserve below. The opus states
+# and the demo's capture buffers ride the tinygogc malloc wrap into the GC
+# heap (static window first, PSRAM segments after); the wakenet weights
+# (DET_MODE_95) load to PSRAM - ~330 KB on top of the llgo heap.
+CONFIG_SPIRAM=y
+# Also boot on boards with no PSRAM fitted: IDF then reports zero SPIRAM and
+# llgo keeps the Go heap in its static window.
+CONFIG_SPIRAM_IGNORE_NOTFOUND=y
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MEMTEST=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=32768
+
+# 16 MB flash: the layout the esp-sr S31 CI config ships (factory 8000K +
+# model 7900K; see post-sync.sh, which writes this demo's partition table
+# over the generated common one). A smaller-flash board needs a shrunk
+# table - see the README's flash-size note.
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ---- WakeNet (esp-sr): one model, the smallest S31-carried one ----
+# wn9_nihaoxiaozhi_tts: the "你好小智" utterance, the model xiaozhi-class
+# devices ship with; ~16 KB internal RAM at run time on S31.
+CONFIG_SR_WN_WN9_NIHAOXIAOZHI_TTS=y
+
+# esp-sr's own S31 CI settings, carried over: the detect calls are heavy
+# bursts (1.5-6.4 ms) that can starve the idle tasks a watchdog counts, and
+# the CI proves the engine builds best at -O2.
+CONFIG_ESP_TASK_WDT_EN=n
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
