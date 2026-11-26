@@ -525,6 +525,95 @@ exit:
 	}
 }
 
+func TestIsDerivedLiveAtAllocAndClearTail(t *testing.T) {
+	mod := parseModule(t, `
+declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)
+
+define i64 @phi_and_block_cases(i1 %cond, ptr %init) {
+entry:
+  br label %allocblk
+allocblk:
+  %early = load i64, ptr %init, align 8
+  %slot = alloca [16 x i8], align 8
+  %g1 = getelementptr inbounds i8, ptr %slot, i64 0
+  %dup = select i1 %cond, ptr %g1, ptr %g1
+  tail call void @llvm.memset.p0.i64(ptr align 8 %dup, i8 0, i64 16, i1 false)
+  br i1 %cond, label %defblk, label %afterblk
+defblk:
+  %derived = getelementptr inbounds i8, ptr %slot, i64 8
+  br label %afterblk
+afterblk:
+  %merged = phi ptr [ %derived, %defblk ], [ %init, %allocblk ]
+  %late = load i64, ptr %derived, align 8
+  %sum = add i64 %early, %late
+  ret i64 %sum
+}
+`)
+	fn := mod.NamedFunction("phi_and_block_cases")
+	var allocBB, defBB, afterBB llvm.BasicBlock
+	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		switch bb.AsValue().Name() {
+		case "allocblk":
+			allocBB = bb
+		case "defblk":
+			defBB = bb
+		case "afterblk":
+			afterBB = bb
+		}
+	}
+	var slot, derived, earlyLoad, mergedPHI, lateLoad llvm.Value
+	order := make(map[llvm.Value]int)
+	pos := 0
+	for i := allocBB.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
+		order[i] = pos
+		pos++
+		switch i.Name() {
+		case "early":
+			earlyLoad = i
+		case "slot":
+			slot = i
+		}
+	}
+	for i := defBB.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
+		if i.Name() == "derived" {
+			derived = i
+		}
+	}
+	for i := afterBB.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
+		switch i.Name() {
+		case "merged":
+			mergedPHI = i
+		case "late":
+			lateLoad = i
+		}
+	}
+	_ = earlyLoad
+	_ = mergedPHI
+	_ = lateLoad
+	// Duplicate worklist path in clearTailOnMemIntrinsics (select references %g1 twice).
+	clearTailOnMemIntrinsics(slot)
+	if strings.Contains(fn.String(), "tail call void @llvm.memset") {
+		t.Fatalf("clearTailOnMemIntrinsics kept tail on memset:\n%s", fn.String())
+	}
+	// Reachable from allocBB without defBB includes afterBB -> late load in afterBB is live.
+	reachNoDef := forwardReachableWithout(allocBB, defBB)
+	if !isDerivedLiveAtAlloc(derived, defBB, allocBB, order[slot], order, reachNoDef) {
+		t.Fatal("expected derived value used in reachable afterblk to be live")
+	}
+	// If reachable includes defBB (the incoming block of %merged PHI), PHI check returns true.
+	if !isDerivedLiveAtAlloc(derived, defBB, allocBB, order[slot], order, map[llvm.BasicBlock]bool{defBB: true}) {
+		t.Fatal("expected derived value feeding PHI from reachable predecessor to be live")
+	}
+	// With empty reachable set, PHI is skipped and late load in afterblk is unreachable;
+	// also test early same-block use (pos <= allocPos -> continue).
+	if isDerivedLiveAtAlloc(derived, defBB, allocBB, order[slot], order, map[llvm.BasicBlock]bool{}) {
+		t.Fatal("unexpected liveness with empty reachable set")
+	}
+	if isDerivedLiveAtAlloc(fn.Param(1), defBB, allocBB, order[slot], order, map[llvm.BasicBlock]bool{}) {
+		t.Fatal("unexpected liveness for pre-alloc use only")
+	}
+}
+
 func parseModule(t *testing.T, source string) llvm.Module {
 	t.Helper()
 	ctx := llvm.NewContext()
