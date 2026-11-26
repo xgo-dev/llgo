@@ -349,6 +349,96 @@ func TestWriteReadBundleAndErrors(t *testing.T) {
 		t.Fatal("sequential Read MakeItem return type does not share dep.Item identity")
 	}
 
+	// Struct fields referencing package Aliases, chained aliases, mutually
+	// recursive Named/Alias types, and aliases to instantiated generics must
+	// all resolve to the final populated Alias objects (never nil-Rhs shells).
+	aliasPkg := types.NewPackage("example.com/aliasgraph", "aliasgraph")
+	tagObj := types.NewTypeName(token.NoPos, aliasPkg, "Tag", nil)
+	tagAlias := types.NewAlias(tagObj, types.Typ[types.String])
+	aliasPkg.Scope().Insert(tagObj)
+
+	tag2Obj := types.NewTypeName(token.NoPos, aliasPkg, "Tag2", nil)
+	tag2Alias := types.NewAlias(tag2Obj, tagAlias)
+	aliasPkg.Scope().Insert(tag2Obj)
+
+	itemObj := types.NewTypeName(token.NoPos, aliasPkg, "Item", nil)
+	_ = types.NewNamed(itemObj, types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, aliasPkg, "Value", tagAlias, false),
+		types.NewField(token.NoPos, aliasPkg, "Nested", tag2Alias, false),
+	}, nil), nil)
+	aliasPkg.Scope().Insert(itemObj)
+
+	// Mutually recursive Named <-> Alias: type Rec struct { Next RecPtr }; type RecPtr = *Rec.
+	recObj := types.NewTypeName(token.NoPos, aliasPkg, "Rec", nil)
+	recNamed := types.NewNamed(recObj, nil, nil)
+	recPtrObj := types.NewTypeName(token.NoPos, aliasPkg, "RecPtr", nil)
+	recPtrAlias := types.NewAlias(recPtrObj, types.NewPointer(recNamed))
+	recNamed.SetUnderlying(types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, aliasPkg, "Next", recPtrAlias, false),
+	}, nil))
+	aliasPkg.Scope().Insert(recObj)
+	aliasPkg.Scope().Insert(recPtrObj)
+
+	// Generic Named + Alias referencing its instantiation + struct referencing the Alias.
+	tp := types.NewTypeParam(types.NewTypeName(token.NoPos, aliasPkg, "T", nil), types.Universe.Lookup("any").Type())
+	genBoxObj := types.NewTypeName(token.NoPos, aliasPkg, "GenBox", nil)
+	genBox := types.NewNamed(genBoxObj, types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, aliasPkg, "Label", tagAlias, false),
+		types.NewField(token.NoPos, aliasPkg, "Elem", tp, false),
+	}, nil), nil)
+	genBox.SetTypeParams([]*types.TypeParam{tp})
+	aliasPkg.Scope().Insert(genBoxObj)
+	strBoxInst, err := types.Instantiate(nil, genBox, []types.Type{types.Typ[types.Int]}, false)
+	if err != nil {
+		t.Fatalf("Instantiate GenBox[int]: %v", err)
+	}
+	intBoxAliasObj := types.NewTypeName(token.NoPos, aliasPkg, "IntBoxAlias", nil)
+	intBoxAlias := types.NewAlias(intBoxAliasObj, strBoxInst)
+	aliasPkg.Scope().Insert(intBoxAliasObj)
+	holderObj := types.NewTypeName(token.NoPos, aliasPkg, "Holder", nil)
+	_ = types.NewNamed(holderObj, types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, aliasPkg, "B", intBoxAlias, false),
+	}, nil), nil)
+	aliasPkg.Scope().Insert(holderObj)
+	aliasPkg.MarkComplete()
+
+	var aliasBuf bytes.Buffer
+	if err := exportdata.Write(&aliasBuf, fset, aliasPkg); err != nil {
+		t.Fatalf("Write(aliasPkg): %v", err)
+	}
+	gotAliasPkg, err := exportdata.Read(bytes.NewReader(aliasBuf.Bytes()), fset, nil, aliasPkg.Path())
+	if err != nil {
+		t.Fatalf("Read(aliasPkg): %v", err)
+	}
+	gotTag := gotAliasPkg.Scope().Lookup("Tag").Type().(*types.Alias)
+	gotTag2 := gotAliasPkg.Scope().Lookup("Tag2").Type().(*types.Alias)
+	gotItemSt := gotAliasPkg.Scope().Lookup("Item").Type().(*types.Named).Underlying().(*types.Struct)
+	field0, ok := gotItemSt.Field(0).Type().(*types.Alias)
+	if !ok || field0 != gotTag || field0.Rhs() != types.Typ[types.String] {
+		t.Fatalf("Item.Value = %v (rhs=%v, ptr=%p), want Tag (%p, rhs=string)", gotItemSt.Field(0).Type(), field0.Rhs(), field0, gotTag)
+	}
+	field1, ok := gotItemSt.Field(1).Type().(*types.Alias)
+	if !ok || field1 != gotTag2 || field1.Rhs() != gotTag {
+		t.Fatalf("Item.Nested = %v (rhs=%v), want Tag2 -> Tag", gotItemSt.Field(1).Type(), field1.Rhs())
+	}
+	gotRec := gotAliasPkg.Scope().Lookup("Rec").Type().(*types.Named)
+	gotRecPtr := gotAliasPkg.Scope().Lookup("RecPtr").Type().(*types.Alias)
+	if gotRec.Underlying().(*types.Struct).Field(0).Type() != gotRecPtr {
+		t.Fatal("Rec.Next did not preserve RecPtr alias identity")
+	}
+	if ptr, ok := gotRecPtr.Rhs().(*types.Pointer); !ok || ptr.Elem() != gotRec {
+		t.Fatalf("RecPtr.Rhs = %v, want *Rec", gotRecPtr.Rhs())
+	}
+	gotIntBoxAlias := gotAliasPkg.Scope().Lookup("IntBoxAlias").Type().(*types.Alias)
+	gotHolderSt := gotAliasPkg.Scope().Lookup("Holder").Type().(*types.Named).Underlying().(*types.Struct)
+	if gotHolderSt.Field(0).Type() != gotIntBoxAlias {
+		t.Fatal("Holder.B did not preserve IntBoxAlias identity")
+	}
+	if instNamed, ok := gotIntBoxAlias.Rhs().(*types.Named); !ok || instNamed.TypeArgs().Len() != 1 ||
+		instNamed.Underlying().(*types.Struct).Field(0).Type() != gotTag {
+		t.Fatalf("IntBoxAlias.Rhs did not preserve instantiated GenBox[int] with Tag field: %v", gotIntBoxAlias.Rhs())
+	}
+
 	// Corrupt/bad-magic/kind-mismatch checks.
 	if _, err := exportdata.Read(bytes.NewReader([]byte("BADMAGIC12345")), fset, nil, ""); err == nil || !strings.Contains(err.Error(), "magic") {
 		t.Fatalf("expected invalid magic error, got %v", err)

@@ -1535,6 +1535,102 @@ var (
 	}
 }
 
+func TestCrossFileAliasedFuncCallConvPreservesFileImports(t *testing.T) {
+	fset := token.NewFileSet()
+	// Also test conflicting import aliases across files: a.go binds wire to
+	// unsafe (and dep1), while b.go binds wire to a different package.
+	dep1 := types.NewPackage("example.com/dep1", "dep1")
+	dep1T := types.NewNamed(types.NewTypeName(token.NoPos, dep1, "T", nil), types.Typ[types.Int32], nil)
+	dep1.Scope().Insert(dep1T.Obj())
+	dep1.MarkComplete()
+
+	dep2 := types.NewPackage("example.com/dep2", "dep2")
+	dep2T := types.NewNamed(types.NewTypeName(token.NoPos, dep2, "T", nil), types.Typ[types.String], nil)
+	dep2.Scope().Insert(dep2T.Obj())
+	dep2.MarkComplete()
+
+	srcA := `package xfile
+
+import (
+	wire "unsafe"
+	dep "example.com/dep1"
+)
+
+type GoFn = func(wire.Pointer, dep.T)
+`
+	srcB := `package xfile
+
+import (
+	"unsafe"
+	dep "example.com/dep2"
+)
+
+//llgo:cdecl
+type CFn = GoFn
+
+const (
+	SizeGoFn = unsafe.Sizeof(GoFn(nil))
+	SizeCFn  = unsafe.Sizeof(CFn(nil))
+)
+
+var (
+	_ dep.T
+	g GoFn
+	c CFn = g
+)
+`
+	fa, err := parser.ParseFile(fset, "a.go", srcA, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile a.go: %v", err)
+	}
+	fb, err := parser.ParseFile(fset, "b.go", srcB, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile b.go: %v", err)
+	}
+
+	ctx := types.NewContextWithConfig(types.ContextConfig{
+		Spec: target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"}),
+	})
+	info := &types.Info{
+		Defs:   make(map[*ast.Ident]types.Object),
+		Uses:   make(map[*ast.Ident]types.Object),
+		Scopes: make(map[ast.Node]*types.Scope),
+	}
+	conf := types.Config{
+		Context: ctx,
+		Importer: &mapImporter{pkgs: map[string]*types.Package{
+			"unsafe":           types.Unsafe,
+			"example.com/dep1": dep1,
+			"example.com/dep2": dep2,
+		}},
+	}
+	pkg, err := conf.Check("example.com/xfile", fset, []*ast.File{fa, fb}, info)
+	if err != nil {
+		t.Fatalf("Config.Check cross-file alias failed: %v", err)
+	}
+	for _, name := range pkg.Scope().Names() {
+		if strings.HasPrefix(name, "__llgo_ccalias_") {
+			t.Fatalf("synthetic alias %q leaked into package scope", name)
+		}
+	}
+	for name, want := range map[string]int64{"SizeGoFn": 16, "SizeCFn": 8} {
+		cObj, ok := pkg.Scope().Lookup(name).(*types.Const)
+		if !ok {
+			t.Fatalf("missing const %s", name)
+		}
+		if got, ok := constant.Int64Val(cObj.Val()); !ok || got != want {
+			t.Fatalf("%s = %v, want %d", name, cObj.Val(), want)
+		}
+	}
+	cFnSig := types.Unalias(pkg.Scope().Lookup("CFn").Type()).(*types.Signature)
+	if cFnSig.CallConv() != types.CDecl {
+		t.Fatalf("CFn CallConv = %v, want CDecl", cFnSig.CallConv())
+	}
+	if param1 := cFnSig.Params().At(1).Type(); param1 != dep1T {
+		t.Fatalf("CFn param 1 = %v, want dep1.T (%v)", param1, dep1T)
+	}
+}
+
 func TestConcurrentEvalAndCheckExprAfterPostCheckScopeInsert(t *testing.T) {
 	fset := token.NewFileSet()
 	checkedFile, err := parser.ParseFile(fset, "checked.go", "package checked\nconst Base = 10\n", 0)

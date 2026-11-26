@@ -737,3 +737,62 @@ func TestLLGoFilesCacheInvalidatesEarlierCPATHShadowHeader(t *testing.T) {
 		t.Fatalf("cached build after adding earlier nested shadow header output = %q, want 22", got)
 	}
 }
+
+func TestLLGoFilesCacheInvalidatesTransitiveQuotedIncludeSameDir(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCacheRoot := cacheRootFunc
+	cacheDir := t.TempDir()
+	cacheRootFunc = func() string { return cacheDir }
+	defer func() { cacheRootFunc = oldCacheRoot }()
+
+	rootDir := t.TempDir()
+	pkgDir := filepath.Join(rootDir, "pkg")
+	if err := os.MkdirAll(filepath.Join(pkgDir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rootDir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "api.h"), []byte("#include \"value.h\"\n#include \"sub/nested.h\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootDir, "value.h"), []byte("#define TRANS_VAL 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootDir, "sub", "nested.h"), []byte("#define TRANS_NESTED 10\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	modDir := writeLLGoFilesDepLibCacheFixture(t, "#include <pkg/api.h>\nint llgo_test_dep_val(void) { return TRANS_VAL + TRANS_NESTED; }\n")
+	t.Setenv("LLGO_ROOT", repoRoot)
+	t.Setenv(llgoBuildCache, "1")
+	t.Setenv("CPATH", rootDir)
+
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "trans-cold"); got != "11" {
+		t.Fatalf("cold cached build output = %q, want 11", got)
+	}
+	if got, pkgs := buildAndRunLLGoFilesFixture(t, modDir, "trans-hot"); got != "11" {
+		t.Fatalf("hot cached build output = %q, want 11", got)
+	} else {
+		assertPkgCacheHit(t, pkgs, "example.com/llgofilesdeplib/clib")
+	}
+
+	// Add a same-directory quoted-include shadow next to pkg/api.h while CPATH stays unchanged.
+	if err := os.WriteFile(filepath.Join(pkgDir, "value.h"), []byte("#define TRANS_VAL 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "trans-samedir"); got != "12" {
+		t.Fatalf("cached build after adding pkg/value.h output = %q, want 12", got)
+	}
+
+	// Add a nested quoted-include shadow under pre-existing pkg/sub/.
+	if err := os.WriteFile(filepath.Join(pkgDir, "sub", "nested.h"), []byte("#define TRANS_NESTED 20\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "trans-samedir-nested"); got != "22" {
+		t.Fatalf("cached build after adding pkg/sub/nested.h output = %q, want 22", got)
+	}
+}

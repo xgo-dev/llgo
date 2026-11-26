@@ -17,6 +17,7 @@
 package exportdata
 
 import (
+	"bytes"
 	"fmt"
 	"go/constant"
 	"go/token"
@@ -501,36 +502,43 @@ func (w *pkgWriter) encode() {
 		w.enc.writeStr(name)
 	}
 
-	// Fill TypeParam constraints.
+	// Emit TypeParam constraints as length-prefixed sub-blobs so decoding can
+	// resolve Alias and Named bodies on demand in dependency order.
 	for _, tp := range w.tparams {
-		w.writeType(tp.Constraint())
+		w.writeSubBlob(func() {
+			w.writeType(tp.Constraint())
+		})
 	}
 
-	// Fill Named definitions (typeParams, underlying, methods).
+	// Emit Named definitions (typeParams, underlying, methods) as sub-blobs.
 	for _, n := range w.nameds {
-		tps := n.TypeParams()
-		w.enc.writeUvarint(uint64(tps.Len()))
-		for i := 0; i < tps.Len(); i++ {
-			w.enc.writeUvarint(w.tpIndex[tps.At(i)])
-		}
-		w.writeType(n.Underlying())
-		w.enc.writeUvarint(uint64(n.NumMethods()))
-		for i := 0; i < n.NumMethods(); i++ {
-			m := n.Method(i)
-			w.enc.writeUvarint(w.internPkg(m.Pkg()))
-			w.enc.writeStr(m.Name())
-			w.writeType(m.Type())
-		}
+		w.writeSubBlob(func() {
+			tps := n.TypeParams()
+			w.enc.writeUvarint(uint64(tps.Len()))
+			for i := 0; i < tps.Len(); i++ {
+				w.enc.writeUvarint(w.tpIndex[tps.At(i)])
+			}
+			w.writeType(n.Underlying())
+			w.enc.writeUvarint(uint64(n.NumMethods()))
+			for i := 0; i < n.NumMethods(); i++ {
+				m := n.Method(i)
+				w.enc.writeUvarint(w.internPkg(m.Pkg()))
+				w.enc.writeStr(m.Name())
+				w.writeType(m.Type())
+			}
+		})
 	}
 
-	// Fill Alias definitions (typeParams, rhs).
+	// Emit Alias definitions (typeParams, rhs) as sub-blobs.
 	for _, a := range w.aliases {
-		tps := a.TypeParams()
-		w.enc.writeUvarint(uint64(tps.Len()))
-		for i := 0; i < tps.Len(); i++ {
-			w.enc.writeUvarint(w.tpIndex[tps.At(i)])
-		}
-		w.writeType(a.Rhs())
+		w.writeSubBlob(func() {
+			tps := a.TypeParams()
+			w.enc.writeUvarint(uint64(tps.Len()))
+			for i := 0; i < tps.Len(); i++ {
+				w.enc.writeUvarint(w.tpIndex[tps.At(i)])
+			}
+			w.writeType(a.Rhs())
+		})
 	}
 
 	// Emit package scope objects.
@@ -558,6 +566,15 @@ func (w *pkgWriter) encode() {
 			w.writeType(o.Type())
 		}
 	}
+}
+
+func (w *pkgWriter) writeSubBlob(fn func()) {
+	origBuf := w.enc.buf
+	w.enc.buf = bytes.Buffer{}
+	fn()
+	sub := w.enc.buf.Bytes()
+	w.enc.buf = origBuf
+	w.enc.writeBytes(sub)
 }
 
 func (w *pkgWriter) writeVar(v *types.Var) {
@@ -789,6 +806,18 @@ type pkgReader struct {
 	tparams []*types.TypeParam
 	nameds  []*types.Named
 	aliases []*types.Alias
+
+	namedCC       []types.CallConv
+	namedReused   []bool
+	namedBlobs    [][]byte
+	namedResolved []bool
+
+	aliasOwners    []*types.Package
+	aliasNames     []string
+	aliasReused    []bool
+	aliasBlobs     [][]byte
+	aliasResolved  []bool
+	aliasResolving []bool
 }
 
 func (r *pkgReader) pkgByID(id uint64) *types.Package {
@@ -937,8 +966,9 @@ func (r *pkgReader) decodeBody() error {
 		return err
 	}
 	r.nameds = make([]*types.Named, namedCount)
-	namedCC := make([]types.CallConv, namedCount)
-	namedReused := make([]bool, namedCount)
+	r.namedCC = make([]types.CallConv, namedCount)
+	r.namedReused = make([]bool, namedCount)
+	r.namedResolved = make([]bool, namedCount)
 	for i := uint64(0); i < namedCount; i++ {
 		pkgID, err := r.dec.readUvarint()
 		if err != nil {
@@ -952,13 +982,13 @@ func (r *pkgReader) decodeBody() error {
 		if err != nil {
 			return err
 		}
-		namedCC[i] = types.CallConv(cc)
+		r.namedCC[i] = types.CallConv(cc)
 		owner := r.pkgByID(pkgID)
 		if pkgID == 0 {
 			if obj := types.Universe.Lookup(nName); obj != nil {
 				if existing, ok := obj.Type().(*types.Named); ok {
 					r.nameds[i] = existing
-					namedReused[i] = true
+					r.namedReused[i] = true
 					continue
 				}
 			}
@@ -966,13 +996,13 @@ func (r *pkgReader) decodeBody() error {
 			if obj := owner.Scope().Lookup(nName); obj != nil {
 				if existing, ok := obj.Type().(*types.Named); ok {
 					r.nameds[i] = existing
-					namedReused[i] = existing.Underlying() != nil
+					r.namedReused[i] = existing.Underlying() != nil
 					continue
 				}
 			}
 			if existing := r.bundle.lookupNamed(owner, nName); existing != nil {
 				r.nameds[i] = existing
-				namedReused[i] = r.bundle != nil && r.bundle.filledNamed[existing]
+				r.namedReused[i] = r.bundle != nil && r.bundle.filledNamed[existing]
 				continue
 			}
 		}
@@ -988,9 +1018,11 @@ func (r *pkgReader) decodeBody() error {
 		return err
 	}
 	r.aliases = make([]*types.Alias, aliasCount)
-	aliasOwners := make([]*types.Package, aliasCount)
-	aliasNames := make([]string, aliasCount)
-	aliasReused := make([]bool, aliasCount)
+	r.aliasOwners = make([]*types.Package, aliasCount)
+	r.aliasNames = make([]string, aliasCount)
+	r.aliasReused = make([]bool, aliasCount)
+	r.aliasResolved = make([]bool, aliasCount)
+	r.aliasResolving = make([]bool, aliasCount)
 	for i := uint64(0); i < aliasCount; i++ {
 		pkgID, err := r.dec.readUvarint()
 		if err != nil {
@@ -1001,13 +1033,14 @@ func (r *pkgReader) decodeBody() error {
 			return err
 		}
 		owner := r.pkgByID(pkgID)
-		aliasOwners[i] = owner
-		aliasNames[i] = aName
+		r.aliasOwners[i] = owner
+		r.aliasNames[i] = aName
 		if pkgID == 0 {
 			if obj := types.Universe.Lookup(aName); obj != nil {
 				if existing, ok := obj.Type().(*types.Alias); ok {
 					r.aliases[i] = existing
-					aliasReused[i] = true
+					r.aliasReused[i] = true
+					r.aliasResolved[i] = true
 					continue
 				}
 			}
@@ -1015,114 +1048,66 @@ func (r *pkgReader) decodeBody() error {
 			if obj := owner.Scope().Lookup(aName); obj != nil {
 				if existing, ok := obj.Type().(*types.Alias); ok {
 					r.aliases[i] = existing
-					aliasReused[i] = existing.Rhs() != nil
+					r.aliasReused[i] = existing.Rhs() != nil
+					r.aliasResolved[i] = r.aliasReused[i]
 					continue
 				}
 			}
 			if existing := r.bundle.lookupAlias(owner, aName); existing != nil {
 				r.aliases[i] = existing
-				aliasReused[i] = r.bundle != nil && r.bundle.filledAlias[existing]
+				r.aliasReused[i] = r.bundle != nil && r.bundle.filledAlias[existing]
+				r.aliasResolved[i] = r.aliasReused[i]
 				continue
 			}
 		}
 		r.aliases[i] = types.NewAlias(nil, nil)
 	}
 
-	// Fill TypeParam constraints.
+	// Read raw body blobs up front so Aliases and instantiated Named origins
+	// can be resolved on demand before any struct field or signature binds them.
+	tpConstraintBlobs := make([][]byte, tpCount)
 	for i := uint64(0); i < tpCount; i++ {
-		c, err := r.readType()
+		blob, err := r.dec.readBytes()
+		if err != nil {
+			return err
+		}
+		tpConstraintBlobs[i] = blob
+	}
+	r.namedBlobs = make([][]byte, namedCount)
+	for i := uint64(0); i < namedCount; i++ {
+		blob, err := r.dec.readBytes()
+		if err != nil {
+			return err
+		}
+		r.namedBlobs[i] = blob
+	}
+	r.aliasBlobs = make([][]byte, aliasCount)
+	for i := uint64(0); i < aliasCount; i++ {
+		blob, err := r.dec.readBytes()
+		if err != nil {
+			return err
+		}
+		r.aliasBlobs[i] = blob
+	}
+
+	// Fill TypeParam constraints (may reference Aliases resolved on demand).
+	for i := uint64(0); i < tpCount; i++ {
+		c, err := r.decodeTypeBlob(tpConstraintBlobs[i])
 		if err != nil {
 			return err
 		}
 		r.tparams[i].SetConstraint(c)
 	}
 
-	// Fill Named definitions.
-	for i := uint64(0); i < namedCount; i++ {
-		tps, err := r.readTypeParams()
-		if err != nil {
+	// Resolve all Aliases and Named definitions in dependency order.
+	for i := range r.aliases {
+		if _, err := r.resolveAlias(i); err != nil {
 			return err
-		}
-		under, err := r.readType()
-		if err != nil {
-			return err
-		}
-		nm, err := r.dec.readUvarint()
-		if err != nil {
-			return err
-		}
-		type methodRec struct {
-			pkg  *types.Package
-			name string
-			sig  *types.Signature
-		}
-		var methods []methodRec
-		for j := uint64(0); j < nm; j++ {
-			mPkgID, err := r.dec.readUvarint()
-			if err != nil {
-				return err
-			}
-			mName, err := r.dec.readStr()
-			if err != nil {
-				return err
-			}
-			mTyp, err := r.readType()
-			if err != nil {
-				return err
-			}
-			sig, _ := mTyp.(*types.Signature)
-			if !namedReused[i] {
-				methods = append(methods, methodRec{pkg: r.pkgByID(mPkgID), name: mName, sig: sig})
-			}
-		}
-		if namedReused[i] {
-			continue
-		}
-		if len(tps) > 0 {
-			r.nameds[i].SetTypeParams(tps)
-		}
-		if sig, ok := under.(*types.Signature); ok && namedCC[i] != types.Go {
-			under = sig.WithCallConv(namedCC[i])
-		}
-		r.nameds[i].SetUnderlying(under)
-		for _, mr := range methods {
-			r.nameds[i].AddMethod(types.NewFunc(token.NoPos, mr.pkg, mr.name, mr.sig))
-		}
-		if r.bundle != nil {
-			r.bundle.filledNamed[r.nameds[i]] = true
-		}
-		if obj := r.nameds[i].Obj(); obj != nil {
-			if owner := obj.Pkg(); owner != nil && owner != pkg && !owner.Complete() {
-				owner.Scope().Insert(obj)
-			}
 		}
 	}
-
-	// Fill Alias definitions.
-	for i := uint64(0); i < aliasCount; i++ {
-		tps, err := r.readTypeParams()
-		if err != nil {
+	for i := range r.nameds {
+		if err := r.resolveNamed(i); err != nil {
 			return err
-		}
-		rhs, err := r.readType()
-		if err != nil {
-			return err
-		}
-		if aliasReused[i] {
-			continue
-		}
-		tn := types.NewTypeName(token.NoPos, aliasOwners[i], aliasNames[i], nil)
-		a := types.NewAlias(tn, rhs)
-		if len(tps) > 0 {
-			a.SetTypeParams(tps)
-		}
-		r.aliases[i] = a
-		if r.bundle != nil {
-			r.bundle.registerAlias(aliasOwners[i], aliasNames[i], a)
-			r.bundle.filledAlias[a] = true
-		}
-		if aliasOwners[i] != nil && aliasOwners[i] != pkg && !aliasOwners[i].Complete() {
-			aliasOwners[i].Scope().Insert(tn)
 		}
 	}
 
@@ -1222,6 +1207,131 @@ func (r *pkgReader) decodeBody() error {
 		r.imports[path] = pkg
 	}
 	return nil
+}
+
+func (r *pkgReader) withSubDecoder(blob []byte, fn func() error) error {
+	orig := r.dec
+	r.dec = &decoder{data: blob, strings: orig.strings}
+	defer func() { r.dec = orig }()
+	return fn()
+}
+
+func (r *pkgReader) decodeTypeBlob(blob []byte) (types.Type, error) {
+	var t types.Type
+	err := r.withSubDecoder(blob, func() error {
+		var err error
+		t, err = r.readType()
+		return err
+	})
+	return t, err
+}
+
+func (r *pkgReader) resolveNamed(idx int) error {
+	if r.namedResolved[idx] {
+		return nil
+	}
+	r.namedResolved[idx] = true
+	return r.withSubDecoder(r.namedBlobs[idx], func() error {
+		tps, err := r.readTypeParams()
+		if err != nil {
+			return err
+		}
+		under, err := r.readType()
+		if err != nil {
+			return err
+		}
+		nm, err := r.dec.readUvarint()
+		if err != nil {
+			return err
+		}
+		type methodRec struct {
+			pkg  *types.Package
+			name string
+			sig  *types.Signature
+		}
+		var methods []methodRec
+		for j := uint64(0); j < nm; j++ {
+			mPkgID, err := r.dec.readUvarint()
+			if err != nil {
+				return err
+			}
+			mName, err := r.dec.readStr()
+			if err != nil {
+				return err
+			}
+			mTyp, err := r.readType()
+			if err != nil {
+				return err
+			}
+			sig, _ := mTyp.(*types.Signature)
+			if !r.namedReused[idx] {
+				methods = append(methods, methodRec{pkg: r.pkgByID(mPkgID), name: mName, sig: sig})
+			}
+		}
+		if r.namedReused[idx] {
+			return nil
+		}
+		if len(tps) > 0 {
+			r.nameds[idx].SetTypeParams(tps)
+		}
+		if sig, ok := under.(*types.Signature); ok && r.namedCC[idx] != types.Go {
+			under = sig.WithCallConv(r.namedCC[idx])
+		}
+		r.nameds[idx].SetUnderlying(under)
+		for _, mr := range methods {
+			r.nameds[idx].AddMethod(types.NewFunc(token.NoPos, mr.pkg, mr.name, mr.sig))
+		}
+		if r.bundle != nil {
+			r.bundle.filledNamed[r.nameds[idx]] = true
+		}
+		if obj := r.nameds[idx].Obj(); obj != nil {
+			if owner := obj.Pkg(); owner != nil && owner != r.pkg && !owner.Complete() {
+				owner.Scope().Insert(obj)
+			}
+		}
+		return nil
+	})
+}
+
+func (r *pkgReader) resolveAlias(idx int) (*types.Alias, error) {
+	if r.aliasResolved[idx] || r.aliasResolving[idx] {
+		return r.aliases[idx], nil
+	}
+	r.aliasResolving[idx] = true
+	defer func() { r.aliasResolving[idx] = false }()
+	err := r.withSubDecoder(r.aliasBlobs[idx], func() error {
+		tps, err := r.readTypeParams()
+		if err != nil {
+			return err
+		}
+		rhs, err := r.readType()
+		if err != nil {
+			return err
+		}
+		if r.aliasReused[idx] {
+			r.aliasResolved[idx] = true
+			return nil
+		}
+		tn := types.NewTypeName(token.NoPos, r.aliasOwners[idx], r.aliasNames[idx], nil)
+		a := types.NewAlias(tn, rhs)
+		if len(tps) > 0 {
+			a.SetTypeParams(tps)
+		}
+		r.aliases[idx] = a
+		r.aliasResolved[idx] = true
+		if r.bundle != nil {
+			r.bundle.registerAlias(r.aliasOwners[idx], r.aliasNames[idx], a)
+			r.bundle.filledAlias[a] = true
+		}
+		if owner := r.aliasOwners[idx]; owner != nil && owner != r.pkg && !owner.Complete() {
+			owner.Scope().Insert(tn)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return r.aliases[idx], nil
 }
 
 func (r *pkgReader) readTypeParams() ([]*types.TypeParam, error) {
@@ -1502,6 +1612,9 @@ func (r *pkgReader) readType() (types.Type, error) {
 				return nil, err
 			}
 		}
+		if err := r.resolveNamed(int(origIdx)); err != nil {
+			return nil, err
+		}
 		orig := r.nameds[origIdx]
 		if orig.Underlying() == nil {
 			return orig, nil
@@ -1516,7 +1629,7 @@ func (r *pkgReader) readType() (types.Type, error) {
 		if err != nil || idx >= uint64(len(r.aliases)) {
 			return nil, errCorrupt
 		}
-		return r.aliases[idx], nil
+		return r.resolveAlias(int(idx))
 	case typeTagAliasInst:
 		origIdx, err := r.dec.readUvarint()
 		if err != nil || origIdx >= uint64(len(r.aliases)) {
@@ -1533,7 +1646,10 @@ func (r *pkgReader) readType() (types.Type, error) {
 				return nil, err
 			}
 		}
-		orig := r.aliases[origIdx]
+		orig, err := r.resolveAlias(int(origIdx))
+		if err != nil {
+			return nil, err
+		}
 		if orig.Rhs() == nil {
 			return orig, nil
 		}

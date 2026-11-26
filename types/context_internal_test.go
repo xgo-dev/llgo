@@ -39,14 +39,14 @@ type CFn = Mid
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)
 	}
-	rewritten, isolated, uses := prepareErasedCallConvAliasFiles([]*ast.File{f})
-	if !isolated["AliasC"] || !isolated["CFn"] || isolated["GoFn"] {
-		t.Fatalf("isolated aliases = %#v, want AliasC and CFn only", isolated)
+	prep := prepareErasedCallConvAliasFiles([]*ast.File{f})
+	if !prep.isolated["AliasC"] || !prep.isolated["CFn"] || prep.isolated["GoFn"] {
+		t.Fatalf("isolated aliases = %#v, want AliasC and CFn only", prep.isolated)
 	}
-	if len(uses) != 1 || uses[0].targetName != "Mid" {
-		t.Fatalf("erased uses = %#v, want Mid", uses)
+	if len(prep.uses) != 1 || prep.uses[0].targetName != "Mid" {
+		t.Fatalf("erased uses = %#v, want Mid", prep.uses)
 	}
-	if rewritten[0] == f {
+	if prep.files[0] == f {
 		t.Fatal("prepareErasedCallConvAliasFiles mutated input file instead of shallow copy")
 	}
 	// Verify the caller's original AST still references Mid verbatim.
@@ -55,16 +55,46 @@ type CFn = Mid
 		t.Fatalf("original AST CFn RHS was mutated: %T", origSpec.Type)
 	}
 	// Verify rewritten CFn RHS is a cloned *ast.FuncType with fresh param idents.
-	newSpec := rewritten[0].Decls[3].(*ast.GenDecl).Specs[0].(*ast.TypeSpec)
+	newSpec := prep.files[0].Decls[3].(*ast.GenDecl).Specs[0].(*ast.TypeSpec)
 	origFT := f.Decls[0].(*ast.GenDecl).Specs[0].(*ast.TypeSpec).Type.(*ast.FuncType)
 	clonedFT, ok := newSpec.Type.(*ast.FuncType)
 	if !ok || clonedFT == origFT || clonedFT.Params.List[0].Names[0] == origFT.Params.List[0].Names[0] {
 		t.Fatalf("rewritten CFn RHS did not clone FuncType cleanly")
 	}
 
+	// Cross-file rewrite must keep the cloned FuncType in the declaring file.
+	fa, err := parser.ParseFile(fset, "a.go", "package x\nimport wire \"unsafe\"\ntype GoFn = func(wire.Pointer)\n", parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile a.go: %v", err)
+	}
+	fb, err := parser.ParseFile(fset, "b.go", "package x\n//llgo:cdecl\ntype CFn = GoFn\n", parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile b.go: %v", err)
+	}
+	xprep := prepareErasedCallConvAliasFiles([]*ast.File{fa, fb})
+	if !xprep.isolated["CFn"] || len(xprep.synthNames) != 1 || len(xprep.files[0].Decls) != len(fa.Decls)+1 {
+		t.Fatalf("cross-file prep = %#v", xprep)
+	}
+	xGoPkg := gotypes.NewPackage("example.com/x", "x")
+	xGoInfo := &gotypes.Info{
+		Defs:   make(map[*ast.Ident]gotypes.Object),
+		Uses:   make(map[*ast.Ident]gotypes.Object),
+		Types:  make(map[ast.Expr]gotypes.TypeAndValue),
+		Scopes: make(map[ast.Node]*gotypes.Scope),
+	}
+	var xGoCfg gotypes.Config
+	xGoCfg.Importer = &unsafeOnlyGoImporter{}
+	if err := gotypes.NewChecker(&xGoCfg, fset, xGoPkg, xGoInfo).Files(xprep.files); err != nil {
+		t.Fatalf("cross-file go/types check failed: %v", err)
+	}
+	xprep.restoreGoInfo(xGoPkg, xGoInfo, []*ast.File{fa, fb})
+	if xGoInfo.Scopes[fa] == nil || xGoInfo.Scopes[fb] == nil {
+		t.Fatal("restoreGoInfo did not remap cloned file scopes back to original files")
+	}
+
 	// Calling prescan twice exercises the existing-entry update path.
-	ctx.prescanTypeDirectives("example.com/demo", []*ast.File{f}, isolated)
-	ctx.prescanTypeDirectives("example.com/demo", []*ast.File{f}, isolated)
+	ctx.prescanTypeDirectives("example.com/demo", []*ast.File{f}, prep.isolated)
+	ctx.prescanTypeDirectives("example.com/demo", []*ast.File{f}, prep.isolated)
 
 	// Simulate a Go 1.20/1.21 go/types package where AliasC's TypeName holds an
 	// erased *gotypes.Signature directly rather than a *gotypes.Alias wrapper.
@@ -91,4 +121,13 @@ type CFn = Mid
 	if otherSigLL, ok := otherType.(*Signature); !ok || otherSigLL.CallConv() != Go {
 		t.Fatalf("unrelated signature = %v, want Go calling convention", otherType)
 	}
+}
+
+type unsafeOnlyGoImporter struct{}
+
+func (unsafeOnlyGoImporter) Import(path string) (*gotypes.Package, error) {
+	if path == "unsafe" {
+		return gotypes.Unsafe, nil
+	}
+	return nil, nil
 }

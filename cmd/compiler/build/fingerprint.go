@@ -503,10 +503,20 @@ func collectIncludeSearchDirs(inputPath, workDir string, environ, effectiveArgs 
 }
 
 // extractIncludeTargets scans C/C++/ObjC preprocessor directives in content for
-// quoted or angled header paths (#include, #import, #include_next, __has_include).
-func extractIncludeTargets(content []byte) []string {
-	var out []string
+// quoted ("...") and angled (<...>) header paths (#include, #import,
+// #include_next, __has_include).
+func extractIncludeTargets(content []byte) (quoted, angled []string) {
 	s := string(content)
+	addTarget := func(target string, isQuoted bool) {
+		if target == "" {
+			return
+		}
+		if isQuoted {
+			quoted = append(quoted, target)
+		} else {
+			angled = append(angled, target)
+		}
+	}
 	for len(s) > 0 {
 		var line string
 		if nl := strings.IndexByte(s, '\n'); nl >= 0 {
@@ -526,9 +536,8 @@ func extractIncludeTargets(content []byte) []string {
 				after := rest[len(kw):]
 				if len(after) > 0 && (after[0] == ' ' || after[0] == '\t' || after[0] == '"' || after[0] == '<') {
 					after = strings.TrimLeft(after, " \t")
-					if target := parseIncludeToken(after); target != "" {
-						out = append(out, target)
-					}
+					target, isQuoted := parseIncludeToken(after)
+					addTarget(target, isQuoted)
 				}
 				break
 			}
@@ -541,61 +550,117 @@ func extractIncludeTargets(content []byte) []string {
 					break
 				}
 				cur = strings.TrimLeft(cur[idx+len(fn):], " \t")
-				if target := parseIncludeToken(cur); target != "" {
-					out = append(out, target)
-				}
+				target, isQuoted := parseIncludeToken(cur)
+				addTarget(target, isQuoted)
 			}
 		}
 	}
-	return out
+	return quoted, angled
 }
 
-func parseIncludeToken(s string) string {
+func parseIncludeToken(s string) (target string, isQuoted bool) {
 	if len(s) < 3 {
-		return ""
+		return "", false
 	}
 	var closeCh byte
 	switch s[0] {
 	case '"':
 		closeCh = '"'
+		isQuoted = true
 	case '<':
 		closeCh = '>'
 	default:
-		return ""
+		return "", false
 	}
 	end := strings.IndexByte(s[1:], closeCh)
 	if end <= 0 {
-		return ""
+		return "", false
 	}
-	return s[1 : 1+end]
+	return s[1 : 1+end], isQuoted
+}
+
+// collectWatchedDepDirs combines explicit include search directories with the
+// containing directories of all resolved dependencies so transitive quoted
+// includes (which prioritize the including header's directory) are watched.
+func collectWatchedDepDirs(searchDirs, deps []string) []string {
+	seen := make(map[string]bool, len(searchDirs)+len(deps))
+	dirs := make([]string, 0, len(searchDirs)+len(deps))
+	addDir := func(d string) {
+		if d == "" {
+			return
+		}
+		d = filepath.Clean(d)
+		if !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	for _, sd := range searchDirs {
+		addDir(sd)
+	}
+	for _, dep := range deps {
+		if dep != "" {
+			addDir(filepath.Dir(dep))
+		}
+	}
+	return dirs
 }
 
 // collectShadowingMissingPaths records non-existent candidate header paths across
-// searchDirs that, if created later, could shadow a previously resolved header or
-// change __has_include evaluation without changing environment variables.
+// searchDirs and including headers' directories that, if created later, could
+// shadow a previously resolved header or change __has_include evaluation without
+// changing environment variables.
 func collectShadowingMissingPaths(searchDirs, deps []string, depContents map[string][]byte) []string {
-	if len(searchDirs) == 0 {
+	watchedDirs := collectWatchedDepDirs(searchDirs, deps)
+	if len(watchedDirs) == 0 {
 		return nil
 	}
 	depSet := make(map[string]bool, len(deps))
+	depDirSeen := make(map[string]bool, len(deps))
+	var depDirs []string
 	for _, d := range deps {
-		if d != "" {
-			depSet[filepath.Clean(d)] = true
+		if d == "" {
+			continue
+		}
+		clean := filepath.Clean(d)
+		depSet[clean] = true
+		dd := filepath.Dir(clean)
+		if !depDirSeen[dd] {
+			depDirSeen[dd] = true
+			depDirs = append(depDirs, dd)
 		}
 	}
-	// Resolve symlinks on searchDirs once so macOS /var -> /private/var matches.
-	evalSearchDirs := make([]string, len(searchDirs))
-	for i, sd := range searchDirs {
+	// Resolve symlinks on watchedDirs once so macOS /var -> /private/var matches.
+	evalWatchedDirs := make([]string, len(watchedDirs))
+	for i, sd := range watchedDirs {
 		if real, err := filepath.EvalSymlinks(sd); err == nil {
-			evalSearchDirs[i] = filepath.Clean(real)
+			evalWatchedDirs[i] = filepath.Clean(real)
 		} else {
-			evalSearchDirs[i] = sd
+			evalWatchedDirs[i] = sd
 		}
 	}
 
-	relSeen := make(map[string]bool)
-	var rels []string
-	addRel := func(rel string) {
+	missingSeen := make(map[string]bool)
+	var missing []string
+	addCandidate := func(cand string) {
+		if cand == "" {
+			return
+		}
+		cand = filepath.Clean(cand)
+		if depSet[cand] || missingSeen[cand] {
+			return
+		}
+		if _, err := os.Stat(cand); os.IsNotExist(err) {
+			missingSeen[cand] = true
+			missing = append(missing, cand)
+		}
+	}
+
+	allRelSeen := make(map[string]bool)
+	var allRels []string
+	quotedRelSeen := make(map[string]bool)
+	var quotedRels []string
+	addRel := func(rel string, alsoQuoted bool) {
 		rel = strings.TrimSpace(rel)
 		if rel == "" || filepath.IsAbs(rel) {
 			return
@@ -604,15 +669,29 @@ func collectShadowingMissingPaths(searchDirs, deps []string, depContents map[str
 		if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
 			return
 		}
-		if !relSeen[rel] {
-			relSeen[rel] = true
-			rels = append(rels, rel)
+		if !allRelSeen[rel] {
+			allRelSeen[rel] = true
+			allRels = append(allRels, rel)
+		}
+		if alsoQuoted && !quotedRelSeen[rel] {
+			quotedRelSeen[rel] = true
+			quotedRels = append(quotedRels, rel)
 		}
 	}
 
-	for _, content := range depContents {
-		for _, target := range extractIncludeTargets(content) {
-			addRel(target)
+	for depPath, content := range depContents {
+		depDir := filepath.Dir(filepath.Clean(depPath))
+		quoted, angled := extractIncludeTargets(content)
+		for _, q := range quoted {
+			// Quoted includes search the including file's own directory first,
+			// including relative "../..." paths.
+			if q != "" && !filepath.IsAbs(q) {
+				addCandidate(filepath.Join(depDir, q))
+			}
+			addRel(q, true)
+		}
+		for _, a := range angled {
+			addRel(a, false)
 		}
 	}
 	for _, dep := range deps {
@@ -624,28 +703,24 @@ func collectShadowingMissingPaths(searchDirs, deps []string, depContents map[str
 		if r, err := filepath.EvalSymlinks(cleanDep); err == nil {
 			realDep = filepath.Clean(r)
 		}
-		for i, sd := range searchDirs {
-			for _, pair := range [][2]string{{sd, cleanDep}, {evalSearchDirs[i], realDep}} {
+		for i, sd := range watchedDirs {
+			for _, pair := range [][2]string{{sd, cleanDep}, {evalWatchedDirs[i], realDep}} {
 				rel, err := filepath.Rel(pair[0], pair[1])
 				if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
-					addRel(rel)
+					addRel(rel, true)
 				}
 			}
 		}
 	}
 
-	missingSeen := make(map[string]bool)
-	var missing []string
 	for _, sd := range searchDirs {
-		for _, rel := range rels {
-			cand := filepath.Clean(filepath.Join(sd, rel))
-			if depSet[cand] || missingSeen[cand] {
-				continue
-			}
-			if _, err := os.Stat(cand); os.IsNotExist(err) {
-				missingSeen[cand] = true
-				missing = append(missing, cand)
-			}
+		for _, rel := range allRels {
+			addCandidate(filepath.Join(sd, rel))
+		}
+	}
+	for _, dd := range depDirs {
+		for _, rel := range quotedRels {
+			addCandidate(filepath.Join(dd, rel))
 		}
 	}
 	sort.Strings(missing)
@@ -731,7 +806,8 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 						}
 						searchDirs := collectIncludeSearchDirs(input.path, workDir, cmd.Env, effectiveArgs)
 						if stats, contents, err := statDepfilesWithContent(deps); err == nil && len(stats) > 0 {
-							if dirStats, err := statDepfileDirs(searchDirs); err == nil {
+							watchedDirs := collectWatchedDepDirs(searchDirs, deps)
+							if dirStats, err := statDepfileDirs(watchedDirs); err == nil {
 								missing := collectShadowingMissingPaths(searchDirs, deps, contents)
 								if raw, err := marshalDepfile(&depfileRecord{
 									Key:              depKey,
