@@ -22,8 +22,6 @@ import (
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
-	"path"
-	"strconv"
 )
 
 // Error describes a type-checking error (mirroring go/types.Error).
@@ -251,8 +249,6 @@ type erasedAliasPrep struct {
 	synthNames   map[string]bool
 	synthIdents  []*ast.Ident
 	synthExprs   []ast.Expr
-	synthNodes   []ast.Node
-	synthFiles   []*ast.File
 	clonedToOrig map[*ast.File]*ast.File
 }
 
@@ -275,17 +271,9 @@ func (p *erasedAliasPrep) restoreGoInfo(goPkg *gotypes.Package, goInfo *gotypes.
 		if goInfo.Types != nil {
 			delete(goInfo.Types, expr)
 		}
-	}
-	for _, node := range p.synthNodes {
-		if goInfo.Implicits != nil {
-			delete(goInfo.Implicits, node)
-		}
-	}
-	for _, sf := range p.synthFiles {
 		if goInfo.Scopes != nil {
-			delete(goInfo.Scopes, sf)
+			delete(goInfo.Scopes, expr)
 		}
-		deleteGoInfoFileVersion(goInfo, sf)
 	}
 	if len(p.clonedToOrig) > 0 {
 		for cloned, orig := range p.clonedToOrig {
@@ -295,7 +283,7 @@ func (p *erasedAliasPrep) restoreGoInfo(goPkg *gotypes.Package, goInfo *gotypes.
 					delete(goInfo.Scopes, cloned)
 				}
 			}
-			deleteGoInfoFileVersion(goInfo, cloned)
+			remapGoInfoFileVersion(goInfo, cloned, orig)
 		}
 	}
 	if len(p.uses) > 0 && goPkg != nil && goInfo.Uses != nil {
@@ -397,34 +385,50 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package) e
 		return res
 	}
 
-	resolveLocalFuncType := func(expr ast.Expr, startFile *ast.File) (*ast.FuncType, *ast.File, *ast.Ident) {
+	// resolveAliasTarget follows local alias chains to either:
+	//   - a *gotypes.Signature already type-checked in an earlier batch (prevSig), or
+	//   - an *ast.FuncType declared in the current batch (ft, ftFile).
+	resolveAliasTarget := func(expr ast.Expr, startFile *ast.File) (ft *ast.FuncType, ftFile *ast.File, prevSig *gotypes.Signature, origIdent *ast.Ident) {
 		e := unwrapAstParens(expr)
-		if ft, ok := e.(*ast.FuncType); ok {
-			return ft, startFile, nil
+		if f, ok := e.(*ast.FuncType); ok {
+			return f, startFile, nil, nil
 		}
-		origIdent, ok := e.(*ast.Ident)
+		orig, ok := e.(*ast.Ident)
 		if !ok {
-			return nil, nil, nil
+			return nil, nil, nil, nil
 		}
 		visited := make(map[string]bool)
-		cur := origIdent.Name
+		cur := orig.Name
 		for !visited[cur] {
 			visited[cur] = true
 			ad, exists := st.aliasDecls[cur]
 			if !exists {
-				return nil, nil, nil
+				return nil, nil, nil, nil
+			}
+			if _, inBatch := batchIndex[ad.file]; !inBatch {
+				// Target was already type-checked in an earlier Checker.Files
+				// batch; reuse its resolved *gotypes.Signature directly so all
+				// original imports, dot-imports, and ImporterFrom paths stay intact.
+				if goPkg != nil && goPkg.Scope() != nil {
+					if obj := goPkg.Scope().Lookup(cur); obj != nil {
+						if sig, ok := unaliasType(obj.Type()).(*gotypes.Signature); ok {
+							return nil, ad.file, sig, orig
+						}
+					}
+				}
+				return nil, nil, nil, nil
 			}
 			rhs := unwrapAstParens(ad.expr)
-			if ft, ok := rhs.(*ast.FuncType); ok {
-				return ft, ad.file, origIdent
+			if f, ok := rhs.(*ast.FuncType); ok {
+				return f, ad.file, nil, orig
 			}
 			nextID, ok := rhs.(*ast.Ident)
 			if !ok {
-				return nil, nil, nil
+				return nil, nil, nil, nil
 			}
 			cur = nextID.Name
 		}
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	var outFiles []*ast.File
@@ -474,8 +478,8 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package) e
 				if _, ok := parseTypeCallConvDirective(doc); !ok {
 					continue
 				}
-				ft, ftFile, origIdent := resolveLocalFuncType(ts.Type, f)
-				if ft == nil {
+				ft, ftFile, prevSig, origIdent := resolveAliasTarget(ts.Type, f)
+				if ft == nil && prevSig == nil {
 					continue
 				}
 				res.isolated[ts.Name.Name] = true
@@ -493,25 +497,43 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package) e
 					fCopy.Decls[di] = gdCopy
 				}
 				tsCopy := *ts
-				clonedFT, clonedIdents := cloneFuncTypeForAlias(ft)
-				res.synthExprs = append(res.synthExprs, clonedFT)
-				res.synthIdents = append(res.synthIdents, clonedIdents...)
-				if ftFile == f {
-					tsCopy.Type = clonedFT
-				} else {
-					// Keep the cloned FuncType in its declaring file (or a
-					// synthetic helper file carrying only the imports used by
-					// clonedFT when declaring file was checked in an earlier batch).
+				if prevSig != nil {
+					// Target came from an earlier batch: allocate a distinct,
+					// type-identical *gotypes.Signature directly without creating
+					// any synthetic *ast.File or re-invoking ImporterFrom.
 					synthName := st.nextSynthName()
 					if res.synthNames == nil {
 						res.synthNames = make(map[string]bool)
 					}
 					res.synthNames[synthName] = true
+					freshSig := gotypes.NewSignatureType(
+						prevSig.Recv(), nil, nil,
+						prevSig.Params(), prevSig.Results(), prevSig.Variadic(),
+					)
+					goPkg.Scope().Insert(gotypes.NewTypeName(token.NoPos, goPkg, synthName, freshSig))
 					refIdent := &ast.Ident{NamePos: origIdent.Pos(), Name: synthName}
-					if ftIdx, inBatch := batchIndex[ftFile]; inBatch {
+					paren := &ast.ParenExpr{Lparen: origIdent.Pos(), X: refIdent, Rparen: origIdent.End()}
+					res.synthIdents = append(res.synthIdents, refIdent)
+					res.synthExprs = append(res.synthExprs, paren)
+					tsCopy.Type = paren
+				} else {
+					clonedFT, clonedIdents := cloneFuncTypeForAlias(ft)
+					res.synthExprs = append(res.synthExprs, clonedFT)
+					res.synthIdents = append(res.synthIdents, clonedIdents...)
+					if ftFile == f {
+						tsCopy.Type = clonedFT
+					} else {
+						// Keep the cloned FuncType in its declaring file so all
+						// file-scoped imports and import aliases bind identically.
+						synthName := st.nextSynthName()
+						if res.synthNames == nil {
+							res.synthNames = make(map[string]bool)
+						}
+						res.synthNames[synthName] = true
 						declIdent := &ast.Ident{NamePos: ft.Pos(), Name: synthName}
+						refIdent := &ast.Ident{NamePos: origIdent.Pos(), Name: synthName}
 						res.synthIdents = append(res.synthIdents, declIdent, refIdent)
-						origFileCopy := ensureFileCopy(ftIdx)
+						origFileCopy := ensureFileCopy(batchIndex[ftFile])
 						origFileCopy.Decls = append(origFileCopy.Decls, &ast.GenDecl{
 							TokPos: ft.Pos(),
 							Tok:    token.TYPE,
@@ -523,27 +545,8 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package) e
 								},
 							},
 						})
-					} else {
-						declIdent := &ast.Ident{Name: synthName}
-						res.synthIdents = append(res.synthIdents, declIdent, refIdent)
-						clonedFT.Func = token.NoPos
-						typeDecl := &ast.GenDecl{
-							Tok: token.TYPE,
-							Specs: []ast.Spec{
-								&ast.TypeSpec{
-									Name:   declIdent,
-									Assign: 1,
-									Type:   clonedFT,
-								},
-							},
-						}
-						sf, impIdents, impNodes := buildSyntheticAliasFile(ftFile, typeDecl, clonedFT, goPkg)
-						res.synthIdents = append(res.synthIdents, impIdents...)
-						res.synthNodes = append(res.synthNodes, impNodes...)
-						res.synthFiles = append(res.synthFiles, sf)
-						outFiles = append(outFiles, sf)
+						tsCopy.Type = refIdent
 					}
-					tsCopy.Type = refIdent
 				}
 				gdCopy.Specs[si] = &tsCopy
 				res.uses = append(res.uses, erasedAliasUse{ident: origIdent, targetName: origIdent.Name})
@@ -554,123 +557,6 @@ func (st *erasedAliasState) prepare(files []*ast.File, goPkg *gotypes.Package) e
 		res.files = outFiles
 	}
 	return res
-}
-
-// buildSyntheticAliasFile creates a minimal synthetic *ast.File with token.NoPos
-// positions (so it never overlaps any real file's lexical scope) carrying only
-// the imports from origFile that are actually referenced by clonedFT.
-func buildSyntheticAliasFile(origFile *ast.File, typeDecl *ast.GenDecl, clonedFT *ast.FuncType, goPkg *gotypes.Package) (*ast.File, []*ast.Ident, []ast.Node) {
-	selPkgs := make(map[string]bool)
-	unqualIdents := make(map[string]bool)
-	fieldNames := make(map[*ast.Ident]bool)
-	recordFieldNames := func(fl *ast.FieldList) {
-		if fl == nil {
-			return
-		}
-		for _, field := range fl.List {
-			for _, name := range field.Names {
-				fieldNames[name] = true
-			}
-		}
-	}
-	recordFieldNames(clonedFT.Params)
-	recordFieldNames(clonedFT.Results)
-	selFields := make(map[*ast.Ident]bool)
-	ast.Inspect(clonedFT, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.SelectorExpr:
-			if id, ok := x.X.(*ast.Ident); ok && id != nil {
-				selPkgs[id.Name] = true
-			}
-			if x.Sel != nil {
-				selFields[x.Sel] = true
-			}
-		case *ast.Ident:
-			if x != nil && !fieldNames[x] && !selFields[x] {
-				unqualIdents[x.Name] = true
-			}
-		}
-		return true
-	})
-
-	importedByPath := make(map[string]*gotypes.Package)
-	if goPkg != nil {
-		for _, imp := range goPkg.Imports() {
-			if imp != nil {
-				importedByPath[imp.Path()] = imp
-			}
-		}
-	}
-
-	var impSpecs []ast.Spec
-	var fileImps []*ast.ImportSpec
-	var synthIdents []*ast.Ident
-	var synthNodes []ast.Node
-	if origFile != nil {
-		for _, imp := range origFile.Imports {
-			if imp == nil || imp.Path == nil {
-				continue
-			}
-			impPath, err := strconv.Unquote(imp.Path.Value)
-			if err != nil {
-				continue
-			}
-			needed := false
-			if imp.Name != nil {
-				switch imp.Name.Name {
-				case "_":
-					needed = false
-				case ".":
-					if p := importedByPath[impPath]; p != nil && p.Scope() != nil {
-						for name := range unqualIdents {
-							if p.Scope().Lookup(name) != nil {
-								needed = true
-								break
-							}
-						}
-					}
-				default:
-					needed = selPkgs[imp.Name.Name]
-				}
-			} else {
-				pkgName := path.Base(impPath)
-				if p := importedByPath[impPath]; p != nil && p.Name() != "" {
-					pkgName = p.Name()
-				}
-				needed = selPkgs[pkgName]
-			}
-			if !needed {
-				continue
-			}
-			specCopy := &ast.ImportSpec{
-				Path: &ast.BasicLit{Kind: token.STRING, Value: imp.Path.Value},
-			}
-			if imp.Name != nil {
-				nameCopy := &ast.Ident{Name: imp.Name.Name}
-				specCopy.Name = nameCopy
-				synthIdents = append(synthIdents, nameCopy)
-			} else {
-				synthNodes = append(synthNodes, specCopy)
-			}
-			impSpecs = append(impSpecs, specCopy)
-			fileImps = append(fileImps, specCopy)
-		}
-	}
-
-	var decls []ast.Decl
-	if len(impSpecs) > 0 {
-		decls = append(decls, &ast.GenDecl{Tok: token.IMPORT, Specs: impSpecs})
-	}
-	decls = append(decls, typeDecl)
-	pkgName := ""
-	if origFile != nil && origFile.Name != nil {
-		pkgName = origFile.Name.Name
-	}
-	return &ast.File{
-		Name:    &ast.Ident{Name: pkgName},
-		Decls:   decls,
-		Imports: fileImps,
-	}, synthIdents, synthNodes
 }
 
 func unwrapAstParens(e ast.Expr) ast.Expr {
@@ -711,10 +597,12 @@ func cloneFuncTypeForAlias(ft *ast.FuncType) (*ast.FuncType, []*ast.Ident) {
 		}
 		return out
 	}
+	params := cloneList(ft.Params)
+	results := cloneList(ft.Results)
 	return &ast.FuncType{
 		Func:    ft.Func,
-		Params:  cloneList(ft.Params),
-		Results: cloneList(ft.Results),
+		Params:  params,
+		Results: results,
 	}, clonedIdents
 }
 

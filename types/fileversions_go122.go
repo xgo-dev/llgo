@@ -21,8 +21,11 @@ func copyGoInfoFileVersions(dst map[*ast.File]string, goInfo *gotypes.Info) bool
 	return true
 }
 
-func deleteGoInfoFileVersion(goInfo *gotypes.Info, f *ast.File) {
+func remapGoInfoFileVersion(goInfo *gotypes.Info, cloned, orig *ast.File) {
 	if goInfo != nil && goInfo.FileVersions != nil {
-		delete(goInfo.FileVersions, f)
+		if v, ok := goInfo.FileVersions[cloned]; ok {
+			goInfo.FileVersions[orig] = v
+			delete(goInfo.FileVersions, cloned)
+		}
 	}
 }

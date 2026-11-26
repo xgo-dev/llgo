@@ -1822,41 +1822,68 @@ func TestIncrementalCheckerFilesErasedAliases(t *testing.T) {
 		}
 	})
 
-	// Case 3: Batch 1 declares GoFn (including with file-local renamed import and
-	// extra import unused by GoFn); Batch 2 declares //llgo:cdecl CFn = GoFn.
+	// Case 3: Batch 1 declares GoFn using directory-sensitive ImporterFrom AND a
+	// dot-imported package exporting Value (while GoFn has struct{ Value int });
+	// Batch 2 declares //llgo:cdecl CFn = GoFn and verifies zero synthetic Info nodes.
 	t.Run("Batch1GoFnBatch2CFn", func(t *testing.T) {
 		fset := token.NewFileSet()
-		dep1 := types.NewPackage("example.com/incdep", "incdep")
-		unusedTN := types.NewTypeName(token.NoPos, dep1, "Unused", nil)
-		_ = types.NewNamed(unusedTN, types.Typ[types.Int], nil)
-		dep1.Scope().Insert(unusedTN)
-		dep1.MarkComplete()
+		relDep := types.NewPackage("example.com/reldep", "reldep")
+		relT := types.NewNamed(types.NewTypeName(token.NoPos, relDep, "T", nil), types.Typ[types.Int32], nil)
+		relDep.Scope().Insert(relT.Obj())
+		relDep.MarkComplete()
 
-		chk, pkg := newChecker(fset, "example.com/inc3", map[string]*types.Package{
-			"unsafe":             types.Unsafe,
-			"example.com/incdep": dep1,
+		dotDep := types.NewPackage("example.com/dotdep", "dotdep")
+		dotDep.Scope().Insert(types.NewConst(token.NoPos, dotDep, "Value", types.Typ[types.Int], constant.MakeInt64(7)))
+		dotDep.MarkComplete()
+
+		strictImp := &dirStrictImporter{
+			wantDir: "/src/p",
+			pkgs: map[string]*types.Package{
+				"unsafe":             types.Unsafe,
+				"example.com/reldep": relDep,
+				"example.com/dotdep": dotDep,
+			},
+		}
+		ctx := types.NewContextWithConfig(types.ContextConfig{
+			Spec: target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"}),
 		})
-		fa := parse(t, fset, "a.go", `package inc
+		pkg := types.NewPackage("example.com/inc3", "inc")
+		info := &types.Info{
+			Types:        make(map[ast.Expr]types.TypeAndValue),
+			Defs:         make(map[*ast.Ident]types.Object),
+			Uses:         make(map[*ast.Ident]types.Object),
+			Implicits:    make(map[ast.Node]types.Object),
+			Selections:   make(map[*ast.SelectorExpr]*types.Selection),
+			Scopes:       make(map[ast.Node]*types.Scope),
+			Instances:    make(map[*ast.Ident]types.Instance),
+			FileVersions: make(map[*ast.File]string),
+		}
+		chk := types.NewChecker(&types.Config{
+			Context:   ctx,
+			GoVersion: "go1.20",
+			Importer:  strictImp,
+		}, fset, pkg, info)
+
+		fa := parse(t, fset, "/src/p/a.go", `//go:build go1.22
+
+package inc
 import (
-	wire "unsafe"
-	"example.com/incdep"
+	wire "example.com/reldep"
+	. "example.com/dotdep"
 )
-type GoFn = func(int)
-type GoPtrFn = func(wire.Pointer)
-var _ incdep.Unused
+type GoFn = func(wire.T, struct{ Value int })
+var UsedDot = Value
 func helper(k int) int { return k }
 `)
-		fb := parse(t, fset, "b.go", `package inc
+		fb := parse(t, fset, "/src/p/b.go", `//go:build go1.22
+
+package inc
 import "unsafe"
 //llgo:cdecl
 type CFn = GoFn
-//llgo:cdecl
-type CPtrFn = GoPtrFn
 const (
-	SizeGoFn    = unsafe.Sizeof(GoFn(nil))
-	SizeCFn     = unsafe.Sizeof(CFn(nil))
-	SizeGoPtrFn = unsafe.Sizeof(GoPtrFn(nil))
-	SizeCPtrFn  = unsafe.Sizeof(CPtrFn(nil))
+	SizeGoFn = unsafe.Sizeof(GoFn(nil))
+	SizeCFn  = unsafe.Sizeof(CFn(nil))
 )
 `)
 		if err := chk.Files([]*ast.File{fa}); err != nil {
@@ -1866,26 +1893,113 @@ const (
 			t.Fatalf("batch 2 Files: %v", err)
 		}
 		assertNoSynthInScope(t, pkg)
-		for name, want := range map[string]int64{
-			"SizeGoFn":    16,
-			"SizeCFn":     8,
-			"SizeGoPtrFn": 16,
-			"SizeCPtrFn":  8,
-		} {
+		for name, want := range map[string]int64{"SizeGoFn": 16, "SizeCFn": 8} {
 			got, ok := constant.Int64Val(pkg.Scope().Lookup(name).(*types.Const).Val())
 			if !ok || got != want {
 				t.Fatalf("%s = %v, want %d", name, got, want)
 			}
 		}
-		for name, wantCC := range map[string]types.CallConv{
-			"GoFn":    types.Go,
-			"CFn":     types.CDecl,
-			"GoPtrFn": types.Go,
-			"CPtrFn":  types.CDecl,
-		} {
+		for name, wantCC := range map[string]types.CallConv{"GoFn": types.Go, "CFn": types.CDecl} {
 			sig := types.Unalias(pkg.Scope().Lookup(name).Type()).(*types.Signature)
 			if sig.CallConv() != wantCC {
 				t.Fatalf("%s CallConv = %v, want %v", name, sig.CallConv(), wantCC)
+			}
+		}
+		// Every node recorded in Info must come from the caller's original ASTs.
+		origNodes := make(map[ast.Node]bool)
+		for _, rf := range []*ast.File{fa, fb} {
+			ast.Inspect(rf, func(n ast.Node) bool {
+				if n != nil {
+					origNodes[n] = true
+				}
+				return true
+			})
+		}
+		for id := range info.Defs {
+			if !origNodes[id] {
+				t.Fatalf("synthetic ident %q leaked into Info.Defs", id.Name)
+			}
+		}
+		for id := range info.Uses {
+			if !origNodes[id] {
+				t.Fatalf("synthetic ident %q leaked into Info.Uses", id.Name)
+			}
+		}
+		for expr := range info.Types {
+			if !origNodes[expr] {
+				t.Fatalf("synthetic expr %T leaked into Info.Types", expr)
+			}
+		}
+		for node := range info.Scopes {
+			if !origNodes[node] {
+				t.Fatalf("synthetic node %T leaked into Info.Scopes", node)
+			}
+		}
+		for node := range info.Implicits {
+			if !origNodes[node] {
+				t.Fatalf("synthetic node %T leaked into Info.Implicits", node)
+			}
+		}
+		for f := range info.FileVersions {
+			if !origNodes[f] {
+				t.Fatalf("synthetic file leaked into Info.FileVersions")
+			}
+		}
+		// Cloned file fb must preserve the exact same per-file language version
+		// as unmodified control file fa (both //go:build go1.22 under GoVersion=go1.20).
+		if info.FileVersions[fa] == "" {
+			t.Fatal("missing FileVersions for control file fa")
+		}
+		if info.FileVersions[fb] != info.FileVersions[fa] {
+			t.Fatalf("FileVersions[fb] = %q, want %q (matching unmodified control fa)", info.FileVersions[fb], info.FileVersions[fa])
+		}
+		// Also verify same-batch cross-file rewriting preserves //go:build go1.22
+		// FileVersions and leaves zero synthetic nodes in Info.
+		fc := parse(t, fset, "/src/p/c.go", "//go:build go1.22\n\npackage inc\ntype GoFnBatch3 = func(x int)\n")
+		fd := parse(t, fset, "/src/p/d.go", "//go:build go1.22\n\npackage inc\n//llgo:cdecl\ntype CFnBatch3 = GoFnBatch3\n")
+		if err := chk.Files([]*ast.File{fc, fd}); err != nil {
+			t.Fatalf("batch 3 Files: %v", err)
+		}
+		assertNoSynthInScope(t, pkg)
+		for _, rf := range []*ast.File{fc, fd} {
+			ast.Inspect(rf, func(n ast.Node) bool {
+				if n != nil {
+					origNodes[n] = true
+				}
+				return true
+			})
+			if info.FileVersions[rf] != info.FileVersions[fa] {
+				t.Fatalf("FileVersions[%s] = %q, want %q", fset.Position(rf.Pos()).Filename, info.FileVersions[rf], info.FileVersions[fa])
+			}
+		}
+		for id := range info.Defs {
+			if !origNodes[id] {
+				t.Fatalf("batch 3 synthetic ident %q leaked into Info.Defs", id.Name)
+			}
+		}
+		for id := range info.Uses {
+			if !origNodes[id] {
+				t.Fatalf("batch 3 synthetic ident %q leaked into Info.Uses", id.Name)
+			}
+		}
+		for expr := range info.Types {
+			if !origNodes[expr] {
+				t.Fatalf("batch 3 synthetic expr %T leaked into Info.Types", expr)
+			}
+		}
+		for node := range info.Scopes {
+			if !origNodes[node] {
+				t.Fatalf("batch 3 synthetic node %T leaked into Info.Scopes", node)
+			}
+		}
+		for node := range info.Implicits {
+			if !origNodes[node] {
+				t.Fatalf("batch 3 synthetic node %T leaked into Info.Implicits", node)
+			}
+		}
+		for f := range info.FileVersions {
+			if !origNodes[f] {
+				t.Fatalf("batch 3 synthetic file leaked into Info.FileVersions")
 			}
 		}
 		var retPos token.Pos
@@ -1900,6 +2014,25 @@ const (
 			t.Fatalf("Eval(k + 1) at batch 1 return pos = %v, %v; want int", tv, err)
 		}
 	})
+}
+
+type dirStrictImporter struct {
+	wantDir string
+	pkgs    map[string]*types.Package
+}
+
+func (d *dirStrictImporter) Import(path string) (*types.Package, error) {
+	return nil, fmt.Errorf("unexpected Import(%q) without dir", path)
+}
+
+func (d *dirStrictImporter) ImportFrom(path, dir string, _ types.ImportMode) (*types.Package, error) {
+	if path != "unsafe" && dir != d.wantDir {
+		return nil, fmt.Errorf("ImportFrom(%q, dir=%q): want dir %q", path, dir, d.wantDir)
+	}
+	if p, ok := d.pkgs[path]; ok {
+		return p, nil
+	}
+	return nil, fmt.Errorf("package %q not found", path)
 }
 
 func TestConcurrentEvalAndCheckExprAfterPostCheckScopeInsert(t *testing.T) {

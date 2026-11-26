@@ -64,20 +64,22 @@ type CFn = Mid
 	}
 
 	// Cross-file and multi-batch incremental prepare: batch 1 declares GoFn with
-	// a renamed import plus an unused-by-GoFn import; batch 2 adds //llgo:cdecl CFn = GoFn.
-	fa, err := parser.ParseFile(fset, "a.go", "package x\nimport wire \"unsafe\"\nimport \"unsafe\"\ntype GoFn = func(wire.Pointer)\nvar _ unsafe.Pointer\n", parser.ParseComments)
+	// a renamed import; batch 2 adds //llgo:cdecl CFn = GoFn (reusing the resolved
+	// signature directly with zero synthetic files); batch 3 adds a cross-file pair
+	// with //go:build go1.22 to verify FileVersions remapping and Info node hygiene.
+	fa, err := parser.ParseFile(fset, "a.go", "//go:build go1.22\n\npackage x\nimport wire \"unsafe\"\ntype GoFn = func(wire.Pointer)\n", parser.ParseComments)
 	if err != nil {
 		t.Fatalf("ParseFile a.go: %v", err)
 	}
-	fb, err := parser.ParseFile(fset, "b.go", "package x\n//llgo:cdecl\ntype CFn = GoFn\n", parser.ParseComments)
+	fb, err := parser.ParseFile(fset, "b.go", "//go:build go1.22\n\npackage x\n//llgo:cdecl\ntype CFn = GoFn\n", parser.ParseComments)
 	if err != nil {
 		t.Fatalf("ParseFile b.go: %v", err)
 	}
-	fc, err := parser.ParseFile(fset, "c.go", "package x\ntype GoFn2 = func(int)\n", parser.ParseComments)
+	fc, err := parser.ParseFile(fset, "c.go", "//go:build go1.22\n\npackage x\ntype GoFn2 = func(v int)\n", parser.ParseComments)
 	if err != nil {
 		t.Fatalf("ParseFile c.go: %v", err)
 	}
-	fd, err := parser.ParseFile(fset, "d.go", "package x\n//llgo:cdecl\ntype CFn2 = GoFn2\n", parser.ParseComments)
+	fd, err := parser.ParseFile(fset, "d.go", "//go:build go1.22\n\npackage x\n//llgo:cdecl\ntype CFn2 = GoFn2\n", parser.ParseComments)
 	if err != nil {
 		t.Fatalf("ParseFile d.go: %v", err)
 	}
@@ -90,7 +92,9 @@ type CFn = Mid
 		Implicits: make(map[ast.Node]gotypes.Object),
 		Scopes:    make(map[ast.Node]*gotypes.Scope),
 	}
+	initGoInfoFileVersions(xGoInfo)
 	var xGoCfg gotypes.Config
+	xGoCfg.GoVersion = "go1.20"
 	xGoCfg.Importer = &unsafeOnlyGoImporter{}
 	xGoChecker := gotypes.NewChecker(&xGoCfg, fset, xGoPkg, xGoInfo)
 
@@ -101,9 +105,9 @@ type CFn = Mid
 	}
 	p1.restoreGoInfo(xGoPkg, xGoInfo, []*ast.File{fa})
 
-	// Batch 2: fb alone (references GoFn from earlier batch via synthetic file).
+	// Batch 2: fb alone (reuses GoFn's resolved *gotypes.Signature directly).
 	p2 := xst.prepare([]*ast.File{fb}, xGoPkg)
-	if !p2.isolated["CFn"] || len(p2.synthFiles) != 1 || len(p2.synthNames) != 1 {
+	if !p2.isolated["CFn"] || len(p2.files) != 1 || len(p2.synthNames) != 1 {
 		t.Fatalf("batch 2 prep = %#v", p2)
 	}
 	if err := xGoChecker.Files(p2.files); err != nil {
@@ -122,6 +126,48 @@ type CFn = Mid
 	p3.restoreGoInfo(xGoPkg, xGoInfo, []*ast.File{fc, fd})
 	if xGoInfo.Scopes[fa] == nil || xGoInfo.Scopes[fb] == nil || xGoInfo.Scopes[fc] == nil || xGoInfo.Scopes[fd] == nil {
 		t.Fatal("restoreGoInfo did not preserve original file scopes across batches")
+	}
+	// Verify every node recorded in xGoInfo belongs to the original caller ASTs,
+	// and FileVersions was migrated back to original files on Go 1.22+.
+	origNodes := make(map[ast.Node]bool)
+	for _, rf := range []*ast.File{fa, fb, fc, fd} {
+		ast.Inspect(rf, func(n ast.Node) bool {
+			if n != nil {
+				origNodes[n] = true
+			}
+			return true
+		})
+	}
+	for id := range xGoInfo.Defs {
+		if !origNodes[id] {
+			t.Fatalf("synthetic ident %q leaked into goInfo.Defs", id.Name)
+		}
+	}
+	for id := range xGoInfo.Uses {
+		if !origNodes[id] {
+			t.Fatalf("synthetic ident %q leaked into goInfo.Uses", id.Name)
+		}
+	}
+	for expr := range xGoInfo.Types {
+		if !origNodes[expr] {
+			t.Fatalf("synthetic expr %T leaked into goInfo.Types", expr)
+		}
+	}
+	for node := range xGoInfo.Scopes {
+		if !origNodes[node] {
+			t.Fatalf("synthetic node %T leaked into goInfo.Scopes", node)
+		}
+	}
+	fv := make(map[*ast.File]string)
+	if copyGoInfoFileVersions(fv, xGoInfo) {
+		for _, rf := range []*ast.File{fa, fb, fc, fd} {
+			if fv[rf] != "go1.22" {
+				t.Fatalf("FileVersions[%s] = %q, want go1.22", rf.Name.Name, fv[rf])
+			}
+		}
+		if len(fv) != 4 {
+			t.Fatalf("synthetic file leaked into FileVersions: len=%d", len(fv))
+		}
 	}
 	synthPkg := NewPackage("example.com/synthblock", "synthblock")
 	synthPkg.synthGoNames = xst.synthNames
