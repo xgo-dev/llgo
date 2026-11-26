@@ -729,3 +729,97 @@ func assertDirectInterfaceMatrixEdge(t *testing.T, caller Function, attrName str
 		}
 	}
 }
+
+func TestDirectEnvClosureNoAlloc(t *testing.T) {
+	prog := NewProgram(&Target{GOOS: "darwin", GOARCH: "arm64"})
+	defer prog.Dispose()
+	if !prog.HasHiddenClosureEnv() {
+		t.Fatal("darwin/arm64 should report hidden closure env ABI")
+	}
+	wasmProg := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm"})
+	defer wasmProg.Dispose()
+	if wasmProg.HasHiddenClosureEnv() {
+		t.Fatal("wasip1/wasm should report explicit closure env ABI")
+	}
+
+	pkg := prog.NewPackage("direct", "example.com/direct")
+	intPtr := types.NewPointer(types.Typ[types.Int])
+	envVar := types.NewParam(token.NoPos, nil, "$env", intPtr)
+	sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(token.NoPos, nil, "", types.Typ[types.Int])), false)
+
+	callee := pkg.NewDirectEnvFunc("read", sig, GoDecl, envVar, false, false)
+	if !callee.NeedsEnv() || !callee.DirectEnv() || callee.DirectEnvNullable() {
+		t.Fatalf("NewDirectEnvFunc flags = (NeedsEnv=%v, DirectEnv=%v, DirectEnvNullable=%v), want (true, true, false)",
+			callee.NeedsEnv(), callee.DirectEnv(), callee.DirectEnvNullable())
+	}
+	cb := callee.MakeBody(1)
+	cb.Return(cb.Load(callee.FreeVar(cb, 0)))
+
+	makerSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(token.NoPos, nil, "p", intPtr)),
+		types.NewTuple(types.NewVar(token.NoPos, nil, "", sig)), false)
+	maker := pkg.NewFunc("make", makerSig, GoDecl)
+	mb := maker.MakeBody(1)
+	mb.Return(mb.MakeClosure(callee.Expr, []Expr{maker.Param(0)}))
+
+	makerIR := pkg.Module().NamedFunction("make").String()
+	if strings.Contains(makerIR, "AllocU") || strings.Contains(makerIR, "AllocZ") || strings.Contains(makerIR, directClosureNilEnvName) {
+		t.Fatalf("non-nullable direct env closure unexpectedly allocated wrapper or used nil sentinel:\n%s", makerIR)
+	}
+	calleeIR := pkg.Module().NamedFunction("read").String()
+	if !strings.Contains(calleeIR, "swiftself") || strings.Contains(calleeIR, directClosureNilEnvName) {
+		t.Fatalf("non-nullable direct env callee unexpected IR:\n%s", calleeIR)
+	}
+
+	nullableCallee := pkg.NewDirectEnvFunc("readNullable", sig, GoDecl, envVar, true, false)
+	if !nullableCallee.NeedsEnv() || !nullableCallee.DirectEnv() || !nullableCallee.DirectEnvNullable() {
+		t.Fatalf("nullable NewDirectEnvFunc flags = (NeedsEnv=%v, DirectEnv=%v, DirectEnvNullable=%v), want (true, true, true)",
+			nullableCallee.NeedsEnv(), nullableCallee.DirectEnv(), nullableCallee.DirectEnvNullable())
+	}
+	ncb := nullableCallee.MakeBody(1)
+	ncb.Return(ncb.Load(nullableCallee.FreeVar(ncb, 0)))
+	nullableMaker := pkg.NewFunc("makeNullable", makerSig, GoDecl)
+	nmb := nullableMaker.MakeBody(1)
+	nmb.Return(nmb.MakeClosure(nullableCallee.Expr, []Expr{nullableMaker.Param(0)}))
+
+	nullableMakerIR := pkg.Module().NamedFunction("makeNullable").String()
+	if strings.Contains(nullableMakerIR, "AllocU") || strings.Contains(nullableMakerIR, "AllocZ") {
+		t.Fatalf("nullable direct env closure unexpectedly allocated wrapper:\n%s", nullableMakerIR)
+	}
+	if !strings.Contains(nullableMakerIR, directClosureNilEnvName) {
+		t.Fatalf("nullable direct env closure missing nil-env sentinel:\n%s", nullableMakerIR)
+	}
+	nullableCalleeIR := pkg.Module().NamedFunction("readNullable").String()
+	if !strings.Contains(nullableCalleeIR, directClosureNilEnvName) {
+		t.Fatalf("nullable direct env callee missing sentinel decode:\n%s", nullableCalleeIR)
+	}
+
+	mustPanic := func(name string, fn func()) {
+		t.Helper()
+		defer func() {
+			if recover() == nil {
+				t.Fatalf("%s did not panic", name)
+			}
+		}()
+		fn()
+	}
+	mustPanic("nil direct env", func() {
+		pkg.NewDirectEnvFunc("bad-nil", sig, GoDecl, nil, false, false)
+	})
+	mustPanic("non-pointer direct env", func() {
+		intVar := types.NewParam(token.NoPos, nil, "$env", types.Typ[types.Int])
+		pkg.NewDirectEnvFunc("bad-int", sig, GoDecl, intVar, false, false)
+	})
+	mustPanic("conflicting direct env nullability", func() {
+		pkg.NewDirectEnvFunc("read", sig, GoDecl, envVar, true, false)
+	})
+	mustPanic("DirectEnvValue on non-direct func", func() {
+		maker.DirectEnvValue(mb)
+	})
+	mustPanic("direct env index out of range", func() {
+		callee.FreeVar(cb, 1)
+	})
+	mustPanic("direct env binding mismatch", func() {
+		mb.MakeClosure(callee.Expr, nil)
+	})
+}

@@ -34,9 +34,7 @@ func main() {
 	// ARM64-LABEL: define i1 @"main.main$1"(ptr swiftself %0, i64 %1){{.*}} {
 	// AMD64-LABEL: define i1 @"main.main$1"(ptr nest %0, i64 %1){{.*}} {
 	// CHECK: [[ITER_VALUE:%[0-9]+]] = add i64 %1, 1
-	// CHECK: [[ITER_ENV:%[0-9]+]] = load { ptr }, ptr %0
-	// CHECK-NEXT: [[ITER_GOT:%[0-9]+]] = extractvalue { ptr } [[ITER_ENV]], 0
-	// CHECK-NEXT: store i64 [[ITER_VALUE]], ptr [[ITER_GOT]]
+	// CHECK-NEXT: store i64 [[ITER_VALUE]], ptr %0
 	// CHECK-NEXT: ret i1 false
 
 	tree.Ascend(func(v int) bool {

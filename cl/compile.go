@@ -533,6 +533,105 @@ func (p *context) makeClosureCtx(fn *ssa.Function, pkg *types.Package, vars []*s
 	return types.NewParam(token.NoPos, pkg, "$env", t)
 }
 
+func (p *context) makeDirectClosureEnv(fn *ssa.Function, pkg *types.Package, v *ssa.FreeVar) *types.Var {
+	oldGoFn := p.goFn
+	p.goFn = fn
+	defer func() {
+		p.goFn = oldGoFn
+	}()
+
+	typ := v.Type()
+	if p.options.EscapeAnalysis.CaptureByValue(v) {
+		typ = types.Unalias(typ).Underlying().(*types.Pointer).Elem()
+	}
+	return types.NewParam(token.NoPos, pkg, "$env", p.patchType(typ))
+}
+
+func isDirectClosurePointerType(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	switch u := types.Unalias(t).Underlying().(type) {
+	case *types.Pointer, *types.Map, *types.Chan:
+		return true
+	case *types.Basic:
+		return u.Kind() == types.UnsafePointer
+	}
+	return false
+}
+
+// canUseDirectSinglePtrClosureEnv reports whether a closure with a single
+// pointer-typed capture can pass that pointer directly in the closure's
+// hidden environment slot instead of allocating a pointer-sized wrapper
+// struct. Nullable captures encode nil with the shared non-nil sentinel so
+// closure.env != nil continues to distinguish env-bearing entries from no-env
+// functions (including native callback conversions and reflection).
+func (p *context) canUseDirectSinglePtrClosureEnv(f *ssa.Function) bool {
+	if f == nil || len(f.FreeVars) != 1 || p.canElideZeroSizedClosureEnv(f) {
+		return false
+	}
+	if p.prog == nil || !p.prog.HasHiddenClosureEnv() {
+		return false
+	}
+	fv := f.FreeVars[0]
+	oldGoFn := p.goFn
+	p.goFn = f
+	defer func() {
+		p.goFn = oldGoFn
+	}()
+	typ := fv.Type()
+	if p.options.EscapeAnalysis.CaptureByValue(fv) {
+		ptr, ok := types.Unalias(typ).Underlying().(*types.Pointer)
+		if !ok || !p.directCaptureByValueUsesValid(fv) {
+			return false
+		}
+		typ = ptr.Elem()
+	}
+	return isDirectClosurePointerType(p.patchType(typ))
+}
+
+func (p *context) directCaptureByValueUsesValid(fv *ssa.FreeVar) bool {
+	refs, ok := nonDebugReferrers(fv)
+	if !ok {
+		return false
+	}
+	for _, ref := range refs {
+		switch use := ref.(type) {
+		case *ssa.UnOp:
+			if use.Op != token.MUL || use.X != fv {
+				return false
+			}
+		case *ssa.MakeClosure:
+			inner, ok := use.Fn.(*ssa.Function)
+			if !ok {
+				return false
+			}
+			for i, binding := range use.Bindings {
+				if binding != fv {
+					continue
+				}
+				if i >= len(inner.FreeVars) || !p.options.EscapeAnalysis.CaptureByValue(inner.FreeVars[i]) {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (p *context) isDirectCaptureByValueFreeVar(fv *ssa.FreeVar) bool {
+	return fv != nil && p.fn != nil && p.fn.DirectEnv() && fv.Parent() == p.goFn && p.options.EscapeAnalysis.CaptureByValue(fv)
+}
+
+func (p *context) directClosureEnvNullable(f *ssa.Function) bool {
+	// Source closures capturing a mutable variable by address receive a
+	// non-nil lexical cell pointer; bound wrappers and CaptureByValue pointer
+	// captures may hold nil at runtime and use the shared non-nil sentinel.
+	return f.Synthetic != "" || p.options.EscapeAnalysis.CaptureByValue(f.FreeVars[0])
+}
+
 // canElideZeroSizedClosureEnv reports whether a source closure can recreate
 // all of its captured variables from the module's zero-sized sentinel. Go SSA
 // represents a lexical capture as a pointer to the captured variable. Captured
@@ -710,10 +809,15 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		fullName := declarationFuncName(llssa.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())
 		hasExplicitEnv = p.prog.HasClosureEnvDirective(p.goProg.Fset, fullName, decl.Pos())
 	}
+	directFreeVarEnv := !elideFreeVarEnv && !hasExplicitEnv && p.canUseDirectSinglePtrClosureEnv(f)
+	directFreeVarNullable := directFreeVarEnv && p.directClosureEnvNullable(f)
 	hasCtx := hasFreeVars && !elideFreeVarEnv || hasExplicitEnv
 	var ctx *types.Var
 	if elideFreeVarEnv {
 		dbgInstrln("==> NewZeroSizedClosure", name, "type:", sig)
+	} else if directFreeVarEnv {
+		dbgInstrln("==> NewDirectClosure", name, "type:", sig)
+		ctx = p.makeDirectClosureEnv(f, pkgTypes, f.FreeVars[0])
 	} else if hasFreeVars {
 		dbgInstrln("==> NewClosure", name, "type:", sig)
 		ctx = p.makeClosureCtx(f, pkgTypes, f.FreeVars)
@@ -724,7 +828,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		dbgInstrln("==> NewFunc", name, "type:", sig.Recv(), sig, "ftype:", ftype)
 	}
 	if fn != nil {
-		if fn.NeedsEnv() != hasCtx {
+		if fn.NeedsEnv() != hasCtx || fn.DirectEnv() != directFreeVarEnv || fn.DirectEnvNullable() != directFreeVarNullable {
 			panic("conflicting closure environment ABI for " + name)
 		}
 		if fn.HasBody() {
@@ -747,7 +851,11 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			}
 		}
 		if hasCtx {
-			fn = pkg.NewEnvFunc(name, sig, cc, ctx, p.needsLinkOnce(f))
+			if directFreeVarEnv {
+				fn = pkg.NewDirectEnvFunc(name, sig, cc, ctx, directFreeVarNullable, p.needsLinkOnce(f))
+			} else {
+				fn = pkg.NewEnvFunc(name, sig, cc, ctx, p.needsLinkOnce(f))
+			}
 		} else {
 			fn = pkg.NewFuncEx(name, sig, cc, false, p.needsLinkOnce(f))
 		}
@@ -1189,6 +1297,10 @@ func (p *context) debugRef(b llssa.Builder, v *ssa.DebugRef) {
 	scope := variable.Parent()
 	diScope := b.DIScope(p.fn, scope)
 	if v.IsAddr {
+		if fv, ok := v.X.(*ssa.FreeVar); ok && p.isDirectCaptureByValueFreeVar(fv) {
+			b.DIValue(variable, value, dbgVar, diScope, pos, b.Func.Block(v.Block().Index))
+			return
+		}
 		b.DIDeclare(variable, value, dbgVar, diScope, pos, b.Func.Block(v.Block().Index))
 	} else {
 		b.DIValue(variable, value, dbgVar, diScope, pos, b.Func.Block(v.Block().Index))
@@ -1796,6 +1908,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.UnOp:
 		pointerNilChecked := false
 		if v.Op == token.MUL {
+			if fv, ok := v.X.(*ssa.FreeVar); ok && p.isDirectCaptureByValueFreeVar(fv) {
+				ret = p.fn.DirectEnvValue(b)
+				break
+			}
 			if pos, ok := p.recvNilDerefChecks[v]; ok {
 				p.recordPanicSite(b, pos)
 				return p.compileCheckedDeref(b, v)
@@ -2065,13 +2181,17 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		var bindings []llssa.Expr
 		goFn, _ := v.Fn.(*ssa.Function)
 		if !p.canElideZeroSizedClosureEnv(goFn) {
-			bindings = p.compileValues(b, v.Bindings, 0)
-			if goFn != nil {
-				for i, freeVar := range goFn.FreeVars {
-					if p.options.EscapeAnalysis.CaptureByValue(freeVar) {
-						bindings[i] = b.Load(bindings[i])
+			bindings = make([]llssa.Expr, len(v.Bindings))
+			for i, binding := range v.Bindings {
+				if goFn != nil && i < len(goFn.FreeVars) && p.options.EscapeAnalysis.CaptureByValue(goFn.FreeVars[i]) {
+					if fv, ok := binding.(*ssa.FreeVar); ok && p.isDirectCaptureByValueFreeVar(fv) {
+						bindings[i] = p.fn.DirectEnvValue(b)
+						continue
 					}
+					bindings[i] = b.Load(p.compileValue(b, binding))
+					continue
 				}
+				bindings[i] = p.compileValue(b, binding)
 			}
 		}
 		ret = b.MakeClosureEx(fn, bindings, !p.stackStorage(v))
@@ -2791,6 +2911,9 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 			if freeVar == v {
 				if p.canElideZeroSizedClosureEnv(fn) {
 					return p.elidedZeroSizedFreeVar(b, v)
+				}
+				if p.isDirectCaptureByValueFreeVar(v) {
+					return p.fn.DirectEnvValue(b)
 				}
 				if p.options.EscapeAnalysis.CaptureByValue(v) {
 					return b.FieldAddr(p.fn.Env(), idx)

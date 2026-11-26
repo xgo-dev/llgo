@@ -13,8 +13,7 @@ package main
 // CHECK: @[[POST_LOOP:[0-9]+]] = private unnamed_addr constant [9 x i8] c"post-loop"
 // CHECK-LABEL: define %"{{.*}}Slice" @main.complexOrder(){{.*}} {
 // CHECK: [[RESULT_SLOT:%[0-9]+]] = call ptr @"{{.*}}AllocZ"(i64 24)
-// CHECK: store ptr [[RESULT_SLOT]], ptr [[RECORD_ENV_SLOT:%[0-9]+]]
-// CHECK: [[RECORD_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.complexOrder$1", ptr undef }, ptr [[RECORD_ENV:%[0-9]+]], 1
+// CHECK-NEXT: [[RECORD_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.complexOrder$1", ptr undef }, ptr [[RESULT_SLOT]], 1
 // CHECK-NEXT: [[FINAL_LABEL:%[0-9]+]] = call %"{{.*}}String" @main.label1(%"{{.*}}String" { ptr @[[CLEANUP_FINAL]], i64 13 }, i64 0)
 // CHECK-NEXT: [[DEFER_SLOT:%[0-9]+]] = call ptr @"{{.*}}ThreadDeferSlot"()
 // CHECK-NEXT: [[PREVIOUS_DEFER:%[0-9]+]] = load ptr, ptr [[DEFER_SLOT]]
@@ -70,17 +69,14 @@ package main
 // CHECK-NEXT: store ptr [[RESTORED_DEFER]], ptr [[DEFER_SLOT]]
 // ARM64-LABEL: define void @"main.complexOrder$1"(ptr swiftself %0, %"{{.*}}String" %1){{.*}} {
 // AMD64-LABEL: define void @"main.complexOrder$1"(ptr nest %0, %"{{.*}}String" %1){{.*}} {
-// CHECK: [[RECORD_ENV_VALUE:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[RECORD_RESULT_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECORD_ENV_VALUE]], 0
-// CHECK: [[OLD_RESULT:%[0-9]+]] = load %"{{.*}}Slice", ptr [[RECORD_RESULT_SLOT]]
+// CHECK: [[OLD_RESULT:%[0-9]+]] = load %"{{.*}}Slice", ptr %0
 // CHECK: store %"{{.*}}String" %1, ptr %{{[0-9]+}}
 // CHECK: [[APPEND_DATA:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[APPEND_SLICE:%[0-9]+]], 0
 // CHECK-NEXT: [[APPEND_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[APPEND_SLICE]], 1
 // CHECK: call void @llvm.memmove.p0.p0.i64(ptr %{{[0-9]+}}, ptr [[APPEND_DATA]], i64 %{{[0-9]+}}, i1 false)
 // CHECK: call %"{{.*}}Slice" @"{{.*}}SliceAppend"(%"{{.*}}Slice" [[OLD_RESULT]], ptr [[APPEND_DATA]], i64 [[APPEND_LEN]], i64 16, i1 true)
 // CHECK: [[NEW_RESULT:%[0-9]+]] = phi %"{{.*}}Slice"
-// CHECK-NEXT: [[UPDATED_RESULT_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECORD_ENV_VALUE]], 0
-// CHECK: store %"{{.*}}Slice" [[NEW_RESULT]], ptr [[UPDATED_RESULT_SLOT]]
+// CHECK: store %"{{.*}}Slice" [[NEW_RESULT]], ptr %0
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[ORDER:%[0-9]+]] = call %"{{.*}}Slice" @main.complexOrder()
 // CHECK-NEXT: [[ORDER_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[ORDER]], 1
