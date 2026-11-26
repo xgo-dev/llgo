@@ -47,6 +47,12 @@ func scanStart(blocking int32) int32
 //go:linkname scanFetch C.llgo_wifi_scan_fetch
 func scanFetch(out *ApInfo, max int32, count *int32) int32
 
+//go:linkname setPowerSave C.llgo_wifi_set_ps
+func setPowerSave(ps int32) int32
+
+//go:linkname getPowerSave C.llgo_wifi_get_ps
+func getPowerSave(ps *int32) int32
+
 //go:linkname connect C.llgo_wifi_connect
 func connect() int32
 

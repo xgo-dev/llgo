@@ -99,6 +99,7 @@ func TestStubReportsUnsupported(t *testing.T) {
 		"Disconnect":     Disconnect(),
 		"ScanStart":      ScanStart(false),
 		"PrintVersion":   PrintVersion(),
+		"SetPowerSave":   SetPowerSave(PowerSaveMinModem),
 	} {
 		if !errors.Is(err, unsupported) {
 			t.Fatalf("%s on a host build = %v, want errUnsupported (0x%X)", name, err, errUnsupported)
@@ -107,6 +108,9 @@ func TestStubReportsUnsupported(t *testing.T) {
 
 	if _, err := GetAPConfig(); !errors.Is(err, unsupported) {
 		t.Fatalf("GetAPConfig = %v, want errUnsupported", err)
+	}
+	if _, err := GetPowerSave(); !errors.Is(err, unsupported) {
+		t.Fatalf("GetPowerSave = %v, want errUnsupported", err)
 	}
 	if ip, err := GetAPIP(); ip != 0 || !errors.Is(err, unsupported) {
 		t.Fatalf("GetAPIP = (%#x, %v), want (0, errUnsupported)", ip, err)
@@ -222,6 +226,33 @@ func TestAuthModeValues(t *testing.T) {
 	}
 	if DefaultMaxSTA != 4 {
 		t.Fatalf("DefaultMaxSTA = %d, want the IDF default 4", DefaultMaxSTA)
+	}
+}
+
+// TestPowerSaveModeValues pins the constants to the IDF wifi_ps_type_t
+// numbers (esp_wifi_types_generic.h), which the glue casts straight through:
+// a value that drifts here would configure a different sleep strategy than
+// the name says, and the String rendering the probes print must stay the
+// driver's own WIFI_PS_* spelling.
+func TestPowerSaveModeValues(t *testing.T) {
+	tests := map[PowerSaveMode]struct {
+		value int32
+		name  string
+	}{
+		PowerSaveNone:     {0, "NONE"},      // WIFI_PS_NONE
+		PowerSaveMinModem: {1, "MIN_MODEM"}, // WIFI_PS_MIN_MODEM
+		PowerSaveMaxModem: {2, "MAX_MODEM"}, // WIFI_PS_MAX_MODEM
+	}
+	for mode, want := range tests {
+		if int32(mode) != want.value {
+			t.Fatalf("%d = %d, want the IDF WIFI_PS_* value %d", mode, int32(mode), want.value)
+		}
+		if got := mode.String(); got != want.name {
+			t.Fatalf("String(%d) = %q, want %q", int32(mode), got, want.name)
+		}
+	}
+	if got := PowerSaveMode(7).String(); got != "INVALID" {
+		t.Fatalf("String(7) = %q, want INVALID", got)
 	}
 }
 

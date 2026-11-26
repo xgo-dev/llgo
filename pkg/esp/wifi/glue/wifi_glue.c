@@ -589,6 +589,36 @@ int32_t llgo_wifi_deauth_sta(const uint8_t *mac)
     return esp_wifi_deauth_sta(aid);
 }
 
+/* ---- station modem power save ----
+ *
+ * The 802.11 power-save knob lives on the station interface: the driver
+ * itself accepts esp_wifi_set_ps in any mode - its net80211 entry point
+ * validates only the 0..2 enum range and the processing callback always
+ * reports success - and the setting simply never engages without a station
+ * association. That silent swallow is exactly what a caller in AP-only mode
+ * should not get, so both entry points refuse it here first: s_mode mirrors
+ * what this glue last wrote to esp_wifi_set_mode (it is the only writer),
+ * and a mode without the station bit reports ESP_ERR_WIFI_MODE, the same
+ * "this interface does not exist" code the other interface-bound queries
+ * (llgo_wifi_get_ap_config, llgo_wifi_get_ap_ip, llgo_wifi_deauth_sta)
+ * report for a missing AP. */
+int32_t llgo_wifi_set_ps(int32_t ps)
+{
+    if (ps < WIFI_PS_NONE || ps > WIFI_PS_MAX_MODEM) return ESP_ERR_INVALID_ARG;
+    if ((s_mode & WIFI_MODE_STA) == 0) return ESP_ERR_WIFI_MODE;
+    return esp_wifi_set_ps((wifi_ps_type_t)ps);
+}
+
+int32_t llgo_wifi_get_ps(int32_t *ps)
+{
+    if ((s_mode & WIFI_MODE_STA) == 0) return ESP_ERR_WIFI_MODE;
+    wifi_ps_type_t type;
+    esp_err_t e = esp_wifi_get_ps(&type);
+    if (e != ESP_OK) return e;
+    *ps = (int32_t)type;
+    return ESP_OK;
+}
+
 /* Soft-AP station capacity of this chip (ESP_WIFI_MAX_CONN_NUM: 15 on the
  * S31, 4 on a C2). The Go side sizes its station slice from this instead of
  * assuming the S31 number, and a MaxSTA above it is rejected below. */
@@ -603,7 +633,8 @@ int32_t llgo_wifi_max_sta(void)
  * Version 2 is the current contract: llgo_wifi_poll() reports the soft-AP
  * client's MAC and AID in its last two out-parameters, the mailbox carries
  * them, and the soft-AP entry points (mode, set/get config, AP address,
- * station list, deauth, stop, capacity) exist. Projects copy this file as a
+ * station list, deauth, stop, capacity) plus the station power-save pair
+ * (set/get ps) exist. Projects copy this file as a
  * template, so a stale copy is a real failure mode - and because the poll
  * symbol keeps its name across versions, such a copy would silently report
  * zeroed MAC/AID rather than fail the link. The Go side declares the same

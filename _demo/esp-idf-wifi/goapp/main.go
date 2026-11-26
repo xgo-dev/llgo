@@ -64,6 +64,11 @@ func main() {
 	println("[go] wifi setup err=0")
 	heapMark("init")
 
+	// Power-save guard: the PS surface is station-only, and the driver has
+	// no mode yet - both calls must be refused with ESP_ERR_WIFI_MODE before
+	// SetSTA/SetModeSTA picks STA below. See ps.go.
+	psGuardProbe()
+
 	if err := wifi.EventsRegister(); err != nil {
 		println("[go] wifi events register err =", errText(err))
 		println("[go] wifi FAIL events")
@@ -178,6 +183,12 @@ func main() {
 	println("[go] wifi GOT_IP ip=" + wifi.IPString(ip))
 	println("[go] wifi PASS ip=" + wifi.IPString(ip))
 	heapMark("dhcp")
+
+	// Power-save round-trip on the associated station: read the driver
+	// default (MIN_MODEM), flip to None and back, leave MIN_MODEM so the
+	// transport probes below run under the same condition as always; their
+	// PASS lines are the proof the association still works after the flips.
+	psProbe()
 
 	// Subscriber fan-out: two EvGotIP subscriptions must each receive their
 	// own copy of the same mailbox event, which a station disconnect +
