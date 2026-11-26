@@ -43,10 +43,15 @@ type g struct {
 	bubbleBlocked bool
 	defer_        *Defer
 	panic_        unsafe.Pointer
-	panicPCs      panicPCStore
 	recoverFrame  unsafe.Pointer
 	recoverPanic  unsafe.Pointer
-	m             *m
+	// One idle ordinary channel waiter; active/select waiters are never cached.
+	chanWaiter *chanWaiter
+	m          *m
+
+	goexit       bool
+	isMain       bool
+	paniconfault bool
 
 	atomicstatus    uint32
 	goid            uint64
@@ -58,12 +63,7 @@ type g struct {
 
 	context *runtimeContext
 
-	// One idle ordinary channel waiter; active/select waiters are never cached.
-	chanWaiter *chanWaiter
-
-	goexit       bool
-	isMain       bool
-	paniconfault bool
+	panicPCs panicPCStore
 }
 
 // m represents the host execution resource running Go code. Platform-specific

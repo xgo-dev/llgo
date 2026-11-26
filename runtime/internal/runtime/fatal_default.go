@@ -2,6 +2,8 @@
 
 package runtime
 
+//go:noinline
 func fatal(s string) {
 	print("fatal error: ", s, "\n")
+	exitPanic()
 }
