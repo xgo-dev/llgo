@@ -2957,6 +2957,124 @@ var _ = dep.F
 	}
 }
 
+func TestMethodSetAndLookupShadowingMatchesGoTypes(t *testing.T) {
+	src := `package shadow
+
+type Iface interface{ Kind() int }
+type Inner struct{}
+func (*Inner) Type() Iface { return nil }
+func (*Inner) Kept() int   { return 1 }
+func (*Inner) Fielded()    {}
+
+type Wrap struct{ Iface }
+type Outer struct {
+	*Inner
+	Fielded int
+}
+func (*Outer) Type() Wrap { return Wrap{} }
+
+type WithField struct{ M int }
+type WithMethod struct{}
+func (WithMethod) M() {}
+type CollideFM struct {
+	WithField
+	WithMethod
+}
+
+type Leaf struct{}
+func (Leaf) L() {}
+type Mid1 struct{ Leaf }
+type Mid2 struct{ Leaf }
+type TopAmbig struct {
+	Mid1
+	Mid2
+}
+
+type NamedPtr *Outer
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "shadow.go", src, 0)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	var conf types.Config
+	pkg, err := conf.Check("example.com/shadow", fset, []*ast.File{f}, nil)
+	if err != nil {
+		t.Fatalf("Config.Check: %v", err)
+	}
+
+	outer := pkg.Scope().Lookup("Outer").Type()
+	ptrOuter := types.NewPointer(outer)
+
+	// Value method set of Outer must NOT promote (*Inner).Type() because
+	// (*Outer).Type() at depth 0 shadows it; Fielded field also hides (*Inner).Fielded().
+	msVal := types.NewMethodSet(outer)
+	if sel := msVal.Lookup(pkg, "Type"); sel != nil {
+		t.Fatalf("NewMethodSet(Outer).Lookup(Type) = %v, want nil (shadowed by (*Outer).Type)", sel)
+	}
+	if sel := msVal.Lookup(pkg, "Fielded"); sel != nil {
+		t.Fatalf("NewMethodSet(Outer).Lookup(Fielded) = %v, want nil (shadowed by Outer.Fielded field)", sel)
+	}
+	if sel := msVal.Lookup(pkg, "Kept"); sel == nil {
+		t.Fatal("NewMethodSet(Outer).Lookup(Kept) = nil, want promoted (*Inner).Kept")
+	}
+
+	// Pointer method set of *Outer must resolve Type to (*Outer).Type returning Wrap,
+	// and must still hide (*Inner).Fielded behind Outer.Fielded.
+	msPtr := types.NewMethodSet(ptrOuter)
+	selType := msPtr.Lookup(pkg, "Type")
+	if selType == nil {
+		t.Fatal("NewMethodSet(*Outer).Lookup(Type) = nil")
+	}
+	retType := selType.Obj().(*types.Func).Signature().Results().At(0).Type()
+	if retType != pkg.Scope().Lookup("Wrap").Type() {
+		t.Fatalf("(*Outer).Type() returns %v, want Wrap", retType)
+	}
+	if sel := msPtr.Lookup(pkg, "Fielded"); sel != nil {
+		t.Fatalf("NewMethodSet(*Outer).Lookup(Fielded) = %v, want nil", sel)
+	}
+
+	// LookupFieldOrMethod on non-addressable Outer for "Type" must signal
+	// pointer-receiver required (nil, nil, true), NOT promote (*Inner).Type().
+	if obj, idx, ind := types.LookupFieldOrMethod(outer, false, pkg, "Type"); obj != nil || idx != nil || !ind {
+		t.Fatalf("LookupFieldOrMethod(Outer, false, Type) = (%v, %v, %v), want (nil, nil, true)", obj, idx, ind)
+	}
+	// Addressable Outer resolves to (*Outer).Type().
+	if obj, _, _ := types.LookupFieldOrMethod(outer, true, pkg, "Type"); obj == nil || obj.Type().(*types.Signature).Results().At(0).Type() != pkg.Scope().Lookup("Wrap").Type() {
+		t.Fatalf("LookupFieldOrMethod(Outer, true, Type) = %v, want (*Outer).Type() -> Wrap", obj)
+	}
+
+	// Same-depth field vs method collision must be ambiguous.
+	collideFM := pkg.Scope().Lookup("CollideFM").Type()
+	if sel := types.NewMethodSet(collideFM).Lookup(pkg, "M"); sel != nil {
+		t.Fatalf("NewMethodSet(CollideFM).Lookup(M) = %v, want nil (field/method collision)", sel)
+	}
+	if obj, idx, _ := types.LookupFieldOrMethod(collideFM, true, pkg, "M"); obj != nil || idx == nil {
+		t.Fatalf("LookupFieldOrMethod(CollideFM, M) = (%v, %v), want (nil, non-nil ambiguous index)", obj, idx)
+	}
+
+	// Multi-level duplicate embedded type must propagate multiples and stay ambiguous.
+	topAmbig := pkg.Scope().Lookup("TopAmbig").Type()
+	if sel := types.NewMethodSet(topAmbig).Lookup(pkg, "L"); sel != nil {
+		t.Fatalf("NewMethodSet(TopAmbig).Lookup(L) = %v, want nil (ambiguous)", sel)
+	}
+	if obj, idx, _ := types.LookupFieldOrMethod(topAmbig, true, pkg, "L"); obj != nil || idx == nil {
+		t.Fatalf("LookupFieldOrMethod(TopAmbig, L) = (%v, %v), want (nil, non-nil ambiguous index)", obj, idx)
+	}
+
+	// Named pointer type has empty method set, exposes fields, but never methods.
+	namedPtr := pkg.Scope().Lookup("NamedPtr").Type()
+	if got := types.NewMethodSet(namedPtr).Len(); got != 0 {
+		t.Fatalf("NewMethodSet(NamedPtr).Len() = %d, want 0", got)
+	}
+	if obj, _, _ := types.LookupFieldOrMethod(namedPtr, false, pkg, "Fielded"); obj == nil {
+		t.Fatal("LookupFieldOrMethod(NamedPtr, Fielded) = nil, want field")
+	}
+	if obj, _, _ := types.LookupFieldOrMethod(namedPtr, false, pkg, "Type"); obj != nil {
+		t.Fatalf("LookupFieldOrMethod(NamedPtr, Type) = %v, want nil", obj)
+	}
+}
+
 func TestConcurrentEvalAndCheckExprAfterPostCheckScopeInsert(t *testing.T) {
 	fset := token.NewFileSet()
 	checkedFile, err := parser.ParseFile(fset, "checked.go", "package checked\nconst Base = 10\n", 0)

@@ -295,19 +295,19 @@ func LookupFieldOrMethod(T Type, addressable bool, pkg *Package, name string) (o
 	if T == nil {
 		return nil, nil, false
 	}
-	obj, index, indirect = lookupFieldOrMethod(T, addressable, pkg, name)
-	// Handle pointer-receiver method on non-addressable value receiver:
-	// signal indirect=true with obj=nil matching go/types contract.
-	if obj == nil && !addressable {
-		if _, isPtr := Unalias(T).(*Pointer); !isPtr {
-			if m, _, _ := lookupFieldOrMethod(NewPointer(T), true, pkg, name); m != nil {
-				if _, isFunc := m.(*Func); isFunc {
-					return nil, nil, true
-				}
+	// Methods cannot be associated to a named pointer type. If T is a named
+	// pointer type, proceed with the underlying pointer type for field lookup
+	// but discard any method result (mirroring go/types.lookupFieldOrMethod).
+	if n, ok := Unalias(T).(*Named); ok {
+		if p, ok := n.Underlying().(*Pointer); ok {
+			obj, index, indirect = lookupFieldOrMethod(p, false, pkg, name)
+			if _, isFunc := obj.(*Func); isFunc {
+				return nil, nil, false
 			}
+			return obj, index, indirect
 		}
 	}
-	return obj, index, indirect
+	return lookupFieldOrMethod(T, addressable, pkg, name)
 }
 
 type embeddedType struct {
@@ -329,97 +329,106 @@ func lookupFieldOrMethod(T Type, addressable bool, pkg *Package, name string) (o
 		return nil, nil, false
 	}
 	typ, isPtr := derefType(T)
-	// Named pointer types cannot have methods/fields accessed through deref.
+	// *typ where typ is a pointer or interface (incl. type parameter) has no methods/fields.
 	if isPtr {
 		if _, ok := Unalias(typ).(*Pointer); ok {
+			return nil, nil, false
+		}
+		if _, ok := typ.Underlying().(*Interface); ok {
 			return nil, nil, false
 		}
 	}
 
 	current := []embeddedType{{typ: typ, indirect: isPtr}}
-	visited := make(map[Type]bool)
+	var seen []*Named
+	seenNamed := func(n *Named) bool {
+		for _, prev := range seen {
+			if prev == n || Identical(prev, n) {
+				return true
+			}
+		}
+		seen = append(seen, n)
+		return false
+	}
 
 	for len(current) > 0 {
 		var next []embeddedType
-		var found Object
-		var foundIndex []int
-		var foundIndirect bool
-		foundCount := 0
 
 		for _, e := range current {
 			base := Unalias(e.typ)
-			if visited[base] {
-				continue
-			}
-			visited[base] = true
 
 			// Check declared methods on *Named first.
 			if n, ok := base.(*Named); ok {
+				if seenNamed(n) {
+					continue
+				}
+				matchedMethod := false
 				for i := 0; i < n.NumMethods(); i++ {
 					m := n.Method(i)
 					if !matchObj(m, pkg, name) {
 						continue
 					}
-					if !e.indirect && !addressable && hasPointerRecv(m) {
-						continue
+					index = concatIndex(e.index, i)
+					if obj != nil || e.multiples {
+						return nil, index, false
 					}
-					if e.multiples {
-						return nil, concatIndex(e.index, i), false
-					}
-					foundCount++
-					found = m
-					foundIndex = concatIndex(e.index, i)
-					foundIndirect = e.indirect
+					obj = m
+					indirect = e.indirect
+					matchedMethod = true
+					break
+				}
+				if matchedMethod {
+					continue
 				}
 			}
 
 			switch u := base.Underlying().(type) {
-			case *Interface:
-				for i := 0; i < u.NumMethods(); i++ {
-					m := u.Method(i)
-					if !matchObj(m, pkg, name) {
-						continue
-					}
-					if e.multiples {
-						return nil, concatIndex(e.index, i), false
-					}
-					foundCount++
-					found = m
-					foundIndex = concatIndex(e.index, i)
-					foundIndirect = true
-				}
 			case *Struct:
 				for i, f := range u.fields {
 					if f == nil {
 						continue
 					}
 					if matchObj(f, pkg, name) {
-						if e.multiples {
-							return nil, concatIndex(e.index, i), false
+						index = concatIndex(e.index, i)
+						if obj != nil || e.multiples {
+							return nil, index, false
 						}
-						foundCount++
-						found = f
-						foundIndex = concatIndex(e.index, i)
-						foundIndirect = e.indirect
+						obj = f
+						indirect = e.indirect
 						continue
 					}
-					if f.embedded {
+					if obj == nil && f.embedded {
 						ft, ptr := derefType(f.typ)
 						next = append(next, embeddedType{
-							typ:      ft,
-							index:    concatIndex(e.index, i),
-							indirect: e.indirect || ptr,
+							typ:       ft,
+							index:     concatIndex(e.index, i),
+							indirect:  e.indirect || ptr,
+							multiples: e.multiples,
 						})
 					}
+				}
+			case *Interface:
+				for i := 0; i < u.NumMethods(); i++ {
+					m := u.Method(i)
+					if !matchObj(m, pkg, name) {
+						continue
+					}
+					index = concatIndex(e.index, i)
+					if obj != nil || e.multiples {
+						return nil, index, false
+					}
+					obj = m
+					indirect = e.indirect
+					break
 				}
 			}
 		}
 
-		if foundCount == 1 {
-			return found, foundIndex, foundIndirect
-		}
-		if foundCount > 1 {
-			return nil, foundIndex, false
+		if obj != nil {
+			if f, ok := obj.(*Func); ok && hasPointerRecv(f) && !indirect && !addressable {
+				return nil, nil, true
+			}
+			return obj, index, indirect
 		}
 		current = consolidateEmbedded(next)
 	}
@@ -431,13 +440,18 @@ func consolidateEmbedded(list []embeddedType) []embeddedType {
 		return list
 	}
 	out := make([]embeddedType, 0, len(list))
-	seen := make(map[Type]int, len(list))
 	for _, e := range list {
 		base := Unalias(e.typ)
-		if idx, dup := seen[base]; dup {
-			out[idx].multiples = true
+		dupIdx := -1
+		for i, prev := range out {
+			if prevBase := Unalias(prev.typ); prevBase == base || Identical(prevBase, base) {
+				dupIdx = i
+				break
+			}
+		}
+		if dupIdx >= 0 {
+			out[dupIdx].multiples = true
 		} else {
-			seen[base] = len(out)
 			out = append(out, e)
 		}
 	}
@@ -808,6 +822,12 @@ func syntheticMethodSet(T Type) *MethodSet {
 	if T == nil {
 		return &MethodSet{}
 	}
+	// Methods cannot be associated to a named pointer type.
+	if n, ok := Unalias(T).(*Named); ok {
+		if _, isPtr := n.Underlying().(*Pointer); isPtr {
+			return &MethodSet{}
+		}
+	}
 	if iface, ok := T.Underlying().(*Interface); ok {
 		iface.resolve()
 		list := make([]*Selection, iface.NumMethods())
@@ -834,89 +854,104 @@ func syntheticMethodSet(T Type) *MethodSet {
 		}
 	}
 
-	type mentry struct {
-		sel       *Selection
-		ambiguous bool
-	}
-	mset := make(map[string]mentry)
+	// base tracks methods and collisions/shadowings (nil entry) up to current depth,
+	// mirroring go/types.NewMethodSet exactly.
+	baseMap := make(map[string]*Selection)
 	current := []embeddedType{{typ: typ, indirect: isPtr}}
-	visited := make(map[Type]bool)
+	var seen []*Named
+	seenNamed := func(n *Named) bool {
+		for _, prev := range seen {
+			if prev == n || Identical(prev, n) {
+				return true
+			}
+		}
+		seen = append(seen, n)
+		return false
+	}
 
 	for len(current) > 0 {
 		var next []embeddedType
-		level := make(map[string]mentry)
-		addMethod := func(id string, sel *Selection, multiples bool) {
-			if _, exists := mset[id]; exists {
-				return
+		var fset map[string]bool
+		level := make(map[string]*Selection)
+		addMethod := func(m *Func, index []int, indirect, multiples bool) {
+			id := m.Id()
+			if !multiples {
+				if _, found := level[id]; !found && (indirect || !hasPointerRecv(m)) {
+					level[id] = &Selection{
+						kind:     MethodVal,
+						recv:     T,
+						obj:      m,
+						typ:      methodValType(T, m),
+						index:    index,
+						indirect: indirect,
+					}
+					return
+				}
 			}
-			if prev, dup := level[id]; dup || multiples {
-				prev.ambiguous = true
-				level[id] = prev
-				return
-			}
-			level[id] = mentry{sel: sel}
+			// Collision or non-addressable pointer-receiver method: record nil so
+			// it shadows any promoted method with the same name at a deeper level.
+			level[id] = nil
 		}
 
 		for _, e := range current {
 			base := Unalias(e.typ)
-			if visited[base] {
-				continue
-			}
-			visited[base] = true
 
 			if n, ok := base.(*Named); ok {
+				if seenNamed(n) {
+					continue
+				}
 				for i := 0; i < n.NumMethods(); i++ {
-					m := n.Method(i)
-					if !e.indirect && hasPointerRecv(m) {
-						continue
-					}
-					addMethod(m.Id(), &Selection{
-						kind:     MethodVal,
-						recv:     T,
-						obj:      m,
-						typ:      methodValType(T, m),
-						index:    concatIndex(e.index, i),
-						indirect: e.indirect,
-					}, e.multiples)
+					addMethod(n.Method(i), concatIndex(e.index, i), e.indirect, e.multiples)
 				}
 			}
 
 			switch u := base.Underlying().(type) {
-			case *Interface:
-				for i := 0; i < u.NumMethods(); i++ {
-					m := u.Method(i)
-					addMethod(m.Id(), &Selection{
-						kind:     MethodVal,
-						recv:     T,
-						obj:      m,
-						typ:      methodValType(T, m),
-						index:    concatIndex(e.index, i),
-						indirect: true,
-					}, e.multiples)
-				}
 			case *Struct:
 				for i, f := range u.fields {
-					if f != nil && f.embedded {
+					if f == nil {
+						continue
+					}
+					if fset == nil {
+						fset = make(map[string]bool)
+					}
+					fset[f.Id()] = true
+					if f.embedded {
 						ft, ptr := derefType(f.typ)
 						next = append(next, embeddedType{
-							typ:      ft,
-							index:    concatIndex(e.index, i),
-							indirect: e.indirect || ptr,
+							typ:       ft,
+							index:     concatIndex(e.index, i),
+							indirect:  e.indirect || ptr,
+							multiples: e.multiples,
 						})
 					}
 				}
+			case *Interface:
+				for i := 0; i < u.NumMethods(); i++ {
+					addMethod(u.Method(i), concatIndex(e.index, i), true, e.multiples)
+				}
 			}
 		}
-		for id, entry := range level {
-			mset[id] = entry
+
+		for k, m := range level {
+			if _, found := baseMap[k]; !found {
+				if fset[k] {
+					m = nil // field collides with method at same depth
+				}
+				baseMap[k] = m
+			}
+		}
+		for k := range fset {
+			if _, found := baseMap[k]; !found {
+				baseMap[k] = nil // field shadows any method at deeper depth
+			}
 		}
 		current = consolidateEmbedded(next)
 	}
 
 	var list []*Selection
-	for _, entry := range mset {
-		if !entry.ambiguous && entry.sel != nil {
-			list = append(list, entry.sel)
+	for _, sel := range baseMap {
+		if sel != nil {
+			list = append(list, sel)
 		}
 	}
 	sort.Slice(list, func(i, j int) bool {
