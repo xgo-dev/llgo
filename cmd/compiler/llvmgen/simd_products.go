@@ -3,6 +3,7 @@ package llvmgen
 import (
 	"github.com/xgo-dev/llgo/types"
 
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmfmv"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -134,6 +135,11 @@ func (b Builder) simdSumOf8AbsDiff(result Type, x, y Expr) Expr {
 		sad := b.impl.CreateIntrinsic(pair, id, []llvm.Value{extract(x.impl), extract(y.impl)}, "")
 		offset := llvm.ConstInt(index.Type(), uint64(i/8), false)
 		sum = b.impl.CreateIntrinsic(result.ll, llvm.LookupIntrinsicID("llvm.vector.insert"), []llvm.Value{sum, sad, offset}, "")
+	}
+	if n == 64 && target.effectiveGOARCH() == "amd64" {
+		// AVX512BW lets LLVM combine the baseline chunks into one VPSADBW.
+		ctx := b.Prog.ctx
+		sum.SetMetadata(ctx.MDKindID(llvmfmv.PreferFeatureMD), ctx.MDNode([]llvm.Metadata{ctx.MDString(llvmfmv.X86Query("AVX512"))}))
 	}
 	return Expr{sum, result}
 }

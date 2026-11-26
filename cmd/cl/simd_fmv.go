@@ -5,6 +5,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmfmv"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/midway"
 	"github.com/xgo-dev/llgo/ssa"
 )
 
@@ -30,86 +31,13 @@ func (p *context) markSIMDFMV(fn llvmgen.Function, source *ssa.Function) {
 	if fn == nil || p.prog.Target().GOARCH != "amd64" {
 		return
 	}
-	hasVector := false
-	sig := source.Signature
-	var seen map[types.Type]bool
-	var check func(types.Type)
-	check = func(t types.Type) {
-		if hasVector {
-			return
-		}
-		t = types.Unalias(t)
-		if simdFMVVector(t) {
-			hasVector = true
-			return
-		}
-		// Only by-value containment changes the vector call boundary; do not
-		// walk through references or track scalar types in the visited set.
-		underlying := t.Underlying()
-		switch underlying.(type) {
-		case *types.Struct, *types.Array:
-		default:
-			return
-		}
-		if seen[t] {
-			return
-		}
-		if seen == nil {
-			seen = make(map[types.Type]bool)
-		}
-		seen[t] = true
-		switch t := underlying.(type) {
-		case *types.Struct:
-			for i := 0; i < t.NumFields(); i++ {
-				check(t.Field(i).Type())
-			}
-		case *types.Array:
-			check(t.Elem())
-		}
+	query := simdCPUQuery(source)
+	if origin := source.Origin(); origin != nil {
+		source = origin
 	}
-	if sig.Recv() != nil {
-		check(sig.Recv().Type())
+	var width int
+	if obj, ok := source.Object().(*types.Func); ok && source.Synthetic == "" {
+		width = midway.ImplementationWidth(obj)
 	}
-	for i := 0; i < sig.Params().Len(); i++ {
-		check(sig.Params().At(i).Type())
-	}
-	for i := 0; i < sig.Results().Len(); i++ {
-		check(sig.Results().At(i).Type())
-	}
-	// Bodyless assembly/linkname declarations do not promise a compiler-emitted
-	// entry. Only check for generated intrinsic bodies when a vector needs one.
-	available := len(source.Blocks) != 0
-	if hasVector && !available {
-		_, available = lookupSIMD(source, "amd64")
-	}
-	// CPU queries are marked independently of vector signatures.
-	fn.MarkSIMDFMV(available && hasVector, simdCPUQuery(source))
-}
-
-// Midway's hardware representations are defined bridge types, not aliases of
-// archsimd vectors. Recognize their checked storage without changing their ABI.
-func simdFMVVector(t types.Type) bool {
-	if _, ok := llvmgen.SIMDVectorShape(t); ok {
-		return true
-	}
-	named, ok := types.Unalias(t).(*types.Named)
-	if !ok || named.Obj().Pkg() == nil || named.Obj().Pkg().Path() != "simd/internal/bridge" {
-		return false
-	}
-	var arch *types.Package
-	for _, pkg := range named.Obj().Pkg().Imports() {
-		if pkg.Path() == "simd/archsimd" {
-			arch = pkg
-			break
-		}
-	}
-	if arch == nil {
-		return false
-	}
-	obj, ok := arch.Scope().Lookup(named.Obj().Name()).(*types.TypeName)
-	if !ok {
-		return false
-	}
-	_, vector := llvmgen.SIMDVectorShape(obj.Type())
-	return vector && types.Identical(named.Underlying(), obj.Type().Underlying())
+	fn.MarkSIMDFMV(width, query)
 }

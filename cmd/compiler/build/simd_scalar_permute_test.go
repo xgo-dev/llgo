@@ -14,8 +14,9 @@ import (
 )
 
 func TestSIMDScalarPermuteLLVM(t *testing.T) {
-	for _, goos := range []string{"linux", "windows"} {
-		t.Run(goos, func(t *testing.T) {
+	for _, target := range []struct{ os, baseline string }{{"linux", "v1"}, {"linux", "v3"}, {"windows", "v1"}} {
+		goos := target.os
+		t.Run(goos+"/"+target.baseline, func(t *testing.T) {
 			source := "package main\nimport \"simd/archsimd\"\nfunc main() {}\n"
 			var intrinsics []string
 			for _, family := range []struct {
@@ -50,7 +51,7 @@ func dispatch%s(x archsimd.%s,a,b,c,d uint8) archsimd.%s {
 				}
 			}
 			conf := NewDefaultConf(ModeGen)
-			conf.Goos, conf.Goarch, conf.GOEXPERIMENT, conf.GOAMD64 = goos, "amd64", "simd", "v1"
+			conf.Goos, conf.Goarch, conf.GOEXPERIMENT, conf.GOAMD64 = goos, "amd64", "simd", target.baseline
 			var callers []*aPackage
 			var intrinsicBitcode string
 			for _, arg := range []string{".", "simd/archsimd"} {
@@ -123,10 +124,12 @@ func dispatch%s(x archsimd.%s,a,b,c,d uint8) archsimd.%s {
 				if goos != "linux" {
 					return
 				}
-				assertSIMDBaselineAssembly(t, mod, asm)
+				if target.baseline == "v1" {
+					assertSIMDBaselineAssembly(t, mod, asm)
+				}
 				bodies := regexp.MustCompile(`(?ms)^\s*\.type\s+([^\n]+),@function\n(.*?)^\s*\.size\s+[^\n]+`).FindAllStringSubmatch(asm, -1)
 				indexedStack := regexp.MustCompile(`\([^\n)]*%(?:rsp|rbp),`)
-				baseline, avx2, constants := 0, 0, 0
+				scalars, constants := 0, 0
 				shuffle := regexp.MustCompile(`\b(?:v?pshuf[a-z]+|v?shufp[sd]|vpermilps)\b`)
 				for _, body := range bodies {
 					if strings.Contains(body[1], "main.constant") && strings.HasSuffix(t.Name(), "/O2") {
@@ -138,11 +141,7 @@ func dispatch%s(x archsimd.%s,a,b,c,d uint8) archsimd.%s {
 					if !strings.Contains(body[1], "main.scalar") {
 						continue
 					}
-					if strings.Contains(body[1], ".__llgo_fmv_avx2") {
-						avx2++
-					} else {
-						baseline++
-					}
+					scalars++
 					if strings.HasSuffix(t.Name(), "/O2") && (strings.Contains(body[2], "call") || strings.Contains(body[2], "jmp")) {
 						t.Fatalf("dynamic selector retained a helper call in %s:\n%s", body[1], body[2])
 					}
@@ -150,11 +149,11 @@ func dispatch%s(x archsimd.%s,a,b,c,d uint8) archsimd.%s {
 						t.Fatalf("scalar permutation spilled/indexed lanes in %s:\n%s", body[1], body[2])
 					}
 				}
-				if strings.HasSuffix(t.Name(), "/O2") && constants != 2*len(intrinsics) {
-					t.Fatalf("checked %d constant functions, want %d", constants, 2*len(intrinsics))
+				if strings.HasSuffix(t.Name(), "/O2") && constants != len(intrinsics) {
+					t.Fatalf("checked %d constant functions, want %d", constants, len(intrinsics))
 				}
-				if baseline != len(intrinsics) || avx2 != len(intrinsics) {
-					t.Fatalf("checked baseline=%d AVX2=%d functions, want %d each", baseline, avx2, len(intrinsics))
+				if scalars != len(intrinsics) {
+					t.Fatalf("checked %d scalar functions, want %d", scalars, len(intrinsics))
 				}
 			})
 		})

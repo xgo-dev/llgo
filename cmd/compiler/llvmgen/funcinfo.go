@@ -16,18 +16,21 @@
 
 package llvmgen
 
-import "github.com/xgo-dev/llvm"
+import (
+	"github.com/xgo-dev/llgo/cmd/compiler/build/funcinfo"
+	"github.com/xgo-dev/llvm"
+)
 
 const (
 	FuncInfoMetadataName = "llgo.funcinfo"
 	PCLineMetadataName   = "llgo.pcline"
 	funcInfoVersion      = 1
-	funcInfoFlagsVersion = 2
+	funcInfoFlagsVersion = funcinfo.MetadataFlagsVersion
 	pcLineVersion        = 1
 
 	// FuncInfoFlagWrapper marks compiler-generated forwarding wrappers. The
 	// runtime uses this to match gc's abi.FuncIDWrapper stack-trace elision.
-	FuncInfoFlagWrapper uint32 = 1
+	FuncInfoFlagWrapper = funcinfo.RecordFlagWrapper
 )
 
 // internal/llvmfmv/source.go also reads these versioned row layouts when cloning

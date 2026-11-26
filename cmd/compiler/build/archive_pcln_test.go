@@ -39,8 +39,8 @@ func TestPackagePCLNArchive(t *testing.T) {
 				defer prog.Dispose()
 				src := prog.NewPackage("p", "example.com/p")
 				src.EmitFuncInfoFlags("p.Boundary", "p.Boundary", "p.go", int(buildfuncinfo.EncodedLineMask), 0, buildfuncinfo.RecordFlagWrapper)
-				src.EmitFuncInfoFlags("p.Trace.__llgo_fmv_avx2", "p.Trace", "路径/p.go", 10, 2, 1)
-				src.EmitPCLineInfo(1<<63+7, "p.Trace.__llgo_fmv_avx2", "路径/p.go", 14, 3)
+				src.EmitFuncInfoFlags("p.Trace.__llgo_fmv_guard_avx2", "p.Trace", "路径/p.go", 10, 2, 1)
+				src.EmitPCLineInfo(1<<63+7, "p.Trace.__llgo_fmv_guard_avx2", "路径/p.go", 14, 3)
 				wantFuncs := readFuncInfo(src.Module())
 				wantLines := readPCLineInfo(src.Module())
 				ccflags := []string{"--target=" + target.triple}
