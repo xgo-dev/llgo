@@ -46,6 +46,33 @@ func alwaysEntry() int {
 	defer cleanup()
 	return 3
 }
+
+func twoDefersBehindGuard(fast, cond bool) int {
+	if fast {
+		return 0
+	}
+	if cond {
+		defer cleanup()
+	} else {
+		defer cleanup()
+	}
+	return 1
+}
+
+func rangeBehindGuard(fast bool) int {
+	if fast {
+		return 0
+	}
+	seq := func(yield func(int) bool) {
+		_ = yield(1)
+	}
+	sum := 0
+	for v := range seq {
+		defer cleanup()
+		sum += v
+	}
+	return sum
+}
 `
 	for _, target := range []llssa.Target{
 		{GOOS: "linux", GOARCH: "amd64"},
@@ -109,6 +136,28 @@ func alwaysEntry() int {
 			if !strings.Contains(entryBlock(always), "ThreadDeferSlot") {
 				t.Fatalf("alwaysEntry missing ThreadDeferSlot in entry block:\n%s", always)
 			}
+
+			// twoDefersBehindGuard: nearestCommonDominator merges both defer
+			// branches onto the post-guard block, keeping _llgo_0 defer-free.
+			two := llvmFunction(t, ir, "lazydefer.twoDefersBehindGuard")
+			if strings.Contains(entryBlock(two), "ThreadDeferSlot") {
+				t.Fatalf("twoDefersBehindGuard hoisted ThreadDeferSlot into entry block:\n%s", two)
+			}
+
+			// rangeBehindGuard: range-over-func with defer emits ssa:deferstack in
+			// the entry block, so defer initialization must stay in _llgo_0.
+			rng := llvmFunction(t, ir, "lazydefer.rangeBehindGuard")
+			if !strings.Contains(entryBlock(rng), "ThreadDeferSlot") {
+				t.Fatalf("rangeBehindGuard must keep ThreadDeferSlot in entry block:\n%s", rng)
+			}
 		})
+	}
+
+	if got := nearestCommonDominator(nil, nil); got != nil {
+		t.Fatalf("nearestCommonDominator(nil, nil) = %v, want nil", got)
+	}
+	blk := &ssa.BasicBlock{}
+	if got := nearestCommonDominator(blk, nil); got != nil {
+		t.Fatalf("nearestCommonDominator(blk, nil) = %v, want nil", got)
 	}
 }
