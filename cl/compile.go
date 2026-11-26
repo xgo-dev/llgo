@@ -573,9 +573,6 @@ func (p *context) canUseDirectSinglePtrClosureEnv(f *ssa.Function) bool {
 		return false
 	}
 	fv := f.FreeVars[0]
-	if fv == nil {
-		return false
-	}
 	oldGoFn := p.goFn
 	p.goFn = f
 	defer func() {
@@ -1284,14 +1281,6 @@ func (p *context) debugRef(b llssa.Builder, v *ssa.DebugRef) {
 		return
 	}
 	pos := p.goProg.Fset.Position(v.Pos())
-	if fv, ok := v.X.(*ssa.FreeVar); ok && v.IsAddr && p.isDirectCaptureByValueFreeVar(fv) {
-		fn := v.Parent()
-		dbgVar := p.getLocalVariable(b, fn, variable)
-		scope := variable.Parent()
-		diScope := b.DIScope(p.fn, scope)
-		b.DIValue(variable, p.fn.DirectEnvValue(b), dbgVar, diScope, pos, b.Func.Block(v.Block().Index))
-		return
-	}
 	value, exists := p.debugRefValue(b, v.X)
 	if !exists {
 		return
@@ -1301,6 +1290,10 @@ func (p *context) debugRef(b llssa.Builder, v *ssa.DebugRef) {
 	scope := variable.Parent()
 	diScope := b.DIScope(p.fn, scope)
 	if v.IsAddr {
+		if fv, ok := v.X.(*ssa.FreeVar); ok && p.isDirectCaptureByValueFreeVar(fv) {
+			b.DIValue(variable, value, dbgVar, diScope, pos, b.Func.Block(v.Block().Index))
+			return
+		}
 		b.DIDeclare(variable, value, dbgVar, diScope, pos, b.Func.Block(v.Block().Index))
 	} else {
 		b.DIValue(variable, value, dbgVar, diScope, pos, b.Func.Block(v.Block().Index))
@@ -2910,10 +2903,7 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 					return p.elidedZeroSizedFreeVar(b, v)
 				}
 				if p.isDirectCaptureByValueFreeVar(v) {
-					val := p.fn.DirectEnvValue(b)
-					slot := b.Alloc(val.Type, false)
-					b.Store(slot, val)
-					return slot
+					return p.fn.DirectEnvValue(b)
 				}
 				if p.options.EscapeAnalysis.CaptureByValue(v) {
 					return b.FieldAddr(p.fn.Env(), idx)

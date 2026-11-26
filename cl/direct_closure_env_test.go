@@ -19,6 +19,8 @@ import (
 func TestDirectSinglePtrClosureEnvIR(t *testing.T) {
 	const source = `package directenv
 
+import "unsafe"
+
 type box struct{ v int }
 
 func (b *box) add(d int) int {
@@ -45,6 +47,10 @@ func makeMap(m map[int]int) func(int) int {
 	return func(k int) int { return m[k] }
 }
 
+func makeUnsafe(p unsafe.Pointer) func() uintptr {
+	return func() uintptr { return uintptr(p) }
+}
+
 func makeTwo(a, b *box) func() int {
 	return func() int { return a.v + b.v }
 }
@@ -60,12 +66,13 @@ func makeInt(x int) func() int {
 		{llssa.Target{GOOS: "darwin", GOARCH: "arm64"}, true},
 		{llssa.Target{GOOS: "linux", GOARCH: "amd64"}, true},
 		{llssa.Target{GOOS: "windows", GOARCH: "arm64"}, true},
+		{llssa.Target{GOOS: "windows", GOARCH: "386"}, true},
 		{llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}, false},
-		{llssa.Target{GOOS: "linux", GOARCH: "mips64"}, false},
+		{llssa.Target{GOOS: "js", GOARCH: "wasm"}, false},
 	} {
 		t.Run(tc.target.GOOS+"/"+tc.target.GOARCH, func(t *testing.T) {
 			ir := compileInterfaceBoxIR(t, source, ssa.InstantiateGenerics, &tc.target, tc.target.GOARCH == "wasm")
-			for _, fnName := range []string{"directenv.makePtr", "directenv.makeBound", "directenv.makeMap"} {
+			for _, fnName := range []string{"directenv.makePtr", "directenv.makeBound", "directenv.makeMap", "directenv.makeUnsafe"} {
 				fnIR := llvmFunction(t, ir, fnName)
 				hasAlloc := strings.Contains(fnIR, "AllocU")
 				if tc.wantDirect && hasAlloc {
@@ -95,7 +102,9 @@ func makeLoop(b *box) func(int) int {
 	return func(n int) int {
 		sum := 0
 		for i := 0; i < n; i++ {
-			sum += b.v + i
+			if b != nil {
+				sum += b.v + i
+			}
 		}
 		return sum
 	}
@@ -146,5 +155,34 @@ func makeLoop(b *box) func(int) int {
 				t.Fatalf("expected #dbg_value for both $env and decoded captured b:\n%s", fnIR)
 			}
 		})
+	}
+
+	if isDirectClosurePointerType(nil) {
+		t.Fatal("isDirectClosurePointerType(nil) = true, want false")
+	}
+	var emptyCtx context
+	if emptyCtx.canUseDirectSinglePtrClosureEnv(nil) {
+		t.Fatal("canUseDirectSinglePtrClosureEnv(nil) = true, want false")
+	}
+	if !emptyCtx.directCaptureByValueUsesValid(&ssa.FreeVar{}) {
+		t.Fatal("directCaptureByValueUsesValid(empty FreeVar) = false, want true")
+	}
+	// Verify non-MUL and non-CaptureByValue-forwarding uses reject direct env.
+	fv := &ssa.FreeVar{}
+	*fv.Referrers() = []ssa.Instruction{&ssa.UnOp{Op: token.SUB, X: fv}}
+	if emptyCtx.directCaptureByValueUsesValid(fv) {
+		t.Fatal("non-MUL UnOp unexpectedly accepted")
+	}
+	*fv.Referrers() = []ssa.Instruction{&ssa.Return{}}
+	if emptyCtx.directCaptureByValueUsesValid(fv) {
+		t.Fatal("arbitrary referrer unexpectedly accepted")
+	}
+	*fv.Referrers() = []ssa.Instruction{&ssa.MakeClosure{Fn: &ssa.Builtin{}, Bindings: []ssa.Value{fv}}}
+	if emptyCtx.directCaptureByValueUsesValid(fv) {
+		t.Fatal("non-Function MakeClosure unexpectedly accepted")
+	}
+	*fv.Referrers() = []ssa.Instruction{&ssa.MakeClosure{Fn: &ssa.Function{}, Bindings: []ssa.Value{fv}}}
+	if emptyCtx.directCaptureByValueUsesValid(fv) {
+		t.Fatal("MakeClosure without matching CaptureByValue freevar unexpectedly accepted")
 	}
 }
