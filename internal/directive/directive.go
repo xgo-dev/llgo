@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-// Package directive parses Go and LLGo source directives without assigning
-// feature-specific semantics to them.
+// Package directive parses Go and LLGo source directives and exposes
+// source-level attributes. Compiler policies remain with their consumers.
 package directive
 
 import (
