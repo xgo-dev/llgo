@@ -276,11 +276,6 @@ func (a *wideABI) operation(inst, callee llvm.Value) profile {
 	switch inst.InstructionOpcode() {
 	case llvm.Call, llvm.Invoke:
 		if callee.IsNil() || callee.IntrinsicID() == 0 {
-			if !callee.IsNil() && callee.Name() == "github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features" && inst.ArgOperandsCount() == 1 {
-				if arg := inst.Operand(0).IsAConstantInt(); !arg.IsNil() && arg.Type().IntTypeWidth() == 64 {
-					p.isa = arg.ZExtValue()
-				}
-			}
 			p.width = a.callWidth(inst)
 			return p
 		}

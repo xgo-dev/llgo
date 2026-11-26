@@ -139,25 +139,6 @@ exit:
 	}
 }
 
-func TestOptionalGuardAtV4(t *testing.T) {
-	ir := strings.ReplaceAll(guardedVectorFixture, `"x86.fma"`, `"x86.avx512vnni"`)
-	ir = strings.Replace(ir, "define void @root", `declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
-define void @root`, 1)
-	ir = strings.Replace(ir, "vector:", `vector:
- call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64 8192)`, 1)
-	m := parseModule(t, ir)
-	if err := Run(m, "v4"); err != nil {
-		t.Fatal(err)
-	}
-	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
-		t.Fatal(err)
-	}
-	v := m.NamedFunction("root.__llgo_fmv_guard_avx512vnni")
-	if v.IsNil() || m.NamedGlobal("root"+slotSuffix).IsNil() || !strings.Contains(stringAttribute(v, "target-features"), "+avx512vnni") {
-		t.Fatal(m.String())
-	}
-}
-
 func TestGuardBodyEntryAttributes(t *testing.T) {
 	ir := strings.Replace(guardedVectorFixture, "define void @root(ptr %p) {", "define void @root(ptr %p) \""+InlineEntryAttribute+"\" {", 1)
 	m := parseModule(t, ir)
@@ -175,25 +156,27 @@ func TestGuardBodyEntryAttributes(t *testing.T) {
 func TestBaselineFoldCollisionLeavesModuleIntact(t *testing.T) {
 	const ir = `
  target triple = "x86_64-unknown-linux-gnu"
- declare i1 @sha() "llgo.cpu.query"="x86.sha"
+ declare i1 @bitalg() "llgo.cpu.query"="x86.avx512bitalg"
  declare i1 @fma() "llgo.cpu.query"="x86.fma"
- declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
+ declare <16 x i8> @llvm.ctpop.v16i8(<16 x i8>)
  define i1 @unrelated() {
   %b = call i1 @fma()
   ret i1 %b
  }
  define void @root(ptr %p) {
-  %s = call i1 @sha()
+  %s = call i1 @bitalg()
   %b = call i1 @fma()
   %both = and i1 %s, %b
   br i1 %both, label %vector, label %out
  vector:
-  call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64 128)
+  %v = load <16 x i8>, ptr %p
+  %n = call <16 x i8> @llvm.ctpop.v16i8(<16 x i8> %v)
+  store <16 x i8> %n, ptr %p
   br label %out
  out:
   ret void
  }`
-	const collision = "root.__llgo_fmv_guard_sha"
+	const collision = "root.__llgo_fmv_guard_avx512bitalg"
 	for _, level := range []string{"v3", "v4"} {
 		t.Run(level, func(t *testing.T) {
 			m := parseModule(t, ir+"\n@"+collision+" = global i8 0\n")
@@ -211,7 +194,9 @@ func TestBaselineFoldCollisionLeavesModuleIntact(t *testing.T) {
 			if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			if m.NamedFunction(collision).IsNil() || !strings.Contains(m.NamedFunction("unrelated").String(), "ret i1 true") {
+			fast := m.NamedFunction(collision)
+			if fast.IsNil() || !strings.Contains(stringAttribute(fast, "target-features"), "+avx512bitalg") ||
+				!strings.Contains(m.NamedFunction("unrelated").String(), "ret i1 true") {
 				t.Fatal(m.String())
 			}
 		})
@@ -262,30 +247,19 @@ func TestGuardRuntimePredicates(t *testing.T) {
 			bundle := predicateBits[X86Query("AVX512")]
 			masks := []uint64{0, featureAVX, p.runtimeBit, featureAVX | p.runtimeBit, bundle, bundle | p.runtimeBit}
 			for _, published := range masks {
-				m := parseModule(t, fmt.Sprintf(`target triple = "x86_64-unknown-linux-gnu"
-declare i1 @query() "llgo.cpu.query"="%s"
-declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
-define void @root(ptr %%p) {
- %%q = call i1 @query()
- br i1 %%q, label %%yes, label %%exit
-yes:
- call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64 %d)
- %%v = load <4 x i32>, ptr %%p
- store <4 x i32> %%v, ptr %%p
- br label %%exit
-exit:
- ret void
-}`, X86Query(p.method), p.runtimeBit))
-				if err := Run(m, "v1"); err != nil {
-					t.Fatal(err)
-				}
-				base, fast := symbolPrefix+"guard_base", symbolPrefix+"guard_"+strings.ToLower(p.method)
-				if !strings.Contains(m.NamedFunction("root"+base).String(), "call i1 @query()") {
-					t.Fatal("baseline lost the observable Go predicate")
-				}
-				want := m.NamedFunction("root" + base)
+				m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+define void @root() { ret void }
+define void @base() { ret void }
+define void @fast() { ret void }
+`)
+				base, fast := m.NamedFunction("base"), m.NamedFunction("fast")
+				emitDispatch(m, newSourceInfo(m), m.NamedFunction("root"), dispatchPlan{
+					baseline: base,
+					choices:  []dispatchChoice{{bits: p.runtimeBit, fn: fast}},
+				})
+				want := base
 				if published&p.runtimeBit != 0 {
-					want = m.NamedFunction("root" + fast)
+					want = fast
 				}
 				checkCachedGuard(t, m, published, want)
 			}

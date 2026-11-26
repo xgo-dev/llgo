@@ -250,3 +250,46 @@ func TestSIMDIndependentInstructionFamilies(t *testing.T) {
 		t.Fatalf("expected FMA and ZMM implementations within six bodies, got %d", bodies)
 	}
 }
+
+func TestSIMDLeafOwnsInstructionFeature(t *testing.T) {
+	dir, err := filepath.Abs("testdata/fmv-feature-leaf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, goos := range []string{"linux", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			conf := NewDefaultConf(ModeGen)
+			conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = goos, "amd64", "v1", "simd"
+			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pkgs[0].LPkg.Prog.Dispose()
+			mod := pkgs[0].LPkg.Module()
+			if !mod.NamedGlobal("main.shaKernel.__llgo_fmv_slot").IsNil() {
+				t.Fatal("leaf-owned SHA instruction introduced a caller dispatcher")
+			}
+			caller := mod.NamedFunction("main.shaKernel").String()
+			for _, want := range []string{"X86Features.SHA", "SIMDRequireX86Features", "call void @__llgo_simd_sha256rnds2_"} {
+				if !strings.Contains(caller, want) {
+					t.Fatalf("SHA caller lost %s:\n%s", want, caller)
+				}
+			}
+			if goos == "linux" {
+				// On SysV, MulAdd lowers to an FMA intrinsic in the caller.
+				fast := mod.NamedFunction("main.fmaKernel.__llgo_fmv_guard_fma")
+				if fast.IsNil() || !strings.Contains(fast.String(), "call <4 x float> @llvm.fma.") {
+					t.Fatal("local FMA instruction lost its caller specialization")
+				}
+			}
+			simdCodegenVariants(t, []string{"O2"}, pkgs, func(t *testing.T, _ llvm.Module, asm string) {
+				if !strings.Contains(asm, "\tsha256rnds2") {
+					t.Fatal("missing SHA instruction in optimized code")
+				}
+				if goos == "linux" && !strings.Contains(asm, "\tvfmadd") {
+					t.Fatal("missing FMA instruction in optimized code")
+				}
+			})
+		})
+	}
+}

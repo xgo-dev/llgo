@@ -34,7 +34,6 @@ target triple = "x86_64-unknown-linux-gnu"
 @address = global ptr @root
 declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
 declare i1 @fma() "llgo.cpu.query"="x86.fma"
-declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
 declare <4 x float> @external(<4 x float>)
 declare <4 x float> @assembly(<4 x float>)
 declare void @consume(ptr)
@@ -51,9 +50,9 @@ define <4 x float> @root(<4 x float> %x, ptr %indirect) "disable-tail-calls"="tr
   %no = xor i1 %ok, true
   br i1 %no, label %fallback, label %fast
 fast:
-  call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64 2)
+  %sum = fadd <4 x float> %x, %x
   call void asm sideeffect "__llgo_pcsite_000000000000002a_$\7B:uid\7D:\0A.quad 0x000000000000002a", ""()
-  %y = call <4 x float> @helper(<4 x float> %x)
+  %y = call <4 x float> @helper(<4 x float> %sum)
   %z = call <4 x float> %indirect(<4 x float> %y)
   %a = call <4 x float> @assembly(<4 x float> %z)
   %f = call i1 @fma()

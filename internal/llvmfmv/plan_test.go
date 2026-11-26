@@ -70,37 +70,58 @@ define void @relay%d(ptr %%p) noinline {
 }
 
 func TestIndependentPredicatesDoNotEnumerateSubsets(t *testing.T) {
-	predicates := []string{"SHA", "VAES", "AVX512GFNI", "FMA", "AVX512BITALG", "AVX512VBMI", "AVX512VBMI2", "AVX512VNNI", "AVXVNNI"}
+	predicates := []string{"FMA", "AVX512BITALG", "AVX512VPOPCNTDQ"}
 	// Each enabled operation sets a separate visible bit. A partially enabled
 	// machine must enter a body that still evaluates every unproven source query.
-	var ir strings.Builder
-	ir.WriteString(`target triple = "x86_64-unknown-linux-gnu"
-declare void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64)
-`)
-	for _, pred := range predicates {
-		fmt.Fprintf(&ir, "declare i1 @%s() %q=%q\n", pred, QueryAttribute, X86Query(pred))
-	}
-	ir.WriteString("define i32 @root() {\n")
-	previous := "0"
-	for i, pred := range predicates {
-		bit := predicateBits[X86Query(pred)]
-		fmt.Fprintf(&ir, ` %%q%d = call i1 @%s()
- br i1 %%q%d, label %%work%d, label %%skip%d
-work%d:
- call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.SIMDRequireX86Features"(i64 %d)
- %%on%d = or i32 %s, %d
- br label %%next%d
-skip%d: br label %%next%d
-next%d:
- %%v%d = phi i32 [ %%on%d, %%work%d ], [ %s, %%skip%d ]
-`, i, pred, i, i, i, i, bit, i, previous, 1<<i, i, i, i, i, i, i, i, previous, i)
-		previous = fmt.Sprintf("%%v%d", i)
-	}
-	fmt.Fprintf(&ir, " ret i32 %s\n}\n", previous)
+	const ir = `target triple = "x86_64-unknown-linux-gnu"
+declare i1 @fma() "llgo.cpu.query"="x86.fma"
+declare i1 @bytepop() "llgo.cpu.query"="x86.avx512bitalg"
+declare i1 @wordpop() "llgo.cpu.query"="x86.avx512vpopcntdq"
+declare <4 x float> @llvm.fma.v4f32(<4 x float>, <4 x float>, <4 x float>)
+declare <16 x i8> @llvm.ctpop.v16i8(<16 x i8>)
+declare <4 x i32> @llvm.ctpop.v4i32(<4 x i32>)
+define i32 @root(ptr %p) {
+entry:
+ %f = call i1 @fma()
+ br i1 %f, label %fma, label %next
+fma:
+ %x = load <4 x float>, ptr %p
+ %y = call <4 x float> @llvm.fma.v4f32(<4 x float> %x, <4 x float> %x, <4 x float> %x)
+ store <4 x float> %y, ptr %p
+ br label %next
+next:
+ %first = phi i32 [ 0, %entry ], [ 1, %fma ]
+ %b = call i1 @bytepop()
+ br i1 %b, label %bytes, label %last
+bytes:
+ %bi = load <16 x i8>, ptr %p
+ %bo = call <16 x i8> @llvm.ctpop.v16i8(<16 x i8> %bi)
+ store <16 x i8> %bo, ptr %p
+ %setbyte = or i32 %first, 2
+ br label %last
+last:
+ %second = phi i32 [ %first, %next ], [ %setbyte, %bytes ]
+ %w = call i1 @wordpop()
+ br i1 %w, label %words, label %done
+words:
+ %wi = load <4 x i32>, ptr %p
+ %wo = call <4 x i32> @llvm.ctpop.v4i32(<4 x i32> %wi)
+ store <4 x i32> %wo, ptr %p
+ %setword = or i32 %second, 4
+ ret i32 %setword
+done:
+ ret i32 %second
+}`
 	// Each mask starts from the original IR because evaluating the resolver
 	// and folding the remaining source queries below mutates the module.
-	for _, mask := range []uint64{0, predicateBits[X86Query("FMA")], predicateBits[X86Query("SHA")] | predicateBits[X86Query("AVX512VNNI")]} {
-		m := parseModule(t, ir.String())
+	for want := 0; want < 1<<len(predicates); want++ {
+		var mask uint64
+		for i, pred := range predicates {
+			if want&(1<<i) != 0 {
+				mask |= predicateBits[X86Query(pred)]
+			}
+		}
+		m := parseModule(t, ir)
 		if err := Run(m, "v1"); err != nil {
 			t.Fatal(err)
 		}
@@ -115,10 +136,7 @@ next%d:
 			m.NamedFunction("root"+symbolPrefix+"guard_fma").IsNil() {
 			t.Fatalf("%d independent guards generated %d bodies, want just the baseline and FMA", len(predicates), bodies)
 		}
-		body := m.NamedFunction("root")
-		if !m.NamedGlobal("root" + slotSuffix).IsNil() {
-			body = cachedGuardTarget(t, m, "root", mask)
-		}
+		body := cachedGuardTarget(t, m, "root", mask)
 		// Simulate the effective Go predicates; only the reachable blocks may
 		// contribute. Query-only operations cannot disappear on a partial mask.
 		for bb := body.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
@@ -138,12 +156,6 @@ next%d:
 		}
 		simplifyGuards(body)
 		optimizePolicyModule(t, m, "function(instcombine,simplifycfg)")
-		want := 0
-		for i, pred := range predicates {
-			if mask&predicateBits[X86Query(pred)] != 0 {
-				want |= 1 << i
-			}
-		}
 		if !strings.Contains(body.String(), fmt.Sprintf("ret i32 %d\n", want)) {
 			t.Fatalf("mask %#x: expected %d in %s:\n%s", mask, want, body.Name(), body.String())
 		}
