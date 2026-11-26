@@ -146,7 +146,8 @@ func TestWindowsUnwindBorrowedBuffers(t *testing.T) {
 			}
 			defer pkgs[0].LPkg.Prog.Dispose()
 			for _, name := range []string{
-				"fpCallers", "windowsUnwindOne", "recoverFrameMarks", "recoverFrameLive",
+				"fpCallers", "windowsContextCallers", "windowsUnwindOne", "cachedFrameSymbolResult",
+				"recoverFrameMarks", "recoverFrameLive",
 				"platformFaultCallers", "runtimeFuncPCSiteEntry", "runtimeFuncPCMayUseEntrySlack",
 			} {
 				fn := pkgs[0].LPkg.Module().NamedFunction("runtime." + name)
