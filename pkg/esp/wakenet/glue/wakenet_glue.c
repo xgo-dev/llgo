@@ -123,6 +123,10 @@ static int16_t *s_chunk;
  * deinterleaves the left slot into s_chunk, so the engine always sees
  * contiguous 16 kHz mono. */
 static int16_t *s_chunk_raw;
+/* Tracks whether the capture channel is currently enabled: IDF logs an E
+ * line for a disable on a disabled channel, and Close always has to make
+ * sure the channel ends up disabled whichever side did it last. */
+static volatile int s_i2s_enabled;
 static int32_t s_chunk_samples;
 static int32_t s_rate;
 
@@ -279,6 +283,7 @@ static void wakenet_task(void *arg)
             s_test_pos = 0;
             if (s_source == WN_SRC_I2S) {
                 i2s_channel_enable(s_i2s);
+                s_i2s_enabled = 1;
             }
         }
         const size_t chunk_bytes = (size_t)s_chunk_samples * sizeof(int16_t);
@@ -362,8 +367,9 @@ static void wakenet_task(void *arg)
         }
 
         /* s_run dropped: stop the capture channel until the next Start. */
-        if (s_source == WN_SRC_I2S) {
+        if (s_source == WN_SRC_I2S && s_i2s_enabled) {
             i2s_channel_disable(s_i2s);
+            s_i2s_enabled = 0;
         }
     }
 
@@ -574,7 +580,10 @@ int32_t llgo_wakenet_close(void)
         }
     }
     if (s_source == WN_SRC_I2S && s_i2s != NULL) {
-        i2s_channel_disable(s_i2s); /* legal for an already-disabled channel */
+        if (s_i2s_enabled) {
+            i2s_channel_disable(s_i2s);
+            s_i2s_enabled = 0;
+        }
         i2s_del_channel(s_i2s);
         s_i2s = NULL;
     }
