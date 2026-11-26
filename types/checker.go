@@ -211,10 +211,16 @@ func (check *Checker) Files(files []*ast.File) error {
 	err := check.goChecker.Files(checkFiles)
 	prep.restoreGoInfo(check.goPkg, check.goInfo, files)
 	check.ctx.populateFromGoPackage(check.pkg, check.goPkg, check.Info, check.goInfo, check.goVersion, files)
-	if len(prep.synthNames) > 0 && check.pkg != nil && check.pkg.scope != nil {
-		for name := range prep.synthNames {
-			delete(check.pkg.scope.elems, name)
+	if len(prep.synthNames) > 0 && check.pkg != nil {
+		if check.pkg.scope != nil {
+			for name := range prep.synthNames {
+				delete(check.pkg.scope.elems, name)
+			}
 		}
+		// Detach the underlying go/types.Package that still contains synthetic
+		// aliases in its immutable go/types.Scope so Eval, CheckExpr, and
+		// downstream importers bridge from the clean LLGo Package.Scope().
+		check.pkg.goPkg = nil
 	}
 	return wrapGoError(err)
 }
@@ -298,48 +304,29 @@ func prepareErasedCallConvAliasFiles(files []*ast.File) erasedAliasPrep {
 		if f == nil {
 			continue
 		}
-		for _, imp := range f.Imports {
-			if imp != nil && imp.Name != nil {
-				usedNames[imp.Name.Name] = true
+		ast.Inspect(f, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && id != nil {
+				usedNames[id.Name] = true
 			}
-		}
+			return true
+		})
 		for _, decl := range f.Decls {
-			switch d := decl.(type) {
-			case *ast.FuncDecl:
-				if d.Recv == nil && d.Name != nil {
-					usedNames[d.Name.Name] = true
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok || ts.Name == nil || !ts.Assign.IsValid() {
+					continue
 				}
-			case *ast.GenDecl:
-				switch d.Tok {
-				case token.CONST, token.VAR:
-					for _, spec := range d.Specs {
-						if vs, ok := spec.(*ast.ValueSpec); ok {
-							for _, name := range vs.Names {
-								if name != nil {
-									usedNames[name.Name] = true
-								}
-							}
-						}
-					}
-				case token.TYPE:
-					for _, spec := range d.Specs {
-						ts, ok := spec.(*ast.TypeSpec)
-						if !ok || ts.Name == nil {
-							continue
-						}
-						usedNames[ts.Name.Name] = true
-						if !ts.Assign.IsValid() {
-							continue
-						}
-						aliasDecls[ts.Name.Name] = localAliasDecl{expr: ts.Type, fileIdx: fi}
-						doc := ts.Doc
-						if doc == nil && len(d.Specs) == 1 {
-							doc = d.Doc
-						}
-						if _, ok := parseTypeCallConvDirective(doc); ok {
-							hasDirectiveAlias = true
-						}
-					}
+				aliasDecls[ts.Name.Name] = localAliasDecl{expr: ts.Type, fileIdx: fi}
+				doc := ts.Doc
+				if doc == nil && len(gd.Specs) == 1 {
+					doc = gd.Doc
+				}
+				if _, ok := parseTypeCallConvDirective(doc); ok {
+					hasDirectiveAlias = true
 				}
 			}
 		}
@@ -404,7 +391,9 @@ func prepareErasedCallConvAliasFiles(files []*ast.File) erasedAliasPrep {
 	synthSeq := 0
 	nextSynthName := func() string {
 		for {
-			name := fmt.Sprintf("__llgo_ccalias_%d", synthSeq)
+			// Prefix with '$' (not a valid Go identifier character) so user Go
+			// source and Eval expressions can never parse or resolve this name.
+			name := fmt.Sprintf("$llgo_ccalias_%d", synthSeq)
 			synthSeq++
 			if !usedNames[name] {
 				usedNames[name] = true

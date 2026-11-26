@@ -1609,9 +1609,46 @@ var (
 		t.Fatalf("Config.Check cross-file alias failed: %v", err)
 	}
 	for _, name := range pkg.Scope().Names() {
-		if strings.HasPrefix(name, "__llgo_ccalias_") {
+		if strings.HasPrefix(name, "__llgo_ccalias_") || strings.HasPrefix(name, "$llgo_ccalias_") {
 			t.Fatalf("synthetic alias %q leaked into package scope", name)
 		}
+	}
+	// Synthetic aliases must never be visible to Eval or CheckExpr, while real
+	// declarations remain evaluable.
+	if _, err := types.Eval(fset, pkg, token.NoPos, "__llgo_ccalias_0"); err == nil {
+		t.Fatal("Eval unexpectedly resolved undeclared __llgo_ccalias_0")
+	}
+	if _, err := types.Eval(fset, pkg, token.NoPos, "$llgo_ccalias_0"); err == nil {
+		t.Fatal("Eval unexpectedly accepted synthetic $llgo_ccalias_0")
+	}
+	synthID := ast.NewIdent("$llgo_ccalias_0")
+	synthInfo := &types.Info{
+		Uses:  make(map[*ast.Ident]types.Object),
+		Types: make(map[ast.Expr]types.TypeAndValue),
+	}
+	if err := types.CheckExpr(fset, pkg, token.NoPos, synthID, synthInfo); err == nil {
+		if synthInfo.Uses[synthID] != nil || (synthInfo.Types[synthID].Type != nil && synthInfo.Types[synthID].Type != types.Typ[types.Invalid]) {
+			t.Fatalf("CheckExpr unexpectedly resolved synthetic $llgo_ccalias_0: use=%v tv=%v", synthInfo.Uses[synthID], synthInfo.Types[synthID])
+		}
+	}
+	if tv, err := types.Eval(fset, pkg, token.NoPos, "SizeCFn"); err != nil {
+		t.Fatalf("Eval(SizeCFn) failed: %v", err)
+	} else if got, ok := constant.Int64Val(tv.Value); !ok || got != 8 {
+		t.Fatalf("Eval(SizeCFn) = %v, want 8", tv.Value)
+	}
+	// Source referencing an undeclared __llgo_ccalias_0 must still fail Check.
+	badB, err := parser.ParseFile(fset, "bad_b.go", "package xfile\n//llgo:cdecl\ntype CFn = GoFn\nvar _ __llgo_ccalias_0\n", parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile bad_b.go: %v", err)
+	}
+	badConf := types.Config{
+		Importer: &mapImporter{pkgs: map[string]*types.Package{
+			"unsafe":           types.Unsafe,
+			"example.com/dep1": dep1,
+		}},
+	}
+	if _, err := badConf.Check("example.com/xfilebad", fset, []*ast.File{fa, badB}, nil); err == nil {
+		t.Fatal("Config.Check unexpectedly accepted undeclared __llgo_ccalias_0")
 	}
 	for name, want := range map[string]int64{"SizeGoFn": 16, "SizeCFn": 8} {
 		cObj, ok := pkg.Scope().Lookup(name).(*types.Const)

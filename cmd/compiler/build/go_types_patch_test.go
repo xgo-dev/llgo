@@ -226,7 +226,10 @@ func TestParseMakeDepfileAndLinkSnapshotSidecar(t *testing.T) {
 	if !validateDepfile(decoded) {
 		t.Fatal("freshly marshaled depfile failed validation")
 	}
-	// Truncated depfile blobs must fail cleanly.
+	// Truncated depfile blobs and older depfile versions must fail cleanly.
+	if _, err := unmarshalDepfile(append([]byte("LLGODEP4"), raw[len(depfileMagic):]...)); err == nil {
+		t.Fatal("unmarshalDepfile accepted legacy LLGODEP4 payload")
+	}
 	for cut := 0; cut < len(raw); cut++ {
 		if _, err := unmarshalDepfile(raw[:cut]); err == nil {
 			t.Fatalf("unmarshalDepfile succeeded on truncated payload at %d/%d", cut, len(raw))

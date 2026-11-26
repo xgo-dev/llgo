@@ -27,7 +27,7 @@ import (
 	"sort"
 )
 
-const depfileMagic = "LLGODEP4"
+const depfileMagic = "LLGODEP5"
 
 type depfileStat struct {
 	Path    string

@@ -439,12 +439,16 @@ func TestWriteReadBundleAndErrors(t *testing.T) {
 		t.Fatalf("IntBoxAlias.Rhs did not preserve instantiated GenBox[int] with Tag field: %v", gotIntBoxAlias.Rhs())
 	}
 
-	// Corrupt/bad-magic/kind-mismatch checks.
+	// Corrupt/bad-magic/kind-mismatch/version-mismatch checks.
 	if _, err := exportdata.Read(bytes.NewReader([]byte("BADMAGIC12345")), fset, nil, ""); err == nil || !strings.Contains(err.Error(), "magic") {
 		t.Fatalf("expected invalid magic error, got %v", err)
 	}
 	if _, err := exportdata.Read(bytes.NewReader(buf.Bytes()), fset, nil, ""); err == nil || !strings.Contains(err.Error(), "kind") {
 		t.Fatalf("expected kind mismatch error, got %v", err)
+	}
+	v1Header := []byte{'L', 'L', 'G', 'O', 'E', 'X', 1, 1, 0, 0, 0, 0}
+	if _, err := exportdata.Read(bytes.NewReader(v1Header), fset, nil, ""); err == nil || !strings.Contains(err.Error(), "version") {
+		t.Fatalf("expected unsupported format version error for v1 payload, got %v", err)
 	}
 	if _, err := exportdata.ReadBundle(bytes.NewReader([]byte("LL")), fset, nil); err == nil {
 		t.Fatal("expected corrupt error for truncated bundle")
