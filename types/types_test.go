@@ -1457,3 +1457,147 @@ func TestEvalAndCheckExprOnPubliclyConstructedPackage(t *testing.T) {
 		t.Fatalf("Eval(1 + 2) with nil pkg = %v, want 3", tvNil.Value)
 	}
 }
+
+func TestAliasedFuncCallConvPreservesPlainGoFuncLayout(t *testing.T) {
+	src := `package aliasabi
+
+import "unsafe"
+
+type GoFn = func(x int32)
+
+//llgo:cdecl
+type CFn = GoFn
+
+type CFn2 = CFn
+
+//llgo:stdcall
+type StdFn = CFn
+
+const (
+	SizeGoFn  = unsafe.Sizeof(GoFn(nil))
+	SizeCFn   = unsafe.Sizeof(CFn(nil))
+	SizeCFn2  = unsafe.Sizeof(CFn2(nil))
+	SizeStdFn = unsafe.Sizeof(StdFn(nil))
+)
+
+var (
+	g GoFn
+	c CFn = g
+)
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "aliasabi.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	ctx := types.NewContextWithConfig(types.ContextConfig{
+		Spec: target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"}),
+	})
+	info := &types.Info{
+		Defs: make(map[*ast.Ident]types.Object),
+		Uses: make(map[*ast.Ident]types.Object),
+	}
+	conf := types.Config{
+		Context:  ctx,
+		Importer: &mapImporter{pkgs: map[string]*types.Package{"unsafe": types.Unsafe}},
+	}
+	pkg, err := conf.Check("example.com/aliasabi", fset, []*ast.File{f}, info)
+	if err != nil {
+		t.Fatalf("Config.Check: %v", err)
+	}
+	wantSizes := map[string]int64{
+		"SizeGoFn":  16,
+		"SizeCFn":   8,
+		"SizeCFn2":  8,
+		"SizeStdFn": 8,
+	}
+	for name, want := range wantSizes {
+		cObj, ok := pkg.Scope().Lookup(name).(*types.Const)
+		if !ok {
+			t.Fatalf("missing const %s", name)
+		}
+		got, ok := constant.Int64Val(cObj.Val())
+		if !ok || got != want {
+			t.Fatalf("%s = %v, want %d", name, cObj.Val(), want)
+		}
+	}
+	goFnSig := types.Unalias(pkg.Scope().Lookup("GoFn").Type()).(*types.Signature)
+	cFnSig := types.Unalias(pkg.Scope().Lookup("CFn").Type()).(*types.Signature)
+	stdFnSig := types.Unalias(pkg.Scope().Lookup("StdFn").Type()).(*types.Signature)
+	if goFnSig.CallConv() != types.Go {
+		t.Fatalf("GoFn CallConv = %v, want Go", goFnSig.CallConv())
+	}
+	if cFnSig.CallConv() != types.CDecl {
+		t.Fatalf("CFn CallConv = %v, want CDecl", cFnSig.CallConv())
+	}
+	if stdFnSig.CallConv() != types.Stdcall {
+		t.Fatalf("StdFn CallConv = %v, want Stdcall", stdFnSig.CallConv())
+	}
+}
+
+func TestConcurrentEvalAndCheckExprAfterPostCheckScopeInsert(t *testing.T) {
+	fset := token.NewFileSet()
+	checkedFile, err := parser.ParseFile(fset, "checked.go", "package checked\nconst Base = 10\n", 0)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	var conf types.Config
+	checkedPkg, err := conf.Check("example.com/checkedrace", fset, []*ast.File{checkedFile}, nil)
+	if err != nil {
+		t.Fatalf("Config.Check: %v", err)
+	}
+	extraTN := types.NewTypeName(token.NoPos, checkedPkg, "ExtraInt", nil)
+	_ = types.NewNamed(extraTN, types.Typ[types.Int], nil)
+	checkedPkg.Scope().Insert(extraTN)
+	checkedPkg.Scope().Insert(types.NewConst(token.NoPos, checkedPkg, "Extra", types.Typ[types.UntypedInt], constant.MakeInt64(5)))
+	checkedPkg.Scope().Insert(types.NewVar(token.NoPos, checkedPkg, "V", types.Typ[types.Int]))
+
+	manualPkg := types.NewPackage("example.com/manualrace", "manualrace")
+	manualPkg.Scope().Insert(types.NewConst(token.NoPos, manualPkg, "K", types.Typ[types.UntypedInt], constant.MakeInt64(42)))
+
+	const workers = 16
+	start := make(chan struct{})
+	errCh := make(chan error, workers*3)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			tv, err := types.Eval(fset, checkedPkg, token.NoPos, "ExtraInt(Base + Extra)")
+			if err != nil {
+				errCh <- fmt.Errorf("Eval checkedPkg: %w", err)
+				return
+			}
+			if got, ok := constant.Int64Val(tv.Value); !ok || got != 15 {
+				errCh <- fmt.Errorf("Eval checkedPkg = %v, want 15", tv.Value)
+				return
+			}
+			expr, err := parser.ParseExpr("ExtraInt(V + Extra)")
+			if err != nil {
+				errCh <- fmt.Errorf("ParseExpr: %w", err)
+				return
+			}
+			info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue)}
+			if err := types.CheckExpr(fset, checkedPkg, token.NoPos, expr, info); err != nil {
+				errCh <- fmt.Errorf("CheckExpr checkedPkg: %w", err)
+				return
+			}
+			tvM, err := types.Eval(fset, manualPkg, token.NoPos, "K + 1")
+			if err != nil {
+				errCh <- fmt.Errorf("Eval manualPkg: %w", err)
+				return
+			}
+			if got, ok := constant.Int64Val(tvM.Value); !ok || got != 43 {
+				errCh <- fmt.Errorf("Eval manualPkg = %v, want 43", tvM.Value)
+				return
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+}

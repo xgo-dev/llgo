@@ -20,3 +20,7 @@ func newGoAlias(obj *gotypes.TypeName, rhs gotypes.Type, _ []*gotypes.TypeParam)
 	// Pre-Go 1.22 has no gotypes.Alias; represent via TypeName with rhs.
 	return rhs
 }
+
+func goTypesErasesAliases() bool {
+	return true
+}

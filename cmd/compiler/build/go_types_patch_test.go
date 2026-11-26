@@ -192,6 +192,65 @@ func TestParseMakeDepfileAndLinkSnapshotSidecar(t *testing.T) {
 		t.Fatalf("parseMakeDepfileForOS(windows) = %#v", winGot)
 	}
 
+	// Verify depfileRecord round-trip and invalidation for missing dirs and shadow paths.
+	depDir := t.TempDir()
+	srcFile := filepath.Join(depDir, "a.c")
+	if err := os.WriteFile(srcFile, []byte("int x = 1;\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	absentDir := filepath.Join(depDir, "absent")
+	shadowPath := filepath.Join(depDir, "shadow.h")
+	fileStats, err := statDepfiles([]string{srcFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirStats, err := statDepfileDirs([]string{depDir, absentDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := &depfileRecord{
+		Key:              "k",
+		PreprocessedHash: "h",
+		Files:            fileStats,
+		Dirs:             dirStats,
+		Missing:          []string{shadowPath},
+	}
+	raw, err := marshalDepfile(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := unmarshalDepfile(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validateDepfile(decoded) {
+		t.Fatal("freshly marshaled depfile failed validation")
+	}
+	// Truncated depfile blobs must fail cleanly.
+	for cut := 0; cut < len(raw); cut++ {
+		if _, err := unmarshalDepfile(raw[:cut]); err == nil {
+			t.Fatalf("unmarshalDepfile succeeded on truncated payload at %d/%d", cut, len(raw))
+		}
+	}
+	// Creating a previously absent search directory must invalidate the record.
+	if err := os.MkdirAll(absentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if validateDepfile(decoded) {
+		t.Fatal("depfile remained valid after previously absent search dir was created")
+	}
+	_ = os.Remove(absentDir)
+	if !validateDepfile(decoded) {
+		t.Fatal("depfile should be valid again after removing absent dir")
+	}
+	// Creating a previously missing shadowing header must invalidate the record.
+	if err := os.WriteFile(shadowPath, []byte("#define X 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if validateDepfile(decoded) {
+		t.Fatal("depfile remained valid after shadowing header was created")
+	}
+
 	dir := t.TempDir()
 	snapPath := filepath.Join(dir, "pkg.linksnap")
 	pkg := &aPackage{

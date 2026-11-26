@@ -375,13 +375,31 @@ var depfilePreprocessEnvVars = []string{
 	"GCC_EXEC_PREFIX",
 	"CC",
 	"CXX",
+	"CCFLAGS",
 	"CFLAGS",
 	"CXXFLAGS",
 	"CPPFLAGS",
+	"EMCC_CFLAGS",
 	"SOURCE_DATE_EPOCH",
 }
 
-func depfileEnvIdentity(ctx *context, workDir string, environ []string) string {
+var depfileIncludeSearchEnvVars = []string{
+	"CPATH",
+	"C_INCLUDE_PATH",
+	"CPLUS_INCLUDE_PATH",
+	"OBJC_INCLUDE_PATH",
+	"OBJCPLUS_INCLUDE_PATH",
+	"INCLUDE",
+}
+
+func lookupPreprocessEnv(environ []string, name string) string {
+	if len(environ) == 0 {
+		return os.Getenv(name)
+	}
+	return (commandEnv{environ: environ}).lookup(name)
+}
+
+func depfileEnvIdentity(ctx *context, workDir string, environ []string, effectiveArgs []string) string {
 	if workDir == "" {
 		workDir, _ = os.Getwd()
 	}
@@ -394,28 +412,244 @@ func depfileEnvIdentity(ctx *context, workDir string, environ []string) string {
 	b.WriteByte('\x00')
 	b.WriteString(ctx.crossCompile.CXX)
 	b.WriteByte('\x00')
-	b.WriteString(strings.Join(ctx.crossCompile.CCArgs, "\x1f"))
-	b.WriteByte('\x00')
-	b.WriteString(strings.Join(ctx.crossCompile.CXXArgs, "\x1f"))
-	b.WriteByte('\x00')
-	b.WriteString(strings.Join(ctx.crossCompile.CCFLAGS, "\x1f"))
-	b.WriteByte('\x00')
-	b.WriteString(strings.Join(ctx.crossCompile.CFLAGS, "\x1f"))
+	b.WriteString(strings.Join(effectiveArgs, "\x1f"))
 	b.WriteByte('\x00')
 	b.WriteString(workDir)
 	for _, name := range depfilePreprocessEnvVars {
-		var val string
-		if len(environ) == 0 {
-			val = os.Getenv(name)
-		} else {
-			val = (commandEnv{environ: environ}).lookup(name)
-		}
+		val := lookupPreprocessEnv(environ, name)
 		b.WriteByte('\x00')
 		b.WriteString(name)
 		b.WriteByte('=')
 		b.WriteString(val)
 	}
 	return b.String()
+}
+
+func resolveSearchDir(workDir, dir string) string {
+	if dir == "" {
+		dir = workDir
+	}
+	if dir == "" {
+		return ""
+	}
+	if !filepath.IsAbs(dir) && workDir != "" {
+		dir = filepath.Join(workDir, dir)
+	}
+	return filepath.Clean(dir)
+}
+
+// collectIncludeSearchDirs extracts every directory that clang searches when
+// resolving #include directives for inputPath, from the source directory,
+// effective compiler flags, and preprocessor environment variables.
+func collectIncludeSearchDirs(inputPath, workDir string, environ, effectiveArgs []string) []string {
+	var dirs []string
+	seen := make(map[string]bool)
+	addDir := func(d string) {
+		d = resolveSearchDir(workDir, d)
+		if d == "" || seen[d] {
+			return
+		}
+		seen[d] = true
+		dirs = append(dirs, d)
+	}
+	if inputPath != "" {
+		srcPath := inputPath
+		if !filepath.IsAbs(srcPath) && workDir != "" {
+			srcPath = filepath.Join(workDir, srcPath)
+		}
+		addDir(filepath.Dir(srcPath))
+	}
+	twoArgFlags := map[string]bool{
+		"-I": true, "-isystem": true, "-iquote": true, "-idirafter": true,
+		"-F": true, "-iframework": true,
+	}
+	joinedPrefixes := []string{
+		"--include-directory=",
+		"-isystem", "-iquote", "-idirafter", "-iframework",
+		"-I", "-F",
+	}
+	for i := 0; i < len(effectiveArgs); i++ {
+		arg := effectiveArgs[i]
+		if twoArgFlags[arg] {
+			if i+1 < len(effectiveArgs) {
+				i++
+				addDir(effectiveArgs[i])
+			}
+			continue
+		}
+		for _, pfx := range joinedPrefixes {
+			if strings.HasPrefix(arg, pfx) && len(arg) > len(pfx) {
+				addDir(arg[len(pfx):])
+				break
+			}
+		}
+	}
+	sep := string(os.PathListSeparator)
+	for _, envName := range depfileIncludeSearchEnvVars {
+		val := lookupPreprocessEnv(environ, envName)
+		if val == "" {
+			continue
+		}
+		for _, seg := range strings.Split(val, sep) {
+			// Per GCC/Clang rules, an empty segment in CPATH or *_INCLUDE_PATH
+			// searches the current working directory.
+			if seg == "" && envName == "INCLUDE" {
+				continue
+			}
+			addDir(seg)
+		}
+	}
+	return dirs
+}
+
+// extractIncludeTargets scans C/C++/ObjC preprocessor directives in content for
+// quoted or angled header paths (#include, #import, #include_next, __has_include).
+func extractIncludeTargets(content []byte) []string {
+	var out []string
+	s := string(content)
+	for len(s) > 0 {
+		var line string
+		if nl := strings.IndexByte(s, '\n'); nl >= 0 {
+			line = s[:nl]
+			s = s[nl+1:]
+		} else {
+			line = s
+			s = ""
+		}
+		trimmed := strings.TrimLeft(line, " \t")
+		if len(trimmed) == 0 || trimmed[0] != '#' {
+			continue
+		}
+		rest := strings.TrimLeft(trimmed[1:], " \t")
+		for _, kw := range []string{"include_next", "include", "import"} {
+			if strings.HasPrefix(rest, kw) {
+				after := rest[len(kw):]
+				if len(after) > 0 && (after[0] == ' ' || after[0] == '\t' || after[0] == '"' || after[0] == '<') {
+					after = strings.TrimLeft(after, " \t")
+					if target := parseIncludeToken(after); target != "" {
+						out = append(out, target)
+					}
+				}
+				break
+			}
+		}
+		for _, fn := range []string{"__has_include_next(", "__has_include("} {
+			cur := rest
+			for {
+				idx := strings.Index(cur, fn)
+				if idx < 0 {
+					break
+				}
+				cur = strings.TrimLeft(cur[idx+len(fn):], " \t")
+				if target := parseIncludeToken(cur); target != "" {
+					out = append(out, target)
+				}
+			}
+		}
+	}
+	return out
+}
+
+func parseIncludeToken(s string) string {
+	if len(s) < 3 {
+		return ""
+	}
+	var closeCh byte
+	switch s[0] {
+	case '"':
+		closeCh = '"'
+	case '<':
+		closeCh = '>'
+	default:
+		return ""
+	}
+	end := strings.IndexByte(s[1:], closeCh)
+	if end <= 0 {
+		return ""
+	}
+	return s[1 : 1+end]
+}
+
+// collectShadowingMissingPaths records non-existent candidate header paths across
+// searchDirs that, if created later, could shadow a previously resolved header or
+// change __has_include evaluation without changing environment variables.
+func collectShadowingMissingPaths(searchDirs, deps []string, depContents map[string][]byte) []string {
+	if len(searchDirs) == 0 {
+		return nil
+	}
+	depSet := make(map[string]bool, len(deps))
+	for _, d := range deps {
+		if d != "" {
+			depSet[filepath.Clean(d)] = true
+		}
+	}
+	// Resolve symlinks on searchDirs once so macOS /var -> /private/var matches.
+	evalSearchDirs := make([]string, len(searchDirs))
+	for i, sd := range searchDirs {
+		if real, err := filepath.EvalSymlinks(sd); err == nil {
+			evalSearchDirs[i] = filepath.Clean(real)
+		} else {
+			evalSearchDirs[i] = sd
+		}
+	}
+
+	relSeen := make(map[string]bool)
+	var rels []string
+	addRel := func(rel string) {
+		rel = strings.TrimSpace(rel)
+		if rel == "" || filepath.IsAbs(rel) {
+			return
+		}
+		rel = filepath.Clean(rel)
+		if rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+			return
+		}
+		if !relSeen[rel] {
+			relSeen[rel] = true
+			rels = append(rels, rel)
+		}
+	}
+
+	for _, content := range depContents {
+		for _, target := range extractIncludeTargets(content) {
+			addRel(target)
+		}
+	}
+	for _, dep := range deps {
+		if dep == "" {
+			continue
+		}
+		cleanDep := filepath.Clean(dep)
+		realDep := cleanDep
+		if r, err := filepath.EvalSymlinks(cleanDep); err == nil {
+			realDep = filepath.Clean(r)
+		}
+		for i, sd := range searchDirs {
+			for _, pair := range [][2]string{{sd, cleanDep}, {evalSearchDirs[i], realDep}} {
+				rel, err := filepath.Rel(pair[0], pair[1])
+				if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+					addRel(rel)
+				}
+			}
+		}
+	}
+
+	missingSeen := make(map[string]bool)
+	var missing []string
+	for _, sd := range searchDirs {
+		for _, rel := range rels {
+			cand := filepath.Clean(filepath.Join(sd, rel))
+			if depSet[cand] || missingSeen[cand] {
+				continue
+			}
+			if _, err := os.Stat(cand); os.IsNotExist(err) {
+				missingSeen[cand] = true
+				missing = append(missing, cand)
+			}
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[string][]byte) ([]llgoFileDigest, error) {
@@ -433,10 +667,11 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 		if workDir == "" {
 			workDir, _ = os.Getwd()
 		}
-		envID := depfileEnvIdentity(ctx, workDir, cmd.Env)
+		effectiveArgs := cmd.CompileArguments(compilerArgs...)
+		envID := depfileEnvIdentity(ctx, workDir, cmd.Env, effectiveArgs)
 		cacheKey := llgoFileHashKey{
 			path:         input.path,
-			compilerArgs: strings.Join(compilerArgs, "\x00"),
+			compilerArgs: strings.Join(effectiveArgs, "\x00"),
 			envIdentity:  envID,
 		}
 		preprocessedHash, ok := ctx.llgoFileHashCache[cacheKey]
@@ -494,13 +729,19 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 								deps[i] = filepath.Join(workDir, d)
 							}
 						}
-						if stats, err := statDepfiles(deps); err == nil && len(stats) > 0 {
-							if raw, err := marshalDepfile(&depfileRecord{
-								Key:              depKey,
-								PreprocessedHash: preprocessedHash,
-								Files:            stats,
-							}); err == nil {
-								_ = writeFileAtomicBytes(depPath, raw)
+						searchDirs := collectIncludeSearchDirs(input.path, workDir, cmd.Env, effectiveArgs)
+						if stats, contents, err := statDepfilesWithContent(deps); err == nil && len(stats) > 0 {
+							if dirStats, err := statDepfileDirs(searchDirs); err == nil {
+								missing := collectShadowingMissingPaths(searchDirs, deps, contents)
+								if raw, err := marshalDepfile(&depfileRecord{
+									Key:              depKey,
+									PreprocessedHash: preprocessedHash,
+									Files:            stats,
+									Dirs:             dirStats,
+									Missing:          missing,
+								}); err == nil {
+									_ = writeFileAtomicBytes(depPath, raw)
+								}
 							}
 						}
 					}

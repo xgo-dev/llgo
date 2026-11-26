@@ -1624,7 +1624,7 @@ func (c *Context) lookupErasedAliasCallConvLocked(sig *gotypes.Signature) (CallC
 	return Go, false
 }
 
-func (c *Context) prescanTypeDirectives(pkgPath string, files []*ast.File) {
+func (c *Context) prescanTypeDirectives(pkgPath string, files []*ast.File, isolatedAliases map[string]bool) {
 	if len(files) == 0 {
 		return
 	}
@@ -1657,7 +1657,7 @@ func (c *Context) prescanTypeDirectives(pkgPath string, files []*ast.File) {
 						}
 						changed = true
 					}
-					if ts.Assign.IsValid() {
+					if ts.Assign.IsValid() && isolatedAliases[ts.Name.Name] {
 						if c.typeAliasCallConvs == nil {
 							c.typeAliasCallConvs = make(map[string][]aliasCallConv)
 						}

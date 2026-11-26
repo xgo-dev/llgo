@@ -62,9 +62,25 @@ func (c *Context) toGoPackage(pkg *Package) *gotypes.Package {
 	return conv.pkg(pkg)
 }
 
-// syncPackageScopeToGo bridges any objects inserted into pkg.Scope() after
+// packageScopeNeedsSyncLocked reports whether pkg.Scope() contains any object
+// not yet mirrored into pkg.goPkg.Scope(). Caller must hold pkg.evalMu (RLock or Lock).
+func (c *Context) packageScopeNeedsSyncLocked(pkg *Package) bool {
+	if pkg == nil || pkg.goPkg == nil || pkg.scope == nil || pkg.goPkg.Scope() == nil {
+		return false
+	}
+	goScope := pkg.goPkg.Scope()
+	for _, name := range pkg.scope.Names() {
+		if goScope.Lookup(name) == nil && pkg.scope.Lookup(name) != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// syncPackageScopeToGoLocked bridges any objects inserted into pkg.Scope() after
 // pkg.goPkg was created so Eval and CheckExpr see post-Check scope mutations.
-func (c *Context) syncPackageScopeToGo(pkg *Package) {
+// Caller must hold pkg.evalMu.Lock().
+func (c *Context) syncPackageScopeToGoLocked(pkg *Package) {
 	if pkg == nil || pkg.goPkg == nil || pkg.scope == nil || pkg.goPkg.Scope() == nil {
 		return
 	}

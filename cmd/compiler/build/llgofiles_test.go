@@ -595,3 +595,145 @@ func TestLLGoFilesCacheInvalidatesCPATHSwitch(t *testing.T) {
 		t.Fatalf("cached build after switching CPATH=dir2 output = %q, want 2", got)
 	}
 }
+
+func writeLLGoFilesDepLibCacheFixture(t *testing.T, cSource string) string {
+	t.Helper()
+	modDir := t.TempDir()
+	libWrap := filepath.Join(modDir, "clib", "_wrap")
+	if err := os.MkdirAll(libWrap, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/llgofilesdeplib\n\ngo 1.20\n",
+		"main.go": `package main
+
+import "example.com/llgofilesdeplib/clib"
+
+func main() {
+	println(clib.Value())
+}
+`,
+		filepath.Join("clib", "clib.go"): `package clib
+
+import _ "unsafe"
+
+const LLGoFiles = "_wrap/val.c"
+
+//go:linkname getVal C.llgo_test_dep_val
+func getVal() int32
+
+func Value() int32 {
+	return getVal()
+}
+`,
+		filepath.Join("clib", "_wrap", "val.c"): cSource,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(modDir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return modDir
+}
+
+func assertPkgCacheHit(t *testing.T, pkgs []Package, pkgPath string) {
+	t.Helper()
+	for _, p := range pkgs {
+		if p.PkgPath == pkgPath {
+			if !p.CacheHit {
+				t.Fatalf("expected package %s to hit cache", pkgPath)
+			}
+			return
+		}
+	}
+	t.Fatalf("package %s not found in build result", pkgPath)
+}
+
+func TestLLGoFilesCacheInvalidatesCCFLAGS(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCacheRoot := cacheRootFunc
+	cacheDir := t.TempDir()
+	cacheRootFunc = func() string { return cacheDir }
+	defer func() { cacheRootFunc = oldCacheRoot }()
+
+	modDir := writeLLGoFilesDepLibCacheFixture(t, "int llgo_test_dep_val(void) { return REVIEW_VALUE; }\n")
+	t.Setenv("LLGO_ROOT", repoRoot)
+	t.Setenv(llgoBuildCache, "1")
+	t.Setenv("CCFLAGS", "-DREVIEW_VALUE=1")
+
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "ccflags1"); got != "1" {
+		t.Fatalf("first cached build with CCFLAGS=-DREVIEW_VALUE=1 output = %q, want 1", got)
+	}
+	if got, pkgs := buildAndRunLLGoFilesFixture(t, modDir, "ccflags1-hot"); got != "1" {
+		t.Fatalf("hot cached build with CCFLAGS=-DREVIEW_VALUE=1 output = %q, want 1", got)
+	} else {
+		assertPkgCacheHit(t, pkgs, "example.com/llgofilesdeplib/clib")
+	}
+
+	t.Setenv("CCFLAGS", "-DREVIEW_VALUE=2")
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "ccflags2"); got != "2" {
+		t.Fatalf("cached build after changing CCFLAGS=-DREVIEW_VALUE=2 output = %q, want 2", got)
+	}
+}
+
+func TestLLGoFilesCacheInvalidatesEarlierCPATHShadowHeader(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCacheRoot := cacheRootFunc
+	cacheDir := t.TempDir()
+	cacheRootFunc = func() string { return cacheDir }
+	defer func() { cacheRootFunc = oldCacheRoot }()
+
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	// Pre-create dir1/sub so adding dir1/sub/nested.h tests nested shadowing
+	// even when top-level dir1 entries do not change.
+	if err := os.MkdirAll(filepath.Join(dir1, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir2, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir2, "shadow.h"), []byte("#define SHADOW_VAL 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir2, "sub", "nested.h"), []byte("#define NESTED_VAL 10\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	modDir := writeLLGoFilesDepLibCacheFixture(t, "#include <shadow.h>\n#include <sub/nested.h>\nint llgo_test_dep_val(void) { return SHADOW_VAL + NESTED_VAL; }\n")
+	cpath := dir1 + string(os.PathListSeparator) + dir2
+	t.Setenv("LLGO_ROOT", repoRoot)
+	t.Setenv(llgoBuildCache, "1")
+	t.Setenv("CPATH", cpath)
+
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "shadow-cold"); got != "11" {
+		t.Fatalf("cold cached build output = %q, want 11", got)
+	}
+	if got, pkgs := buildAndRunLLGoFilesFixture(t, modDir, "shadow-hot"); got != "11" {
+		t.Fatalf("hot cached build output = %q, want 11", got)
+	} else {
+		assertPkgCacheHit(t, pkgs, "example.com/llgofilesdeplib/clib")
+	}
+
+	// Keep CPATH identical; add a shadowing header to the earlier directory.
+	if err := os.WriteFile(filepath.Join(dir1, "shadow.h"), []byte("#define SHADOW_VAL 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "shadow-top"); got != "12" {
+		t.Fatalf("cached build after adding earlier top-level shadow header output = %q, want 12", got)
+	}
+
+	// Keep CPATH identical; add a nested shadowing header inside pre-existing dir1/sub.
+	if err := os.WriteFile(filepath.Join(dir1, "sub", "nested.h"), []byte("#define NESTED_VAL 20\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "shadow-nested"); got != "22" {
+		t.Fatalf("cached build after adding earlier nested shadow header output = %q, want 22", got)
+	}
+}

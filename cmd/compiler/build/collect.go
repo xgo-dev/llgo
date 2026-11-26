@@ -116,6 +116,8 @@ func (c *context) collectEnvInputs(m *manifestBuilder) {
 		llgoWasmWorkers,
 		llgoStdioNobuf,
 		llgoFullRpath,
+		"CCFLAGS",
+		"CFLAGS",
 	}
 	if c.buildConf.Goos == "js" && c.buildConf.Goarch == "wasm" {
 		// emcc consumes this for both LLVM IR codegen and linking. In

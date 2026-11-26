@@ -877,7 +877,6 @@ func (r *pkgReader) readPackageTable() error {
 			r.pkgs[i] = r.imports[pPath]
 		} else {
 			p := types.NewPackage(pPath, pName)
-			p.MarkComplete()
 			if r.imports != nil && pPath != "" {
 				r.imports[pPath] = p
 			}
@@ -964,13 +963,11 @@ func (r *pkgReader) decodeBody() error {
 				}
 			}
 		} else if owner != nil {
-			if owner != pkg || r.reused {
-				if obj := owner.Scope().Lookup(nName); obj != nil {
-					if existing, ok := obj.Type().(*types.Named); ok {
-						r.nameds[i] = existing
-						namedReused[i] = true
-						continue
-					}
+			if obj := owner.Scope().Lookup(nName); obj != nil {
+				if existing, ok := obj.Type().(*types.Named); ok {
+					r.nameds[i] = existing
+					namedReused[i] = existing.Underlying() != nil
+					continue
 				}
 			}
 			if existing := r.bundle.lookupNamed(owner, nName); existing != nil {
@@ -993,7 +990,6 @@ func (r *pkgReader) decodeBody() error {
 	r.aliases = make([]*types.Alias, aliasCount)
 	aliasOwners := make([]*types.Package, aliasCount)
 	aliasNames := make([]string, aliasCount)
-	aliasObjs := make([]*types.TypeName, aliasCount)
 	aliasReused := make([]bool, aliasCount)
 	for i := uint64(0); i < aliasCount; i++ {
 		pkgID, err := r.dec.readUvarint()
@@ -1016,13 +1012,11 @@ func (r *pkgReader) decodeBody() error {
 				}
 			}
 		} else if owner != nil {
-			if owner != pkg || r.reused {
-				if obj := owner.Scope().Lookup(aName); obj != nil {
-					if existing, ok := obj.Type().(*types.Alias); ok {
-						r.aliases[i] = existing
-						aliasReused[i] = true
-						continue
-					}
+			if obj := owner.Scope().Lookup(aName); obj != nil {
+				if existing, ok := obj.Type().(*types.Alias); ok {
+					r.aliases[i] = existing
+					aliasReused[i] = existing.Rhs() != nil
+					continue
 				}
 			}
 			if existing := r.bundle.lookupAlias(owner, aName); existing != nil {
@@ -1031,8 +1025,7 @@ func (r *pkgReader) decodeBody() error {
 				continue
 			}
 		}
-		aliasObjs[i] = types.NewTypeName(token.NoPos, owner, aName, nil)
-		r.aliases[i] = types.NewAlias(aliasObjs[i], nil)
+		r.aliases[i] = types.NewAlias(nil, nil)
 	}
 
 	// Fill TypeParam constraints.
@@ -1098,6 +1091,11 @@ func (r *pkgReader) decodeBody() error {
 		if r.bundle != nil {
 			r.bundle.filledNamed[r.nameds[i]] = true
 		}
+		if obj := r.nameds[i].Obj(); obj != nil {
+			if owner := obj.Pkg(); owner != nil && owner != pkg && !owner.Complete() {
+				owner.Scope().Insert(obj)
+			}
+		}
 	}
 
 	// Fill Alias definitions.
@@ -1113,7 +1111,8 @@ func (r *pkgReader) decodeBody() error {
 		if aliasReused[i] {
 			continue
 		}
-		a := types.NewAlias(aliasObjs[i], rhs)
+		tn := types.NewTypeName(token.NoPos, aliasOwners[i], aliasNames[i], nil)
+		a := types.NewAlias(tn, rhs)
 		if len(tps) > 0 {
 			a.SetTypeParams(tps)
 		}
@@ -1121,6 +1120,9 @@ func (r *pkgReader) decodeBody() error {
 		if r.bundle != nil {
 			r.bundle.registerAlias(aliasOwners[i], aliasNames[i], a)
 			r.bundle.filledAlias[a] = true
+		}
+		if aliasOwners[i] != nil && aliasOwners[i] != pkg && !aliasOwners[i].Complete() {
+			aliasOwners[i].Scope().Insert(tn)
 		}
 	}
 

@@ -201,10 +201,212 @@ func (check *Checker) Files(files []*ast.File) error {
 		return nil
 	}
 	check.ctx.registerCheckedGoPackage(check.pkg.path, check.goPkg)
-	check.ctx.prescanTypeDirectives(check.pkg.path, files)
-	err := check.goChecker.Files(files)
+	checkFiles := files
+	var isolatedAliases map[string]bool
+	var erasedUses []erasedAliasUse
+	if goTypesErasesAliases() {
+		checkFiles, isolatedAliases, erasedUses = prepareErasedCallConvAliasFiles(files)
+	}
+	check.ctx.prescanTypeDirectives(check.pkg.path, files, isolatedAliases)
+	err := check.goChecker.Files(checkFiles)
+	if len(erasedUses) > 0 && check.goInfo != nil && check.goInfo.Uses != nil {
+		scope := check.goPkg.Scope()
+		for _, u := range erasedUses {
+			if obj := scope.Lookup(u.targetName); obj != nil {
+				check.goInfo.Uses[u.ident] = obj
+			}
+		}
+	}
 	check.ctx.populateFromGoPackage(check.pkg, check.goPkg, check.Info, check.goInfo, check.goVersion, files)
 	return wrapGoError(err)
+}
+
+type erasedAliasUse struct {
+	ident      *ast.Ident
+	targetName string
+}
+
+// prepareErasedCallConvAliasFiles isolates native-callconv function type aliases
+// on Go toolchains where go/types erases aliases into bare *gotypes.Signature
+// values (Go 1.20/1.21, or Go 1.22 with gotypesalias=0). When a directive alias
+// such as `//llgo:cdecl\ntype CFn = GoFn` aliases a plain Go function alias,
+// expanding CFn's RHS to a cloned *ast.FuncType in a shallow copy of the AST
+// causes go/types to allocate a distinct *gotypes.Signature for CFn while
+// keeping GoFn's signature untouched and type-identical.
+func prepareErasedCallConvAliasFiles(files []*ast.File) ([]*ast.File, map[string]bool, []erasedAliasUse) {
+	if len(files) == 0 {
+		return files, nil, nil
+	}
+	aliasExprs := make(map[string]ast.Expr)
+	hasDirectiveAlias := false
+	for _, f := range files {
+		if f == nil {
+			continue
+		}
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok || ts.Name == nil || !ts.Assign.IsValid() {
+					continue
+				}
+				aliasExprs[ts.Name.Name] = ts.Type
+				doc := ts.Doc
+				if doc == nil && len(gd.Specs) == 1 {
+					doc = gd.Doc
+				}
+				if _, ok := parseTypeCallConvDirective(doc); ok {
+					hasDirectiveAlias = true
+				}
+			}
+		}
+	}
+	if !hasDirectiveAlias {
+		return files, nil, nil
+	}
+
+	resolveLocalFuncType := func(expr ast.Expr) (*ast.FuncType, *ast.Ident) {
+		e := unwrapAstParens(expr)
+		if ft, ok := e.(*ast.FuncType); ok {
+			return ft, nil
+		}
+		origIdent, ok := e.(*ast.Ident)
+		if !ok {
+			return nil, nil
+		}
+		visited := make(map[string]bool)
+		cur := origIdent.Name
+		for !visited[cur] {
+			visited[cur] = true
+			rhs, exists := aliasExprs[cur]
+			if !exists {
+				return nil, nil
+			}
+			rhs = unwrapAstParens(rhs)
+			if ft, ok := rhs.(*ast.FuncType); ok {
+				return ft, origIdent
+			}
+			nextID, ok := rhs.(*ast.Ident)
+			if !ok {
+				return nil, nil
+			}
+			cur = nextID.Name
+		}
+		return nil, nil
+	}
+
+	var outFiles []*ast.File
+	isolated := make(map[string]bool)
+	var uses []erasedAliasUse
+
+	for fi, f := range files {
+		if f == nil {
+			continue
+		}
+		var fCopy *ast.File
+		for di, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			var gdCopy *ast.GenDecl
+			for si, spec := range gd.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok || ts.Name == nil || !ts.Assign.IsValid() {
+					continue
+				}
+				doc := ts.Doc
+				if doc == nil && len(gd.Specs) == 1 {
+					doc = gd.Doc
+				}
+				if _, ok := parseTypeCallConvDirective(doc); !ok {
+					continue
+				}
+				ft, origIdent := resolveLocalFuncType(ts.Type)
+				if ft == nil {
+					continue
+				}
+				isolated[ts.Name.Name] = true
+				if origIdent == nil {
+					// Direct `type CFn = func(...)`: go/types already allocates
+					// a fresh *gotypes.Signature exclusively for this alias.
+					continue
+				}
+				if outFiles == nil {
+					outFiles = make([]*ast.File, len(files))
+					copy(outFiles, files)
+				}
+				if fCopy == nil {
+					fc := *f
+					fc.Decls = make([]ast.Decl, len(f.Decls))
+					copy(fc.Decls, f.Decls)
+					fCopy = &fc
+					outFiles[fi] = fCopy
+				}
+				if gdCopy == nil {
+					gc := *gd
+					gc.Specs = make([]ast.Spec, len(gd.Specs))
+					copy(gc.Specs, gd.Specs)
+					gdCopy = &gc
+					fCopy.Decls[di] = gdCopy
+				}
+				tsCopy := *ts
+				tsCopy.Type = cloneFuncTypeForAlias(ft)
+				gdCopy.Specs[si] = &tsCopy
+				uses = append(uses, erasedAliasUse{ident: origIdent, targetName: origIdent.Name})
+			}
+		}
+	}
+	if outFiles == nil {
+		outFiles = files
+	}
+	return outFiles, isolated, uses
+}
+
+func unwrapAstParens(e ast.Expr) ast.Expr {
+	for {
+		p, ok := e.(*ast.ParenExpr)
+		if !ok {
+			return e
+		}
+		e = p.X
+	}
+}
+
+func cloneFuncTypeForAlias(ft *ast.FuncType) *ast.FuncType {
+	if ft == nil {
+		return nil
+	}
+	cloneList := func(fl *ast.FieldList) *ast.FieldList {
+		if fl == nil {
+			return nil
+		}
+		out := &ast.FieldList{
+			Opening: fl.Opening,
+			Closing: fl.Closing,
+			List:    make([]*ast.Field, len(fl.List)),
+		}
+		for i, field := range fl.List {
+			fc := *field
+			if len(field.Names) > 0 {
+				fc.Names = make([]*ast.Ident, len(field.Names))
+				for j, name := range field.Names {
+					nc := *name
+					fc.Names[j] = &nc
+				}
+			}
+			out.List[i] = &fc
+		}
+		return out
+	}
+	return &ast.FuncType{
+		Func:    ft.Func,
+		Params:  cloneList(ft.Params),
+		Results: cloneList(ft.Results),
+	}
 }
 
 func makeMirrorGoInfo(info *Info) *gotypes.Info {
@@ -329,28 +531,37 @@ func (a *goImporterAdapter) ImportFrom(path, dir string, mode gotypes.ImportMode
 	return gp, err
 }
 
-func evalGoPackage(pkg *Package) (*Context, *gotypes.Package) {
+func evalGoPackage(pkg *Package) (*Context, *gotypes.Package, func()) {
 	if pkg == nil {
-		return NewContext(), nil
+		return NewContext(), nil, func() {}
 	}
 	if pkg.goPkg != nil {
 		ctx := pkg.ctx
 		if ctx == nil {
 			ctx = NewContext()
 		}
-		ctx.syncPackageScopeToGo(pkg)
-		return ctx, pkg.goPkg
+		pkg.evalMu.RLock()
+		if ctx.packageScopeNeedsSyncLocked(pkg) {
+			pkg.evalMu.RUnlock()
+			pkg.evalMu.Lock()
+			ctx.syncPackageScopeToGoLocked(pkg)
+			pkg.evalMu.Unlock()
+			pkg.evalMu.RLock()
+		}
+		return ctx, pkg.goPkg, pkg.evalMu.RUnlock
 	}
 	// Use a fresh Context when bridging a publicly constructed Package so
-	// subsequent pkg.Scope().Insert mutations are always observed.
+	// subsequent pkg.Scope().Insert mutations are always observed without
+	// mutating shared state across concurrent callers.
 	ctx := NewContext()
-	return ctx, ctx.toGoPackage(pkg)
+	return ctx, ctx.toGoPackage(pkg), func() {}
 }
 
 // Eval returns the type and, if constant, the value for the expression expr,
 // evaluated at position pos of package pkg (mirroring go/types.Eval).
 func Eval(fset *token.FileSet, pkg *Package, pos token.Pos, expr string) (_ TypeAndValue, err error) {
-	ctx, goPkg := evalGoPackage(pkg)
+	ctx, goPkg, unlock := evalGoPackage(pkg)
+	defer unlock()
 	gtv, err := gotypes.Eval(fset, goPkg, pos, expr)
 	if err != nil {
 		return TypeAndValue{}, wrapGoError(err)
@@ -364,7 +575,8 @@ func Eval(fset *token.FileSet, pkg *Package, pos token.Pos, expr string) (_ Type
 // CheckExpr type-checks the expression expr as if it had appeared at position
 // pos of package pkg (mirroring go/types.CheckExpr).
 func CheckExpr(fset *token.FileSet, pkg *Package, pos token.Pos, expr ast.Expr, info *Info) error {
-	ctx, goPkg := evalGoPackage(pkg)
+	ctx, goPkg, unlock := evalGoPackage(pkg)
+	defer unlock()
 	goInfo := makeMirrorGoInfo(info)
 	err := gotypes.CheckExpr(fset, goPkg, pos, expr, goInfo)
 	if info != nil && goInfo != nil {

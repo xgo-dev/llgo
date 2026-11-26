@@ -291,6 +291,64 @@ func TestWriteReadBundleAndErrors(t *testing.T) {
 		t.Fatalf("ReadBundle (shared ext) split Alias identity")
 	}
 
+	// Sequential Read(importer) followed by Read(dep) with the same imports map:
+	// reading importer first must leave dep incomplete so the subsequent Read(dep)
+	// populates all of dep's declarations while preserving shared type identities.
+	depFull := types.NewPackage("example.com/seqdep", "seqdep")
+	seqItemObj := types.NewTypeName(token.NoPos, depFull, "Item", nil)
+	seqItem := types.NewNamed(seqItemObj, types.Typ[types.Int64], nil)
+	depFull.Scope().Insert(seqItemObj)
+	seqAliasObj := types.NewTypeName(token.NoPos, depFull, "Tag", nil)
+	seqAlias := types.NewAlias(seqAliasObj, types.Typ[types.String])
+	depFull.Scope().Insert(seqAliasObj)
+	depFull.Scope().Insert(types.NewConst(token.NoPos, depFull, "DepConst", types.Typ[types.Int], constant.MakeInt64(99)))
+	depFull.Scope().Insert(types.NewFunc(token.NoPos, depFull, "MakeItem", types.NewSignatureType(
+		nil, nil, nil, nil, types.NewTuple(types.NewVar(token.NoPos, depFull, "", seqItem)), false,
+	)))
+	depFull.MarkComplete()
+
+	seqImp := types.NewPackage("example.com/seqimp", "seqimp")
+	seqImp.SetImports([]*types.Package{depFull})
+	seqImp.Scope().Insert(types.NewVar(token.NoPos, seqImp, "V", seqItem))
+	seqImp.Scope().Insert(types.NewVar(token.NoPos, seqImp, "T", seqAlias))
+	seqImp.MarkComplete()
+
+	var seqImpBuf, seqDepBuf bytes.Buffer
+	if err := exportdata.Write(&seqImpBuf, fset, seqImp); err != nil {
+		t.Fatalf("Write(seqImp): %v", err)
+	}
+	if err := exportdata.Write(&seqDepBuf, fset, depFull); err != nil {
+		t.Fatalf("Write(depFull): %v", err)
+	}
+	seqImports := make(map[string]*types.Package)
+	gotImp, err := exportdata.Read(bytes.NewReader(seqImpBuf.Bytes()), fset, seqImports, seqImp.Path())
+	if err != nil {
+		t.Fatalf("Read(seqImp): %v", err)
+	}
+	if gotImp.Imports()[0].Complete() {
+		t.Fatal("placeholder dependency package was prematurely marked Complete before its own Read")
+	}
+	gotDep, err := exportdata.Read(bytes.NewReader(seqDepBuf.Bytes()), fset, seqImports, depFull.Path())
+	if err != nil {
+		t.Fatalf("Read(depFull): %v", err)
+	}
+	if gotDep != gotImp.Imports()[0] || !gotDep.Complete() {
+		t.Fatalf("sequential Read(dep) identity/complete mismatch: same=%v complete=%v", gotDep == gotImp.Imports()[0], gotDep.Complete())
+	}
+	if gotDep.Scope().Lookup("DepConst") == nil || gotDep.Scope().Lookup("MakeItem") == nil {
+		t.Fatalf("sequential Read(dep) left dependency scope incomplete: names=%v", gotDep.Scope().Names())
+	}
+	if gotImp.Scope().Lookup("V").Type() != gotDep.Scope().Lookup("Item").Type() {
+		t.Fatal("sequential Read split dep.Item Named identity")
+	}
+	if gotImp.Scope().Lookup("T").Type() != gotDep.Scope().Lookup("Tag").Type() {
+		t.Fatal("sequential Read split dep.Tag Alias identity")
+	}
+	makeItemRet := gotDep.Scope().Lookup("MakeItem").Type().(*types.Signature).Results().At(0).Type()
+	if makeItemRet != gotImp.Scope().Lookup("V").Type() {
+		t.Fatal("sequential Read MakeItem return type does not share dep.Item identity")
+	}
+
 	// Corrupt/bad-magic/kind-mismatch checks.
 	if _, err := exportdata.Read(bytes.NewReader([]byte("BADMAGIC12345")), fset, nil, ""); err == nil || !strings.Contains(err.Error(), "magic") {
 		t.Fatalf("expected invalid magic error, got %v", err)

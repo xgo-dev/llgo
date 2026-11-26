@@ -26,6 +26,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Object represents a named language entity (Func, Var, TypeName, Const,
@@ -579,6 +580,7 @@ type Package struct {
 	goVersion string
 	ctx       *Context
 	goPkg     *gotypes.Package
+	evalMu    sync.RWMutex
 }
 
 // NewPackage creates a new Package (matching go/types.NewPackage).

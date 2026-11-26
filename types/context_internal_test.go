@@ -28,16 +28,43 @@ func TestLookupErasedAliasCallConv(t *testing.T) {
 	ctx := NewContext()
 	fset := token.NewFileSet()
 	src := `package demo
+type GoFn = func(x int32) (r int32)
+type Mid = (GoFn)
 //llgo:type C
 type AliasC = func(int32)
+//llgo:cdecl
+type CFn = Mid
 `
 	f, err := parser.ParseFile(fset, "demo.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)
 	}
+	rewritten, isolated, uses := prepareErasedCallConvAliasFiles([]*ast.File{f})
+	if !isolated["AliasC"] || !isolated["CFn"] || isolated["GoFn"] {
+		t.Fatalf("isolated aliases = %#v, want AliasC and CFn only", isolated)
+	}
+	if len(uses) != 1 || uses[0].targetName != "Mid" {
+		t.Fatalf("erased uses = %#v, want Mid", uses)
+	}
+	if rewritten[0] == f {
+		t.Fatal("prepareErasedCallConvAliasFiles mutated input file instead of shallow copy")
+	}
+	// Verify the caller's original AST still references Mid verbatim.
+	origSpec := f.Decls[3].(*ast.GenDecl).Specs[0].(*ast.TypeSpec)
+	if id, ok := origSpec.Type.(*ast.Ident); !ok || id.Name != "Mid" {
+		t.Fatalf("original AST CFn RHS was mutated: %T", origSpec.Type)
+	}
+	// Verify rewritten CFn RHS is a cloned *ast.FuncType with fresh param idents.
+	newSpec := rewritten[0].Decls[3].(*ast.GenDecl).Specs[0].(*ast.TypeSpec)
+	origFT := f.Decls[0].(*ast.GenDecl).Specs[0].(*ast.TypeSpec).Type.(*ast.FuncType)
+	clonedFT, ok := newSpec.Type.(*ast.FuncType)
+	if !ok || clonedFT == origFT || clonedFT.Params.List[0].Names[0] == origFT.Params.List[0].Names[0] {
+		t.Fatalf("rewritten CFn RHS did not clone FuncType cleanly")
+	}
+
 	// Calling prescan twice exercises the existing-entry update path.
-	ctx.prescanTypeDirectives("example.com/demo", []*ast.File{f})
-	ctx.prescanTypeDirectives("example.com/demo", []*ast.File{f})
+	ctx.prescanTypeDirectives("example.com/demo", []*ast.File{f}, isolated)
+	ctx.prescanTypeDirectives("example.com/demo", []*ast.File{f}, isolated)
 
 	// Simulate a Go 1.20/1.21 go/types package where AliasC's TypeName holds an
 	// erased *gotypes.Signature directly rather than a *gotypes.Alias wrapper.

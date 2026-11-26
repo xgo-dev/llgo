@@ -18,13 +18,16 @@ package build
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"os"
+	"path/filepath"
 	"sort"
 )
 
-const depfileMagic = "LLGODEP3"
+const depfileMagic = "LLGODEP4"
 
 type depfileStat struct {
 	Path    string
@@ -33,36 +36,101 @@ type depfileStat struct {
 	Hash    string
 }
 
+type depfileDirStat struct {
+	Path   string
+	Exists bool
+	Hash   string
+}
+
 type depfileRecord struct {
 	Key              string
 	PreprocessedHash string
 	Files            []depfileStat
+	Dirs             []depfileDirStat
+	Missing          []string
 }
 
 func statDepfiles(paths []string) ([]depfileStat, error) {
+	stats, _, err := statDepfilesWithContent(paths)
+	return stats, err
+}
+
+func statDepfilesWithContent(paths []string) ([]depfileStat, map[string][]byte, error) {
 	if len(paths) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	seen := make(map[string]bool, len(paths))
 	stats := make([]depfileStat, 0, len(paths))
+	contents := make(map[string][]byte, len(paths))
 	for _, p := range paths {
-		if p == "" || seen[p] {
+		if p == "" {
+			continue
+		}
+		p = filepath.Clean(p)
+		if seen[p] {
 			continue
 		}
 		seen[p] = true
 		fi, err := os.Stat(p)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		data, err := os.ReadFile(p)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		contents[p] = data
 		stats = append(stats, depfileStat{
 			Path:    p,
 			Size:    fi.Size(),
 			ModTime: fi.ModTime().UnixNano(),
 			Hash:    digestBytes(data),
+		})
+	}
+	sort.Slice(stats, func(i, j int) bool { return stats[i].Path < stats[j].Path })
+	return stats, contents, nil
+}
+
+func hashDirEntries(entries []os.DirEntry) string {
+	h := sha256.New()
+	for _, e := range entries {
+		h.Write([]byte(e.Name()))
+		if e.IsDir() {
+			h.Write([]byte{0, 'd', '\n'})
+		} else {
+			h.Write([]byte{0, 'f', '\n'})
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func statDepfileDirs(dirs []string) ([]depfileDirStat, error) {
+	if len(dirs) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]bool, len(dirs))
+	stats := make([]depfileDirStat, 0, len(dirs))
+	for _, d := range dirs {
+		if d == "" {
+			continue
+		}
+		d = filepath.Clean(d)
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			if os.IsNotExist(err) {
+				stats = append(stats, depfileDirStat{Path: d, Exists: false})
+				continue
+			}
+			return nil, err
+		}
+		stats = append(stats, depfileDirStat{
+			Path:   d,
+			Exists: true,
+			Hash:   hashDirEntries(entries),
 		})
 	}
 	sort.Slice(stats, func(i, j int) bool { return stats[i].Path < stats[j].Path })
@@ -86,6 +154,23 @@ func validateDepfile(df *depfileRecord) bool {
 			return false
 		}
 	}
+	for _, d := range df.Dirs {
+		entries, err := os.ReadDir(d.Path)
+		if !d.Exists {
+			if !os.IsNotExist(err) {
+				return false
+			}
+			continue
+		}
+		if err != nil || hashDirEntries(entries) != d.Hash {
+			return false
+		}
+	}
+	for _, p := range df.Missing {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -105,6 +190,20 @@ func marshalDepfile(df *depfileRecord) ([]byte, error) {
 		writeBinVarint(&buf, f.Size)
 		writeBinVarint(&buf, f.ModTime)
 		writeBinStr(&buf, f.Hash)
+	}
+	dirs := append([]depfileDirStat(nil), df.Dirs...)
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Path < dirs[j].Path })
+	writeBinUvarint(&buf, uint64(len(dirs)))
+	for _, d := range dirs {
+		writeBinStr(&buf, d.Path)
+		writeBinBool(&buf, d.Exists)
+		writeBinStr(&buf, d.Hash)
+	}
+	missing := append([]string(nil), df.Missing...)
+	sort.Strings(missing)
+	writeBinUvarint(&buf, uint64(len(missing)))
+	for _, m := range missing {
+		writeBinStr(&buf, m)
 	}
 	return buf.Bytes(), nil
 }
@@ -143,6 +242,36 @@ func unmarshalDepfile(raw []byte) (*depfileRecord, error) {
 				return nil, err
 			}
 			if df.Files[i].Hash, err = r.readStr(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	nd, err := r.readUvarint()
+	if err != nil || nd > uint64(len(raw)) {
+		return nil, errors.New("corrupt depfile")
+	}
+	if nd > 0 {
+		df.Dirs = make([]depfileDirStat, nd)
+		for i := uint64(0); i < nd; i++ {
+			if df.Dirs[i].Path, err = r.readStr(); err != nil {
+				return nil, err
+			}
+			if df.Dirs[i].Exists, err = r.readBool(); err != nil {
+				return nil, err
+			}
+			if df.Dirs[i].Hash, err = r.readStr(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	nm, err := r.readUvarint()
+	if err != nil || nm > uint64(len(raw)) {
+		return nil, errors.New("corrupt depfile")
+	}
+	if nm > 0 {
+		df.Missing = make([]string, nm)
+		for i := uint64(0); i < nm; i++ {
+			if df.Missing[i], err = r.readStr(); err != nil {
 				return nil, err
 			}
 		}
