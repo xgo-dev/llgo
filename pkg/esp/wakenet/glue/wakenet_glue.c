@@ -101,6 +101,11 @@ _Static_assert(sizeof(llgo_wakenet_ev_t) == 12, "llgo_wakenet_ev_t ABI drifted")
 #define WN_EV_SLOTS 8
 #define WN_I2S_READ_TIMEOUT_MS 2000
 #define WN_CREATE_WAIT_MS 10000 /* bounded Init wait for the engine create */
+/* The session task's stack: 12 KiB is the measured wn9 floor (see Init). It
+ * is a caller-provided block, so the word count and the byte count both get
+ * names - xTaskCreateStatic wants words, heap_caps_malloc wants bytes. */
+#define WN_TASK_STACK_WORDS 12288
+#define WN_TASK_STACK_BYTES (WN_TASK_STACK_WORDS * (uint32_t)sizeof(StackType_t))
 
 static int32_t s_state;                     /* scheduler-task written */
 static int32_t s_source;                    /* scheduler-task written */
@@ -133,6 +138,9 @@ static int32_t s_rate;
 /* ---- session control ---- */
 
 static TaskHandle_t s_task;                 /* session-task written */
+static StackType_t *s_task_stack;           /* internal-RAM block, freed at
+                                             * Close after the exit bit */
+static StaticTask_t s_task_tcb;             /* caller-provided TCB storage */
 static EventGroupHandle_t s_ev;             /* created at Init */
 static volatile int32_t s_run;              /* scheduler-task written */
 static volatile int32_t s_quit;             /* scheduler-task written */
@@ -495,18 +503,43 @@ int32_t llgo_wakenet_init(const uint8_t *model, int32_t model_len,
         return ESP_ERR_NO_MEM;
     }
 
-    /* the session task: 12 KiB stack (wn9's detect frames are the dominant
-     * cost - 4 KiB dies on the first call, "Stack overflow while saving
-     * coprocessor context", measured under esp-emu; the esp-sr CI runs its
-     * synchronous detect on a 10 KiB task stack), pinned to core 1 (PIE). */
+    /* the session task: 12288 stack WORDS = 48 KiB (wn9's detect frames are
+     * the dominant cost - 4 Ki words dies on the first call, "Stack overflow
+     * while saving coprocessor context", measured under esp-emu; the esp-sr
+     * CI runs its synchronous detect on a 10 Ki task stack), pinned to core 1
+     * (PIE). The stack is carved from internal RAM explicitly: the IDF heap
+     * gives a plain xTaskCreate stack a PSRAM block when internal RAM runs
+     * tight (WiFi + wakenet in one firmware, measured), and a coprocessor
+     * context cannot be saved on a PSRAM stack - the first cache freeze dies
+     * with s_task_stack_is_sane_when_cache_frozen(). xTaskCreateStatic with a
+     * MALLOC_CAP_INTERNAL block pins the placement. */
     s_init_err = ESP_FAIL;
     s_source = source;
     s_threshold_milli = threshold_milli;
     s_run = 0;
     s_quit = 0;
-    BaseType_t ok = xTaskCreatePinnedToCore(wakenet_task, "llgo_wakenet", 12288,
-                                            NULL, 5, &s_task, 1);
-    if (ok != pdPASS) {
+    s_task_stack = heap_caps_malloc(WN_TASK_STACK_BYTES,
+                                    MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (s_task_stack == NULL) {
+        vEventGroupDelete(s_ev);
+        s_ev = NULL;
+        if (s_i2s != NULL) {
+            i2s_del_channel(s_i2s);
+            s_i2s = NULL;
+        }
+        esp_srmodel_deinit(s_models);
+        s_models = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+    /* IDF's variant returns the handle (NULL on failure) and takes no
+     * pxCreatedTask out-param, unlike vanilla FreeRTOS xTaskCreateStatic. */
+    s_task = xTaskCreateStaticPinnedToCore(wakenet_task, "llgo_wakenet",
+                                           WN_TASK_STACK_WORDS, NULL, 5,
+                                           s_task_stack, &s_task_tcb, 1);
+    if (s_task == NULL) {
+        s_task = NULL;
+        heap_caps_free(s_task_stack);
+        s_task_stack = NULL;
         vEventGroupDelete(s_ev);
         s_ev = NULL;
         if (s_i2s != NULL) {
@@ -578,6 +611,10 @@ int32_t llgo_wakenet_close(void)
         if (!(bits & WN_BIT_EXIT)) {
             return ESP_ERR_TIMEOUT; /* task wedged; nothing was freed */
         }
+    }
+    if (s_task_stack != NULL) {
+        heap_caps_free(s_task_stack);
+        s_task_stack = NULL;
     }
     if (s_source == WN_SRC_I2S && s_i2s != NULL) {
         if (s_i2s_enabled) {
