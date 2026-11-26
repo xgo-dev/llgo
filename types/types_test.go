@@ -1716,6 +1716,192 @@ func fB(m int) int {
 	}
 }
 
+func TestIncrementalCheckerFilesErasedAliases(t *testing.T) {
+	assertNoSynthInScope := func(t *testing.T, pkg *types.Package) {
+		t.Helper()
+		for _, name := range pkg.Scope().Names() {
+			if strings.HasPrefix(name, "$llgo_ccalias_") || strings.HasPrefix(name, "__llgo_ccalias_") {
+				t.Fatalf("synthetic alias %q leaked into package scope: %v", name, pkg.Scope().Names())
+			}
+		}
+	}
+	parse := func(t *testing.T, fset *token.FileSet, name, src string) *ast.File {
+		t.Helper()
+		f, err := parser.ParseFile(fset, name, src, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("ParseFile %s: %v", name, err)
+		}
+		return f
+	}
+	newChecker := func(fset *token.FileSet, pkgPath string, imports map[string]*types.Package) (*types.Checker, *types.Package) {
+		ctx := types.NewContextWithConfig(types.ContextConfig{
+			Spec: target.ResolveSpec(target.Spec{GOOS: "linux", GOARCH: "amd64"}),
+		})
+		pkg := types.NewPackage(pkgPath, "inc")
+		conf := &types.Config{
+			Context:  ctx,
+			Importer: &mapImporter{pkgs: imports},
+		}
+		info := &types.Info{
+			Defs:   make(map[*ast.Ident]types.Object),
+			Uses:   make(map[*ast.Ident]types.Object),
+			Scopes: make(map[ast.Node]*types.Scope),
+		}
+		return types.NewChecker(conf, fset, pkg, info), pkg
+	}
+
+	// Case 1: Batch 1 generates a cross-file synthetic alias; Batch 2 adds only
+	// `var New int`. The synthetic alias must stay excluded from pkg.Scope().
+	t.Run("Batch2VarDoesNotResurfaceSynth", func(t *testing.T) {
+		fset := token.NewFileSet()
+		chk, pkg := newChecker(fset, "example.com/inc1", map[string]*types.Package{"unsafe": types.Unsafe})
+		fa := parse(t, fset, "a.go", "package inc\nimport wire \"unsafe\"\ntype GoFn = func(wire.Pointer)\nfunc f(n int) int { return n }\n")
+		fb := parse(t, fset, "b.go", "package inc\n//llgo:cdecl\ntype CFn = GoFn\n")
+		fc := parse(t, fset, "c.go", "package inc\nvar New int\n")
+
+		if err := chk.Files([]*ast.File{fa, fb}); err != nil {
+			t.Fatalf("batch 1 Files: %v", err)
+		}
+		assertNoSynthInScope(t, pkg)
+		if err := chk.Files([]*ast.File{fc}); err != nil {
+			t.Fatalf("batch 2 Files: %v", err)
+		}
+		assertNoSynthInScope(t, pkg)
+		if pkg.Scope().Lookup("New") == nil {
+			t.Fatal("batch 2 var New missing from scope")
+		}
+		var retPos token.Pos
+		ast.Inspect(fa, func(n ast.Node) bool {
+			if rs, ok := n.(*ast.ReturnStmt); ok {
+				retPos = rs.Pos()
+				return false
+			}
+			return true
+		})
+		if tv, err := types.Eval(fset, pkg, retPos, "n + New"); err != nil || tv.Type != types.Typ[types.Int] {
+			t.Fatalf("Eval(n + New) at return pos = %v, %v; want int", tv, err)
+		}
+	})
+
+	// Case 2: Two separate batches each declare a distinct cross-file alias pair;
+	// synthetic names must not collide across batches.
+	t.Run("TwoBatchesDistinctCrossFileAliases", func(t *testing.T) {
+		fset := token.NewFileSet()
+		chk, pkg := newChecker(fset, "example.com/inc2", map[string]*types.Package{"unsafe": types.Unsafe})
+		a1 := parse(t, fset, "a1.go", "package inc\ntype GoFn1 = func(int32)\n")
+		b1 := parse(t, fset, "b1.go", "package inc\nimport \"unsafe\"\n//llgo:cdecl\ntype CFn1 = GoFn1\nconst S1 = unsafe.Sizeof(CFn1(nil))\n")
+		a2 := parse(t, fset, "a2.go", "package inc\ntype GoFn2 = func(int64)\n")
+		b2 := parse(t, fset, "b2.go", "package inc\nimport \"unsafe\"\n//llgo:cdecl\ntype CFn2 = GoFn2\nconst S2 = unsafe.Sizeof(CFn2(nil))\n")
+
+		if err := chk.Files([]*ast.File{a1, b1}); err != nil {
+			t.Fatalf("batch 1 Files: %v", err)
+		}
+		if err := chk.Files([]*ast.File{a2, b2}); err != nil {
+			t.Fatalf("batch 2 Files: %v", err)
+		}
+		assertNoSynthInScope(t, pkg)
+		for _, tc := range []struct {
+			name string
+			cc   types.CallConv
+		}{
+			{"GoFn1", types.Go},
+			{"CFn1", types.CDecl},
+			{"GoFn2", types.Go},
+			{"CFn2", types.CDecl},
+		} {
+			sig := types.Unalias(pkg.Scope().Lookup(tc.name).Type()).(*types.Signature)
+			if sig.CallConv() != tc.cc {
+				t.Fatalf("%s CallConv = %v, want %v", tc.name, sig.CallConv(), tc.cc)
+			}
+		}
+		for _, name := range []string{"S1", "S2"} {
+			got, ok := constant.Int64Val(pkg.Scope().Lookup(name).(*types.Const).Val())
+			if !ok || got != 8 {
+				t.Fatalf("%s = %v, want 8", name, got)
+			}
+		}
+	})
+
+	// Case 3: Batch 1 declares GoFn (including with file-local renamed import and
+	// extra import unused by GoFn); Batch 2 declares //llgo:cdecl CFn = GoFn.
+	t.Run("Batch1GoFnBatch2CFn", func(t *testing.T) {
+		fset := token.NewFileSet()
+		dep1 := types.NewPackage("example.com/incdep", "incdep")
+		unusedTN := types.NewTypeName(token.NoPos, dep1, "Unused", nil)
+		_ = types.NewNamed(unusedTN, types.Typ[types.Int], nil)
+		dep1.Scope().Insert(unusedTN)
+		dep1.MarkComplete()
+
+		chk, pkg := newChecker(fset, "example.com/inc3", map[string]*types.Package{
+			"unsafe":             types.Unsafe,
+			"example.com/incdep": dep1,
+		})
+		fa := parse(t, fset, "a.go", `package inc
+import (
+	wire "unsafe"
+	"example.com/incdep"
+)
+type GoFn = func(int)
+type GoPtrFn = func(wire.Pointer)
+var _ incdep.Unused
+func helper(k int) int { return k }
+`)
+		fb := parse(t, fset, "b.go", `package inc
+import "unsafe"
+//llgo:cdecl
+type CFn = GoFn
+//llgo:cdecl
+type CPtrFn = GoPtrFn
+const (
+	SizeGoFn    = unsafe.Sizeof(GoFn(nil))
+	SizeCFn     = unsafe.Sizeof(CFn(nil))
+	SizeGoPtrFn = unsafe.Sizeof(GoPtrFn(nil))
+	SizeCPtrFn  = unsafe.Sizeof(CPtrFn(nil))
+)
+`)
+		if err := chk.Files([]*ast.File{fa}); err != nil {
+			t.Fatalf("batch 1 Files: %v", err)
+		}
+		if err := chk.Files([]*ast.File{fb}); err != nil {
+			t.Fatalf("batch 2 Files: %v", err)
+		}
+		assertNoSynthInScope(t, pkg)
+		for name, want := range map[string]int64{
+			"SizeGoFn":    16,
+			"SizeCFn":     8,
+			"SizeGoPtrFn": 16,
+			"SizeCPtrFn":  8,
+		} {
+			got, ok := constant.Int64Val(pkg.Scope().Lookup(name).(*types.Const).Val())
+			if !ok || got != want {
+				t.Fatalf("%s = %v, want %d", name, got, want)
+			}
+		}
+		for name, wantCC := range map[string]types.CallConv{
+			"GoFn":    types.Go,
+			"CFn":     types.CDecl,
+			"GoPtrFn": types.Go,
+			"CPtrFn":  types.CDecl,
+		} {
+			sig := types.Unalias(pkg.Scope().Lookup(name).Type()).(*types.Signature)
+			if sig.CallConv() != wantCC {
+				t.Fatalf("%s CallConv = %v, want %v", name, sig.CallConv(), wantCC)
+			}
+		}
+		var retPos token.Pos
+		ast.Inspect(fa, func(n ast.Node) bool {
+			if rs, ok := n.(*ast.ReturnStmt); ok {
+				retPos = rs.Pos()
+				return false
+			}
+			return true
+		})
+		if tv, err := types.Eval(fset, pkg, retPos, "k + 1"); err != nil || tv.Type != types.Typ[types.Int] {
+			t.Fatalf("Eval(k + 1) at batch 1 return pos = %v, %v; want int", tv, err)
+		}
+	})
+}
+
 func TestConcurrentEvalAndCheckExprAfterPostCheckScopeInsert(t *testing.T) {
 	fset := token.NewFileSet()
 	checkedFile, err := parser.ParseFile(fset, "checked.go", "package checked\nconst Base = 10\n", 0)

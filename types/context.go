@@ -1120,6 +1120,9 @@ func (c *Context) fromGoObjectLocked(obj gotypes.Object) Object {
 		return nil
 	}
 	if cached, ok := c.goObjs[obj]; ok {
+		if tn, isTN := cached.(*TypeName); isTN && tn.typ == nil && obj.Type() != nil {
+			tn.typ = c.fromGoLocked(obj.Type(), Go, false)
+		}
 		return cached
 	}
 	if obj.Parent() == gotypes.Universe {

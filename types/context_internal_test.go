@@ -39,7 +39,8 @@ type CFn = Mid
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)
 	}
-	prep := prepareErasedCallConvAliasFiles([]*ast.File{f})
+	st := newErasedAliasState()
+	prep := st.prepare([]*ast.File{f}, nil)
 	if !prep.isolated["AliasC"] || !prep.isolated["CFn"] || prep.isolated["GoFn"] {
 		t.Fatalf("isolated aliases = %#v, want AliasC and CFn only", prep.isolated)
 	}
@@ -47,7 +48,7 @@ type CFn = Mid
 		t.Fatalf("erased uses = %#v, want Mid", prep.uses)
 	}
 	if prep.files[0] == f {
-		t.Fatal("prepareErasedCallConvAliasFiles mutated input file instead of shallow copy")
+		t.Fatal("erasedAliasState.prepare mutated input file instead of shallow copy")
 	}
 	// Verify the caller's original AST still references Mid verbatim.
 	origSpec := f.Decls[3].(*ast.GenDecl).Specs[0].(*ast.TypeSpec)
@@ -62,8 +63,9 @@ type CFn = Mid
 		t.Fatalf("rewritten CFn RHS did not clone FuncType cleanly")
 	}
 
-	// Cross-file rewrite must keep the cloned FuncType in the declaring file.
-	fa, err := parser.ParseFile(fset, "a.go", "package x\nimport wire \"unsafe\"\ntype GoFn = func(wire.Pointer)\n", parser.ParseComments)
+	// Cross-file and multi-batch incremental prepare: batch 1 declares GoFn with
+	// a renamed import plus an unused-by-GoFn import; batch 2 adds //llgo:cdecl CFn = GoFn.
+	fa, err := parser.ParseFile(fset, "a.go", "package x\nimport wire \"unsafe\"\nimport \"unsafe\"\ntype GoFn = func(wire.Pointer)\nvar _ unsafe.Pointer\n", parser.ParseComments)
 	if err != nil {
 		t.Fatalf("ParseFile a.go: %v", err)
 	}
@@ -71,29 +73,59 @@ type CFn = Mid
 	if err != nil {
 		t.Fatalf("ParseFile b.go: %v", err)
 	}
-	xprep := prepareErasedCallConvAliasFiles([]*ast.File{fa, fb})
-	if !xprep.isolated["CFn"] || len(xprep.synthNames) != 1 || len(xprep.files[0].Decls) != len(fa.Decls)+1 {
-		t.Fatalf("cross-file prep = %#v", xprep)
+	fc, err := parser.ParseFile(fset, "c.go", "package x\ntype GoFn2 = func(int)\n", parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile c.go: %v", err)
 	}
+	fd, err := parser.ParseFile(fset, "d.go", "package x\n//llgo:cdecl\ntype CFn2 = GoFn2\n", parser.ParseComments)
+	if err != nil {
+		t.Fatalf("ParseFile d.go: %v", err)
+	}
+	xst := newErasedAliasState()
 	xGoPkg := gotypes.NewPackage("example.com/x", "x")
 	xGoInfo := &gotypes.Info{
-		Defs:   make(map[*ast.Ident]gotypes.Object),
-		Uses:   make(map[*ast.Ident]gotypes.Object),
-		Types:  make(map[ast.Expr]gotypes.TypeAndValue),
-		Scopes: make(map[ast.Node]*gotypes.Scope),
+		Defs:      make(map[*ast.Ident]gotypes.Object),
+		Uses:      make(map[*ast.Ident]gotypes.Object),
+		Types:     make(map[ast.Expr]gotypes.TypeAndValue),
+		Implicits: make(map[ast.Node]gotypes.Object),
+		Scopes:    make(map[ast.Node]*gotypes.Scope),
 	}
 	var xGoCfg gotypes.Config
 	xGoCfg.Importer = &unsafeOnlyGoImporter{}
-	if err := gotypes.NewChecker(&xGoCfg, fset, xGoPkg, xGoInfo).Files(xprep.files); err != nil {
-		t.Fatalf("cross-file go/types check failed: %v", err)
+	xGoChecker := gotypes.NewChecker(&xGoCfg, fset, xGoPkg, xGoInfo)
+
+	// Batch 1: fa alone (records GoFn without directive).
+	p1 := xst.prepare([]*ast.File{fa}, xGoPkg)
+	if err := xGoChecker.Files(p1.files); err != nil {
+		t.Fatalf("batch 1 go/types check failed: %v", err)
 	}
-	xprep.restoreGoInfo(xGoPkg, xGoInfo, []*ast.File{fa, fb})
-	if xGoInfo.Scopes[fa] == nil || xGoInfo.Scopes[fb] == nil {
-		t.Fatal("restoreGoInfo did not remap cloned file scopes back to original files")
+	p1.restoreGoInfo(xGoPkg, xGoInfo, []*ast.File{fa})
+
+	// Batch 2: fb alone (references GoFn from earlier batch via synthetic file).
+	p2 := xst.prepare([]*ast.File{fb}, xGoPkg)
+	if !p2.isolated["CFn"] || len(p2.synthFiles) != 1 || len(p2.synthNames) != 1 {
+		t.Fatalf("batch 2 prep = %#v", p2)
+	}
+	if err := xGoChecker.Files(p2.files); err != nil {
+		t.Fatalf("batch 2 go/types check failed: %v", err)
+	}
+	p2.restoreGoInfo(xGoPkg, xGoInfo, []*ast.File{fb})
+
+	// Batch 3: fc + fd together (must get a distinct synth name without collision).
+	p3 := xst.prepare([]*ast.File{fc, fd}, xGoPkg)
+	if !p3.isolated["CFn2"] || len(xst.synthNames) != 2 {
+		t.Fatalf("batch 3 prep = %#v, all synthNames = %#v", p3, xst.synthNames)
+	}
+	if err := xGoChecker.Files(p3.files); err != nil {
+		t.Fatalf("batch 3 go/types check failed: %v", err)
+	}
+	p3.restoreGoInfo(xGoPkg, xGoInfo, []*ast.File{fc, fd})
+	if xGoInfo.Scopes[fa] == nil || xGoInfo.Scopes[fb] == nil || xGoInfo.Scopes[fc] == nil || xGoInfo.Scopes[fd] == nil {
+		t.Fatal("restoreGoInfo did not preserve original file scopes across batches")
 	}
 	synthPkg := NewPackage("example.com/synthblock", "synthblock")
-	synthPkg.synthGoNames = xprep.synthNames
-	for name := range xprep.synthNames {
+	synthPkg.synthGoNames = xst.synthNames
+	for name := range xst.synthNames {
 		if err := CheckExpr(fset, synthPkg, token.NoPos, ast.NewIdent(name), nil); err == nil {
 			t.Fatalf("CheckExpr did not block synthetic alias %q", name)
 		}

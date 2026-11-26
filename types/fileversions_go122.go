@@ -20,3 +20,9 @@ func copyGoInfoFileVersions(dst map[*ast.File]string, goInfo *gotypes.Info) bool
 	}
 	return true
 }
+
+func deleteGoInfoFileVersion(goInfo *gotypes.Info, f *ast.File) {
+	if goInfo != nil && goInfo.FileVersions != nil {
+		delete(goInfo.FileVersions, f)
+	}
+}
