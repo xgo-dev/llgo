@@ -1,11 +1,22 @@
 package build
 
 import (
+	"debug/elf"
+	"debug/macho"
+	"debug/pe"
+	"go/importer"
+	"go/token"
 	"go/types"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/buildenv"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/meta"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
@@ -58,6 +69,91 @@ func TestApplyDeadcodeDropOverridesWritesStrongTypeOverride(t *testing.T) {
 	}
 	if err := llvm.VerifyModule(entryPkg.LPkg.Module(), llvm.ReturnStatusAction); err != nil {
 		t.Fatalf("cross-context strong type override produced invalid entry module: %v\n%s", err, out)
+	}
+}
+
+func TestDCEMethodTypeMetadataLookupAndGlobalDCEOverride(t *testing.T) {
+	llssa.Initialize(llssa.InitAll)
+	rtPkg, err := importer.For("source", nil).Import(llssa.PkgRuntime)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srcProg := llssa.NewProgram(nil)
+	defer srcProg.Dispose()
+	srcProg.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	srcProg.SetRuntime(rtPkg)
+	srcProg.EnableGoGlobalDCE(true)
+	srcProg.EnableDeadcodeDrop(true)
+
+	goPkg := types.NewPackage("example.com/vfe", "vfe")
+	named := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "T", nil), types.NewStruct(nil, nil), nil)
+	recv := types.NewVar(token.NoPos, goPkg, "t", named)
+	sig := types.NewSignatureType(recv, nil, nil, nil, nil, false)
+	named.AddMethod(types.NewFunc(token.NoPos, goPkg, "Live", sig))
+	named.AddMethod(types.NewFunc(token.NoPos, goPkg, "dead", sig))
+	emptyIntf := types.NewInterfaceType(nil, nil).Complete()
+
+	srcPkg := srcProg.NewPackage("vfe", "example.com/vfe")
+	fn := srcPkg.NewFunc("use", llssa.NoArgsNoRet, llssa.GoDecl)
+	b := fn.MakeBody(1)
+	b.MakeInterface(srcProg.Type(emptyIntf, llssa.GoDecl), srcProg.Zero(srcProg.Type(named, llssa.GoDecl)))
+	b.Return()
+	b.EndBuild()
+	b.Dispose()
+
+	var globalName string
+	for k := range srcPkg.MethodTypeMetadata() {
+		globalName = k
+		break
+	}
+	if globalName == "" {
+		t.Fatal("expected ABI type descriptor metadata to be recorded")
+	}
+
+	lookup := dceMethodTypeMetadataLookup([]Package{
+		nil,
+		&aPackage{Package: &packages.Package{PkgPath: "empty"}},
+		&aPackage{Package: &packages.Package{PkgPath: "example.com/vfe"}, LPkg: srcPkg},
+	})
+	got, ok := lookup(globalName)
+	if !ok || len(got.Entries) == 0 {
+		t.Fatalf("lookup(%q) = (%+v, %v), want non-empty metadata", globalName, got, ok)
+	}
+	if _, ok := lookup("nonexistent_type"); ok {
+		t.Fatal("lookup(nonexistent_type) = true, want false")
+	}
+
+	// Verify applyDeadcodeDropOverrides fails loudly when GoGlobalDCE is active
+	// on entryPkg but the source module lacks recorded VFE metadata.
+	ctx := &context{
+		prog: llssa.NewProgram(nil),
+		buildConf: &Config{
+			BuildMode: BuildModeExe,
+			Goos:      "linux",
+			Goarch:    "amd64",
+		},
+	}
+	defer ctx.prog.Dispose()
+	ctx.prog.EnableGoGlobalDCE(true)
+
+	noMetaProg := llssa.NewProgram(nil)
+	defer noMetaProg.Dispose()
+	noMetaPkg := noMetaProg.NewPackage("pkg", "pkg")
+	addMethodTypeGlobal(noMetaPkg.Module(), "_llgo_pkg.T")
+	pkgMeta := buildDeadcodeMeta(t)
+	defer pkgMeta.Close()
+	srcAPkg := &aPackage{
+		Package: &packages.Package{PkgPath: "pkg"},
+		LPkg:    noMetaPkg,
+		Meta:    pkgMeta,
+	}
+	entryPkg := genMainModule(ctx, llssa.PkgRuntime, &packages.Package{
+		PkgPath:    "pkg",
+		ExportFile: "pkg.a",
+	}, &genConfig{})
+	if err := applyDeadcodeDropOverrides([]Package{srcAPkg}, entryPkg, false, false, false); err == nil || !strings.Contains(err.Error(), "missing VFE type metadata") {
+		t.Fatalf("applyDeadcodeDropOverrides() with GoGlobalDCE and missing VFE metadata = %v, want fail-loud error", err)
 	}
 }
 
@@ -353,4 +449,167 @@ func TestInterfacePredicatesRequireClosedProgram(t *testing.T) {
 			t.Fatalf("closed=%v: predicate=%d", closed, value)
 		}
 	}
+}
+
+func TestComposableDeadcodeDropAndFullLTO(t *testing.T) {
+	if !buildenv.Dev {
+		t.Skip("deadcode drop and full-LTO Go GlobalDCE require a development build")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", repoRoot)
+
+	srcDir := t.TempDir()
+	goMod := "module example.com/composable\n\ngo 1.24\n"
+	mainGo := `package main
+
+import (
+	"fmt"
+	"reflect"
+)
+
+type Worker interface {
+	Run() int
+	UnusedIface() int
+}
+
+type Task struct{ v int }
+
+func (t Task) Run() int         { return t.v + 1 }
+func (t Task) UnusedIface() int { return t.v + 2 }
+func (t Task) DeadDirect() int  { return t.v + 3 }
+func (t Task) deadPrivate() int { return t.v + 4 }
+
+type Refl struct{ v int }
+
+func (r Refl) LiveRefl() int        { return r.v * 10 }
+func (r Refl) DeadRefl() int        { return r.v * 20 }
+func (r Refl) NeverCalledRefl() int { return r.v * 30 }
+
+//go:noinline
+func pickName(flag bool) string {
+	if flag {
+		return "LiveRefl"
+	}
+	return "DeadRefl"
+}
+
+//go:noinline
+func callWorker(w Worker) int {
+	return w.Run()
+}
+
+func main() {
+	var w Worker = Task{v: 41}
+	rv := reflect.ValueOf(Refl{v: 3}).MethodByName(pickName(true)).Call(nil)[0].Int()
+	fmt.Printf("%d:%d\n", callWorker(w), rv)
+}
+`
+	if err := os.WriteFile(filepath.Join(srcDir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "main.go"), []byte(mainGo), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name   string
+		plugin string
+	}{
+		{name: "full_lto"},
+	}
+	if plugin := os.Getenv("LLGO_LTO_PLUGIN"); plugin != "" {
+		cases = append(cases, struct {
+			name   string
+			plugin string
+		}{name: "full_lto_plugin", plugin: plugin})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			outBin := filepath.Join(t.TempDir(), "composable")
+			conf := NewDefaultConf(ModeBuild)
+			conf.DeadcodeDrop = true
+			conf.LTO = lto.Full
+			if tc.plugin != "" {
+				conf.LTOPlugin = lto.PassPlugin{Path: tc.plugin}
+			}
+			conf.PCLNMode = PCLNNone
+			conf.OutFile = outBin
+			if !conf.deadcodeDropEnabled() || !conf.goGlobalDCEEnabled() {
+				t.Fatalf("expected both deadcodeDrop (%v) and goGlobalDCE (%v) to be enabled", conf.deadcodeDropEnabled(), conf.goGlobalDCEEnabled())
+			}
+
+			if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: srcDir}); err != nil {
+				t.Fatalf("composable deadcode+full-LTO build failed: %v", err)
+			}
+			out, err := exec.Command(outBin).CombinedOutput()
+			if err != nil {
+				t.Fatalf("run %s: %v\n%s", outBin, err, out)
+			}
+			if got := strings.TrimSpace(string(out)); got != "42:30" {
+				t.Fatalf("output = %q, want %q", got, "42:30")
+			}
+			// Go-side deadcode drop must always prune unexported unused methods
+			// even when dynamic reflect.Value.MethodByName keeps exported ones.
+			if binaryContainsSymbol(t, outBin, "deadPrivate") {
+				t.Errorf("linked binary unexpectedly retained unexported dead method symbol %q", "deadPrivate")
+			}
+			// With the LTO plugin, preserved VFE metadata lets LLVM narrow the
+			// bounded reflect.MethodByName set to {"LiveRefl", "DeadRefl"} and
+			// additionally prune exported dead methods.
+			if tc.plugin != "" {
+				for _, dead := range []string{"DeadDirect", "UnusedIface", "NeverCalledRefl"} {
+					if binaryContainsSymbol(t, outBin, dead) {
+						t.Errorf("linked binary unexpectedly retained dead method symbol containing %q", dead)
+					}
+				}
+			}
+		})
+	}
+}
+
+func binaryContainsSymbol(t *testing.T, path, substr string) bool {
+	t.Helper()
+	if f, err := macho.Open(path); err == nil {
+		defer f.Close()
+		if f.Symtab != nil {
+			for _, sym := range f.Symtab.Syms {
+				if strings.Contains(sym.Name, substr) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if f, err := elf.Open(path); err == nil {
+		defer f.Close()
+		if syms, err := f.Symbols(); err == nil {
+			for _, sym := range syms {
+				if strings.Contains(sym.Name, substr) {
+					return true
+				}
+			}
+		}
+		if syms, err := f.DynamicSymbols(); err == nil {
+			for _, sym := range syms {
+				if strings.Contains(sym.Name, substr) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if f, err := pe.Open(path); err == nil {
+		defer f.Close()
+		for _, sym := range f.Symbols {
+			if strings.Contains(sym.Name, substr) {
+				return true
+			}
+		}
+		return false
+	}
+	t.Fatalf("unsupported binary format for symbol inspection: %s", path)
+	return false
 }

@@ -8,8 +8,9 @@ python3 test/sizebuild/runtest.py --target=esp32c3
 ```
 
 The runner builds its own development LLGo. The WASI full-LTO cases exercise
-Go-metadata DCE, while the separate ESP32-C3 lane uses `-deadcodedrop`; the two
-paths are not enabled together. The WASI lane requires Wasmer (`wasmer`, or
+Go-metadata DCE, while the separate ESP32-C3 lane uses `-deadcodedrop` by
+choice (the two passes can also be combined; see
+`TestComposableDeadcodeDropAndFullLTO` in `internal/build/deadcode_test.go`). The WASI lane requires Wasmer (`wasmer`, or
 `WASMER=/path/to/wasmer`) with threads and standard exception handling. It builds and
 runs C printf and println with off/full/ThinLTO and fmt.Printf with full LTO, first forcing
 compilation and then permitting package-cache reuse. The existing worker-defer

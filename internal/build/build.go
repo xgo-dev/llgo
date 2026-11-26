@@ -523,7 +523,7 @@ func (c *Config) goGlobalDCEEnabled() bool {
 }
 
 func (c *Config) deadcodeDropEnabled() bool {
-	return c.wasiReleaseDCE || buildenv.Dev && c.DeadcodeDrop && !c.goGlobalDCEEnabled()
+	return c.wasiReleaseDCE || buildenv.Dev && c.DeadcodeDrop
 }
 
 func (c *Config) packageMetaEnabled() bool {
@@ -2940,12 +2940,44 @@ func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime, t
 		rejectInterfaceType = analysis.CanRejectInterfaceType
 	}
 	mods := dceSourceModules(pkgs)
+	var lookupMeta dcepass.TypeMetadataLookup
+	if entryPkg != nil && entryPkg.LPkg != nil && entryPkg.LPkg.Prog.GoGlobalDCEEnabled() {
+		lookupMeta = dceMethodTypeMetadataLookup(pkgs)
+	}
 	dcepass.EmitInterfaceUseOverrides(entryPkg.LPkg.Module(), mods, rejectInterfaceType)
-	dcepass.EmitStrongTypeOverrides(entryPkg.LPkg.Module(), mods, analysis.LiveSlots, dropMetadata, verbose)
+	if err := dcepass.EmitStrongTypeOverridesWithMetadata(entryPkg.LPkg.Module(), mods, analysis.LiveSlots, lookupMeta, dropMetadata, verbose); err != nil {
+		return err
+	}
 	if trimMethods {
 		dcepass.EmitRegularTypeFieldOverrides(entryPkg.LPkg.Module(), mods, analysis.CanDropTypeFields)
 	}
 	return nil
+}
+
+func dceMethodTypeMetadataLookup(pkgs []Package) dcepass.TypeMetadataLookup {
+	return func(name string) (dcepass.GlobalTypeMetadata, bool) {
+		for _, pkg := range pkgs {
+			if pkg == nil || pkg.LPkg == nil {
+				continue
+			}
+			m, ok := pkg.LPkg.MethodTypeMetadata()[name]
+			if !ok || len(m.Entries) == 0 {
+				continue
+			}
+			entries := make([]dcepass.TypeMetadataEntry, len(m.Entries))
+			for i, entry := range m.Entries {
+				entries[i] = dcepass.TypeMetadataEntry{
+					Offset: entry.Offset,
+					TypeID: entry.TypeID,
+				}
+			}
+			return dcepass.GlobalTypeMetadata{
+				VCallVisibility: m.VCallVisibility,
+				Entries:         entries,
+			}, true
+		}
+		return dcepass.GlobalTypeMetadata{}, false
+	}
 }
 
 func dceSourceModules(pkgs []Package) []gllvm.Module {

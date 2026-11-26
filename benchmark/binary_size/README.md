@@ -63,10 +63,10 @@ Record the complete dSYM bundle separately and include it in debug totals.
 
 For WASI, compare each workload with the same compiler/toolchain and final
 Binaryen `wasm-opt -Oz` pass. Record both the linked module and the final file,
-then run the final file under the supported Wasmer runner. Keep three separate
-columns: default, dev `-deadcodedrop`, and dev
-`-deadcodedrop -lto=full -globaldce=false`. Full LTO otherwise selects the
-existing LLVM GoGlobalDCE path, so those results are a different configuration.
+then run the final file under the supported Wasmer runner. Keep separate columns for default, dev `-deadcodedrop`, dev
+`-deadcodedrop -lto=full -globaldce=false`, and composable dev
+`-deadcodedrop -lto=full` (which runs both Go-side deadcode drop and LLVM
+GoGlobalDCE together by preserving VFE metadata on strong type overrides).
 Do not add `-s` to this comparison.
 
 Optimized Wasm executables discard unused scalar global stores and safe blank

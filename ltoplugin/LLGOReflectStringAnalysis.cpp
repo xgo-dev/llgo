@@ -1,0 +1,1163 @@
+#include "LLGOReflectStringAnalysis.h"
+
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Analysis/ConstantFolding.h"
+#include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Operator.h"
+
+#include <optional>
+
+using namespace llvm;
+
+namespace {
+
+static constexpr char RuntimeStringCatSuffix[] =
+    "runtime/internal/runtime.StringCat";
+static constexpr char RuntimeStringCatBufferSuffix[] =
+    "runtime/internal/runtime.StringCatBuffer";
+static constexpr char RuntimeStringSliceSuffix[] =
+    "runtime/internal/runtime.StringSlice";
+static constexpr char RuntimeStringSlice2Suffix[] =
+    "runtime/internal/runtime.StringSlice2";
+static constexpr unsigned MaxReflectMethodNames = 32;
+static constexpr unsigned MaxStringAnalysisDepth = 12;
+static constexpr unsigned MaxConstantGEPChoices = 32;
+
+// Keep the replacement bounded. The pass is only meant to refine cases where
+// optimization has exposed a small finite set of names. If the set grows too
+// large we leave the original generic marker intact, which preserves the old
+// conservative GlobalDCE behavior.
+bool addName(SmallVectorImpl<std::string> &Names, StringRef Name) {
+  for (const std::string &Existing : Names) {
+    if (Existing == Name)
+      return true;
+  }
+  if (Names.size() >= MaxReflectMethodNames)
+    return false;
+  Names.push_back(Name.str());
+  return true;
+}
+
+// LLGo strings are lowered as (ptr, len). After LTO optimizations the pointer
+// usually still points into a private global string literal, possibly with a
+// constant GEP offset. Reading through the initializer lets the pass recover
+// names that are no longer visible to the Go SSA builder, for example after
+// inlining and scalar replacement.
+std::optional<std::string> readConstantString(Value *Ptr, Value *Len,
+                                              const DataLayout &DL) {
+  auto *LenC = dyn_cast<ConstantInt>(Len);
+  if (!LenC || LenC->isNegative())
+    return std::nullopt;
+  uint64_t Size = LenC->getZExtValue();
+
+  int64_t Offset = 0;
+  Value *Base = GetPointerBaseWithConstantOffset(Ptr, Offset, DL);
+  if (!Base || Offset < 0)
+    return std::nullopt;
+
+  auto *GV = dyn_cast<GlobalVariable>(Base->stripPointerCasts());
+  if (!GV || !GV->hasInitializer())
+    return std::nullopt;
+
+  auto *Data = dyn_cast<ConstantDataArray>(GV->getInitializer());
+  if (!Data || !Data->isString())
+    return std::nullopt;
+
+  StringRef Bytes = Data->getAsString();
+  uint64_t Start = static_cast<uint64_t>(Offset);
+  if (Start > Bytes.size() || Size > Bytes.size() - Start)
+    return std::nullopt;
+  return Bytes.substr(Start, Size).str();
+}
+
+bool collectStringSet(Value *Ptr, Value *Len, const DataLayout &DL,
+                      SmallVectorImpl<std::string> &Names, unsigned Depth = 0);
+
+bool collectStringSetFromStringValue(Value *StringValue, const DataLayout &DL,
+                                     SmallVectorImpl<std::string> &Names,
+                                     unsigned Depth = 0);
+
+bool collectIntegerChoices(Value *V, SmallVectorImpl<uint64_t> &Choices,
+                           unsigned Depth = 0);
+
+bool collectStringSetFromFunctionStringArg(Value *Ptr, Value *Len,
+                                           const DataLayout &DL,
+                                           SmallVectorImpl<std::string> &Names,
+                                           unsigned Depth);
+
+std::optional<unsigned> singleExtractValueIndex(ExtractValueInst *Extract) {
+  if (!Extract || Extract->getNumIndices() != 1)
+    return std::nullopt;
+  return Extract->getIndices()[0];
+}
+
+std::optional<unsigned> singleInsertValueIndex(InsertValueInst *Insert) {
+  if (!Insert || Insert->getNumIndices() != 1)
+    return std::nullopt;
+  return Insert->getIndices()[0];
+}
+
+Value *findInsertedValue(Value *Aggregate, unsigned Index) {
+  for (Value *Cur = Aggregate;;) {
+    auto *Insert = dyn_cast<InsertValueInst>(Cur);
+    if (!Insert)
+      return nullptr;
+    auto InsertIndex = singleInsertValueIndex(Insert);
+    if (InsertIndex && *InsertIndex == Index)
+      return Insert->getInsertedValueOperand();
+    Cur = Insert->getAggregateOperand();
+  }
+}
+
+bool collectStringSetFromStringConstant(Constant *C, const DataLayout &DL,
+                                        SmallVectorImpl<std::string> &Names,
+                                        unsigned Depth) {
+  if (isa<ConstantAggregateZero>(C))
+    return addName(Names, "");
+
+  Constant *Ptr = C->getAggregateElement(0U);
+  Constant *Len = C->getAggregateElement(1U);
+  if (!Ptr || !Len)
+    return false;
+  return collectStringSet(Ptr, Len, DL, Names, Depth + 1);
+}
+
+bool addConcatenatedNames(SmallVectorImpl<std::string> &Names,
+                          ArrayRef<std::string> Prefixes,
+                          ArrayRef<std::string> Suffixes) {
+  for (const std::string &Prefix : Prefixes) {
+    for (const std::string &Suffix : Suffixes) {
+      if (!addName(Names, Prefix + Suffix))
+        return false;
+    }
+  }
+  return true;
+}
+
+bool isRuntimeStringCat(CallBase *CB) {
+  if (!CB)
+    return false;
+  Function *Callee = CB->getCalledFunction();
+  return Callee &&
+         (Callee->getName().ends_with(RuntimeStringCatSuffix) ||
+          Callee->getName().ends_with(RuntimeStringCatBufferSuffix));
+}
+
+unsigned runtimeStringSliceBoundsArgs(CallBase *CB) {
+  if (!CB)
+    return 0;
+  Function *Callee = CB->getCalledFunction();
+  if (!Callee)
+    return 0;
+  // Native signed bounds omit the two signedness flags of the generic entry.
+  if (Callee->getName().ends_with(RuntimeStringSliceSuffix))
+    return 2;
+  return Callee->getName().ends_with(RuntimeStringSlice2Suffix) ? 4 : 0;
+}
+
+bool consumeStringCallArgument(CallBase *CB, unsigned &NextArgIndex,
+                               const DataLayout &DL,
+                               SmallVectorImpl<std::string> &Names,
+                               unsigned Depth) {
+  if (NextArgIndex >= CB->arg_size())
+    return false;
+
+  Value *Arg = CB->getArgOperand(NextArgIndex);
+  if (Arg->getType()->isStructTy()) {
+    ++NextArgIndex;
+    return collectStringSetFromStringValue(Arg, DL, Names, Depth + 1);
+  }
+
+  if (NextArgIndex + 1 >= CB->arg_size())
+    return false;
+  Value *Len = CB->getArgOperand(NextArgIndex + 1);
+  if (!Arg->getType()->isPointerTy() || !Len->getType()->isIntegerTy())
+    return false;
+  NextArgIndex += 2;
+  return collectStringSet(Arg, Len, DL, Names, Depth + 1);
+}
+
+bool collectStringSetFromStringCat(CallBase *CB, const DataLayout &DL,
+                                   SmallVectorImpl<std::string> &Names,
+                                   unsigned Depth) {
+  if (!isRuntimeStringCat(CB))
+    return false;
+
+  SmallVector<std::string, 4> Prefixes;
+  SmallVector<std::string, 4> Suffixes;
+  unsigned NextArgIndex = 0;
+  // The caller-buffer variant computes the same string, with one trailing
+  // storage pointer that does not affect the set of possible method names.
+  bool HasBuffer = CB->getCalledFunction()->getName().ends_with(
+      RuntimeStringCatBufferSuffix);
+  if (!consumeStringCallArgument(CB, NextArgIndex, DL, Prefixes, Depth) ||
+      !consumeStringCallArgument(CB, NextArgIndex, DL, Suffixes, Depth) ||
+      NextArgIndex + unsigned(HasBuffer) != CB->arg_size() ||
+      (HasBuffer && !CB->getArgOperand(NextArgIndex)->getType()->isPointerTy()))
+    return false;
+  return addConcatenatedNames(Names, Prefixes, Suffixes);
+}
+
+bool collectStringSetFromStringSlice(CallBase *CB, const DataLayout &DL,
+                                     SmallVectorImpl<std::string> &Names,
+                                     unsigned Depth) {
+  unsigned BoundsArgs = runtimeStringSliceBoundsArgs(CB);
+  if (!BoundsArgs)
+    return false;
+
+  SmallVector<std::string, 4> Bases;
+  unsigned NextArgIndex = 0;
+  if (!consumeStringCallArgument(CB, NextArgIndex, DL, Bases, Depth) ||
+      CB->arg_size() != NextArgIndex + BoundsArgs)
+    return false;
+
+  SmallVector<uint64_t, 4> Lows;
+  SmallVector<uint64_t, 4> Highs;
+  if (!collectIntegerChoices(CB->getArgOperand(NextArgIndex), Lows,
+                             Depth + 1) ||
+      !collectIntegerChoices(CB->getArgOperand(NextArgIndex + 1), Highs,
+                             Depth + 1))
+    return false;
+
+  for (const std::string &Base : Bases) {
+    for (uint64_t I : Lows) {
+      for (uint64_t J : Highs) {
+        if (I > J || J > Base.size())
+          return false;
+        if (!addName(Names, StringRef(Base).substr(I, J - I)))
+          return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool hasOnlyReadUses(User *U, SmallPtrSetImpl<User *> &Seen,
+                     bool FollowGlobalPointerLoads = false) {
+  if (!Seen.insert(U).second)
+    return true;
+
+  if (auto *Load = dyn_cast<LoadInst>(U)) {
+    if (!Load->isSimple())
+      return false;
+    if (!FollowGlobalPointerLoads || !Load->getType()->isPointerTy() ||
+        !isa<GlobalVariable>(
+            Load->getPointerOperand()->stripPointerCasts()))
+      return true;
+    for (User *Next : Load->users()) {
+      if (!hasOnlyReadUses(Next, Seen, false))
+        return false;
+    }
+    return true;
+  }
+
+  // A static slice backing array is referenced by the constant slice-header
+  // initializer, which in turn initializes the package global. Follow that
+  // chain and prove that pointers loaded from the slice header are only used
+  // for reads before consulting the backing initializer.
+  if (isa<ConstantAggregate>(U) || isa<GlobalVariable>(U)) {
+    for (User *Next : U->users()) {
+      if (!hasOnlyReadUses(Next, Seen, true))
+        return false;
+    }
+    return true;
+  }
+
+  if (isa<GEPOperator>(U) || isa<BitCastOperator>(U) ||
+      isa<AddrSpaceCastOperator>(U) || isa<BitCastInst>(U) ||
+      isa<AddrSpaceCastInst>(U)) {
+    for (User *Next : U->users()) {
+      if (!hasOnlyReadUses(Next, Seen, FollowGlobalPointerLoads))
+        return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+Constant *foldLoadFromConstantPtr(Constant *Ptr, Type *LoadTy,
+                                  const DataLayout &DL) {
+  if (Constant *Folded = ConstantFoldLoadFromConstPtr(Ptr, LoadTy, DL))
+    return Folded;
+
+  int64_t Offset = 0;
+  Value *Base = GetPointerBaseWithConstantOffset(Ptr, Offset, DL);
+  if (!Base || Offset < 0)
+    return nullptr;
+  auto *GV = dyn_cast<GlobalVariable>(Base->stripPointerCasts());
+  if (!llgo::canReadGlobalInitializer(GV))
+    return nullptr;
+  return llgo::constantAtByteOffset(GV->getInitializer(),
+                                    static_cast<uint64_t>(Offset), LoadTy, DL);
+}
+
+Constant *foldConstantLoad(LoadInst *Load, const DataLayout &DL) {
+  if (!Load || !Load->isSimple())
+    return nullptr;
+  auto *Ptr =
+      dyn_cast<Constant>(Load->getPointerOperand()->stripPointerCasts());
+  if (!Ptr)
+    return nullptr;
+  return foldLoadFromConstantPtr(Ptr, Load->getType(), DL);
+}
+
+bool addIntegerChoice(SmallVectorImpl<uint64_t> &Choices, uint64_t Value) {
+  for (uint64_t Existing : Choices) {
+    if (Existing == Value)
+      return true;
+  }
+  if (Choices.size() >= MaxConstantGEPChoices)
+    return false;
+  Choices.push_back(Value);
+  return true;
+}
+
+bool collectIntegerChoices(Value *V, SmallVectorImpl<uint64_t> &Choices,
+                           unsigned Depth) {
+  if (Depth > MaxStringAnalysisDepth)
+    return false;
+
+  if (auto *C = dyn_cast<ConstantInt>(V)) {
+    if (C->isNegative())
+      return false;
+    return addIntegerChoice(Choices, C->getZExtValue());
+  }
+
+  if (auto *ZExt = dyn_cast<ZExtInst>(V)) {
+    if (ZExt->getSrcTy()->isIntegerTy(1))
+      return addIntegerChoice(Choices, 0) && addIntegerChoice(Choices, 1);
+  }
+
+  if (auto *Sel = dyn_cast<SelectInst>(V)) {
+    return collectIntegerChoices(Sel->getTrueValue(), Choices, Depth + 1) &&
+           collectIntegerChoices(Sel->getFalseValue(), Choices, Depth + 1);
+  }
+
+  if (auto *Phi = dyn_cast<PHINode>(V)) {
+    for (Value *Incoming : Phi->incoming_values()) {
+      if (!collectIntegerChoices(Incoming, Choices, Depth + 1))
+        return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool isSelfIncrementingPhi(Value *V, unsigned Depth = 0);
+
+std::optional<int64_t> signedConstantInt(Value *V) {
+  auto *C = dyn_cast<ConstantInt>(V);
+  if (!C || C->getBitWidth() > 64)
+    return std::nullopt;
+  return C->getSExtValue();
+}
+
+bool isAddOfPhi(Value *V, PHINode *Phi, int64_t &Step, unsigned Depth) {
+  if (Depth > MaxStringAnalysisDepth)
+    return false;
+
+  if (auto *Cast = dyn_cast<CastInst>(V)) {
+    if (Cast->getType()->isIntegerTy() &&
+        Cast->getOperand(0)->getType()->isIntegerTy())
+      return isAddOfPhi(Cast->getOperand(0), Phi, Step, Depth + 1);
+  }
+
+  auto *Bin = dyn_cast<BinaryOperator>(V);
+  if (!Bin || Bin->getOpcode() != Instruction::Add)
+    return false;
+
+  Value *LHS = Bin->getOperand(0);
+  Value *RHS = Bin->getOperand(1);
+  if (LHS == Phi) {
+    if (auto C = signedConstantInt(RHS)) {
+      Step = *C;
+      return true;
+    }
+  }
+  if (RHS == Phi) {
+    if (auto C = signedConstantInt(LHS)) {
+      Step = *C;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool isIncrementOfPhi(Value *V, PHINode *Phi, unsigned Depth) {
+  int64_t Step = 0;
+  return isAddOfPhi(V, Phi, Step, Depth);
+}
+
+bool isSelfIncrementingPhi(Value *V, unsigned Depth) {
+  if (Depth > MaxStringAnalysisDepth)
+    return false;
+
+  if (auto *Cast = dyn_cast<CastInst>(V)) {
+    if (Cast->getType()->isIntegerTy() &&
+        Cast->getOperand(0)->getType()->isIntegerTy())
+      return isSelfIncrementingPhi(Cast->getOperand(0), Depth + 1);
+  }
+
+  auto *Phi = dyn_cast<PHINode>(V);
+  if (!Phi)
+    return false;
+
+  bool HasSeed = false;
+  bool HasStep = false;
+  for (Value *Incoming : Phi->incoming_values()) {
+    if (auto *C = dyn_cast<ConstantInt>(Incoming)) {
+      if (C->isNegative())
+        return false;
+      HasSeed = true;
+      continue;
+    }
+    if (isIncrementOfPhi(Incoming, Phi, Depth + 1)) {
+      HasStep = true;
+      continue;
+    }
+  }
+  return HasSeed && HasStep;
+}
+
+bool isNormalizedInductionIndex(Value *V, unsigned Depth = 0) {
+  if (isSelfIncrementingPhi(V, Depth))
+    return true;
+  if (Depth > MaxStringAnalysisDepth)
+    return false;
+
+  auto *Bin = dyn_cast<BinaryOperator>(V);
+  if (!Bin || Bin->getOpcode() != Instruction::Add)
+    return false;
+
+  PHINode *Phi = nullptr;
+  int64_t Adjustment = 0;
+  if ((Phi = dyn_cast<PHINode>(Bin->getOperand(0)))) {
+    auto C = signedConstantInt(Bin->getOperand(1));
+    if (!C)
+      return false;
+    Adjustment = *C;
+  } else if ((Phi = dyn_cast<PHINode>(Bin->getOperand(1)))) {
+    auto C = signedConstantInt(Bin->getOperand(0));
+    if (!C)
+      return false;
+    Adjustment = *C;
+  } else {
+    return false;
+  }
+
+  bool HasSeed = false;
+  bool HasStep = false;
+  for (Value *Incoming : Phi->incoming_values()) {
+    if (auto Seed = signedConstantInt(Incoming)) {
+      if (*Seed + Adjustment != 0)
+        return false;
+      HasSeed = true;
+      continue;
+    }
+
+    int64_t Step = 0;
+    if (isAddOfPhi(Incoming, Phi, Step, Depth + 1) && Step == 1) {
+      HasStep = true;
+      continue;
+    }
+    return false;
+  }
+  return HasSeed && HasStep;
+}
+
+bool collectBoundedInductionChoices(Value *Index, uint64_t Bound,
+                                    SmallVectorImpl<uint64_t> &Choices) {
+  if (Bound > MaxConstantGEPChoices || !isNormalizedInductionIndex(Index))
+    return false;
+  for (uint64_t I = 0; I != Bound; ++I) {
+    if (!addIntegerChoice(Choices, I))
+      return false;
+  }
+  return true;
+}
+
+bool collectIndexConstants(Value *Index, SmallVectorImpl<Constant *> &Constants,
+                           std::optional<uint64_t> Bound = std::nullopt) {
+  if (auto *C = dyn_cast<ConstantInt>(Index)) {
+    if (Bound && C->getZExtValue() >= *Bound)
+      return false;
+    Constants.push_back(C);
+    return true;
+  }
+
+  SmallVector<uint64_t, 4> Choices;
+  if (!collectIntegerChoices(Index, Choices)) {
+    if (!Bound || !collectBoundedInductionChoices(Index, *Bound, Choices))
+      return false;
+  }
+
+  Type *IndexTy = Index->getType();
+  for (uint64_t Choice : Choices) {
+    if (Bound && Choice >= *Bound)
+      return false;
+    Constants.push_back(ConstantInt::get(IndexTy, Choice));
+  }
+  return true;
+}
+
+std::optional<uint64_t>
+firstIndexArrayBound(ArrayRef<Constant *> Bases, Type *ElemTy,
+                     const DataLayout &DL) {
+  std::optional<uint64_t> Bound;
+  for (Constant *Base : Bases) {
+    int64_t Offset = 0;
+    Value *Root = GetPointerBaseWithConstantOffset(Base, Offset, DL);
+    auto *GV = Root ? dyn_cast<GlobalVariable>(Root->stripPointerCasts())
+                    : nullptr;
+    auto *ArrayTy = GV ? dyn_cast<ArrayType>(GV->getValueType()) : nullptr;
+    if (!ArrayTy || ArrayTy->getElementType() != ElemTy || Offset != 0)
+      return std::nullopt;
+    uint64_t Current = ArrayTy->getNumElements();
+    if (Bound && *Bound != Current)
+      return std::nullopt;
+    Bound = Current;
+  }
+  return Bound;
+}
+
+bool enumerateConstantPointers(Value *Ptr, const DataLayout &DL,
+                               SmallVectorImpl<Constant *> &Pointers) {
+  Ptr = Ptr->stripPointerCasts();
+  if (auto *C = dyn_cast<Constant>(Ptr)) {
+    Pointers.push_back(C);
+    return true;
+  }
+
+  if (auto *Load = dyn_cast<LoadInst>(Ptr)) {
+    Constant *Folded = foldConstantLoad(Load, DL);
+    return Folded && enumerateConstantPointers(Folded, DL, Pointers);
+  }
+
+  auto *GEP = dyn_cast<GEPOperator>(Ptr);
+  if (!GEP)
+    return false;
+
+  SmallVector<Constant *, 4> Bases;
+  if (!enumerateConstantPointers(GEP->getPointerOperand(), DL, Bases))
+    return false;
+
+  SmallVector<SmallVector<Constant *, 4>, 4> IndexChoices;
+  Type *IndexedTy = GEP->getSourceElementType();
+  bool FirstIndex = true;
+  for (Value *Index : GEP->indices()) {
+    SmallVector<Constant *, 4> Choices;
+    std::optional<uint64_t> Bound;
+    if (FirstIndex) {
+      Bound = firstIndexArrayBound(Bases, IndexedTy, DL);
+    } else {
+      if (auto *ArrayTy = dyn_cast<ArrayType>(IndexedTy))
+        Bound = ArrayTy->getNumElements();
+    }
+    if (!collectIndexConstants(Index, Choices, Bound))
+      return false;
+    IndexChoices.push_back(std::move(Choices));
+
+    if (FirstIndex) {
+      FirstIndex = false;
+      continue;
+    }
+    if (auto *StructTy = dyn_cast<StructType>(IndexedTy)) {
+      auto *C = dyn_cast<ConstantInt>(Index);
+      if (!C || C->getZExtValue() >= StructTy->getNumElements())
+        return false;
+      IndexedTy =
+          StructTy->getElementType(static_cast<unsigned>(C->getZExtValue()));
+    } else if (auto *ArrayTy = dyn_cast<ArrayType>(IndexedTy)) {
+      IndexedTy = ArrayTy->getElementType();
+    }
+  }
+
+  SmallVector<SmallVector<Constant *, 4>, 8> Work;
+  Work.push_back({});
+  for (ArrayRef<Constant *> Choices : IndexChoices) {
+    SmallVector<SmallVector<Constant *, 4>, 8> Next;
+    for (const auto &Prefix : Work) {
+      for (Constant *Choice : Choices) {
+        if (Next.size() >= MaxConstantGEPChoices)
+          return false;
+        SmallVector<Constant *, 4> Combined(Prefix.begin(), Prefix.end());
+        Combined.push_back(Choice);
+        Next.push_back(std::move(Combined));
+      }
+    }
+    Work = std::move(Next);
+  }
+
+  for (Constant *Base : Bases) {
+    for (const auto &Indices : Work) {
+      if (Pointers.size() >= MaxConstantGEPChoices)
+        return false;
+      Pointers.push_back(ConstantExpr::getGetElementPtr(
+          GEP->getSourceElementType(), Base, Indices, GEP->isInBounds()));
+    }
+  }
+  return true;
+}
+
+struct LocalStringSlot {
+  AllocaInst *Base;
+  uint64_t Offset;
+};
+
+bool enumerateLocalStringSlots(Value *Ptr, const DataLayout &DL,
+                               SmallVectorImpl<LocalStringSlot> &Slots) {
+  Ptr = Ptr->stripPointerCasts();
+  auto *GEP = dyn_cast<GEPOperator>(Ptr);
+  if (!GEP || GEP->getNumIndices() != 1)
+    return false;
+
+  auto *Base =
+      dyn_cast<AllocaInst>(GEP->getPointerOperand()->stripPointerCasts());
+  if (!Base || Base->isArrayAllocation())
+    return false;
+
+  auto *ArrayTy = dyn_cast<ArrayType>(Base->getAllocatedType());
+  if (!ArrayTy || ArrayTy->getElementType() != GEP->getSourceElementType())
+    return false;
+
+  SmallVector<Constant *, 4> Indices;
+  if (!collectIndexConstants(*GEP->idx_begin(), Indices,
+                             ArrayTy->getNumElements()))
+    return false;
+
+  uint64_t ElemSize = DL.getTypeAllocSize(ArrayTy->getElementType());
+  for (Constant *Index : Indices) {
+    auto *IndexC = dyn_cast<ConstantInt>(Index);
+    if (!IndexC || IndexC->isNegative())
+      return false;
+    Slots.push_back({Base, IndexC->getZExtValue() * ElemSize});
+  }
+  return true;
+}
+
+bool hasOnlyConstantLocalSlotUses(Value *Ptr, AllocaInst *Base,
+                                  const DataLayout &DL,
+                                  SmallPtrSetImpl<User *> &Seen) {
+  for (User *U : Ptr->users()) {
+    if (!Seen.insert(U).second)
+      continue;
+
+    if (auto *Load = dyn_cast<LoadInst>(U)) {
+      if (!Load->isSimple())
+        return false;
+      continue;
+    }
+
+    if (auto *Store = dyn_cast<StoreInst>(U)) {
+      if (!Store->isSimple() || !isa<Constant>(Store->getValueOperand()))
+        return false;
+      int64_t Offset = 0;
+      Value *FoundBase = GetPointerBaseWithConstantOffset(
+          Store->getPointerOperand(), Offset, DL);
+      if (FoundBase != Base || Offset < 0)
+        return false;
+      continue;
+    }
+
+    if (isa<GEPOperator>(U) || isa<BitCastOperator>(U) ||
+        isa<AddrSpaceCastOperator>(U) || isa<BitCastInst>(U) ||
+        isa<AddrSpaceCastInst>(U)) {
+      if (!hasOnlyConstantLocalSlotUses(U, Base, DL, Seen))
+        return false;
+      continue;
+    }
+
+    auto *II = dyn_cast<IntrinsicInst>(U);
+    if (II && (II->getIntrinsicID() == Intrinsic::lifetime_start ||
+               II->getIntrinsicID() == Intrinsic::lifetime_end))
+      continue;
+    return false;
+  }
+  return true;
+}
+
+Constant *findDominatingLocalConstant(AllocaInst *Base, uint64_t WantOffset,
+                                      LoadInst *Load, const DataLayout &DL,
+                                      DominatorTree &DT) {
+  uint64_t LoadSize = DL.getTypeStoreSize(Load->getType());
+  Constant *Found = nullptr;
+  for (BasicBlock &BB : *Base->getFunction()) {
+    for (Instruction &I : BB) {
+      auto *Store = dyn_cast<StoreInst>(&I);
+      if (!Store)
+        continue;
+
+      int64_t Offset = 0;
+      Value *FoundBase = GetPointerBaseWithConstantOffset(
+          Store->getPointerOperand(), Offset, DL);
+      if (FoundBase != Base || Offset < 0)
+        continue;
+
+      uint64_t StoreOffset = static_cast<uint64_t>(Offset);
+      uint64_t StoreSize =
+          DL.getTypeStoreSize(Store->getValueOperand()->getType());
+      if (StoreOffset + StoreSize <= WantOffset ||
+          WantOffset + LoadSize <= StoreOffset)
+        continue;
+
+      auto *C = dyn_cast<Constant>(Store->getValueOperand());
+      if (!Store->isSimple() || StoreOffset != WantOffset ||
+          Store->getValueOperand()->getType() != Load->getType() || !C ||
+          !DT.dominates(Store, Load) || (Found && Found != C))
+        return nullptr;
+      Found = C;
+    }
+  }
+  return Found;
+}
+
+bool isByteOffsetFrom(Value *Ptr, Value *Base, int64_t WantOffset,
+                      const DataLayout &DL) {
+  int64_t Offset = 0;
+  Value *FoundBase = GetPointerBaseWithConstantOffset(Ptr, Offset, DL);
+  return FoundBase == Base->stripPointerCasts() && Offset == WantOffset;
+}
+
+Constant *byteOffsetPointer(Constant *Base, uint64_t Offset, LLVMContext &Ctx) {
+  Type *Int8Ty = Type::getInt8Ty(Ctx);
+  Type *Int64Ty = Type::getInt64Ty(Ctx);
+  Constant *Index = ConstantInt::get(Int64Ty, Offset);
+  return ConstantExpr::getGetElementPtr(Int8Ty, Base,
+                                        ArrayRef<Constant *>{Index});
+}
+
+bool collectStringSetFromConstantSlots(LoadInst *PtrLoad, LoadInst *LenLoad,
+                                       const DataLayout &DL,
+                                       SmallVectorImpl<std::string> &Names,
+                                       unsigned Depth) {
+  if (!PtrLoad || !LenLoad || !PtrLoad->isSimple() || !LenLoad->isSimple())
+    return false;
+
+  uint64_t PtrSize = DL.getPointerSize();
+  Value *StringSlot = PtrLoad->getPointerOperand()->stripPointerCasts();
+  if (!isByteOffsetFrom(LenLoad->getPointerOperand(), StringSlot, PtrSize, DL))
+    return false;
+
+  SmallVector<Constant *, 4> Slots;
+  if (!enumerateConstantPointers(StringSlot, DL, Slots))
+    return false;
+
+  LLVMContext &Ctx = PtrLoad->getContext();
+  for (Constant *Slot : Slots) {
+    Constant *Ptr = foldLoadFromConstantPtr(Slot, PtrLoad->getType(), DL);
+    Constant *LenPtr = byteOffsetPointer(Slot, PtrSize, Ctx);
+    Constant *Len = foldLoadFromConstantPtr(LenPtr, LenLoad->getType(), DL);
+    if (!Ptr || !Len || !collectStringSet(Ptr, Len, DL, Names, Depth + 1))
+      return false;
+  }
+  return true;
+}
+
+bool collectStringSetFromLocalSlots(LoadInst *PtrLoad, LoadInst *LenLoad,
+                                    const DataLayout &DL,
+                                    SmallVectorImpl<std::string> &Names,
+                                    unsigned Depth) {
+  if (!PtrLoad || !LenLoad || !PtrLoad->isSimple() || !LenLoad->isSimple())
+    return false;
+
+  uint64_t PtrSize = DL.getPointerSize();
+  Value *StringSlot = PtrLoad->getPointerOperand()->stripPointerCasts();
+  if (!isByteOffsetFrom(LenLoad->getPointerOperand(), StringSlot, PtrSize, DL))
+    return false;
+
+  SmallVector<LocalStringSlot, 4> Slots;
+  if (!enumerateLocalStringSlots(StringSlot, DL, Slots) || Slots.empty())
+    return false;
+
+  AllocaInst *Base = Slots.front().Base;
+  SmallPtrSet<User *, 16> Seen;
+  if (!hasOnlyConstantLocalSlotUses(Base, Base, DL, Seen))
+    return false;
+
+  DominatorTree DT(*Base->getFunction());
+  for (const LocalStringSlot &Slot : Slots) {
+    if (Slot.Base != Base)
+      return false;
+    Constant *Ptr =
+        findDominatingLocalConstant(Base, Slot.Offset, PtrLoad, DL, DT);
+    Constant *Len = findDominatingLocalConstant(Base, Slot.Offset + PtrSize,
+                                                LenLoad, DL, DT);
+    if (!Ptr || !Len || !collectStringSet(Ptr, Len, DL, Names, Depth + 1))
+      return false;
+  }
+  return true;
+}
+
+bool collectStringSetFromFunctionStringArg(Value *Ptr, Value *Len,
+                                           const DataLayout &DL,
+                                           SmallVectorImpl<std::string> &Names,
+                                           unsigned Depth) {
+  auto *PtrArg = dyn_cast<Argument>(Ptr);
+  auto *LenArg = dyn_cast<Argument>(Len);
+  if (!PtrArg || !LenArg)
+    return false;
+
+  Function *F = PtrArg->getParent();
+  if (!F || F != LenArg->getParent())
+    return false;
+
+  unsigned PtrArgNo = PtrArg->getArgNo();
+  unsigned LenArgNo = LenArg->getArgNo();
+  if (LenArgNo != PtrArgNo + 1 || !PtrArg->getType()->isPointerTy() ||
+      !LenArg->getType()->isIntegerTy())
+    return false;
+
+  SmallVector<CallBase *, 8> Callers;
+  for (User *U : F->users()) {
+    auto *CB = dyn_cast<CallBase>(U);
+    if (!CB || CB->getCalledFunction() != F)
+      return false;
+    Callers.push_back(CB);
+  }
+  if (Callers.empty())
+    return false;
+
+  for (CallBase *CB : Callers) {
+    if (LenArgNo >= CB->arg_size())
+      return false;
+    Value *CallPtr = CB->getArgOperand(PtrArgNo);
+    Value *CallLen = CB->getArgOperand(LenArgNo);
+    if (!CallPtr->getType()->isPointerTy() || !CallLen->getType()->isIntegerTy())
+      return false;
+    if (!collectStringSet(CallPtr, CallLen, DL, Names, Depth + 1))
+      return false;
+  }
+  return true;
+}
+
+bool collectStringSetFromFunctionStringValueArg(
+    Value *StringValue, const DataLayout &DL,
+    SmallVectorImpl<std::string> &Names, unsigned Depth) {
+  auto *Arg = dyn_cast<Argument>(StringValue);
+  if (!Arg || !Arg->getType()->isStructTy())
+    return false;
+
+  Function *F = Arg->getParent();
+  if (!F)
+    return false;
+
+  unsigned ArgNo = Arg->getArgNo();
+  SmallVector<CallBase *, 8> Callers;
+  for (User *U : F->users()) {
+    auto *CB = dyn_cast<CallBase>(U);
+    if (!CB || CB->getCalledFunction() != F || ArgNo >= CB->arg_size())
+      return false;
+    Callers.push_back(CB);
+  }
+  if (Callers.empty())
+    return false;
+
+  for (CallBase *CB : Callers) {
+    Value *CallValue = CB->getArgOperand(ArgNo);
+    if (!CallValue->getType()->isStructTy() ||
+        !collectStringSetFromStringValue(CallValue, DL, Names, Depth + 1))
+      return false;
+  }
+  return true;
+}
+
+// Size-oriented pre-link pipelines can deliberately leave small string
+// helpers uninlined. Follow a direct callee's return values so a finite set of
+// names remains visible to the MethodByName refinement without depending on
+// the inliner. Unknown or recursive return flows still fail closed through the
+// existing depth bound.
+bool collectStringSetFromDirectCallReturn(
+    CallBase *CB, const DataLayout &DL,
+    SmallVectorImpl<std::string> &Names, unsigned Depth) {
+  if (!CB)
+    return false;
+
+  auto *Callee = dyn_cast<Function>(CB->getCalledOperand()->stripPointerCasts());
+  if (!Callee || Callee->isDeclaration())
+    return false;
+
+  bool SawReturn = false;
+  for (BasicBlock &BB : *Callee) {
+    auto *Ret = dyn_cast<ReturnInst>(BB.getTerminator());
+    if (!Ret)
+      continue;
+    Value *ReturnValue = Ret->getReturnValue();
+    if (!ReturnValue ||
+        !collectStringSetFromStringValue(ReturnValue, DL, Names, Depth + 1))
+      return false;
+    SawReturn = true;
+  }
+  return SawReturn;
+}
+
+bool collectStringSetFromStringValue(Value *StringValue, const DataLayout &DL,
+                                     SmallVectorImpl<std::string> &Names,
+                                     unsigned Depth) {
+  if (Depth > MaxStringAnalysisDepth)
+    return false;
+
+  if (auto *C = dyn_cast<Constant>(StringValue))
+    return collectStringSetFromStringConstant(C, DL, Names, Depth);
+
+  if (auto *CB = dyn_cast<CallBase>(StringValue)) {
+    if (collectStringSetFromStringSlice(CB, DL, Names, Depth))
+      return true;
+    if (collectStringSetFromStringCat(CB, DL, Names, Depth))
+      return true;
+    if (collectStringSetFromDirectCallReturn(CB, DL, Names, Depth))
+      return true;
+  }
+
+  if (auto *Load = dyn_cast<LoadInst>(StringValue)) {
+    if (Constant *Folded = foldConstantLoad(Load, DL))
+      return collectStringSetFromStringConstant(Folded, DL, Names, Depth + 1);
+  }
+
+  if (collectStringSetFromFunctionStringValueArg(StringValue, DL, Names, Depth))
+    return true;
+
+  if (auto *Insert = dyn_cast<InsertValueInst>(StringValue)) {
+    Value *Ptr = findInsertedValue(Insert, 0);
+    Value *Len = findInsertedValue(Insert, 1);
+    if (!Ptr || !Len)
+      return false;
+    return collectStringSet(Ptr, Len, DL, Names, Depth + 1);
+  }
+
+  if (auto *Sel = dyn_cast<SelectInst>(StringValue)) {
+    return collectStringSetFromStringValue(Sel->getTrueValue(), DL, Names,
+                                           Depth + 1) &&
+           collectStringSetFromStringValue(Sel->getFalseValue(), DL, Names,
+                                           Depth + 1);
+  }
+
+  if (auto *Phi = dyn_cast<PHINode>(StringValue)) {
+    for (Value *Incoming : Phi->incoming_values()) {
+      if (!collectStringSetFromStringValue(Incoming, DL, Names, Depth + 1))
+        return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+bool collectExtractedStringSet(Value *Ptr, Value *Len, const DataLayout &DL,
+                               SmallVectorImpl<std::string> &Names,
+                               unsigned Depth) {
+  auto *PtrExtract = dyn_cast<ExtractValueInst>(Ptr);
+  auto *LenExtract = dyn_cast<ExtractValueInst>(Len);
+  auto PtrIndex = singleExtractValueIndex(PtrExtract);
+  auto LenIndex = singleExtractValueIndex(LenExtract);
+  if (!PtrIndex || *PtrIndex != 0)
+    return false;
+  Value *StringValue = PtrExtract->getAggregateOperand();
+  if (LenIndex && *LenIndex == 1 &&
+      StringValue == LenExtract->getAggregateOperand())
+    return collectStringSetFromStringValue(StringValue, DL, Names, Depth + 1);
+
+  // Interprocedural constant propagation can replace just the length of a
+  // returned string. This occurs for same-length alternatives in optimized
+  // DWARF builds on x86-64. Recover the finite return set, but only accept the
+  // separate length when it agrees with every candidate: an unrelated length
+  // must not turn an unknown lookup into a different, supposedly known name.
+  auto *LenC = dyn_cast<ConstantInt>(Len);
+  if (!LenC)
+    return false;
+  SmallVector<std::string, 4> Candidates;
+  if (!collectStringSetFromStringValue(StringValue, DL, Candidates, Depth + 1))
+    return false;
+  for (const std::string &Name : Candidates) {
+    if (LenC->getValue() != Name.size())
+      return false;
+  }
+  for (const std::string &Name : Candidates) {
+    if (!addName(Names, Name))
+      return false;
+  }
+  return !Candidates.empty();
+}
+
+// Collect every possible string from a lowered (ptr, len) pair.
+//
+// The pass is intentionally all-or-nothing: it returns false as soon as any
+// incoming value is unknown. That way a partially understood dynamic
+// MethodByName call cannot accidentally lose the generic reflect marker and
+// make GlobalDCE drop a method that may still be reachable at runtime.
+bool collectStringSet(Value *Ptr, Value *Len, const DataLayout &DL,
+                      SmallVectorImpl<std::string> &Names, unsigned Depth) {
+  if (Depth > MaxStringAnalysisDepth)
+    return false;
+
+  Ptr = Ptr->stripPointerCasts();
+
+  bool FoldedLoad = false;
+  if (auto *PtrLoad = dyn_cast<LoadInst>(Ptr)) {
+    if (Constant *Folded = foldConstantLoad(PtrLoad, DL)) {
+      Ptr = Folded;
+      FoldedLoad = true;
+    }
+  }
+  if (auto *LenLoad = dyn_cast<LoadInst>(Len)) {
+    if (Constant *Folded = foldConstantLoad(LenLoad, DL)) {
+      Len = Folded;
+      FoldedLoad = true;
+    }
+  }
+  if (FoldedLoad)
+    return collectStringSet(Ptr, Len, DL, Names, Depth + 1);
+
+  if (collectStringSetFromFunctionStringArg(Ptr, Len, DL, Names, Depth))
+    return true;
+
+  if (collectStringSetFromConstantSlots(
+          dyn_cast<LoadInst>(Ptr), dyn_cast<LoadInst>(Len), DL, Names, Depth))
+    return true;
+
+  if (collectStringSetFromLocalSlots(dyn_cast<LoadInst>(Ptr),
+                                     dyn_cast<LoadInst>(Len), DL, Names, Depth))
+    return true;
+
+  if (auto *LenC = dyn_cast<ConstantInt>(Len); LenC && LenC->isZero())
+    return addName(Names, "");
+
+  if (auto Name = readConstantString(Ptr, Len, DL))
+    return addName(Names, *Name);
+
+  if (collectExtractedStringSet(Ptr, Len, DL, Names, Depth))
+    return true;
+
+  auto *PtrSel = dyn_cast<SelectInst>(Ptr);
+  auto *LenSel = dyn_cast<SelectInst>(Len);
+  if (PtrSel && LenSel && PtrSel->getCondition() == LenSel->getCondition()) {
+    return collectStringSet(PtrSel->getTrueValue(), LenSel->getTrueValue(), DL,
+                            Names, Depth + 1) &&
+           collectStringSet(PtrSel->getFalseValue(), LenSel->getFalseValue(),
+                            DL, Names, Depth + 1);
+  }
+  if (PtrSel && isa<ConstantInt>(Len)) {
+    return collectStringSet(PtrSel->getTrueValue(), Len, DL, Names,
+                            Depth + 1) &&
+           collectStringSet(PtrSel->getFalseValue(), Len, DL, Names, Depth + 1);
+  }
+
+  auto *PtrPhi = dyn_cast<PHINode>(Ptr);
+  auto *LenPhi = dyn_cast<PHINode>(Len);
+  if (PtrPhi && LenPhi && PtrPhi->getParent() == LenPhi->getParent() &&
+      PtrPhi->getNumIncomingValues() == LenPhi->getNumIncomingValues()) {
+    for (unsigned I = 0, E = PtrPhi->getNumIncomingValues(); I != E; ++I) {
+      BasicBlock *Incoming = PtrPhi->getIncomingBlock(I);
+      int LenIndex = LenPhi->getBasicBlockIndex(Incoming);
+      if (LenIndex < 0)
+        return false;
+      if (!collectStringSet(PtrPhi->getIncomingValue(I),
+                            LenPhi->getIncomingValue(LenIndex), DL, Names,
+                            Depth + 1))
+        return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+std::optional<unsigned> findReflectMethodNameArg(CallBase *ReflectCall) {
+  for (unsigned I = 0, E = ReflectCall->arg_size(); I != E; ++I) {
+    Attribute Attr =
+        ReflectCall->getParamAttr(I, llgo::ReflectMethodByNameArgAttr);
+    if (Attr.isStringAttribute())
+      return I;
+  }
+  return std::nullopt;
+}
+
+} // namespace
+
+namespace llgo {
+
+bool canReadGlobalInitializer(GlobalVariable *GV) {
+  if (!GV || !GV->hasInitializer() || GV->isExternallyInitialized())
+    return false;
+  if (GV->isConstant())
+    return true;
+
+  // LLGo can emit pure package literals as mutable globals with initializers.
+  // After full LTO, if every remaining use is a simple load through
+  // value-preserving pointer operations, the initializer is the only value this
+  // pass can observe.
+  SmallPtrSet<User *, 16> Seen;
+  for (User *U : GV->users()) {
+    if (!hasOnlyReadUses(U, Seen))
+      return false;
+  }
+  return true;
+}
+
+Constant *constantAtByteOffset(Constant *Init, uint64_t Offset, Type *LoadTy,
+                               const DataLayout &DL) {
+  if (!Init)
+    return nullptr;
+  if (Offset == 0 && Init->getType() == LoadTy)
+    return Init;
+
+  if (isa<ConstantAggregateZero>(Init)) {
+    uint64_t LoadSize = DL.getTypeStoreSize(LoadTy);
+    uint64_t InitSize = DL.getTypeAllocSize(Init->getType());
+    if (Offset <= InitSize && LoadSize <= InitSize - Offset)
+      return Constant::getNullValue(LoadTy);
+    return nullptr;
+  }
+
+  Type *Ty = Init->getType();
+  if (auto *StructTy = dyn_cast<StructType>(Ty)) {
+    if (!StructTy->isSized())
+      return nullptr;
+    const StructLayout *Layout = DL.getStructLayout(StructTy);
+    if (Offset >= Layout->getSizeInBytes())
+      return nullptr;
+    unsigned Index = Layout->getElementContainingOffset(Offset);
+    uint64_t ElemOffset = Layout->getElementOffset(Index);
+    Constant *Elem = Init->getAggregateElement(Index);
+    if (!Elem)
+      return nullptr;
+    return constantAtByteOffset(Elem, Offset - ElemOffset, LoadTy, DL);
+  }
+
+  if (auto *ArrayTy = dyn_cast<ArrayType>(Ty)) {
+    Type *ElemTy = ArrayTy->getElementType();
+    uint64_t ElemSize = DL.getTypeAllocSize(ElemTy);
+    if (ElemSize == 0)
+      return nullptr;
+    uint64_t Index = Offset / ElemSize;
+    if (Index >= ArrayTy->getNumElements())
+      return nullptr;
+    Constant *Elem = Init->getAggregateElement(static_cast<unsigned>(Index));
+    if (!Elem)
+      return nullptr;
+    return constantAtByteOffset(Elem, Offset - Index * ElemSize, LoadTy, DL);
+  }
+
+  return nullptr;
+}
+
+// Optimized C ABI lowering splits a Go string into (ptr, len), with the name
+// attribute on the pointer. Debug-preserving builds can retain the original
+// aggregate string argument instead. Accept both representations so enabling
+// DWARF does not change MethodByName reachability.
+bool collectReflectMethodNameArgs(CallBase *ReflectCall, const DataLayout &DL,
+                                  SmallVectorImpl<std::string> &Names) {
+  std::optional<unsigned> NameArg = findReflectMethodNameArg(ReflectCall);
+  if (!NameArg)
+    return false;
+
+  unsigned NextArgIndex = *NameArg;
+  return consumeStringCallArgument(ReflectCall, NextArgIndex, DL, Names, 0);
+}
+
+} // namespace llgo

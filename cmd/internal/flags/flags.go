@@ -151,7 +151,7 @@ func AddGlobalDCEFlag(fs *flag.FlagSet) {
 	if !buildenv.Dev {
 		return
 	}
-	fs.BoolFunc("globaldce", "Enable Go global DCE with full LTO (default: true when -lto=full)", func(v string) error {
+	fs.BoolFunc("globaldce", "Enable Go global DCE with full LTO (default: true when -lto=full; composable with -deadcodedrop)", func(v string) error {
 		enabled, err := strconv.ParseBool(v)
 		if err != nil {
 			return err
@@ -218,7 +218,7 @@ func AddBuildFlags(fs *flag.FlagSet) {
 	fs.BoolVar(&ForceRebuild, "a", false, "Force rebuilding of packages that are already up-to-date")
 	fs.BoolVar(&PrintCommands, "x", false, "Print the commands")
 	if buildenv.Dev {
-		fs.BoolVar(&DeadcodeDrop, "deadcodedrop", false, "Enable Go dead code drop")
+		fs.BoolVar(&DeadcodeDrop, "deadcodedrop", false, "Enable Go dead code drop (composable with -lto=full and -globaldce)")
 	}
 	AddOptLevelFlags(fs)
 	AddLTOFlag(fs)
