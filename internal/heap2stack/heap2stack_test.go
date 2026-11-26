@@ -417,6 +417,114 @@ exit:
 	}
 }
 
+func TestRunPostInlineAndCleanupPromoted(t *testing.T) {
+	noAllocMod := parseModule(t, `
+declare ptr @other()
+
+define ptr @just_call() {
+entry:
+  %p = call ptr @other()
+  ret ptr %p
+}
+`)
+	noAllocTM := tailTarget(t, noAllocMod)
+	if promoted, err := RunPostInline(noAllocMod, noAllocTM); err != nil || len(promoted) != 0 {
+		t.Fatalf("RunPostInline(noAllocMod) = (%v, %v), want (nil, nil)", promoted, err)
+	}
+
+	mod := parseModule(t, `
+declare nonnull ptr @alloc(i64) allocsize(0)
+declare ptr @other()
+declare void @use(ptr nocapture)
+
+define ptr @no_alloc(i64 %x) {
+entry:
+  %p = call ptr @other()
+  ret ptr %p
+}
+
+define i64 @already_optnone(i64 %x) optnone noinline {
+entry:
+  ret i64 %x
+}
+
+define void @dynamic_alloc(i64 %n) {
+entry:
+  %p = call ptr @alloc(i64 %n) allockind("alloc,uninitialized")
+  call void @use(ptr %p)
+  ret void
+}
+
+define i64 @promotable_post_inline() {
+entry:
+  %p = call ptr @alloc(i64 8) allockind("alloc,uninitialized")
+  store i64 42, ptr %p, align 8
+  %v = load i64, ptr %p, align 8
+  ret i64 %v
+}
+
+define i64 @derived_phi_live(i1 %again, ptr %init) {
+entry:
+  br label %header
+header:
+  %prev = phi ptr [ %init, %entry ], [ %gep, %latch ]
+  br label %allocblk
+allocblk:
+  %old = load i64, ptr %prev, align 8
+  %p = call ptr @alloc(i64 16) allockind("alloc,uninitialized")
+  store i64 %old, ptr %p, align 8
+  br label %derive
+derive:
+  %gep = getelementptr inbounds i8, ptr %p, i64 8
+  br label %latch
+latch:
+  br i1 %again, label %header, label %exit
+exit:
+  %res = load i64, ptr %gep, align 8
+  ret i64 %res
+}
+`)
+	tm := tailTarget(t, mod)
+	if promoted, err := RunPostInline(llvm.Module{}, tm); err == nil || promoted != nil {
+		t.Fatalf("RunPostInline(nil) = (%v, %v), want (nil, error)", promoted, err)
+	}
+	if err := CleanupPromoted(llvm.Module{}, tm, nil); err != nil {
+		t.Fatalf("CleanupPromoted(nil) = %v, want nil", err)
+	}
+	if err := CleanupPromoted(mod, tm, nil); err != nil {
+		t.Fatalf("CleanupPromoted(empty) = %v, want nil", err)
+	}
+
+	promoted, err := RunPostInline(mod, tm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(promoted) != 1 || promoted[0].Name() != "promotable_post_inline" {
+		t.Fatalf("RunPostInline promoted = %v, want [promotable_post_inline]", promoted)
+	}
+	optnone := llvm.AttributeKindID("optnone")
+	if !mod.NamedFunction("no_alloc").GetEnumFunctionAttribute(optnone).IsNil() {
+		t.Fatal("RunPostInline did not restore optnone on skipped no_alloc")
+	}
+	if mod.NamedFunction("already_optnone").GetEnumFunctionAttribute(optnone).IsNil() {
+		t.Fatal("RunPostInline stripped existing optnone from already_optnone")
+	}
+	if !strings.Contains(mod.NamedFunction("dynamic_alloc").String(), "@alloc(") {
+		t.Fatal("RunPostInline unexpectedly modified dynamic_alloc")
+	}
+
+	if err := CleanupPromoted(mod, tm, promoted); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	cleaned := mod.NamedFunction("promotable_post_inline").String()
+	if strings.Contains(cleaned, "@alloc(") || strings.Contains(cleaned, "alloca ") || !strings.Contains(cleaned, "ret i64 42") {
+		t.Fatalf("CleanupPromoted did not simplify promoted storage:\n%s", cleaned)
+	}
+}
+
 func parseModule(t *testing.T, source string) llvm.Module {
 	t.Helper()
 	ctx := llvm.NewContext()
