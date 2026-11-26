@@ -244,24 +244,35 @@ func newItabSlow(inter *InterfaceType, typ *Type) *Itab {
 	// On J32 C pointer arrays have four-byte elements while itab function
 	// slots follow Go's eight-byte word model.
 	data := c.Advance(ptr, int(itabHdrSize))
-	// Both inter.Methods and u.Methods() are sorted by method name, so one
-	// linear scan matches all interface methods in O(n+m) time.
+	// inter.Methods follows go/types interface order (exported, name, pkg),
+	// whereas u.Methods() follows go/types.MethodSet order (Id: pkg.name for
+	// unexported methods) and abi.FullName canonicalizes main to "main".
+	// Start each search from the rolling cursor j (O(n+m) for aligned methods)
+	// and wrap around [0, start) if needed so differently-ordered unexported
+	// methods still match.
 	mthds := u.Methods()
 	j := 0
 	for i, m := range inter.Methods {
 		imName := m.Name_
 		var fn abi.Text
 		matched := false
+		start := j
 		for ; j < len(mthds); j++ {
-			mName := mthds[j].Name_
-			if mName > imName {
-				break
-			}
-			if mName == imName && mthds[j].Mtyp_ == m.Typ_ {
+			if mthds[j].Name_ == imName && mthds[j].Mtyp_ == m.Typ_ {
 				fn = mthds[j].Ifn_
 				matched = true
 				j++
 				break
+			}
+		}
+		if !matched {
+			for k := 0; k < start; k++ {
+				if mthds[k].Name_ == imName && mthds[k].Mtyp_ == m.Typ_ {
+					fn = mthds[k].Ifn_
+					matched = true
+					j = k + 1
+					break
+				}
 			}
 		}
 		if !matched {
