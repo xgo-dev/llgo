@@ -231,13 +231,14 @@ func (p *context) forceEscapeHeap(site ssa.Instruction, typ types.Type) string {
 		if size == 0 && alloc.Heap {
 			return "zero-size heap identity"
 		}
-		if alloc.Heap && alloc.Parent().Recover != nil && size > llabi.MaxSSAValueSize(p.prog.PointerSize()) {
-			// Escape analysis proves small captures stay within their owning
+		recoverLimit := llabi.MaxRecoverStackValueSize(p.prog.Target().GOARCH, p.prog.PointerSize())
+		if alloc.Heap && alloc.Parent().Recover != nil && size > recoverLimit {
+			// Escape analysis proves promoted captures stay within their owning
 			// invocation, including captures created after a branch or type check;
 			// markRecoverSlot keeps their owner accesses volatile across SJLJ,
 			// and ordinary stack-root lowering preserves captured pointers.
-			// Larger aggregates remain conservative: volatile zeroing and
-			// accesses can cost more than a heap allocation.
+			// Larger aggregates remain conservative: volatile zeroing, volatile
+			// owner accesses, and stack roots can cost more than a heap allocation.
 			return "recover-visible storage"
 		}
 	} else if size == 0 {

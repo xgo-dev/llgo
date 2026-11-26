@@ -2705,6 +2705,21 @@ func collectMethodNilDerefChecks(fn *ssa.Function, receiverChecks *ReceiverNilCh
 }
 
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
+	if act == llssa.Call && ds == nil && !isRecoverTransparentWrapper(p.goFn) {
+		if builtin, ok := call.Value.(*ssa.Builtin); ok && builtin.Name() == "append" && len(call.Args) == 2 {
+			if _, ok := call.Args[0].Type().Underlying().(*types.Slice); ok {
+				args := p.compileValues(b, call.Args, fnNormal)
+				ret = b.AppendSlice(args[0], args[1], func(b llssa.Builder) {
+					p.lastPCLineFile = ""
+					p.recordCallerLocationForCall(b, call)
+					p.emitPCLineLabel(b, call.Pos())
+				})
+				// The growth path's PC anchor does not cover the merged block.
+				p.lastPCLineFile = ""
+				return
+			}
+		}
+	}
 	p.recordCallerLocationForCall(b, call)
 	p.emitPCLineLabel(b, call.Pos())
 	cv := call.Value

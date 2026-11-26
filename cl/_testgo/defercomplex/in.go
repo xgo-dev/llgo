@@ -76,7 +76,9 @@ package main
 // CHECK: store %"{{.*}}String" %1, ptr %{{[0-9]+}}
 // CHECK: [[APPEND_DATA:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[APPEND_SLICE:%[0-9]+]], 0
 // CHECK-NEXT: [[APPEND_LEN:%[0-9]+]] = extractvalue %"{{.*}}Slice" [[APPEND_SLICE]], 1
-// CHECK-NEXT: [[NEW_RESULT:%[0-9]+]] = call %"{{.*}}Slice" @"{{.*}}SliceAppend"(%"{{.*}}Slice" [[OLD_RESULT]], ptr [[APPEND_DATA]], i64 [[APPEND_LEN]], i64 16, i1 true)
+// CHECK: call void @llvm.memmove.p0.p0.i64(ptr %{{[0-9]+}}, ptr [[APPEND_DATA]], i64 %{{[0-9]+}}, i1 false)
+// CHECK: call %"{{.*}}Slice" @"{{.*}}SliceAppend"(%"{{.*}}Slice" [[OLD_RESULT]], ptr [[APPEND_DATA]], i64 [[APPEND_LEN]], i64 16, i1 true)
+// CHECK: [[NEW_RESULT:%[0-9]+]] = phi %"{{.*}}Slice"
 // CHECK-NEXT: [[UPDATED_RESULT_SLOT:%[0-9]+]] = extractvalue { ptr } [[RECORD_ENV_VALUE]], 0
 // CHECK: store %"{{.*}}Slice" [[NEW_RESULT]], ptr [[UPDATED_RESULT_SLOT]]
 // CHECK-LABEL: define void @main.main(){{.*}} {

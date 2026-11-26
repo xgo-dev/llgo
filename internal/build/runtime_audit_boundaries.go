@@ -148,6 +148,11 @@ C.llgo_cpu_profile_stop C.llgo_cpu_profile_update_signal`,
 		`runtime/internal/lib/runtime/_wrap/profile.c
 runtime/internal/lib/runtime/_wrap/profile_windows.c`,
 	},
+	{
+		`C.llgo_bind_channel_address_wait C.llgo_channel_address_wait C.llgo_channel_address_wake`,
+		"LLGo Darwin channel address-wait bridge",
+		`runtime/internal/runtime/_wrap/chan_sync_darwin.c`,
+	},
 	{"C.llgo_debugtrap", "LLGo platform debug trap", "runtime/internal/lib/runtime/_wrap/debugtrap.c"},
 	{
 		`C.llgo_dynunwind_endfp C.llgo_dynunwind_name C.llgo_dynunwind_pccount`,
@@ -174,8 +179,8 @@ C.llgo_windows_fault_pcbuf`,
 	{
 		`C.llgo_maxprocs`,
 		"LLGo platform CPU query",
-		`runtime/internal/lib/runtime/_wrap/runtime.c
-runtime/internal/lib/runtime/_wrap/runtime_windows.c`,
+		`runtime/internal/runtime/_wrap/maxprocs_unix.c
+runtime/internal/runtime/_wrap/maxprocs_windows.c`,
 	},
 	{
 		`C.llgo_mem_readable`,

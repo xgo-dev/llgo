@@ -1,4 +1,3 @@
-#include <unistd.h>
 #include <stdint.h>
 
 #if defined(__APPLE__)
@@ -13,13 +12,7 @@ struct llgo_go_string {
 };
 struct llgo_go_string llgo_os_executable_path __asm("_os.executablePath")
     __attribute__((weak));
-#endif
-
-int llgo_maxprocs()
-{
-#ifdef _SC_NPROCESSORS_ONLN
-    return (int)sysconf(_SC_NPROCESSORS_ONLN);
 #else
-    return 1;
+/* Keep this translation unit non-empty on non-Darwin Unix builds. */
+typedef int llgo_runtime_c_nonempty;
 #endif
-}
