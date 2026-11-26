@@ -32,9 +32,12 @@ func AllocU(size uintptr) unsafe.Pointer {
 	if size == 0 {
 		return unsafe.Pointer(&zerobase)
 	}
-	ret := bdwgc.Malloc(size)
+	ret := allocNormalMedium(size)
 	if ret == nil {
-		panic("out of memory")
+		ret = bdwgc.Malloc(size)
+		if ret == nil {
+			panic("out of memory")
+		}
 	}
 	recordMemProfileAlloc(size)
 	return ret
@@ -87,6 +90,9 @@ func AllocRoot(size uintptr) unsafe.Pointer {
 	if size == 0 {
 		return unsafe.Pointer(&zerobase)
 	}
+	if ret := allocRootCached(size); ret != nil {
+		return ret
+	}
 	ret := bdwgc.MallocUncollectable(size)
 	if ret == nil {
 		panic("out of memory")
@@ -95,7 +101,10 @@ func AllocRoot(size uintptr) unsafe.Pointer {
 }
 
 func FreeRoot(ptr unsafe.Pointer) {
-	if ptr == unsafe.Pointer(&zerobase) {
+	if ptr == nil || ptr == unsafe.Pointer(&zerobase) {
+		return
+	}
+	if freeRootCached(ptr) {
 		return
 	}
 	bdwgc.Free(ptr)

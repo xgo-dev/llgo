@@ -142,6 +142,7 @@ func destroyG(ptr c.Pointer) {
 		gp.panic_ = node.prev
 		FreeRoot(unsafe.Pointer(node))
 	}
+	clearMediumAllocCache(gp.m)
 	ctx := gp.context
 	unregisterTraceback(gp)
 	if ctx != nil && ctx.root != nil {

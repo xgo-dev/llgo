@@ -68,6 +68,12 @@ func Malloc(size uintptr) c.Pointer
 //go:linkname MallocAtomic C.GC_malloc_atomic
 func MallocAtomic(size uintptr) c.Pointer
 
+// MallocMany returns a freelist of zeroed normal (pointer-bearing) objects
+// linked through their first word, amortizing the global allocation lock.
+//
+//go:linkname MallocMany C.GC_malloc_many
+func MallocMany(size uintptr) c.Pointer
+
 // Memalign allocates scanned storage; the result may be an interior pointer.
 //
 //go:linkname Memalign C.GC_memalign
@@ -85,6 +91,11 @@ func Realloc(ptr c.Pointer, size uintptr) c.Pointer
 //
 //go:linkname Base C.GC_base
 func Base(ptr c.Pointer) c.Pointer
+
+// Size returns the actual allocated size in bytes of the collector block at ptr.
+//
+//go:linkname Size C.GC_size
+func Size(ptr c.Pointer) uintptr
 
 //go:linkname Free C.GC_free
 func Free(ptr c.Pointer)

@@ -111,6 +111,7 @@ func mexit(mp *m) {
 	// The compiler-generated entry wrapper needs the scanned startup record
 	// for its whole initial call. Both return and Goexit converge here.
 	releaseStartArg(gp)
+	clearMediumAllocCache(mp)
 	ownedByLifecycle := currentGUsesLifecycle()
 	if !ownedByLifecycle && !ctx.platform.systemG {
 		releaseGAndCheckDeadlock()

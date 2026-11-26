@@ -69,10 +69,11 @@ type g struct {
 // m represents the host execution resource running Go code. Platform-specific
 // scheduler state is confined to mOS so it does not leak into the common core.
 type m struct {
-	curg *g
-	p    *p
-	id   int64
-	os   mOS
+	curg       *g
+	p          *p
+	id         int64
+	os         mOS
+	allocCache mediumAllocCache
 }
 
 // p represents the scheduling resources attached to an M. Native backends bind
