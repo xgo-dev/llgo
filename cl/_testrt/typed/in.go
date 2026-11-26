@@ -55,7 +55,7 @@ func main() {
 // CHECK: br i1 {{.*}}, label %{{.*}}, label %{{.*}}
 // CHECK-DARWIN: load %"{{.*}}Slice", ptr @"_llgo_ifacebox${{.*}}"
 // CHECK-LINUX: load %"{{.*}}Slice", ptr @"_llgo_ifacebox${{.*}}"
-// CHECK-WINDOWS: [[BYTES_BOX:%.*]] = call ptr @"{{.*}}AllocU"(i{{[0-9]+}} {{[0-9]+}})
+// CHECK-WINDOWS: [[BYTES_BOX:%.*]] = call noalias dereferenceable({{[0-9]+}}) ptr @"{{.*}}AllocU"(i{{[0-9]+}} {{[0-9]+}})
 // CHECK-WINDOWS-NEXT: store %"{{.*}}Slice" { ptr @"__llgo.moduleZeroSizedAlloc$", i{{[0-9]+}} 0, i{{[0-9]+}} 0 }, ptr [[BYTES_BOX]]
 // CHECK-WINDOWS: load %"{{.*}}Slice", ptr [[BYTES_BOX]]
 // CHECK: [[BYTES_RESULT:%.*]] = phi { %"{{.*}}Slice", i1 } [ {{.*}}, %{{.*}} ], [ zeroinitializer, %{{.*}} ]

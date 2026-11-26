@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/internal/llvmattr"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
@@ -459,7 +460,37 @@ func TestWindows386CABILowersGoAggregateToNativeLayout(t *testing.T) {
 	b.SetInsertPointAtEnd(ctx.AddBasicBlock(arrayCaller, "entry"))
 	b.CreateRet(llvm.CreateCall(b, arrayFT, arrayCallee, []llvm.Value{arrayCaller.Param(0)}))
 
+	// With a scalar result, the converted byval input is the only new
+	// caller-owned memory access. Conversion needs its own Go parameter home.
+	readType := llvm.FunctionType(ctx.Int8Type(), []llvm.Type{goType}, false)
+	read := llvm.AddFunction(mod, "readByte", readType)
+	none := ctx.CreateEnumAttribute(llvm.AttributeKindID("memory"), llvmattr.MemoryNone)
+	read.AddFunctionAttr(none)
+	b.SetInsertPointAtEnd(ctx.AddBasicBlock(read, "entry"))
+	home := b.CreateAlloca(goType, "home")
+	b.CreateStore(read.Param(0), home)
+	first := b.CreateLoad(ctx.Int8Type(), home, "")
+	b.CreateStore(llvm.ConstInt(ctx.Int8Type(), 42, false), home)
+	b.CreateRet(first)
+	readCaller := llvm.AddFunction(mod, "callReadByte", readType)
+	b.SetInsertPointAtEnd(ctx.AddBasicBlock(readCaller, "entry"))
+	readCall := b.CreateCall(readType, read, []llvm.Value{readCaller.Param(0)}, "")
+	readCall.AddCallSiteAttribute(-1, none)
+	b.CreateRet(readCall)
+
 	tr.TransformModule("test", mod)
+	read = mod.NamedFunction("readByte")
+	if !strings.Contains(read.String(), "store i8 42, ptr %home") {
+		t.Fatalf("converted byval reused caller storage for a writable Go home: %s", read.String())
+	}
+	requireABIAttr(t, read.GetEnumAttributeAtIndex, 1, "byval")
+	readCall = findAttributeCall(t, mod.NamedFunction("callReadByte"), "readByte")
+	for _, get := range []func(int, uint) llvm.Attribute{read.GetEnumAttributeAtIndex, readCall.GetCallSiteEnumAttribute} {
+		if got := requireABIAttr(t, get, -1, "memory").GetEnumValue(); got != llvmattr.MemoryArgRead {
+			t.Fatalf("converted byval memory effects = %#x, want argmem: read", got)
+		}
+	}
+
 	lowered := mod.NamedFunction("cRoundTrip").String()
 	for _, want := range []string{"sret({ i8, i64 })", "byval({ i8, i64 }) align 4"} {
 		if !strings.Contains(lowered, want) {

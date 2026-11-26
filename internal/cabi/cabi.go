@@ -247,20 +247,6 @@ func (p *FuncInfo) HasWrap() bool {
 	return false
 }
 
-// introducesIndirectStorage reports whether lowering adds sret or indirect
-// parameter storage. Register coercions do not add caller-owned memory accesses.
-func (p *FuncInfo) introducesIndirectStorage() bool {
-	if p.Return.Kind == AttrPointer {
-		return true
-	}
-	for _, param := range p.Params {
-		if param.Kind == AttrPointer {
-			return true
-		}
-	}
-	return false
-}
-
 type TypeInfo struct {
 	Type       llvm.Type
 	NativeType llvm.Type // native aggregate layout when it differs from Type
@@ -447,21 +433,11 @@ func (p *Transformer) transformFunc(m llvm.Module, fn llvm.Value) bool {
 			nfn.AddAttributeAtIndex(i, attr)
 		}
 	}
-	copyFunctionABIAttrs(fn, nfn, paramMap)
+	copyFunctionAttributes(ctx, fn, nfn, &info, paramMap)
 	if !preloweredSRet.IsNil() {
 		nfn.AddAttributeAtIndex(1, preloweredSRet)
 	}
 	nfn.CopyFunctionProperties(fn)
-	for _, attr := range fn.GetFunctionAttributes() {
-		// Pre-ABI optimization can infer memory(none) or memory(read) for
-		// direct aggregate values. Indirect parameters add reads and sret
-		// adds writes through caller-owned storage. Let LLVM infer effects
-		// again for the lowered body rather than retaining stale promises.
-		if info.introducesIndirectStorage() && attr.IsEnum() && attr.GetEnumKind() == int(llvm.AttributeKindID("memory")) {
-			continue
-		}
-		nfn.AddAttributeAtIndex(-1, attr)
-	}
 	if sp := fn.Subprogram(); !sp.IsNil() {
 		nfn.SetSubprogram(sp)
 	}
@@ -863,7 +839,7 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 				"llgo.reflect.methodbyname.name", "1",
 			))
 		}
-		copyCallABIAttrs(call, replacement, paramMap)
+		copyCallAttributes(ctx, call, replacement, &info, paramMap)
 	}
 
 	var instr llvm.Value
@@ -911,68 +887,6 @@ func (p *Transformer) transformCallInstr(m llvm.Module, ctx llvm.Context, call l
 	call.ReplaceAllUsesWith(instr)
 	call.EraseFromParentAsInstruction()
 	return true
-}
-
-var integerExtensionAttributeKinds = [...]uint{
-	llvm.AttributeKindID("signext"),
-	llvm.AttributeKindID("zeroext"),
-}
-
-var closureEnvAttributeKinds = [...]uint{
-	llvm.AttributeKindID("nest"),
-	llvm.AttributeKindID("swiftself"),
-}
-
-func copyFunctionABIAttrs(from, to llvm.Value, paramMap []int) {
-	fromType, toType := from.GlobalValueType(), to.GlobalValueType()
-	copyABIAttrs(fromType, toType, paramMap, from.GetEnumAttributeAtIndex, to.AddAttributeAtIndex)
-}
-
-func copyCallABIAttrs(from, to llvm.Value, paramMap []int) {
-	fromType, toType := from.CalledFunctionType(), to.CalledFunctionType()
-	copyABIAttrs(fromType, toType, paramMap, from.GetCallSiteEnumAttribute, to.AddCallSiteAttribute)
-	if fromType.IsFunctionVarArg() {
-		// transformCallInstr appends promoted variadic arguments unchanged.
-		// Only the fixed parameter count shifts their attribute indices; the
-		// final call operand is the callee, not an argument.
-		fixed := fromType.ParamTypesCount()
-		offset := toType.ParamTypesCount() - fixed
-		for i := fixed; i < from.OperandsCount()-1; i++ {
-			for _, kind := range integerExtensionAttributeKinds {
-				if attr := from.GetCallSiteEnumAttribute(i+1, kind); !attr.IsNil() {
-					to.AddCallSiteAttribute(i+offset+1, attr)
-				}
-			}
-		}
-	}
-}
-
-// copyABIAttrs remaps existing attributes when aggregate lowering replaces a
-// function or call: sret insertion, empty parameter elision and aggregate
-// expansion can change parameter positions. SSA codegen has already emitted
-// integer extension attributes from Go signedness and the target ABI. Preserve
-// them where the physical type survives lowering; closure environment markers
-// follow the environment parameter.
-func copyABIAttrs(from, to llvm.Type, paramMap []int, get func(int, uint) llvm.Attribute, add func(int, llvm.Attribute)) {
-	copyIndex := func(oldIndex, newIndex int, kinds []uint) {
-		for _, kind := range kinds {
-			if attr := get(oldIndex, kind); !attr.IsNil() {
-				add(newIndex, attr)
-			}
-		}
-	}
-	fromParams, toParams := from.ParamTypes(), to.ParamTypes()
-	// paramMap uses zero-based source positions and one-based LLVM attribute
-	// indices, reserving zero for elided parameters. Attribute index 0 is return.
-	for oldIndex, newIndex := range paramMap {
-		if newIndex == 0 {
-			continue
-		}
-		copyIndex(oldIndex+1, newIndex, closureEnvAttributeKinds[:])
-		if fromParams[oldIndex] == toParams[newIndex-1] {
-			copyIndex(oldIndex+1, newIndex, integerExtensionAttributeKinds[:])
-		}
-	}
 }
 
 func (p *Transformer) callMemcpy(_ llvm.Module, ctx llvm.Context, b llvm.Builder, dst llvm.Value, src llvm.Value, size int) llvm.Value {

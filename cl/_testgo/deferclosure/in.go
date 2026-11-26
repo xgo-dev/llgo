@@ -92,7 +92,7 @@ package main
 // CHECK-DAG: [[STRUCT_MSG:%.*]] = alloca %"{{.*}}String"
 // CHECK: store volatile %"{{.*}}String" { ptr @{{.*}}, i64 8 }, ptr [[STRUCT_MSG]]
 // CHECK: [[STRUCT_COPY:%.*]] = load %"{{.*}}String", ptr [[STRUCT_MSG]]
-// CHECK: [[STRUCT_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
+// CHECK: [[STRUCT_ENV:%.*]] = call noalias dereferenceable(16) ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK: store %"{{.*}}String" [[STRUCT_COPY]], ptr %{{.*}}
 // CHECK: [[STRUCT_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferStructClosure$1", ptr undef }, ptr [[STRUCT_ENV]], 1
 // CHECK: call ptr @"{{.*}}/runtime/internal/runtime.ThreadDeferSlot"()

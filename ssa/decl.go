@@ -482,7 +482,9 @@ func (p Package) newFunc(
 	if isNativeCallConv(cc) {
 		p.Prog.nativeIntegerAttrs(entrySig, t.ll, fn.AddAttributeAtIndex)
 	}
-	llvmattr.ApplyAllocatorFunction(p.Prog.ctx, fn)
+	if envType == nil {
+		llvmattr.ApplyRuntimeFunction(p.Prog.ctx, fn, p.Prog.GCRootsEnabled())
+	}
 	if cc == Stdcall {
 		fn.SetFunctionCallConv(p.Prog.stdcallCallConv())
 	}

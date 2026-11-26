@@ -1,4 +1,3 @@
-// Package llvmattr describes compiler-owned LLVM contracts for runtime allocators.
 package llvmattr
 
 import (
@@ -6,13 +5,12 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-// LLVM 22 AllocFnKind bits and the absent second allocsize argument. Keep the
+// LLVM 22 AllocFnKind bits. Keep the
 // encodings named and check them against the LLVM IR parser in tests.
 const (
 	allocKindAlloc         uint64 = 1 << 0
 	allocKindUninitialized uint64 = 1 << 3
 	allocKindZeroed        uint64 = 1 << 4
-	allocSizeBytes         uint64 = uint64(^uint32(0)) // allocsize(0)
 )
 
 const runtimePrefix = env.LLGoRuntimePkg + "/internal/runtime."
@@ -36,24 +34,23 @@ func ApplyAllocatorFunction(ctx llvm.Context, fn llvm.Value) {
 		return
 	}
 	fn.AddAttributeAtIndex(0, ctx.CreateEnumAttribute(llvm.AttributeKindID("nonnull"), 0))
+	fn.AddAttributeAtIndex(0, ctx.CreateEnumAttribute(llvm.AttributeKindID("noundef"), 0))
 	if kind != 0 {
-		fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("allocsize"), allocSizeBytes))
+		fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("allocsize"), AllocSize(0, AllocSizeNoCount)))
 	}
 }
 
-// ApplyAllocatorCall enables allocation elision and Attributor heap-to-stack
-// for positive constant-size scanned and atomic allocations. Unknown sizes and zero-sized
-// sentinel identities retain their original behavior. Sizes above the signed
-// maximum of the argument type are not treated as proven positive.
-// Explicit-root collectors cannot scan pointer fields in newly introduced
-// stack storage, so they keep
-// their heap allocations as well.
+// ApplyAllocatorCall records the extent of positive constant allocations.
+// Sizes above the signed maximum of the argument type are excluded.
+// Ordinary scanned and atomic allocations also return fresh storage. With
+// explicit GC roots, the collector cannot trace pointers in stack objects
+// introduced by heap-to-stack, so those calls must omit allockind.
 func ApplyAllocatorCall(ctx llvm.Context, call, callee llvm.Value, args []llvm.Value, gcRoots bool) {
-	if gcRoots || len(args) != 1 || callee.IsAFunction().IsNil() {
+	if len(args) != 1 || callee.IsAFunction().IsNil() {
 		return
 	}
-	kind := allocatorKinds[callee.Name()]
-	if kind == 0 {
+	kind, ok := allocatorKinds[callee.Name()]
+	if !ok {
 		return
 	}
 	size := args[0].IsAConstantInt()
@@ -69,5 +66,15 @@ func ApplyAllocatorCall(ctx llvm.Context, call, callee llvm.Value, args []llvm.V
 	if n == 0 || n > maxSize {
 		return
 	}
-	call.AddCallSiteAttribute(-1, ctx.CreateEnumAttribute(llvm.AttributeKindID("allockind"), kind))
+	call.AddCallSiteAttribute(0, ctx.CreateEnumAttribute(llvm.AttributeKindID("dereferenceable"), n))
+	if kind == 0 {
+		// Wasm AllocRoot publishes the backing allocation in an intrusive
+		// root list and returns a pointer just past its header.
+		return
+	}
+	call.AddCallSiteAttribute(0, ctx.CreateEnumAttribute(llvm.AttributeKindID("noalias"), 0))
+	// Fresh storage is independent of whether the collector permits heap-to-stack.
+	if !gcRoots {
+		call.AddCallSiteAttribute(-1, ctx.CreateEnumAttribute(llvm.AttributeKindID("allockind"), kind))
+	}
 }

@@ -16,7 +16,7 @@ package main
 // CHECK: [[IN_RANGE:%.*]] = icmp slt i64 [[I]], 3
 // CHECK: br i1 [[IN_RANGE]], label %{{.*}}, label %{{.*}}
 // CHECK: [[OLD_HEAD:%.*]] = load ptr, ptr [[HEAD]]
-// CHECK: [[NODE:%.*]] = call ptr @"{{.*}}AllocU"(i64 40)
+// CHECK: [[NODE:%.*]] = call noalias dereferenceable(40) ptr @"{{.*}}AllocU"(i64 40)
 // CHECK: store ptr [[OLD_HEAD]], ptr %{{.*}}
 // CHECK: store %"{{.*}}String" { ptr [[LOOP_TEXT]], i64 4 }, ptr %{{.*}}
 // CHECK: store i64 [[I]], ptr %{{.*}}

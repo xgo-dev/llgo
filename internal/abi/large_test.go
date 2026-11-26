@@ -1274,7 +1274,7 @@ attributes #1 = { noinline }
 
 	caller := mod.NamedFunction("caller").String()
 	for _, want := range []string{
-		`call ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"(i64 65537)`,
+		`call noalias dereferenceable(65537) ptr @"github.com/xgo-dev/llgo/runtime/internal/runtime.AllocU"(i64 65537)`,
 		"call void @callee(ptr sret([65537 x i8])",
 		`ptr "llgo.reflect.methodbyname.name"="1"`,
 		"call void @llvm.memcpy",
@@ -1313,6 +1313,10 @@ func TestLowerLargeAggregatePreservesClosureEnvAttribute(t *testing.T) {
 	const testIR = `
 %Large = type [65537 x i8]
 
+define %Large @identity(%Large returned %value) memory(none) speculatable { ret %Large %value }
+declare [8193 x ptr] @capture(ptr captures(ret: address, provenance))
+declare %Large @sized(i64, i64) allocsize(0, 1)
+
 define %Large @callee(ptr nest %env) {
 entry:
   ret %Large zeroinitializer
@@ -1327,6 +1331,7 @@ define void @caller(ptr %env) {
 entry:
   %unused = call %Large @callee(ptr nest %env)
   %unusedSwift = call %Large @calleeSwift(ptr swiftself %env)
+  %unusedSize = call %Large @sized(i64 1, i64 2) allocsize(0, 1)
   ret void
 }
 `
@@ -1350,6 +1355,22 @@ entry:
 
 	LowerLargeAggregates(td, mod, AggregateLoweringConfig{})
 
+	capture := mod.NamedFunction("capture")
+	if !capture.GetEnumAttributeAtIndex(2, llvm.AttributeKindID("captures")).IsNil() {
+		t.Fatalf("large sret declaration retained return-only capture: %s", capture.String())
+	}
+	if sized := mod.NamedFunction("sized"); !sized.GetEnumFunctionAttribute(llvm.AttributeKindID("allocsize")).IsNil() {
+		t.Fatalf("void sret declaration retained allocsize: %s", sized.String())
+	}
+	identity := mod.NamedFunction("identity")
+	for _, name := range []string{"memory", "speculatable"} {
+		if !identity.GetEnumFunctionAttribute(llvm.AttributeKindID(name)).IsNil() {
+			t.Fatalf("large sret function retained %s: %s", name, identity.String())
+		}
+	}
+	if !identity.GetEnumAttributeAtIndex(2, llvm.AttributeKindID("returned")).IsNil() {
+		t.Fatalf("void sret function retained returned: %s", identity.String())
+	}
 	nest := llvm.AttributeKindID("nest")
 	callee := mod.NamedFunction("callee")
 	if attr := callee.GetEnumAttributeAtIndex(2, nest); attr.IsNil() {

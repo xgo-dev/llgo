@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/heap2stack"
+	"github.com/xgo-dev/llgo/internal/llvmattr"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
@@ -68,13 +69,20 @@ define { i64 } @registers({ i64 } %v) memory(none) { ret { i64 } %v }
 				t.Fatal(err)
 			}
 			memory := llvm.AttributeKindID("memory")
-			if mod.NamedFunction("get").GetEnumFunctionAttribute(memory).IsNil() {
+			before := mod.NamedFunction("get").GetEnumFunctionAttribute(memory)
+			if before.IsNil() {
 				t.Fatal("fixture did not infer the pre-ABI memory effects")
 			}
 			NewTransformer(prog, target.Spec().Triple, "", true).TransformModule("test", mod)
-			for _, name := range []string{"get", "byvalue"} {
-				if !mod.NamedFunction(name).GetEnumFunctionAttribute(memory).IsNil() {
-					t.Errorf("%s retained pre-ABI memory effects after introducing indirect storage:\n%s", name, mod.NamedFunction(name))
+			// get writes the hidden result; byvalue can use the incoming
+			// parameter as a writable home for its Go value.
+			for name, want := range map[string]uint64{
+				"get":     before.GetEnumValue() | llvmattr.MemoryArgWrite,
+				"byvalue": llvmattr.MemoryArgRead | llvmattr.MemoryArgWrite,
+			} {
+				attr := mod.NamedFunction(name).GetEnumFunctionAttribute(memory)
+				if attr.IsNil() || attr.GetEnumValue() != want {
+					t.Errorf("%s has wrong memory effects after lowering:\n%s", name, mod.NamedFunction(name))
 				}
 			}
 			for _, name := range []string{"scalar", "registers"} {
