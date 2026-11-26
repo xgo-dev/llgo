@@ -752,8 +752,14 @@ func uuidFromWire(b *[16]uint8, n uint8) UUID {
 type Service struct {
 	// UUID is the service's UUID.
 	UUID UUID
-	// Handle is the service declaration's handle, End the last handle the
-	// service owns. Characteristics searches that range.
+	// Handle is the service declaration's handle, End the service end the
+	// peer's discovery reported. A conformant peer reports 0xFFFF for the
+	// database's last service - the GATT convention that spares the client a
+	// follow-up request when the service ends at the end of the database -
+	// so End is authoritative for "everything from here on", not for the
+	// exact last handle. Characteristics searches the range as reported: a
+	// 0xFFFF End discovers the rest of the database, which is what a last
+	// service's range is.
 	Handle uint16
 	End    uint16
 }
