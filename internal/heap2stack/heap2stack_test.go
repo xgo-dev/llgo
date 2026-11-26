@@ -544,33 +544,52 @@ defblk:
   br label %afterblk
 afterblk:
   %merged = phi ptr [ %derived, %defblk ], [ %init, %allocblk ]
-  %late = load i64, ptr %derived, align 8
+  %late = load i64, ptr %merged, align 8
   %sum = add i64 %early, %late
+  ret i64 %sum
+}
+
+define i64 @loop_live_use(i1 %cond, ptr %init) {
+entry:
+  br label %header
+header:
+  %carried_other = phi ptr [ %init, %entry ], [ %next, %latch ]
+  %carried_after = phi ptr [ %init, %entry ], [ %next, %latch ]
+  br label %allocblk
+allocblk:
+  %early = load i64, ptr %carried_other, align 8
+  %slot = alloca [16 x i8], align 8
+  %after = load i64, ptr %carried_after, align 8
+  br i1 %cond, label %useblk, label %latch
+useblk:
+  %late = load i64, ptr %carried_other, align 8
+  br label %latch
+latch:
+  %use_val = phi i64 [ %late, %useblk ], [ %early, %allocblk ]
+  %next = getelementptr inbounds i8, ptr %slot, i64 8
+  %sum = add i64 %use_val, %after
+  br i1 %cond, label %header, label %exit
+exit:
   ret i64 %sum
 }
 `)
 	fn := mod.NamedFunction("phi_and_block_cases")
-	var allocBB, defBB, afterBB llvm.BasicBlock
+	var allocBB, defBB llvm.BasicBlock
 	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 		switch bb.AsValue().Name() {
 		case "allocblk":
 			allocBB = bb
 		case "defblk":
 			defBB = bb
-		case "afterblk":
-			afterBB = bb
 		}
 	}
-	var slot, derived, earlyLoad, mergedPHI, lateLoad llvm.Value
+	var slot, derived llvm.Value
 	order := make(map[llvm.Value]int)
 	pos := 0
 	for i := allocBB.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
 		order[i] = pos
 		pos++
-		switch i.Name() {
-		case "early":
-			earlyLoad = i
-		case "slot":
+		if i.Name() == "slot" {
 			slot = i
 		}
 	}
@@ -579,38 +598,61 @@ afterblk:
 			derived = i
 		}
 	}
-	for i := afterBB.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
-		switch i.Name() {
-		case "merged":
-			mergedPHI = i
-		case "late":
-			lateLoad = i
-		}
-	}
-	_ = earlyLoad
-	_ = mergedPHI
-	_ = lateLoad
 	// Duplicate worklist path in clearTailOnMemIntrinsics (select references %g1 twice).
 	clearTailOnMemIntrinsics(slot)
 	if strings.Contains(fn.String(), "tail call void @llvm.memset") {
 		t.Fatalf("clearTailOnMemIntrinsics kept tail on memset:\n%s", fn.String())
 	}
-	// Reachable from allocBB without defBB includes afterBB -> late load in afterBB is live.
-	reachNoDef := forwardReachableWithout(allocBB, defBB)
-	if !isDerivedLiveAtAlloc(derived, defBB, allocBB, order[slot], order, reachNoDef) {
-		t.Fatal("expected derived value used in reachable afterblk to be live")
-	}
 	// If reachable includes defBB (the incoming block of %merged PHI), PHI check returns true.
 	if !isDerivedLiveAtAlloc(derived, defBB, allocBB, order[slot], order, map[llvm.BasicBlock]bool{defBB: true}) {
 		t.Fatal("expected derived value feeding PHI from reachable predecessor to be live")
 	}
-	// With empty reachable set, PHI is skipped and late load in afterblk is unreachable;
-	// also test early same-block use (pos <= allocPos -> continue).
+	// With empty reachable set, the PHI incoming block is unreachable -> not live.
 	if isDerivedLiveAtAlloc(derived, defBB, allocBB, order[slot], order, map[llvm.BasicBlock]bool{}) {
 		t.Fatal("unexpected liveness with empty reachable set")
 	}
-	if isDerivedLiveAtAlloc(fn.Param(1), defBB, allocBB, order[slot], order, map[llvm.BasicBlock]bool{}) {
-		t.Fatal("unexpected liveness for pre-alloc use only")
+
+	// Verifier-valid loop fixture for non-PHI uses (pre-alloc, post-alloc, and cross-block).
+	loopFn := mod.NamedFunction("loop_live_use")
+	var headerBB, loopAllocBB llvm.BasicBlock
+	for bb := loopFn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		switch bb.AsValue().Name() {
+		case "header":
+			headerBB = bb
+		case "allocblk":
+			loopAllocBB = bb
+		}
+	}
+	var carriedOther, carriedAfter, loopSlot llvm.Value
+	for i := headerBB.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
+		switch i.Name() {
+		case "carried_other":
+			carriedOther = i
+		case "carried_after":
+			carriedAfter = i
+		}
+	}
+	loopOrder := make(map[llvm.Value]int)
+	pos = 0
+	for i := loopAllocBB.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
+		loopOrder[i] = pos
+		pos++
+		if i.Name() == "slot" {
+			loopSlot = i
+		}
+	}
+	// Loop-carried pointer used before %slot in allocblk and after %slot in reachable useblk.
+	reachNoHeader := forwardReachableWithout(loopAllocBB, headerBB)
+	if !isDerivedLiveAtAlloc(carriedOther, headerBB, loopAllocBB, loopOrder[loopSlot], loopOrder, reachNoHeader) {
+		t.Fatal("expected loop-carried pointer used in reachable useblk to be live")
+	}
+	// When useblk is not reachable, only the pre-alloc load in allocblk remains -> not live.
+	if isDerivedLiveAtAlloc(carriedOther, headerBB, loopAllocBB, loopOrder[loopSlot], loopOrder, map[llvm.BasicBlock]bool{}) {
+		t.Fatal("unexpected liveness when only pre-alloc use is reachable")
+	}
+	// Loop-carried pointer used after %slot in the same allocblk -> live even with empty reachable set.
+	if !isDerivedLiveAtAlloc(carriedAfter, headerBB, loopAllocBB, loopOrder[loopSlot], loopOrder, map[llvm.BasicBlock]bool{}) {
+		t.Fatal("expected loop-carried pointer used after allocation in allocblk to be live")
 	}
 }
 
@@ -631,5 +673,8 @@ func parseModule(t *testing.T, source string) llvm.Module {
 		t.Fatal(err)
 	}
 	t.Cleanup(mod.Dispose)
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatalf("invalid test IR module: %v", err)
+	}
 	return mod
 }
