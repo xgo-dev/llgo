@@ -34,6 +34,14 @@ declare nonnull ptr @allocate(%Large, %Empty, i32 range(i32 1, 64), ptr returned
 declare ptr @allocate_count(%Large, %Empty, i32, i64) allocsize(2, 3) allockind("alloc,zeroed") "alloc-family"="test"
 declare %Large @produce(%Large, ptr readonly captures(none)) memory(none) nosync nounwind willreturn
 
+declare void @take_large(%Large) nosync speculatable
+define %Large @return_large() nosync speculatable { ret %Large zeroinitializer }
+define void @use_large() {
+  %r = call %Large @return_large() nosync speculatable
+  call void @take_large(%Large %r) nosync speculatable
+  ret void
+}
+
 define i64 @writable_home(%Large %v) memory(none) {
   %home = alloca %Large, align 1
   store %Large %v, ptr %home, align 1
@@ -85,6 +93,18 @@ define %Large @roundtrip(%Large %v, ptr readonly captures(none) %p) memory(none)
 			tr.TransformModule("test", mod)
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatalf("%v\n%s", err, mod.String())
+			}
+			// Either an indirect parameter or an sret result prevents speculation.
+			// The ordinary memory accesses introduced by the ABI preserve nosync.
+			for _, name := range []string{"take_large", "return_large"} {
+				fn := mod.NamedFunction(name)
+				call := findAttributeCall(t, mod.NamedFunction("use_large"), name)
+				kind := llvm.AttributeKindID("speculatable")
+				if !fn.GetEnumFunctionAttribute(kind).IsNil() || !call.GetCallSiteEnumAttribute(-1, kind).IsNil() {
+					t.Fatalf("%s retained speculatable after indirect lowering", name)
+				}
+				requireABIAttr(t, fn.GetEnumAttributeAtIndex, -1, "nosync")
+				requireABIAttr(t, call.GetCallSiteEnumAttribute, -1, "nosync")
 			}
 			home := mod.NamedFunction("writable_home")
 			if !strings.Contains(home.String(), "store i64 41, ptr %0") {
