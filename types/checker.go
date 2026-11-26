@@ -217,10 +217,15 @@ func (check *Checker) Files(files []*ast.File) error {
 				delete(check.pkg.scope.elems, name)
 			}
 		}
-		// Detach the underlying go/types.Package that still contains synthetic
-		// aliases in its immutable go/types.Scope so Eval, CheckExpr, and
-		// downstream importers bridge from the clean LLGo Package.Scope().
-		check.pkg.goPkg = nil
+		// Keep check.pkg.goPkg intact so file/function lexical scopes remain
+		// available for Eval/CheckExpr with source positions, while recording
+		// synthetic names to block them in CheckExpr.
+		if check.pkg.synthGoNames == nil {
+			check.pkg.synthGoNames = make(map[string]bool, len(prep.synthNames))
+		}
+		for name := range prep.synthNames {
+			check.pkg.synthGoNames[name] = true
+		}
 	}
 	return wrapGoError(err)
 }
@@ -697,6 +702,22 @@ func Eval(fset *token.FileSet, pkg *Package, pos token.Pos, expr string) (_ Type
 // CheckExpr type-checks the expression expr as if it had appeared at position
 // pos of package pkg (mirroring go/types.CheckExpr).
 func CheckExpr(fset *token.FileSet, pkg *Package, pos token.Pos, expr ast.Expr, info *Info) error {
+	if pkg != nil && len(pkg.synthGoNames) > 0 && expr != nil {
+		var leaked string
+		ast.Inspect(expr, func(n ast.Node) bool {
+			if leaked != "" {
+				return false
+			}
+			if id, ok := n.(*ast.Ident); ok && id != nil && pkg.synthGoNames[id.Name] {
+				leaked = id.Name
+				return false
+			}
+			return true
+		})
+		if leaked != "" {
+			return fmt.Errorf("undefined: %s", leaked)
+		}
+	}
 	ctx, goPkg, unlock := evalGoPackage(pkg)
 	defer unlock()
 	goInfo := makeMirrorGoInfo(info)

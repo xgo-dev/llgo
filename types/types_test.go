@@ -1557,6 +1557,10 @@ import (
 )
 
 type GoFn = func(wire.Pointer, dep.T)
+
+func fA(n int) int {
+	return n
+}
 `
 	srcB := `package xfile
 
@@ -1578,6 +1582,10 @@ var (
 	g GoFn
 	c CFn = g
 )
+
+func fB(m int) int {
+	return m
+}
 `
 	fa, err := parser.ParseFile(fset, "a.go", srcA, parser.ParseComments)
 	if err != nil {
@@ -1635,6 +1643,46 @@ var (
 		t.Fatalf("Eval(SizeCFn) failed: %v", err)
 	} else if got, ok := constant.Int64Val(tv.Value); !ok || got != 8 {
 		t.Fatalf("Eval(SizeCFn) = %v, want 8", tv.Value)
+	}
+	// Lexical scopes in both files must remain intact for Eval and CheckExpr
+	// with real source positions (non-token.NoPos), including after post-Check inserts.
+	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "PostExtra", types.Typ[types.Int], constant.MakeInt64(3)))
+	for _, tc := range []struct {
+		file  *ast.File
+		param string
+	}{
+		{file: fa, param: "n"},
+		{file: fb, param: "m"},
+	} {
+		var retPos token.Pos
+		ast.Inspect(tc.file, func(n ast.Node) bool {
+			if rs, ok := n.(*ast.ReturnStmt); ok {
+				retPos = rs.Pos()
+				return false
+			}
+			return true
+		})
+		if !retPos.IsValid() {
+			t.Fatalf("failed to find return statement position for param %s", tc.param)
+		}
+		tv, err := types.Eval(fset, pkg, retPos, tc.param+" + PostExtra")
+		if err != nil {
+			t.Fatalf("Eval(%s + PostExtra) at return pos failed: %v", tc.param, err)
+		}
+		if tv.Type != types.Typ[types.Int] {
+			t.Fatalf("Eval(%s + PostExtra) type = %v, want int", tc.param, tv.Type)
+		}
+		expr, err := parser.ParseExpr(tc.param + " + PostExtra")
+		if err != nil {
+			t.Fatalf("ParseExpr: %v", err)
+		}
+		exprInfo := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue)}
+		if err := types.CheckExpr(fset, pkg, retPos, expr, exprInfo); err != nil {
+			t.Fatalf("CheckExpr(%s + PostExtra) at return pos failed: %v", tc.param, err)
+		}
+		if got := exprInfo.Types[expr].Type; got != types.Typ[types.Int] {
+			t.Fatalf("CheckExpr(%s + PostExtra) type = %v, want int", tc.param, got)
+		}
 	}
 	// Source referencing an undeclared __llgo_ccalias_0 must still fail Check.
 	badB, err := parser.ParseFile(fset, "bad_b.go", "package xfile\n//llgo:cdecl\ntype CFn = GoFn\nvar _ __llgo_ccalias_0\n", parser.ParseComments)

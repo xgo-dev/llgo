@@ -572,15 +572,16 @@ func initUnsafe() *Package {
 
 // Package describes an LLGo-typed Go package (mirroring go/types.Package).
 type Package struct {
-	path      string
-	name      string
-	scope     *Scope
-	complete  bool
-	imports   []*Package
-	goVersion string
-	ctx       *Context
-	goPkg     *gotypes.Package
-	evalMu    sync.RWMutex
+	path         string
+	name         string
+	scope        *Scope
+	complete     bool
+	imports      []*Package
+	goVersion    string
+	ctx          *Context
+	goPkg        *gotypes.Package
+	synthGoNames map[string]bool
+	evalMu       sync.RWMutex
 }
 
 // NewPackage creates a new Package (matching go/types.NewPackage).

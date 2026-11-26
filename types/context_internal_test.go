@@ -91,6 +91,13 @@ type CFn = Mid
 	if xGoInfo.Scopes[fa] == nil || xGoInfo.Scopes[fb] == nil {
 		t.Fatal("restoreGoInfo did not remap cloned file scopes back to original files")
 	}
+	synthPkg := NewPackage("example.com/synthblock", "synthblock")
+	synthPkg.synthGoNames = xprep.synthNames
+	for name := range xprep.synthNames {
+		if err := CheckExpr(fset, synthPkg, token.NoPos, ast.NewIdent(name), nil); err == nil {
+			t.Fatalf("CheckExpr did not block synthetic alias %q", name)
+		}
+	}
 
 	// Calling prescan twice exercises the existing-entry update path.
 	ctx.prescanTypeDirectives("example.com/demo", []*ast.File{f}, prep.isolated)
