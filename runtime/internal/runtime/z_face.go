@@ -219,10 +219,36 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	return newItabSlow(inter, typ)
 }
 
+func itabMethodHash(name string, typ *abi.FuncType) uintptr {
+	h := uintptr(unsafe.Pointer(typ))
+	h ^= h >> 16
+	for i := 0; i < len(name); i++ {
+		h = h*16777619 ^ uintptr(name[i])
+	}
+	return h ^ (h >> 16)
+}
+
+func buildItabMethodIndex(mthds []abi.Method) ([]int, uintptr) {
+	cap := 1
+	for cap < len(mthds)*2 {
+		cap <<= 1
+	}
+	mask := uintptr(cap - 1)
+	slots := make([]int, cap)
+	for idx := range mthds {
+		pos := itabMethodHash(mthds[idx].Name_, mthds[idx].Mtyp_) & mask
+		for slots[pos] != 0 {
+			pos = (pos + 1) & mask
+		}
+		slots[pos] = idx + 1
+	}
+	return slots, mask
+}
+
 //go:noinline
 func newItabSlow(inter *InterfaceType, typ *Type) *Itab {
 	u := typ.Uncommon()
-	if u == nil {
+	if u == nil || int(u.Mcount) < len(inter.Methods) {
 		ptr := AllocU(itabHdrSize + pointerSize)
 		ret := (*itab)(ptr)
 		ret.inter = inter
@@ -247,31 +273,54 @@ func newItabSlow(inter *InterfaceType, typ *Type) *Itab {
 	// inter.Methods follows go/types interface order (exported, name, pkg),
 	// whereas u.Methods() follows go/types.MethodSet order (Id: pkg.name for
 	// unexported methods) and abi.FullName canonicalizes main to "main".
-	// Start each search from the rolling cursor j (O(n+m) for aligned methods)
-	// and wrap around [0, start) if needed so differently-ordered unexported
-	// methods still match.
+	// Start each search from the rolling cursor j (allocation-free O(n+m) for
+	// aligned methods). On the first successful wrap-around with remaining
+	// methods, switch to a temporary open-addressed index so alternating
+	// multi-package unexported method sets also stay O(n+m).
 	mthds := u.Methods()
 	j := 0
+	var indexSlots []int
+	var indexMask uintptr
 	for i, m := range inter.Methods {
 		imName := m.Name_
 		var fn abi.Text
 		matched := false
-		start := j
-		for ; j < len(mthds); j++ {
-			if mthds[j].Name_ == imName && mthds[j].Mtyp_ == m.Typ_ {
-				fn = mthds[j].Ifn_
-				matched = true
-				j++
-				break
-			}
-		}
-		if !matched {
-			for k := 0; k < start; k++ {
-				if mthds[k].Name_ == imName && mthds[k].Mtyp_ == m.Typ_ {
-					fn = mthds[k].Ifn_
-					matched = true
-					j = k + 1
+		if indexSlots != nil {
+			pos := itabMethodHash(imName, m.Typ_) & indexMask
+			for {
+				entry := indexSlots[pos]
+				if entry == 0 {
 					break
+				}
+				cand := &mthds[entry-1]
+				if cand.Name_ == imName && cand.Mtyp_ == m.Typ_ {
+					fn = cand.Ifn_
+					matched = true
+					break
+				}
+				pos = (pos + 1) & indexMask
+			}
+		} else {
+			start := j
+			for ; j < len(mthds); j++ {
+				if mthds[j].Name_ == imName && mthds[j].Mtyp_ == m.Typ_ {
+					fn = mthds[j].Ifn_
+					matched = true
+					j++
+					break
+				}
+			}
+			if !matched {
+				for k := 0; k < start; k++ {
+					if mthds[k].Name_ == imName && mthds[k].Mtyp_ == m.Typ_ {
+						fn = mthds[k].Ifn_
+						matched = true
+						j = k + 1
+						if i+1 < len(inter.Methods) {
+							indexSlots, indexMask = buildItabMethodIndex(mthds)
+						}
+						break
+					}
 				}
 			}
 		}
@@ -453,7 +502,8 @@ func Implements(T, V *abi.Type) bool {
 		return true
 	}
 	if V.Kind() != abi.Interface {
-		if V.TFlag&abi.TFlagUncommon == 0 {
+		u := V.Uncommon()
+		if u == nil || int(u.Mcount) < len(t.Methods) {
 			return false
 		}
 		return NewItab(t, V).fun[0] != 0

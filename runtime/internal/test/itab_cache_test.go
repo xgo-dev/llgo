@@ -162,6 +162,12 @@ func TestItabTableConcurrentGrowth(t *testing.T) {
 
 type itabNonImplValue struct{}
 
+type itabNamedScalar int
+
+type itabOtherValue struct{}
+
+func (itabOtherValue) Other() int { return 7 }
+
 type itabExtraInterface interface {
 	Probe() int
 	Extra() int
@@ -173,6 +179,21 @@ func TestItabTableNegativeCacheAndImplements(t *testing.T) {
 	emptyType := abi.TypeFor[any]()
 	implType := abi.TypeFor[itabCacheValue]()
 	nonImplType := abi.TypeFor[itabNonImplValue]()
+	namedScalarType := abi.TypeFor[itabNamedScalar]()
+	otherType := abi.TypeFor[itabOtherValue]()
+
+	var m0, m1 runtime.MemStats
+	runtime.ReadMemStats(&m0)
+	if rt.Implements(&inter.Type, namedScalarType) {
+		t.Fatal("Implements returned true for named scalar with zero methods")
+	}
+	if rt.Implements(&extraInter.Type, implType) {
+		t.Fatal("Implements returned true for concrete type with fewer methods than interface")
+	}
+	runtime.ReadMemStats(&m1)
+	if m1.Mallocs != m0.Mallocs {
+		t.Fatalf("Implements allocated %d times for impossible method-count checks, want 0", m1.Mallocs-m0.Mallocs)
+	}
 
 	neg1 := rt.NewItab(inter, nonImplType)
 	if neg1 == nil {
@@ -194,11 +215,16 @@ func TestItabTableNegativeCacheAndImplements(t *testing.T) {
 	if !rt.Implements(&inter.Type, implType) {
 		t.Fatal("Implements returned false for implementing concrete type")
 	}
+	if rt.Implements(&inter.Type, otherType) {
+		t.Fatal("Implements returned true for concrete type with mismatched method")
+	}
+	if neg4 := rt.NewItab(inter, otherType); neg4 == nil || (*itabPrefix)(unsafe.Pointer(neg4)).fun[0] != 0 {
+		t.Fatal("mismatched concrete type must produce a cached negative itab")
+	} else if rt.NewItab(inter, otherType) != neg4 {
+		t.Fatal("mismatched concrete type negative itab was not cached")
+	}
 	if rt.Implements(&inter.Type, nonImplType) {
 		t.Fatal("Implements returned true for non-implementing concrete type")
-	}
-	if rt.Implements(&extraInter.Type, implType) {
-		t.Fatal("Implements returned true for partially implementing concrete type")
 	}
 	if !rt.Implements(emptyType, nonImplType) {
 		t.Fatal("Implements returned false for empty interface")
