@@ -210,6 +210,18 @@ defaults to 192.168.4.0/24 ... a future release changes the default to
 net=10.0.2.0/24 to switch now`); if that lands, pass
 `--net 192.168.4.0/24` or the probe's hardcoded addresses stop matching.
 
+Golden: `idfproj/host/golden/emu-net-probe.txt` pins the probe lines that
+must not drift between runs - the net, udp and reconnect sections plus the
+two power-save sections (every `[go] net` / `[go] wifi ps` / `[go] wifi
+reconn` line except the heap marks). Regression check after an emu run:
+
+    grep -E '^\[go\] (net|wifi ps|wifi reconn)' <emu log> | grep -v 'heap '
+
+and byte-diff against the golden (comments excluded). New lines may only be
+appended at the end of their own section; every existing line must stay
+byte-identical - a diff is a behavior change in a pre-existing path, not a
+cosmetic rename.
+
 Expected console output (interleaved with the IDF boot log):
 
 ```
@@ -240,6 +252,21 @@ emulator does not model ACK/NACK, so the read reports `err = 0` and a
 alloc → std init → enable → one silence write. Each probe prints its own
 esp_err code; the `probeGPIO`/`probeI2C`/`probeI2S` switches in `main.go`
 skip a peripheral that hangs a given target.
+
+The power-save surface is exercised twice (`[go] wifi ps ...` lines). Before
+any mode is picked, `psGuardProbe` proves the surface is station-only:
+both `SetPowerSave` and `GetPowerSave` must be refused with ESP_ERR_WIFI_MODE
+while the driver still has no mode (the driver itself would swallow the call
+there - esp_wifi_set_ps validates only the enum range - so a named refusal
+is the proof the glue guard fired). On the associated station, `psProbe`
+reads the driver default (MIN_MODEM, `esp_wifi.h`), flips to NONE and back,
+and leaves MIN_MODEM - the state every earlier acceptance run saw - so the
+net/udp probes that follow run under the same power-save condition as
+before, and their PASS lines double as the proof the association still
+passes traffic after the flips. What the emulator cannot say anything about
+is the point of the feature: idle current and downlink latency (the numbers
+live in `pkg/esp/wifi`'s PowerSaveMode doc; esp-emu does not model RF
+power), which stay a real-board measurement item.
 
 After the association (the net probe needs the DHCP lease), `netProbe`
 exercises `pkg/esp/net` over the emulator's NAT (`[go] net ...` lines):

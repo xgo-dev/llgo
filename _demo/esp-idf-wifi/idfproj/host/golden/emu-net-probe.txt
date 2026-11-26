@@ -1,29 +1,42 @@
-# Golden for the esp-emu network probes ([go] net ... / [go] net udp ...)
-# and the wifi auto-reconnect probe ([go] wifi reconn ...) of
-# _demo/esp-idf-wifi, captured from an acceptance run (esp-emu v1.2.0,
-# esp32s31-idf firmware, 16 MiB PSRAM, host peers echosrv on 127.0.0.1:9000
-# and udpsrv on 127.0.0.1:9002).
+# Golden for the esp-emu network probes ([go] net ... / [go] net udp ...),
+# the wifi power-save probes ([go] wifi ps ...) and the wifi auto-reconnect
+# probe ([go] wifi reconn ...) of _demo/esp-idf-wifi, captured from an
+# acceptance run (esp-emu v1.2.0, esp32s31-idf firmware, 16 MiB PSRAM, host
+# peers echosrv on 127.0.0.1:9000 and udpsrv on 127.0.0.1:9002).
 #
 # Scope: every [go] net line the probes print except the heap marks
 # ([go] wifi heap ... lines carry IDF-heap byte counts that legitimately
-# vary between runs), plus every [go] wifi reconn line (the reconnect probe
-# prints no timings, counts or values that legitimately vary between runs;
-# the ip= figures are the emulator's fixed station address). The two
-# "in <ms>" timings have measured 0 ms in every recorded run (the NAT
-# connect and the localhost resolve complete within one emulated scheduler
-# slice), so they are part of the golden; if a run ever reports non-zero
-# there, treat the run, not the golden, as suspect before changing anything.
+# vary between runs), every [go] wifi ps line, and every [go] wifi reconn
+# line (neither probe prints timings, counts or values that legitimately
+# vary between runs; the ip= figures are the emulator's fixed station
+# address). The two "in <ms>" timings have measured 0 ms in every recorded
+# run (the NAT connect and the localhost resolve complete within one
+# emulated scheduler slice), so they are part of the golden; if a run ever
+# reports non-zero there, treat the run, not the golden, as suspect before
+# changing anything.
 #
-# Regression check: grep -E '^\[go\] (net|wifi reconn)' <emu log> |
+# Regression check: grep -E '^\[go\] (net|wifi ps|wifi reconn)' <emu log> |
 # grep -v 'heap ' and byte-diff against this file (comments excluded; both
-# sides tolerate the file's CR/LF mix). The reconn probe runs after the
-# udp probe in main, so its lines follow the udp section in the log.
+# sides tolerate the file's CR/LF mix). The ps guard probe runs before the
+# mode is picked in main, and the ps readback probe right after the DHCP
+# lease - both precede the transport probes, so the two ps sections open
+# the file; the reconn probe runs last, so its lines close the log's
+# golden-relevant output.
 #
 # Discipline: udpProbe lines may only be APPENDED at the end of the udp
+# section, psProbe/psGuardProbe lines only at the end of their own ps
 # section, reconnProbe lines only at the end of the reconn section; every
 # existing line must stay byte-identical. A diff means a behavior change
-# in the pre-existing TCP path, the UDP path or the reconnect path broke
-# the acceptance contract.
+# in the pre-existing TCP path, the UDP path, the power-save surface or the
+# reconnect path broke the acceptance contract.
+[go] wifi ps: guard start
+[go] wifi ps: mode guard refused 12293 ESP_ERR_WIFI_MODE
+[go] wifi ps: guard PASS
+[go] wifi ps: start
+[go] wifi ps: default ps=MIN_MODEM
+[go] wifi ps: none ok ps=NONE
+[go] wifi ps: min ok ps=MIN_MODEM
+[go] wifi ps: PASS
 [go] net: start
 [go] net dial ok in 0 ms
 [go] net echo 256 / 256 bytes verified

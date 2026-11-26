@@ -816,6 +816,101 @@ func DeauthStation(mac [6]uint8) error {
 	return errOf(deauthSta(&mac[0]))
 }
 
+// PowerSaveMode is the Wi-Fi modem power-save mode - IDF's wifi_ps_type_t
+// verbatim (esp_wifi_types_generic.h). Modem sleep is the station's side of
+// the 802.11 power-save protocol: between the beacons it must wake for, the
+// driver switches RF, PHY and baseband off, and the interval between those
+// wake-ups is the knob that trades idle current against downlink latency.
+// The modes, with the behavior the IDF docs state (esp_wifi.h's attention
+// note, api-guides/wifi-driver/wifi-performance-and-power-save.rst,
+// api-guides/low-power-mode/low-power-mode-wifi.rst):
+//
+//	PowerSaveNone      Modem sleep off: the radio stays on, downlink data is
+//	                   received the moment it arrives, and the idle current is
+//	                   the full radio-on figure (ballpark ~100 mA on the
+//	                   radio-class boards; empirical, measure on the target
+//	                   board - the emulator does not model RF power). The mode
+//	                   for latency-bound links.
+//	PowerSaveMinModem  Wake for every DTIM beacon. Broadcast data follows
+//	                   the DTIM, so nothing is lost, but downlink receive
+//	                   latency can reach one DTIM cycle (AP-determined; a
+//	                   short DTIM weakens the saving - IDF docs). Idle current
+//	                   drops to roughly a fifth of PowerSaveNone (ballpark
+//	                   ~20-30 mA; empirical, board-dependent). This is the
+//	                   driver's default after esp_wifi_init (esp_wifi.h).
+//	PowerSaveMaxModem  Wake every listen_interval beacons (the
+//	                   wifi_sta_config_t field, set before Connect). The
+//	                   longest interval saves the most, but DTIMs are missed,
+//	                   so buffered broadcast data is lost and the receive
+//	                   latency grows to the listen interval (IDF docs).
+//	                   Verify against the real AP on hardware.
+//
+// The esp32s31 sleep-current tables are still TODO in the IDF docs, so the mA
+// figures above are radio-class ballparks, not S31 measurements; the
+// qualitative behavior (what wakes the station, what gets lost, how far the
+// latency reaches) is quoted from the docs.
+//
+// Modem sleep is a property of the station association: it engages when the
+// station connects and stops when it disconnects (IDF docs), and the driver
+// itself accepts esp_wifi_set_ps in any mode without effect there (verified
+// against the net80211 entry point, which validates only the 0..2 range), so
+// this package refuses a mode without a station interface (NULL, AP) in the
+// glue before the driver can swallow the call - see SetPowerSave.
+type PowerSaveMode int32
+
+const (
+	// PowerSaveNone disables modem sleep: radio always on, lowest receive
+	// latency, highest idle current (WIFI_PS_NONE).
+	PowerSaveNone PowerSaveMode = 0
+	// PowerSaveMinModem wakes the station for every DTIM beacon: no
+	// broadcast loss, receive latency up to one DTIM cycle, the driver's
+	// default after esp_wifi_init (WIFI_PS_MIN_MODEM).
+	PowerSaveMinModem PowerSaveMode = 1
+	// PowerSaveMaxModem wakes the station every listen_interval beacons
+	// (wifi_sta_config_t): the most saving, buffered broadcast data may be
+	// lost, latency up to the listen interval (WIFI_PS_MAX_MODEM).
+	PowerSaveMaxModem PowerSaveMode = 2
+)
+
+// String names the mode with IDF's WIFI_PS_* spelling ("NONE",
+// "MIN_MODEM", "MAX_MODEM"), so probe logs and errors print the driver's
+// own name for the mode; values outside the enum render INVALID.
+func (m PowerSaveMode) String() string {
+	switch m {
+	case PowerSaveNone:
+		return "NONE"
+	case PowerSaveMinModem:
+		return "MIN_MODEM"
+	case PowerSaveMaxModem:
+		return "MAX_MODEM"
+	default:
+		return "INVALID"
+	}
+}
+
+// SetPowerSave selects the modem power-save mode for the station interface.
+// It works on a started or running driver (any time after Setup): the IDF
+// docs recommend calling it right after esp_wifi_init, and the setting
+// engages when the station associates. Errors: ESP_ERR_INVALID_ARG (0x102)
+// for a value outside the three modes, ESP_ERR_WIFI_MODE (0x3005) when the
+// driver has no station interface - mode NULL (before Setup, or after it
+// before anything picks a mode) or AP; the soft AP never sleeps, while an
+// APSTA mode passes and the setting applies to its station half.
+func SetPowerSave(mode PowerSaveMode) error { return errOf(setPowerSave(int32(mode))) }
+
+// GetPowerSave reads the mode back out of the driver (esp_wifi_get_ps) -
+// the answer to "which strategy is the station actually running", as
+// opposed to "did the call return zero". Until SetPowerSave changes it the
+// answer is PowerSaveMinModem. Errors: ESP_ERR_WIFI_MODE (0x3005) when the
+// driver has no station interface (mode NULL or AP).
+func GetPowerSave() (PowerSaveMode, error) {
+	var ps int32
+	if e := getPowerSave(&ps); e != 0 {
+		return 0, errOf(e)
+	}
+	return PowerSaveMode(ps), nil
+}
+
 // Connect calls esp_wifi_connect: a single attempt. Association or
 // handshake failures arrive as EvStaDisconnected with a reason code; the
 // application retries (see the loop in main.go). While the auto-reconnect

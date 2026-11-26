@@ -49,6 +49,14 @@ func scanFetch(out *ApInfo, max int32, count *int32) int32 {
 	_, _, _ = out, max, count
 	return errUnsupported
 }
+func setPowerSave(ps int32) int32 {
+	_ = ps
+	return errUnsupported
+}
+func getPowerSave(ps *int32) int32 {
+	_ = ps
+	return errUnsupported
+}
 func connect() int32    { return errUnsupported }
 func disconnect() int32 { return errUnsupported }
 func getIP() uint32     { return 0 }
