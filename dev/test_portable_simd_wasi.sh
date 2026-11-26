@@ -18,6 +18,7 @@ for profile in O0-off O2-off O2-thin O2-full; do
   for debug in simd=128 simd=0; do
     # WASI does not inherit host environment variables into the guest.
     wasmer run --enable-exceptions --enable-simd --stack-size=1048576 \
-      --env="GODEBUG=$debug" "$binary" -- -test.v -test.count=1 -test.timeout=2m
+      --env="GODEBUG=$debug" "$binary" -- -test.v -test.count=1 -test.timeout=2m \
+      -test.bench='^BenchmarkSIMDDot$' -test.benchtime=1x
   done
 done

@@ -1299,10 +1299,13 @@ jobs:
           # Go's WASI example runner captures stdout in temporary files.
           wasi_tmp="$RUNNER_TEMP/go-wasi-example-tmp"
           mkdir -p "$wasi_tmp"
-          GOOS=wasip1 GOARCH=wasm go test -exec="wasmtime --dir=$wasi_tmp::/tmp" -count=1 -timeout=2m ./test/simd/... ./test/std/simd
+          # One iteration verifies the real workload and its scalar control;
+          # CI timings are diagnostic output, not performance thresholds.
+          GOOS=wasip1 GOARCH=wasm go test -exec="wasmtime --dir=$wasi_tmp::/tmp" \
+            -count=1 -timeout=2m -bench='^BenchmarkSIMD(Dot|Hex)$' -benchtime=1x ./test/simd/... ./test/std/simd
           for opt in 0 2; do
             "$RUNNER_TEMP/llgo-bin/llgo" test "-O${opt}" -target wasi -emulator \
-              -v -count=1 -timeout=2m ./test/simd/... ./test/std/simd
+              -v -count=1 -timeout=2m -bench='^BenchmarkSIMD(Dot|Hex)$' -benchtime=1x ./test/simd/... ./test/std/simd
           done
           LLGO="$RUNNER_TEMP/llgo-bin/llgo" bash dev/test_portable_simd_wasi.sh
 

@@ -5,6 +5,7 @@ package simd_test
 import (
 	"bytes"
 	"encoding/hex"
+	"fmt"
 	"simd/archsimd"
 	"testing"
 )
@@ -14,13 +15,13 @@ func encodeHexSIMD(dst, src []byte) {
 	table := archsimd.LoadUint8x16Array(&tableBytes)
 	mask := archsimd.BroadcastUint8x16(15)
 	n := len(src) &^ 15
+	var lows, highs [16]byte
 	for pos := 0; pos < n; pos += 16 {
 		x := archsimd.LoadUint8x16(src[pos:])
 		lo := lookupHexDigits(table, x.And(mask))
 		// Shifting pairs of bytes and masking each byte also works on amd64,
 		// whose official API does not expose a byte-lane ShiftAllRight.
 		hi := lookupHexDigits(table, x.ReshapeToUint16s().ShiftAllRight(4).ReshapeToUint8s().And(mask))
-		var lows, highs [16]byte
 		lo.StoreArray(&lows)
 		hi.StoreArray(&highs)
 		for i := range lows {
@@ -33,9 +34,14 @@ func encodeHexSIMD(dst, src []byte) {
 }
 
 func TestSIMDHexWorkload(t *testing.T) {
-	// Every tail length, empty input, unaligned starts, and every byte value.
+	// Every tail length, empty input, unaligned starts, and every byte value,
+	// plus page-sized and bulk buffers with vector loops and a partial tail.
+	lengths := []int{4095, 4096, 4097, 1<<20 + 7}
+	for n := 0; n <= 273; n++ {
+		lengths = append(lengths, n)
+	}
 	for offset := 0; offset < 4; offset++ {
-		for n := 0; n <= 273; n++ {
+		for _, n := range lengths {
 			backing := make([]byte, n+offset)
 			src := backing[offset:]
 			for i := range src {
@@ -47,11 +53,45 @@ func TestSIMDHexWorkload(t *testing.T) {
 			out := backingOut[1 : 1+2*n]
 			encodeHexSIMD(out, src)
 			if !bytes.Equal(out, want) {
-				t.Fatalf("offset=%d length=%d: %x want %x", offset, n, out, want)
+				for i := range out {
+					if out[i] != want[i] {
+						t.Fatalf("offset=%d length=%d byte=%d: %02x want %02x", offset, n, i, out[i], want[i])
+					}
+				}
 			}
 			if backingOut[0] != 0xa5 || backingOut[len(backingOut)-1] != 0xa5 || backingOut[len(backingOut)-2] != 0xa5 || backingOut[len(backingOut)-3] != 0xa5 {
 				t.Fatalf("output boundary overwritten: length=%d", n)
 			}
+		}
+	}
+}
+
+func BenchmarkSIMDHex(b *testing.B) {
+	for _, n := range []int{64, 4096, 1<<20 + 7} {
+		src := make([]byte, n+1)[1:]
+		for i := range src {
+			src[i] = byte(i * 73)
+		}
+		want := make([]byte, hex.EncodedLen(n))
+		hex.Encode(want, src)
+		for _, impl := range []struct {
+			name   string
+			encode func([]byte, []byte)
+		}{
+			{"scalar", func(dst, src []byte) { hex.Encode(dst, src) }},
+			{"simd", encodeHexSIMD},
+		} {
+			b.Run(fmt.Sprintf("%s/%d", impl.name, n), func(b *testing.B) {
+				dst := make([]byte, len(want))
+				b.SetBytes(int64(n))
+				b.ReportAllocs()
+				for b.Loop() {
+					impl.encode(dst, src)
+				}
+				if !bytes.Equal(dst, want) {
+					b.Fatal("hex output differs from encoding/hex")
+				}
+			})
 		}
 	}
 }
