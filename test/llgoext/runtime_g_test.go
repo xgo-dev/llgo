@@ -19,6 +19,7 @@
 package llgoext
 
 import (
+	"runtime"
 	"testing"
 	"unsafe"
 )
@@ -179,6 +180,68 @@ func TestRuntimeGMPLinks(t *testing.T) {
 		mProcs[state.mid] = state.pid
 		seenP[state.pid] = true
 	}
+}
+
+func TestRuntimePoolReuse(t *testing.T) {
+	if !runtimeSchedulerMultiplexesForTesting() {
+		t.Skip("backend does not pool worker threads")
+	}
+
+	const total = 48
+	seenG := make(map[uint64]bool, total)
+	seenM := make(map[int64]int32)
+	for i := 0; i < total; i++ {
+		ch := make(chan runtimeGMPState, 1)
+		go func() {
+			ch <- currentRuntimeGMPState()
+		}()
+		state := <-ch
+		checkRunningRuntimeGMP(t, state)
+		if seenG[state.goid] {
+			t.Fatalf("duplicate goid %d across sequential goroutines", state.goid)
+		}
+		seenG[state.goid] = true
+		if prevP, ok := seenM[state.mid]; ok && prevP != state.pid {
+			t.Fatalf("reused M %d changed P from %d to %d", state.mid, prevP, state.pid)
+		}
+		seenM[state.mid] = state.pid
+	}
+	if len(seenM) >= total {
+		t.Fatalf("expected pooled M reuse across %d sequential goroutines, saw %d distinct Ms", total, len(seenM))
+	}
+}
+
+func TestRuntimePoolLockOSThread(t *testing.T) {
+	if !runtimeSchedulerMultiplexesForTesting() {
+		t.Skip("backend does not pool worker threads")
+	}
+
+	// A goroutine that calls LockOSThread and exits without UnlockOSThread must
+	// terminate its OS thread instead of returning it to the worker pool.
+	lockedCh := make(chan int64, 1)
+	go func() {
+		runtime.LockOSThread()
+		lockedCh <- currentRuntimeGMPState().mid
+	}()
+	lockedMid := <-lockedCh
+	for i := 0; i < 32; i++ {
+		ch := make(chan int64, 1)
+		go func() {
+			ch <- currentRuntimeGMPState().mid
+		}()
+		if got := <-ch; got == lockedMid {
+			t.Fatalf("locked OS thread M %d was reused after goroutine exited without UnlockOSThread", lockedMid)
+		}
+	}
+
+	// Matching LockOSThread/UnlockOSThread allows the thread to be pooled again.
+	unlockedDone := make(chan struct{})
+	go func() {
+		runtime.LockOSThread()
+		runtime.UnlockOSThread()
+		close(unlockedDone)
+	}()
+	<-unlockedDone
 }
 
 type runtimeDeferProbeResult struct {

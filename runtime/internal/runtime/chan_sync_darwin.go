@@ -98,6 +98,29 @@ func (s *chanSignal) park() {
 	TracebackWaiting(false)
 }
 
+// parkIdle parks a pooled worker thread with no attached G, skipping traceback
+// state updates while allowing a brief uncontended spin before sleeping.
+func (s *chanSignal) parkIdle() {
+	atomic.Store(&s.notified, uint32(0))
+	s.unlock()
+	for i := 0; i < 64; i++ {
+		if atomic.Load(&s.notified) != 0 && s.mutex.TryLock() {
+			return
+		}
+		chanSignalSpinHint(chanSignalSpinInstruction)
+	}
+	s.lock()
+	if atomic.Load(&s.notified) == 0 {
+		s.sleeping = true
+		if s.address {
+			s.waitOnAddress()
+		} else {
+			s.cond.Wait(&s.mutex)
+		}
+		s.sleeping = false
+	}
+}
+
 func (s *chanSignal) waitOnAddress() {
 	// The kernel compares the notification word before sleeping. A wake
 	// between unlock and that comparison leaves the word visibly set.

@@ -27,6 +27,8 @@ uintptr_t *llgo_traceback_thread_creator(void *, uintptr_t *);
 uintptr_t *llgo_traceback_creator(llgo_traceback_snapshot *, uintptr_t *);
 void llgo_traceback_attach(void *);
 void llgo_traceback_unregister(void *);
+void llgo_traceback_detach(void *);
+void llgo_traceback_release_thread(void);
 void llgo_traceback_state(void *, uint32_t);
 llgo_traceback_snapshot *llgo_traceback_capture(uint64_t);
 void llgo_traceback_free(llgo_traceback_snapshot *);

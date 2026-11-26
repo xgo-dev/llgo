@@ -37,6 +37,8 @@ type runtimeContextPlatform struct {
 	// with the native lifecycle because TLS may already be unavailable when an
 	// OS thread destructor runs.
 	foreignThreadAttached bool
+
+	pool mPoolSlot
 }
 
 // Native ABIs agree with Go's runtimeContext layout, so do not add the wasm
@@ -46,6 +48,12 @@ func runtimeContextAllocSize() uintptr {
 }
 
 func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callergp *g) {
+	if fn == nil {
+		panic("go of nil func value")
+	}
+	if mPoolStart(fn, arg, stackSize, callergp) {
+		return
+	}
 	gp := newproc1(fn, arg, callergp)
 	if errno := newm(gp.m, stackSize); errno != 0 {
 		releaseG()
@@ -85,19 +93,61 @@ func mstart(arg unsafe.Pointer) unsafe.Pointer {
 		fatal("runtime: invalid mstart context")
 		return nil
 	}
+	registerWasiGCThread()
+	for {
+		gp := mp.curg
+		pp := mp.p
+
+		setg(gp)
+		casgstatus(gp, _Grunnable, _Grunning)
+		setpstatus(pp, _Prunning)
+
+		fn, fnArg := gp.startfn, gp.startarg
+		gp.startfn = nil
+		ret := fn(fnArg)
+		if !mexitOrPark(mp) {
+			return ret
+		}
+	}
+}
+
+func mexitOrPark(mp *m) bool {
+	if mp == nil || mp.curg == nil || mp.p == nil {
+		fatal("runtime: invalid mexit context")
+		return false
+	}
 	gp := mp.curg
 	pp := mp.p
-	registerWasiGCThread()
+	ctx := gp.context
+	if !mPoolEnabled() || currentGUsesLifecycle() || ctx.platform.systemG || mp.touchedLocal || gp.lockedOSThread != 0 || gp.panic_ != nil || gp.defer_ != nil {
+		mexit(mp)
+		return false
+	}
+	releaseStartArg(gp)
+	leaveSynctest(gp)
+	detachTraceback(gp)
+	casgstatus(gp, _Grunning, _Gdead)
+	setpstatus(pp, _Pidle)
 
-	setg(gp)
-	casgstatus(gp, _Grunnable, _Grunning)
-	setpstatus(pp, _Prunning)
+	savedWaiter := gp.chanWaiter
+	*gp = g{chanWaiter: savedWaiter}
+	mp.curg = nil
+	setg(nil)
 
-	fn, arg := gp.startfn, gp.startarg
-	gp.startfn = nil
-	ret := fn(arg)
-	mexit(mp)
-	return ret
+	releaseGAndCheckDeadlock()
+
+	if mPoolPark(ctx) {
+		return true
+	}
+
+	mPoolDestroySlot(&ctx.platform.pool)
+	setpstatus(pp, _Pdead)
+	pp.m = nil
+	mp.p = nil
+	releaseTracebackThread()
+	freeRuntimeContext(ctx)
+	unregisterWasiGCThread()
+	return false
 }
 
 func mexit(mp *m) {
@@ -126,6 +176,7 @@ func mexit(mp *m) {
 
 	setg(nil)
 	if !ownedByLifecycle {
+		mPoolDestroySlot(&ctx.platform.pool)
 		freeRuntimeContext(ctx)
 	}
 	if !ownedByLifecycle {
@@ -160,7 +211,7 @@ func MarkUserGoroutine() {
 }
 
 // GMPForTesting reports the current runtime ownership graph.
-func SchedulerMultiplexesGoroutinesForTesting() bool { return false }
+func SchedulerMultiplexesGoroutinesForTesting() bool { return mPoolEnabled() }
 
 func GMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gstatus, pstatus uint32, linked bool) {
 	gp := getg()

@@ -44,6 +44,10 @@ func (s *chanSignal) park() {
 	TracebackWaiting(false)
 }
 
+func (s *chanSignal) parkIdle() {
+	s.cond.Wait(&s.mutex)
+}
+
 func (s *chanSignal) ready() {
 	s.cond.Signal()
 }

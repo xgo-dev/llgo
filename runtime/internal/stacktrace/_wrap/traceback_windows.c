@@ -129,6 +129,29 @@ void llgo_traceback_unregister(void *raw)
     free(n);
 }
 
+void llgo_traceback_detach(void *raw)
+{
+    thread_node *n = raw;
+    if (!n) return;
+    __atomic_store_n(&n->state, 6, __ATOMIC_RELEASE);
+    AcquireSRWLockExclusive(&registry_lock);
+    if (n->prev) n->prev->next = n->next;
+    else llgo_debugger_threads_v1 = n->next;
+    if (n->next) n->next->prev = n->prev;
+    ReleaseSRWLockExclusive(&registry_lock);
+    if (n->thread) CloseHandle(n->thread);
+    if (current == n) current = 0;
+    free(n);
+}
+
+void llgo_traceback_release_thread(void)
+{
+    if (fault_buffer) {
+        VirtualFree(fault_buffer, 0, 0x8000);
+        fault_buffer = 0;
+    }
+}
+
 void llgo_traceback_state(void *raw, uint32_t state)
 {
     if (raw) __atomic_store_n(&((thread_node *)raw)->state, state, __ATOMIC_RELEASE);
