@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -357,6 +358,66 @@ type llgoFileDigest struct {
 	CompilerArgs     []string `yaml:"compiler_args,omitempty"`
 }
 
+// depfilePreprocessEnvVars lists environment variables that influence C/C++
+// preprocessor include-path resolution, SDK/sysroot selection, or expansion.
+var depfilePreprocessEnvVars = []string{
+	"CPATH",
+	"C_INCLUDE_PATH",
+	"CPLUS_INCLUDE_PATH",
+	"OBJC_INCLUDE_PATH",
+	"OBJCPLUS_INCLUDE_PATH",
+	"INCLUDE",
+	"SDKROOT",
+	"SYSROOT",
+	"MACOSX_DEPLOYMENT_TARGET",
+	"IPHONEOS_DEPLOYMENT_TARGET",
+	"COMPILER_PATH",
+	"GCC_EXEC_PREFIX",
+	"CC",
+	"CXX",
+	"CFLAGS",
+	"CXXFLAGS",
+	"CPPFLAGS",
+	"SOURCE_DATE_EPOCH",
+}
+
+func depfileEnvIdentity(ctx *context, workDir string, environ []string) string {
+	if workDir == "" {
+		workDir, _ = os.Getwd()
+	}
+	var b strings.Builder
+	b.WriteString(ctx.targetTriple())
+	b.WriteByte('\x00')
+	b.WriteString(ctx.llvmVersion)
+	b.WriteByte('\x00')
+	b.WriteString(ctx.crossCompile.CC)
+	b.WriteByte('\x00')
+	b.WriteString(ctx.crossCompile.CXX)
+	b.WriteByte('\x00')
+	b.WriteString(strings.Join(ctx.crossCompile.CCArgs, "\x1f"))
+	b.WriteByte('\x00')
+	b.WriteString(strings.Join(ctx.crossCompile.CXXArgs, "\x1f"))
+	b.WriteByte('\x00')
+	b.WriteString(strings.Join(ctx.crossCompile.CCFLAGS, "\x1f"))
+	b.WriteByte('\x00')
+	b.WriteString(strings.Join(ctx.crossCompile.CFLAGS, "\x1f"))
+	b.WriteByte('\x00')
+	b.WriteString(workDir)
+	for _, name := range depfilePreprocessEnvVars {
+		var val string
+		if len(environ) == 0 {
+			val = os.Getenv(name)
+		} else {
+			val = (commandEnv{environ: environ}).lookup(name)
+		}
+		b.WriteByte('\x00')
+		b.WriteString(name)
+		b.WriteByte('=')
+		b.WriteString(val)
+	}
+	return b.String()
+}
+
 func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[string][]byte) ([]llgoFileDigest, error) {
 	if len(inputs) == 0 {
 		return nil, nil
@@ -367,16 +428,23 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 	digests := make([]llgoFileDigest, 0, len(inputs))
 	for _, input := range inputs {
 		compilerArgs := llgoFileCompilerArgs(ctx, input.compilerArgs, input.path)
+		cmd := ctx.compilerForSource(input.path)
+		workDir := cmd.Dir
+		if workDir == "" {
+			workDir, _ = os.Getwd()
+		}
+		envID := depfileEnvIdentity(ctx, workDir, cmd.Env)
 		cacheKey := llgoFileHashKey{
 			path:         input.path,
 			compilerArgs: strings.Join(compilerArgs, "\x00"),
+			envIdentity:  envID,
 		}
 		preprocessedHash, ok := ctx.llgoFileHashCache[cacheKey]
 		if !ok {
 			var depPath string
 			depKey := ""
 			if cacheEnabled() && overlay[input.path] == nil {
-				depKey = ctx.targetTriple() + "\x00" + cacheKey.path + "\x00" + cacheKey.compilerArgs
+				depKey = cacheKey.envIdentity + "\x00" + cacheKey.path + "\x00" + cacheKey.compilerArgs
 				depPath = ctx.ensureCacheManager().DepfilePath(depKey)
 				if raw, err := os.ReadFile(depPath); err == nil {
 					if df, err := unmarshalDepfile(raw); err == nil && df.Key == depKey && validateDepfile(df) {
@@ -387,7 +455,6 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 			}
 			if !ok {
 				hash := sha256.New()
-				cmd := ctx.compilerForSource(input.path)
 				cmd.Stdout = hash
 				var tmpDep string
 				if depPath != "" {
@@ -397,9 +464,11 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 					}
 				}
 				if tmpDep != "" {
-					preprocessArgs := append(slices.Clone(compilerArgs), "-E", "-MMD", "-MF", tmpDep, "-MT", "llgo", input.path)
+					// Use -MD (not -MMD) so system headers resolved via C_INCLUDE_PATH,
+					// CPATH, -isystem, or SDK paths are tracked in the depfile cache.
+					preprocessArgs := append(slices.Clone(compilerArgs), "-E", "-MD", "-MF", tmpDep, "-MT", "llgo", input.path)
 					if err := cmd.Compile(preprocessArgs...); err != nil {
-						// Fallback to plain -E if compiler rejects -MMD/-MF for these flags.
+						// Fallback to plain -E if compiler rejects -MD/-MF for these flags.
 						_ = os.Remove(tmpDep)
 						tmpDep = ""
 						hash.Reset()
@@ -420,6 +489,11 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 					if depBytes, err := os.ReadFile(tmpDep); err == nil {
 						deps := parseMakeDepfile(string(depBytes))
 						deps = append(deps, input.path)
+						for i, d := range deps {
+							if d != "" && !filepath.IsAbs(d) && workDir != "" {
+								deps[i] = filepath.Join(workDir, d)
+							}
+						}
 						if stats, err := statDepfiles(deps); err == nil && len(stats) > 0 {
 							if raw, err := marshalDepfile(&depfileRecord{
 								Key:              depKey,
@@ -494,9 +568,13 @@ func digestFilesWithOverlay(paths []string, overlay map[string][]byte) ([]fileDi
 	return digests, nil
 }
 
-// parseMakeDepfile parses a clang/gcc -MMD -MF Makefile dependency file and
+// parseMakeDepfile parses a clang/gcc -MD/-MMD -MF Makefile dependency file and
 // returns the list of prerequisite file paths.
 func parseMakeDepfile(content string) []string {
+	return parseMakeDepfileForOS(content, runtime.GOOS == "windows")
+}
+
+func parseMakeDepfileForOS(content string, isWindows bool) []string {
 	content = strings.ReplaceAll(content, "\\\r\n", " ")
 	content = strings.ReplaceAll(content, "\\\n", " ")
 	colon := strings.IndexByte(content, ':')
@@ -508,10 +586,38 @@ func parseMakeDepfile(content string) []string {
 	var cur strings.Builder
 	for i := 0; i < len(rest); i++ {
 		ch := rest[i]
-		if ch == '\\' && i+1 < len(rest) {
+		if ch == '$' && i+1 < len(rest) && rest[i+1] == '$' {
+			cur.WriteByte('$')
 			i++
-			cur.WriteByte(rest[i])
 			continue
+		}
+		if ch == '\\' && i+1 < len(rest) {
+			next := rest[i+1]
+			if !isWindows || next == ' ' || next == '\t' || next == '#' {
+				i++
+				cur.WriteByte(next)
+				continue
+			}
+			// On Windows, clang/gcc only escapes a run of backslashes when it
+			// immediately precedes a space or '#'. Ordinary path separators
+			// such as C:\Users\foo must be preserved verbatim.
+			j := i
+			for j < len(rest) && rest[j] == '\\' {
+				j++
+			}
+			if j < len(rest) && (rest[j] == ' ' || rest[j] == '#') {
+				n := j - i
+				for k := 0; k < n/2; k++ {
+					cur.WriteByte('\\')
+				}
+				if n%2 == 1 {
+					cur.WriteByte(rest[j])
+					i = j
+				} else {
+					i = j - 1
+				}
+				continue
+			}
 		}
 		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
 			if cur.Len() > 0 {

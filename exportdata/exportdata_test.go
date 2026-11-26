@@ -211,9 +211,84 @@ func TestWriteReadBundleAndErrors(t *testing.T) {
 	if got[1].Scope().Lookup("LastErr").Type() != types.Universe.Lookup("error").Type() {
 		t.Fatal("ReadBundle did not resolve Universe error identity")
 	}
-	gotIntBox, ok := got[1].Scope().Lookup("IntBox").Type().(*types.Named)
-	if !ok || gotIntBox.TypeArgs().Len() != 1 || gotIntBox.Origin() != got[1].Scope().Lookup("Box").Type() {
+	if gotIntBox, ok := got[1].Scope().Lookup("IntBox").Type().(*types.Named); !ok || gotIntBox.TypeArgs().Len() != 1 || gotIntBox.Origin() != got[1].Scope().Lookup("Box").Type() {
 		t.Fatalf("ReadBundle did not preserve instantiated generic Box[int]: %v", got[1].Scope().Lookup("IntBox").Type())
+	}
+
+	// Reversed bundle order: importer precedes dependency. Type and package
+	// identities must remain identical regardless of bundle order.
+	var revBuf bytes.Buffer
+	if err := exportdata.WriteBundle(&revBuf, fset, []*types.Package{pkg, dep}); err != nil {
+		t.Fatalf("WriteBundle (reversed): %v", err)
+	}
+	revImports := make(map[string]*types.Package)
+	revGot, err := exportdata.ReadBundle(bytes.NewReader(revBuf.Bytes()), fset, revImports)
+	if err != nil {
+		t.Fatalf("ReadBundle (reversed): %v", err)
+	}
+	if len(revGot) != 2 || revGot[0].Path() != pkg.Path() || revGot[1].Path() != dep.Path() {
+		t.Fatalf("ReadBundle (reversed) got %v", revGot)
+	}
+	revNode := revGot[0].Scope().Lookup("Node").Type().(*types.Named).Underlying().(*types.Struct)
+	revItem := revGot[1].Scope().Lookup("Item").Type()
+	if revNode.Field(2).Type() != revItem || !types.Identical(revNode.Field(2).Type(), revItem) {
+		t.Fatalf("ReadBundle (reversed) split dep.Item identity: field=%p dep=%p identical=%v",
+			revNode.Field(2).Type(), revItem, types.Identical(revNode.Field(2).Type(), revItem))
+	}
+	if len(revGot[0].Imports()) == 0 || revGot[0].Imports()[0] != revGot[1] {
+		t.Fatalf("ReadBundle (reversed) split dep package identity: importer.Imports=%v dep=%p",
+			revGot[0].Imports(), revGot[1])
+	}
+	if revImports[dep.Path()] != revGot[1] || revImports[pkg.Path()] != revGot[0] {
+		t.Fatalf("ReadBundle (reversed) imports map mismatch: %v", revImports)
+	}
+
+	// Re-reading the same bundle into an already-populated imports map must
+	// reuse the existing complete packages without duplicating identities.
+	reusedGot, err := exportdata.ReadBundle(bytes.NewReader(revBuf.Bytes()), fset, revImports)
+	if err != nil {
+		t.Fatalf("ReadBundle (reused): %v", err)
+	}
+	if reusedGot[0] != revGot[0] || reusedGot[1] != revGot[1] {
+		t.Fatalf("ReadBundle (reused) did not preserve package pointers")
+	}
+
+	// Two bundle packages referencing a shared external dependency (not in the
+	// bundle itself) must still share Named and Alias identities for that dep.
+	extPkg := types.NewPackage("example.com/ext", "ext")
+	extNamedObj := types.NewTypeName(token.NoPos, extPkg, "Handle", nil)
+	extNamed := types.NewNamed(extNamedObj, types.Typ[types.Int], nil)
+	extPkg.Scope().Insert(extNamedObj)
+	extAliasObj := types.NewTypeName(token.NoPos, extPkg, "HandleAlias", nil)
+	extAlias := types.NewAlias(extAliasObj, types.Typ[types.String])
+	extPkg.Scope().Insert(extAliasObj)
+	extPkg.MarkComplete()
+
+	userA := types.NewPackage("example.com/usera", "usera")
+	userA.SetImports([]*types.Package{extPkg})
+	userA.Scope().Insert(types.NewVar(token.NoPos, userA, "H", extNamed))
+	userA.Scope().Insert(types.NewVar(token.NoPos, userA, "A", extAlias))
+	userA.MarkComplete()
+
+	userB := types.NewPackage("example.com/userb", "userb")
+	userB.SetImports([]*types.Package{extPkg})
+	userB.Scope().Insert(types.NewVar(token.NoPos, userB, "H", extNamed))
+	userB.Scope().Insert(types.NewVar(token.NoPos, userB, "A", extAlias))
+	userB.MarkComplete()
+
+	var extBuf bytes.Buffer
+	if err := exportdata.WriteBundle(&extBuf, fset, []*types.Package{userA, userB}); err != nil {
+		t.Fatalf("WriteBundle (shared ext): %v", err)
+	}
+	extGot, err := exportdata.ReadBundle(bytes.NewReader(extBuf.Bytes()), fset, nil)
+	if err != nil {
+		t.Fatalf("ReadBundle (shared ext): %v", err)
+	}
+	if extGot[0].Scope().Lookup("H").Type() != extGot[1].Scope().Lookup("H").Type() {
+		t.Fatalf("ReadBundle (shared ext) split Named identity")
+	}
+	if extGot[0].Scope().Lookup("A").Type() != extGot[1].Scope().Lookup("A").Type() {
+		t.Fatalf("ReadBundle (shared ext) split Alias identity")
 	}
 
 	// Corrupt/bad-magic/kind-mismatch checks.
@@ -225,5 +300,22 @@ func TestWriteReadBundleAndErrors(t *testing.T) {
 	}
 	if _, err := exportdata.ReadBundle(bytes.NewReader([]byte("LL")), fset, nil); err == nil {
 		t.Fatal("expected corrupt error for truncated bundle")
+	}
+	// Every strict prefix of a valid package or bundle must fail cleanly without panicking.
+	var singleBuf bytes.Buffer
+	if err := exportdata.Write(&singleBuf, fset, pkg); err != nil {
+		t.Fatalf("Write(pkg): %v", err)
+	}
+	singleBytes := singleBuf.Bytes()
+	for cut := 0; cut < len(singleBytes); cut++ {
+		if _, err := exportdata.Read(bytes.NewReader(singleBytes[:cut]), fset, nil, pkg.Path()); err == nil {
+			t.Fatalf("Read succeeded on truncated single package at offset %d/%d", cut, len(singleBytes))
+		}
+	}
+	bundleBytes := revBuf.Bytes()
+	for cut := 0; cut < len(bundleBytes); cut++ {
+		if _, err := exportdata.ReadBundle(bytes.NewReader(bundleBytes[:cut]), fset, nil); err == nil {
+			t.Fatalf("ReadBundle succeeded on truncated bundle at offset %d/%d", cut, len(bundleBytes))
+		}
 	}
 }

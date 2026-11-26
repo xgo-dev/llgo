@@ -85,6 +85,28 @@ jobs:
           go-version: 1.21.13
           cache: 'false'
 
+      - name: Verify pure-Go 1.20 root module compatibility
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/setup-go
+        env:
+          GOTOOLCHAIN: local
+        with:
+          go-version: 1.20.14
+          cache: 'false'
+
+      - name: Test pure-Go root module with Go 1.20
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GOCACHE: ${{ runner.temp }}/go120-build-cache
+          GOWORK: off
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          go version
+          go vet ./...
+          go test -count=1 ./...
+
       - name: Set up Go
         uses: ./.github/actions/setup-go
 

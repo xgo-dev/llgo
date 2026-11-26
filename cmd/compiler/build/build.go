@@ -4875,6 +4875,7 @@ type llgoFileInput struct {
 type llgoFileHashKey struct {
 	path         string
 	compilerArgs string
+	envIdentity  string
 }
 
 // const LLGoFiles = "file1; file2; ..."

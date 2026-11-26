@@ -21,6 +21,7 @@ import (
 	"go/constant"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -451,5 +452,146 @@ func TestDigestLLGoFileInputsMemoizesContent(t *testing.T) {
 	}
 	if !reflect.DeepEqual(second, first) {
 		t.Fatalf("memoized digest = %#v, want %#v", second, first)
+	}
+}
+
+func buildAndRunLLGoFilesFixture(t *testing.T, modDir, binName string) (string, []Package) {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), binName)
+	if runtime.GOOS == "windows" {
+		out += ".exe"
+	}
+	conf := NewDefaultConf(ModeBuild)
+	conf.OutFile = out
+	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: modDir})
+	if err != nil {
+		t.Fatalf("Build(%s): %v", binName, err)
+	}
+	data, err := exec.Command(out).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run %s: %v\n%s", out, err, data)
+	}
+	return strings.TrimSpace(string(data)), pkgs
+}
+
+func writeLLGoFilesCacheFixture(t *testing.T, headerInclude string) string {
+	t.Helper()
+	modDir := t.TempDir()
+	wrapDir := filepath.Join(modDir, "_wrap")
+	if err := os.MkdirAll(wrapDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/llgofilescache\n\ngo 1.20\n",
+		"main.go": `package main
+
+import _ "unsafe"
+
+const LLGoFiles = "_wrap/val.c"
+
+//go:linkname getVal C.llgo_test_get_val
+func getVal() int32
+
+func main() {
+	println(getVal())
+}
+`,
+		filepath.Join("_wrap", "val.c"): "#include " + headerInclude + "\nint llgo_test_get_val(void) { return TEST_VAL; }\n",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(modDir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return modDir
+}
+
+func TestLLGoFilesCacheInvalidatesSystemHeaderViaCIncludePath(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCacheRoot := cacheRootFunc
+	cacheDir := t.TempDir()
+	cacheRootFunc = func() string { return cacheDir }
+	defer func() { cacheRootFunc = oldCacheRoot }()
+
+	sysDir := t.TempDir()
+	header := filepath.Join(sysDir, "sysval.h")
+	if err := os.WriteFile(header, []byte("#define TEST_VAL 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	modDir := writeLLGoFilesCacheFixture(t, "<sysval.h>")
+
+	t.Setenv("LLGO_ROOT", repoRoot)
+	t.Setenv(llgoBuildCache, "1")
+	t.Setenv("C_INCLUDE_PATH", sysDir)
+
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "first"); got != "1" {
+		t.Fatalf("first cached build output = %q, want 1", got)
+	}
+	// Confirm the package cache actually hits when nothing changed.
+	if got, pkgs := buildAndRunLLGoFilesFixture(t, modDir, "hot"); got != "1" {
+		t.Fatalf("hot cached build output = %q, want 1", got)
+	} else {
+		hits := 0
+		for _, p := range pkgs {
+			if p.CacheHit {
+				hits++
+			}
+		}
+		if hits == 0 {
+			t.Fatal("hot cached build did not hit package cache")
+		}
+	}
+
+	// Modify the system header in-place while preserving size and mtime.
+	info, err := os.Stat(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(header, []byte("#define TEST_VAL 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(header, time.Unix(0, info.ModTime().UnixNano()), time.Unix(0, info.ModTime().UnixNano())); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "after-edit"); got != "2" {
+		t.Fatalf("cached build after C_INCLUDE_PATH header edit output = %q, want 2", got)
+	}
+}
+
+func TestLLGoFilesCacheInvalidatesCPATHSwitch(t *testing.T) {
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCacheRoot := cacheRootFunc
+	cacheDir := t.TempDir()
+	cacheRootFunc = func() string { return cacheDir }
+	defer func() { cacheRootFunc = oldCacheRoot }()
+
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir1, "cpathval.h"), []byte("#define TEST_VAL 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir2, "cpathval.h"), []byte("#define TEST_VAL 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	modDir := writeLLGoFilesCacheFixture(t, "<cpathval.h>")
+
+	t.Setenv("LLGO_ROOT", repoRoot)
+	t.Setenv(llgoBuildCache, "1")
+	t.Setenv("CPATH", dir1)
+
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "cpath1"); got != "1" {
+		t.Fatalf("cached build with CPATH=dir1 output = %q, want 1", got)
+	}
+
+	t.Setenv("CPATH", dir2)
+	if got, _ := buildAndRunLLGoFilesFixture(t, modDir, "cpath2"); got != "2" {
+		t.Fatalf("cached build after switching CPATH=dir2 output = %q, want 2", got)
 	}
 }

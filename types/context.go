@@ -73,6 +73,11 @@ type goTypeCacheKey struct {
 	hasOverride bool
 }
 
+type aliasCallConv struct {
+	name string
+	cc   CallConv
+}
+
 // Context is the single unified engine for LLGo's type system:
 //   - Canonical Type interning and go/types lowering
 //   - Single-source-of-truth Layout, GC bitmap, and target sizing
@@ -90,6 +95,8 @@ type Context struct {
 	// (from Check pre-scan, SetTypeCallConv, SetNativeStructFields, MarkNativeField).
 	hasNativeMetadata  atomic.Bool
 	typeCallConvs      map[string]CallConv
+	typeAliasCallConvs map[string][]aliasCallConv
+	checkedGoPkgs      map[string]*gotypes.Package
 	nativeStructFields map[token.Pos]bool
 	nativeGoVars       map[gotypes.Object]bool
 	nativeVars         map[*Var]bool
@@ -848,6 +855,10 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 		effCC := Go
 		if hasOverride {
 			effCC = cc
+		} else if len(c.typeAliasCallConvs) > 0 {
+			if aliasCC, ok := c.lookupErasedAliasCallConvLocked(gt); ok {
+				effCC = aliasCC
+			}
 		}
 		res := c.fromGoSignatureLocked(gt, effCC)
 		c.goTypes[key] = res
@@ -1582,6 +1593,37 @@ func (c *Context) populateInfoFromGoLocked(info *Info, goInfo *gotypes.Info, goV
 	}
 }
 
+func (c *Context) registerCheckedGoPackage(pkgPath string, goPkg *gotypes.Package) {
+	if c == nil || goPkg == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.checkedGoPkgs == nil {
+		c.checkedGoPkgs = make(map[string]*gotypes.Package)
+	}
+	c.checkedGoPkgs[pkgPath] = goPkg
+	c.mu.Unlock()
+}
+
+// lookupErasedAliasCallConvLocked recovers a native calling convention attached
+// to a function type alias on Go toolchains where go/types erases aliases into
+// bare *gotypes.Signature values (Go 1.20/1.21, or Go 1.22 with gotypesalias=0).
+func (c *Context) lookupErasedAliasCallConvLocked(sig *gotypes.Signature) (CallConv, bool) {
+	for pkgPath, aliases := range c.typeAliasCallConvs {
+		gp := c.checkedGoPkgs[pkgPath]
+		if gp == nil || gp.Scope() == nil {
+			continue
+		}
+		scope := gp.Scope()
+		for _, a := range aliases {
+			if obj := scope.Lookup(a.name); obj != nil && obj.Type() == sig {
+				return a.cc, true
+			}
+		}
+	}
+	return Go, false
+}
+
 func (c *Context) prescanTypeDirectives(pkgPath string, files []*ast.File) {
 	if len(files) == 0 {
 		return
@@ -1614,6 +1656,22 @@ func (c *Context) prescanTypeDirectives(pkgPath string, files []*ast.File) {
 							c.hasNativeMetadata.Store(true)
 						}
 						changed = true
+					}
+					if ts.Assign.IsValid() {
+						if c.typeAliasCallConvs == nil {
+							c.typeAliasCallConvs = make(map[string][]aliasCallConv)
+						}
+						found := false
+						for i, existing := range c.typeAliasCallConvs[pkgPath] {
+							if existing.name == ts.Name.Name {
+								c.typeAliasCallConvs[pkgPath][i].cc = cc
+								found = true
+								break
+							}
+						}
+						if !found {
+							c.typeAliasCallConvs[pkgPath] = append(c.typeAliasCallConvs[pkgPath], aliasCallConv{name: ts.Name.Name, cc: cc})
+						}
 					}
 				}
 			}

@@ -1628,11 +1628,11 @@ func consTypeParamLists(l, r *types.TypeParamList) *types.TypeParamList {
 	// TypeParamList is identical to that of a slice of TypeParams. This
 	// is a hack while we work on getting a constructor for TypeParamList
 	// approved (see go.dev/issue/79603).
-	t := reflect.TypeFor[types.TypeParamList]()
+	t := reflect.TypeOf(types.TypeParamList{})
 	if t.NumField() != 1 {
 		panic("TypeParamList has unexpected fields")
 	}
-	if f := t.Field(0); f.Offset != 0 || f.Type != reflect.TypeFor[[]*types.TypeParam]() {
+	if f := t.Field(0); f.Offset != 0 || f.Type != reflect.TypeOf(([]*types.TypeParam)(nil)) {
 		panic("TypeParamList field is not []*TypeParam")
 	}
 	return (*types.TypeParamList)(unsafe.Pointer(&tpars))

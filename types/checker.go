@@ -200,6 +200,7 @@ func (check *Checker) Files(files []*ast.File) error {
 	if check == nil || check.goChecker == nil {
 		return nil
 	}
+	check.ctx.registerCheckedGoPackage(check.pkg.path, check.goPkg)
 	check.ctx.prescanTypeDirectives(check.pkg.path, files)
 	err := check.goChecker.Files(files)
 	check.ctx.populateFromGoPackage(check.pkg, check.goPkg, check.Info, check.goInfo, check.goVersion, files)
@@ -328,20 +329,28 @@ func (a *goImporterAdapter) ImportFrom(path, dir string, mode gotypes.ImportMode
 	return gp, err
 }
 
+func evalGoPackage(pkg *Package) (*Context, *gotypes.Package) {
+	if pkg == nil {
+		return NewContext(), nil
+	}
+	if pkg.goPkg != nil {
+		ctx := pkg.ctx
+		if ctx == nil {
+			ctx = NewContext()
+		}
+		ctx.syncPackageScopeToGo(pkg)
+		return ctx, pkg.goPkg
+	}
+	// Use a fresh Context when bridging a publicly constructed Package so
+	// subsequent pkg.Scope().Insert mutations are always observed.
+	ctx := NewContext()
+	return ctx, ctx.toGoPackage(pkg)
+}
+
 // Eval returns the type and, if constant, the value for the expression expr,
 // evaluated at position pos of package pkg (mirroring go/types.Eval).
 func Eval(fset *token.FileSet, pkg *Package, pos token.Pos, expr string) (_ TypeAndValue, err error) {
-	var (
-		ctx   *Context
-		goPkg *gotypes.Package
-	)
-	if pkg != nil {
-		ctx = pkg.ctx
-		goPkg = pkg.goPkg
-	}
-	if ctx == nil {
-		ctx = NewContext()
-	}
+	ctx, goPkg := evalGoPackage(pkg)
 	gtv, err := gotypes.Eval(fset, goPkg, pos, expr)
 	if err != nil {
 		return TypeAndValue{}, wrapGoError(err)
@@ -355,17 +364,7 @@ func Eval(fset *token.FileSet, pkg *Package, pos token.Pos, expr string) (_ Type
 // CheckExpr type-checks the expression expr as if it had appeared at position
 // pos of package pkg (mirroring go/types.CheckExpr).
 func CheckExpr(fset *token.FileSet, pkg *Package, pos token.Pos, expr ast.Expr, info *Info) error {
-	var (
-		ctx   *Context
-		goPkg *gotypes.Package
-	)
-	if pkg != nil {
-		ctx = pkg.ctx
-		goPkg = pkg.goPkg
-	}
-	if ctx == nil {
-		ctx = NewContext()
-	}
+	ctx, goPkg := evalGoPackage(pkg)
 	goInfo := makeMirrorGoInfo(info)
 	err := gotypes.CheckExpr(fset, goPkg, pos, expr, goInfo)
 	if info != nil && goInfo != nil {

@@ -1370,3 +1370,90 @@ func TestSizesForIsStateless(t *testing.T) {
 		}
 	}
 }
+
+func TestEvalAndCheckExprOnPubliclyConstructedPackage(t *testing.T) {
+	fset := token.NewFileSet()
+	pkg := types.NewPackage("example.com/manual", "manual")
+	kConst := types.NewConst(token.NoPos, pkg, "K", types.Typ[types.UntypedInt], constant.MakeInt64(42))
+	pkg.Scope().Insert(kConst)
+	xVar := types.NewVar(token.NoPos, pkg, "X", types.Typ[types.Int])
+	pkg.Scope().Insert(xVar)
+	tObj := types.NewTypeName(token.NoPos, pkg, "MyInt", nil)
+	tNamed := types.NewNamed(tObj, types.Typ[types.Int], nil)
+	pkg.Scope().Insert(tObj)
+
+	tv, err := types.Eval(fset, pkg, token.NoPos, "K + 8")
+	if err != nil {
+		t.Fatalf("Eval(K + 8) failed: %v", err)
+	}
+	if got, ok := constant.Int64Val(tv.Value); !ok || got != 50 {
+		t.Fatalf("Eval(K + 8) value = %v, want 50", tv.Value)
+	}
+
+	expr, err := parser.ParseExpr("MyInt(X + K)")
+	if err != nil {
+		t.Fatalf("ParseExpr: %v", err)
+	}
+	info := &types.Info{
+		Types: make(map[ast.Expr]types.TypeAndValue),
+		Uses:  make(map[*ast.Ident]types.Object),
+	}
+	if err := types.CheckExpr(fset, pkg, token.NoPos, expr, info); err != nil {
+		t.Fatalf("CheckExpr(MyInt(X + K)) failed: %v", err)
+	}
+	if got := info.Types[expr].Type; got != tNamed {
+		t.Fatalf("CheckExpr result type = %v (%p), want MyInt (%p)", got, got, tNamed)
+	}
+	foundK, foundX, foundT := false, false, false
+	for _, obj := range info.Uses {
+		switch obj {
+		case kConst:
+			foundK = true
+		case xVar:
+			foundX = true
+		case tObj:
+			foundT = true
+		}
+	}
+	if !foundK || !foundX || !foundT {
+		t.Fatalf("CheckExpr info.Uses did not preserve object identities: K=%v X=%v T=%v uses=%v", foundK, foundX, foundT, info.Uses)
+	}
+
+	// Verify subsequent scope insertions remain visible to Eval.
+	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "K2", types.Typ[types.UntypedInt], constant.MakeInt64(7)))
+	tv2, err := types.Eval(fset, pkg, token.NoPos, "K + K2")
+	if err != nil {
+		t.Fatalf("Eval(K + K2) failed: %v", err)
+	}
+	if got, ok := constant.Int64Val(tv2.Value); !ok || got != 49 {
+		t.Fatalf("Eval(K + K2) value = %v, want 49", tv2.Value)
+	}
+
+	// Also verify post-Check scope mutations on a Config.Check-produced package.
+	checkedFile, err := parser.ParseFile(fset, "checked.go", "package checked\nconst Base = 10\n", 0)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	var conf types.Config
+	checkedPkg, err := conf.Check("example.com/checked", fset, []*ast.File{checkedFile}, nil)
+	if err != nil {
+		t.Fatalf("Config.Check: %v", err)
+	}
+	extraTN := types.NewTypeName(token.NoPos, checkedPkg, "ExtraInt", nil)
+	_ = types.NewNamed(extraTN, types.Typ[types.Int], nil)
+	checkedPkg.Scope().Insert(extraTN)
+	checkedPkg.Scope().Insert(types.NewConst(token.NoPos, checkedPkg, "Extra", types.Typ[types.UntypedInt], constant.MakeInt64(5)))
+	tv3, err := types.Eval(fset, checkedPkg, token.NoPos, "ExtraInt(Base + Extra)")
+	if err != nil {
+		t.Fatalf("Eval on mutated checked package failed: %v", err)
+	}
+	if got, ok := constant.Int64Val(tv3.Value); !ok || got != 15 {
+		t.Fatalf("Eval(ExtraInt(Base + Extra)) = %v, want 15", tv3.Value)
+	}
+	// Nil package should evaluate universe expressions cleanly.
+	if tvNil, err := types.Eval(fset, nil, token.NoPos, "1 + 2"); err != nil {
+		t.Fatalf("Eval with nil pkg failed: %v", err)
+	} else if got, ok := constant.Int64Val(tvNil.Value); !ok || got != 3 {
+		t.Fatalf("Eval(1 + 2) with nil pkg = %v, want 3", tvNil.Value)
+	}
+}

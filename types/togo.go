@@ -62,6 +62,52 @@ func (c *Context) toGoPackage(pkg *Package) *gotypes.Package {
 	return conv.pkg(pkg)
 }
 
+// syncPackageScopeToGo bridges any objects inserted into pkg.Scope() after
+// pkg.goPkg was created so Eval and CheckExpr see post-Check scope mutations.
+func (c *Context) syncPackageScopeToGo(pkg *Package) {
+	if pkg == nil || pkg.goPkg == nil || pkg.scope == nil || pkg.goPkg.Scope() == nil {
+		return
+	}
+	goScope := pkg.goPkg.Scope()
+	var missing []Object
+	for _, name := range pkg.scope.Names() {
+		if goScope.Lookup(name) == nil {
+			if obj := pkg.scope.Lookup(name); obj != nil {
+				missing = append(missing, obj)
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	goCtx := c.ensureGoContext()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	conv := &toGoConverter{
+		ctx:     c,
+		goCtx:   goCtx,
+		pkgs:    map[*Package]*gotypes.Package{pkg: pkg.goPkg},
+		types:   make(map[Type]gotypes.Type),
+		objs:    make(map[Object]gotypes.Object),
+		tparams: make(map[*TypeParam]*gotypes.TypeParam),
+	}
+	for _, obj := range missing {
+		if _, ok := obj.(*TypeName); ok {
+			if goObj := conv.obj(obj); goObj != nil {
+				goScope.Insert(goObj)
+			}
+		}
+	}
+	for _, obj := range missing {
+		if _, ok := obj.(*TypeName); ok {
+			continue
+		}
+		if goObj := conv.obj(obj); goObj != nil {
+			goScope.Insert(goObj)
+		}
+	}
+}
+
 func (c *Context) absorbContextLocked(src *Context) {
 	if src == nil || src == c {
 		return

@@ -111,6 +111,8 @@ func WriteBundle(out io.Writer, fset *token.FileSet, pkgs []*types.Package) erro
 
 // ReadBundle reads a bundle of packages written by WriteBundle, reusing and
 // populating imports (mirroring golang.org/x/tools/go/gcexportdata.ReadBundle).
+// Package type identities are resolved independently of the order packages
+// appear in the bundle.
 func ReadBundle(in io.Reader, fset *token.FileSet, imports map[string]*types.Package) ([]*types.Package, error) {
 	raw, err := readAll(in)
 	if err != nil {
@@ -127,20 +129,72 @@ func ReadBundle(in io.Reader, fset *token.FileSet, imports map[string]*types.Pac
 	if imports == nil {
 		imports = make(map[string]*types.Package)
 	}
-	pkgs := make([]*types.Package, n)
+	readers := make([]*pkgReader, n)
+	bundle := newBundleState()
+	// Phase 1: parse headers and establish shared *types.Package shells in
+	// imports before any package table or declaration is decoded.
 	for i := uint64(0); i < n; i++ {
 		blob, err := d.readBytes()
 		if err != nil {
 			return nil, err
 		}
-		pkg, err := unmarshalPackage(blob, imports)
+		dec, err := newDecoder(blob, kindPackage)
 		if err != nil {
 			return nil, err
 		}
-		if pkg != nil && pkg.Path() != "" {
-			imports[pkg.Path()] = pkg
+		pr := &pkgReader{
+			dec:     dec,
+			imports: imports,
+			bundle:  bundle,
 		}
-		pkgs[i] = pkg
+		if err := pr.readHeader(); err != nil {
+			return nil, err
+		}
+		pr.initPackage()
+		readers[i] = pr
+	}
+	// Phase 2: resolve every package's dependency table against the shared
+	// imports map so cross-package references always share one *types.Package.
+	pkgIndex := make(map[*types.Package]int, len(readers))
+	for i, pr := range readers {
+		if err := pr.readPackageTable(); err != nil {
+			return nil, err
+		}
+		if pr.pkg != nil {
+			if _, exists := pkgIndex[pr.pkg]; !exists {
+				pkgIndex[pr.pkg] = i
+			}
+		}
+	}
+	// Phase 3: decode package bodies in dependency-first topological order
+	// (breaking any cycles deterministically by bundle index) so owning
+	// packages populate their types before importers reference them.
+	visited := make([]bool, len(readers))
+	order := make([]int, 0, len(readers))
+	var visit func(int)
+	visit = func(i int) {
+		if visited[i] {
+			return
+		}
+		visited[i] = true
+		for _, dep := range readers[i].pkgs {
+			if depIdx, ok := pkgIndex[dep]; ok && depIdx != i {
+				visit(depIdx)
+			}
+		}
+		order = append(order, i)
+	}
+	for i := range readers {
+		visit(i)
+	}
+	for _, idx := range order {
+		if err := readers[idx].decodeBody(); err != nil {
+			return nil, err
+		}
+	}
+	pkgs := make([]*types.Package, len(readers))
+	for i, pr := range readers {
+		pkgs[i] = pr.pkg
 	}
 	return pkgs, nil
 }
@@ -666,9 +720,70 @@ func (w *pkgWriter) writeConst(v constant.Value) {
 	}
 }
 
+type bundleState struct {
+	nameds      map[*types.Package]map[string]*types.Named
+	filledNamed map[*types.Named]bool
+	aliases     map[*types.Package]map[string]*types.Alias
+	filledAlias map[*types.Alias]bool
+}
+
+func newBundleState() *bundleState {
+	return &bundleState{
+		nameds:      make(map[*types.Package]map[string]*types.Named),
+		filledNamed: make(map[*types.Named]bool),
+		aliases:     make(map[*types.Package]map[string]*types.Alias),
+		filledAlias: make(map[*types.Alias]bool),
+	}
+}
+
+func (b *bundleState) lookupNamed(owner *types.Package, name string) *types.Named {
+	if b == nil || owner == nil {
+		return nil
+	}
+	return b.nameds[owner][name]
+}
+
+func (b *bundleState) registerNamed(owner *types.Package, name string, n *types.Named) {
+	if b == nil || owner == nil || n == nil {
+		return
+	}
+	if b.nameds[owner] == nil {
+		b.nameds[owner] = make(map[string]*types.Named)
+	}
+	if b.nameds[owner][name] == nil {
+		b.nameds[owner][name] = n
+	}
+}
+
+func (b *bundleState) lookupAlias(owner *types.Package, name string) *types.Alias {
+	if b == nil || owner == nil {
+		return nil
+	}
+	return b.aliases[owner][name]
+}
+
+func (b *bundleState) registerAlias(owner *types.Package, name string, a *types.Alias) {
+	if b == nil || owner == nil || a == nil {
+		return
+	}
+	if b.aliases[owner] == nil {
+		b.aliases[owner] = make(map[string]*types.Alias)
+	}
+	if b.aliases[owner][name] == nil {
+		b.aliases[owner][name] = a
+	}
+}
+
 type pkgReader struct {
 	dec     *decoder
 	imports map[string]*types.Package
+	bundle  *bundleState
+
+	path     string
+	name     string
+	complete bool
+	pkg      *types.Package
+	reused   bool
 
 	pkgs    []*types.Package
 	tparams []*types.TypeParam
@@ -684,44 +799,78 @@ func (r *pkgReader) pkgByID(id uint64) *types.Package {
 }
 
 func (r *pkgReader) decode() (*types.Package, error) {
+	if err := r.readHeader(); err != nil {
+		return nil, err
+	}
+	r.initPackage()
+	if err := r.readPackageTable(); err != nil {
+		return nil, err
+	}
+	if err := r.decodeBody(); err != nil {
+		return nil, err
+	}
+	return r.pkg, nil
+}
+
+func (r *pkgReader) readHeader() error {
 	path, err := r.dec.readStr()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	name, err := r.dec.readStr()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	_, err = r.dec.readStr() // goVersion (informational)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	complete, err := r.dec.readBool()
 	if err != nil {
-		return nil, err
+		return err
 	}
+	r.path = path
+	r.name = name
+	r.complete = complete
+	return nil
+}
 
-	pkg := types.NewPackage(path, name)
-	if complete {
-		pkg.MarkComplete()
+func (r *pkgReader) initPackage() {
+	if r.path == "unsafe" {
+		r.pkg = types.Unsafe
+		r.reused = true
+		return
 	}
+	if r.imports != nil && r.path != "" {
+		if existing := r.imports[r.path]; existing != nil {
+			r.pkg = existing
+			r.reused = existing.Complete()
+			return
+		}
+	}
+	r.pkg = types.NewPackage(r.path, r.name)
+	if r.imports != nil && r.path != "" {
+		r.imports[r.path] = r.pkg
+	}
+}
 
+func (r *pkgReader) readPackageTable() error {
 	pkgCount, err := r.dec.readUvarint()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	r.pkgs = make([]*types.Package, pkgCount)
 	for i := uint64(0); i < pkgCount; i++ {
 		pPath, err := r.dec.readStr()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		pName, err := r.dec.readStr()
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if pPath == path && i == 0 {
-			r.pkgs[i] = pkg
+		if pPath == r.path && i == 0 {
+			r.pkgs[i] = r.pkg
 		} else if pPath == "unsafe" {
 			r.pkgs[i] = types.Unsafe
 		} else if r.imports != nil && r.imports[pPath] != nil {
@@ -729,52 +878,64 @@ func (r *pkgReader) decode() (*types.Package, error) {
 		} else {
 			p := types.NewPackage(pPath, pName)
 			p.MarkComplete()
+			if r.imports != nil && pPath != "" {
+				r.imports[pPath] = p
+			}
 			r.pkgs[i] = p
 		}
 	}
 
 	impCount, err := r.dec.readUvarint()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if impCount > 0 {
 		imps := make([]*types.Package, impCount)
 		for i := uint64(0); i < impCount; i++ {
 			id, err := r.dec.readUvarint()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			imps[i] = r.pkgByID(id)
 		}
-		pkg.SetImports(imps)
+		if !r.reused {
+			r.pkg.SetImports(imps)
+		}
 	}
+	return nil
+}
+
+func (r *pkgReader) decodeBody() error {
+	pkg := r.pkg
+	path := r.path
 
 	// Read TypeParam shells.
 	tpCount, err := r.dec.readUvarint()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	r.tparams = make([]*types.TypeParam, tpCount)
 	for i := uint64(0); i < tpCount; i++ {
 		pkgID, err := r.dec.readUvarint()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		tpName, err := r.dec.readStr()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		_, err = r.dec.readUvarint() // index (assigned by SetTypeParams)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		r.tparams[i] = types.NewTypeParam(types.NewTypeName(token.NoPos, r.pkgByID(pkgID), tpName, nil), nil)
 	}
 
-	// Read Named shells, reusing Universe and already-imported external Named types.
+	// Read Named shells, reusing Universe, already-imported external Named types,
+	// and shared shells within a bundle.
 	namedCount, err := r.dec.readUvarint()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	r.nameds = make([]*types.Named, namedCount)
 	namedCC := make([]types.CallConv, namedCount)
@@ -782,15 +943,15 @@ func (r *pkgReader) decode() (*types.Package, error) {
 	for i := uint64(0); i < namedCount; i++ {
 		pkgID, err := r.dec.readUvarint()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		nName, err := r.dec.readStr()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		cc, err := r.dec.readByte()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		namedCC[i] = types.CallConv(cc)
 		owner := r.pkgByID(pkgID)
@@ -802,36 +963,50 @@ func (r *pkgReader) decode() (*types.Package, error) {
 					continue
 				}
 			}
-		} else if owner != nil && owner != pkg {
-			if obj := owner.Scope().Lookup(nName); obj != nil {
-				if existing, ok := obj.Type().(*types.Named); ok {
-					r.nameds[i] = existing
-					namedReused[i] = true
-					continue
+		} else if owner != nil {
+			if owner != pkg || r.reused {
+				if obj := owner.Scope().Lookup(nName); obj != nil {
+					if existing, ok := obj.Type().(*types.Named); ok {
+						r.nameds[i] = existing
+						namedReused[i] = true
+						continue
+					}
 				}
 			}
+			if existing := r.bundle.lookupNamed(owner, nName); existing != nil {
+				r.nameds[i] = existing
+				namedReused[i] = r.bundle != nil && r.bundle.filledNamed[existing]
+				continue
+			}
 		}
-		r.nameds[i] = types.NewNamed(types.NewTypeName(token.NoPos, owner, nName, nil), nil, nil)
+		n := types.NewNamed(types.NewTypeName(token.NoPos, owner, nName, nil), nil, nil)
+		r.nameds[i] = n
+		r.bundle.registerNamed(owner, nName, n)
 	}
 
-	// Read Alias shells, reusing Universe and already-imported external Alias types.
+	// Read Alias shells, reusing Universe, already-imported external Alias types,
+	// and shared shells within a bundle.
 	aliasCount, err := r.dec.readUvarint()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	r.aliases = make([]*types.Alias, aliasCount)
+	aliasOwners := make([]*types.Package, aliasCount)
+	aliasNames := make([]string, aliasCount)
 	aliasObjs := make([]*types.TypeName, aliasCount)
 	aliasReused := make([]bool, aliasCount)
 	for i := uint64(0); i < aliasCount; i++ {
 		pkgID, err := r.dec.readUvarint()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		aName, err := r.dec.readStr()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		owner := r.pkgByID(pkgID)
+		aliasOwners[i] = owner
+		aliasNames[i] = aName
 		if pkgID == 0 {
 			if obj := types.Universe.Lookup(aName); obj != nil {
 				if existing, ok := obj.Type().(*types.Alias); ok {
@@ -840,13 +1015,20 @@ func (r *pkgReader) decode() (*types.Package, error) {
 					continue
 				}
 			}
-		} else if owner != nil && owner != pkg {
-			if obj := owner.Scope().Lookup(aName); obj != nil {
-				if existing, ok := obj.Type().(*types.Alias); ok {
-					r.aliases[i] = existing
-					aliasReused[i] = true
-					continue
+		} else if owner != nil {
+			if owner != pkg || r.reused {
+				if obj := owner.Scope().Lookup(aName); obj != nil {
+					if existing, ok := obj.Type().(*types.Alias); ok {
+						r.aliases[i] = existing
+						aliasReused[i] = true
+						continue
+					}
 				}
+			}
+			if existing := r.bundle.lookupAlias(owner, aName); existing != nil {
+				r.aliases[i] = existing
+				aliasReused[i] = r.bundle != nil && r.bundle.filledAlias[existing]
+				continue
 			}
 		}
 		aliasObjs[i] = types.NewTypeName(token.NoPos, owner, aName, nil)
@@ -857,7 +1039,7 @@ func (r *pkgReader) decode() (*types.Package, error) {
 	for i := uint64(0); i < tpCount; i++ {
 		c, err := r.readType()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		r.tparams[i].SetConstraint(c)
 	}
@@ -866,15 +1048,15 @@ func (r *pkgReader) decode() (*types.Package, error) {
 	for i := uint64(0); i < namedCount; i++ {
 		tps, err := r.readTypeParams()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		under, err := r.readType()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		nm, err := r.dec.readUvarint()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		type methodRec struct {
 			pkg  *types.Package
@@ -885,15 +1067,15 @@ func (r *pkgReader) decode() (*types.Package, error) {
 		for j := uint64(0); j < nm; j++ {
 			mPkgID, err := r.dec.readUvarint()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			mName, err := r.dec.readStr()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			mTyp, err := r.readType()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			sig, _ := mTyp.(*types.Signature)
 			if !namedReused[i] {
@@ -913,17 +1095,20 @@ func (r *pkgReader) decode() (*types.Package, error) {
 		for _, mr := range methods {
 			r.nameds[i].AddMethod(types.NewFunc(token.NoPos, mr.pkg, mr.name, mr.sig))
 		}
+		if r.bundle != nil {
+			r.bundle.filledNamed[r.nameds[i]] = true
+		}
 	}
 
 	// Fill Alias definitions.
 	for i := uint64(0); i < aliasCount; i++ {
 		tps, err := r.readTypeParams()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		rhs, err := r.readType()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if aliasReused[i] {
 			continue
@@ -933,93 +1118,108 @@ func (r *pkgReader) decode() (*types.Package, error) {
 			a.SetTypeParams(tps)
 		}
 		r.aliases[i] = a
+		if r.bundle != nil {
+			r.bundle.registerAlias(aliasOwners[i], aliasNames[i], a)
+			r.bundle.filledAlias[a] = true
+		}
 	}
 
 	// Read package scope objects.
 	objCount, err := r.dec.readUvarint()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for i := uint64(0); i < objCount; i++ {
 		tag, err := r.dec.readByte()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		switch tag {
 		case objTagConst:
 			oName, err := r.dec.readStr()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			typ, err := r.readType()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			val, err := r.readConst()
 			if err != nil {
-				return nil, err
+				return err
 			}
-			pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, oName, typ, val))
+			if !r.reused {
+				pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, oName, typ, val))
+			}
 		case objTagVar:
 			oName, err := r.dec.readStr()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			vk, err := r.dec.readByte()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			typ, err := r.readType()
 			if err != nil {
-				return nil, err
+				return err
 			}
-			v := types.NewVar(token.NoPos, pkg, oName, typ)
-			v.SetKind(types.VarKind(vk))
-			pkg.Scope().Insert(v)
+			if !r.reused {
+				v := types.NewVar(token.NoPos, pkg, oName, typ)
+				v.SetKind(types.VarKind(vk))
+				pkg.Scope().Insert(v)
+			}
 		case objTagFunc:
 			oName, err := r.dec.readStr()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			typ, err := r.readType()
 			if err != nil {
-				return nil, err
+				return err
 			}
-			sig, _ := typ.(*types.Signature)
-			pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, oName, sig))
+			if !r.reused {
+				sig, _ := typ.(*types.Signature)
+				pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, oName, sig))
+			}
 		case objTagTypeName:
 			oName, err := r.dec.readStr()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			isAlias, err := r.dec.readBool()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			typ, err := r.readType()
 			if err != nil {
-				return nil, err
+				return err
 			}
-			if n, ok := typ.(*types.Named); ok && n.Obj() != nil && n.Obj().Name() == oName {
-				pkg.Scope().Insert(n.Obj())
-			} else if a, ok := typ.(*types.Alias); ok && a.Obj() != nil && a.Obj().Name() == oName {
-				pkg.Scope().Insert(a.Obj())
-			} else {
-				tn := types.NewTypeName(token.NoPos, pkg, oName, typ)
-				if isAlias {
-					_ = types.NewAlias(tn, typ)
+			if !r.reused {
+				if n, ok := typ.(*types.Named); ok && n.Obj() != nil && n.Obj().Name() == oName {
+					pkg.Scope().Insert(n.Obj())
+				} else if a, ok := typ.(*types.Alias); ok && a.Obj() != nil && a.Obj().Name() == oName {
+					pkg.Scope().Insert(a.Obj())
+				} else {
+					tn := types.NewTypeName(token.NoPos, pkg, oName, typ)
+					if isAlias {
+						_ = types.NewAlias(tn, typ)
+					}
+					pkg.Scope().Insert(tn)
 				}
-				pkg.Scope().Insert(tn)
 			}
 		default:
-			return nil, errCorrupt
+			return errCorrupt
 		}
 	}
 
+	if r.complete {
+		pkg.MarkComplete()
+	}
 	if r.imports != nil && path != "" {
 		r.imports[path] = pkg
 	}
-	return pkg, nil
+	return nil
 }
 
 func (r *pkgReader) readTypeParams() ([]*types.TypeParam, error) {

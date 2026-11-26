@@ -181,6 +181,16 @@ func TestParseMakeDepfileAndLinkSnapshotSidecar(t *testing.T) {
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		t.Fatalf("parseMakeDepfile = %#v, want %#v", got, want)
 	}
+	winDep := "llgo: C:\\Users\\runner\\foo.c \\\r\n  C:\\Program\\ Files\\LLVM\\include\\stddef.h C:\\dir\\a$$b.h C:\\dir\\\\ C:\\dir\\\\\\ x.h\r\n"
+	winGot := parseMakeDepfileForOS(winDep, true)
+	if len(winGot) != 5 ||
+		winGot[0] != filepath.Clean("C:\\Users\\runner\\foo.c") ||
+		winGot[1] != filepath.Clean("C:\\Program Files\\LLVM\\include\\stddef.h") ||
+		winGot[2] != filepath.Clean("C:\\dir\\a$b.h") ||
+		winGot[3] != filepath.Clean("C:\\dir\\") ||
+		winGot[4] != filepath.Clean("C:\\dir\\ x.h") {
+		t.Fatalf("parseMakeDepfileForOS(windows) = %#v", winGot)
+	}
 
 	dir := t.TempDir()
 	snapPath := filepath.Join(dir, "pkg.linksnap")
