@@ -2761,6 +2761,202 @@ func TestCheckExprReusingInfoOverwritesPreviousEntries(t *testing.T) {
 	}
 }
 
+func TestPositionalCheckExprPreservesLocalObjectIdentityAndScopes(t *testing.T) {
+	fset := token.NewFileSet()
+	src := `package posid
+
+func f(x int) int {
+	type localT struct{ V int }
+	const localK = 2
+	y := x + localK
+	_ = localT{V: y}
+	return y
+}
+`
+	f, err := parser.ParseFile(fset, "posid.go", src, 0)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	origInfo := &types.Info{
+		Defs:   make(map[*ast.Ident]types.Object),
+		Uses:   make(map[*ast.Ident]types.Object),
+		Types:  make(map[ast.Expr]types.TypeAndValue),
+		Scopes: make(map[ast.Node]*types.Scope),
+	}
+	var conf types.Config
+	pkg, err := conf.Check("example.com/posid", fset, []*ast.File{f}, origInfo)
+	if err != nil {
+		t.Fatalf("Config.Check: %v", err)
+	}
+	if got := pkg.Scope().NumChildren(); got != 1 {
+		t.Fatalf("initial pkg.Scope().NumChildren() = %d, want 1", got)
+	}
+
+	var (
+		retPos    token.Pos
+		origX     types.Object
+		origY     types.Object
+		origK     types.Object
+		origT     types.Object
+		origField types.Object
+	)
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.ReturnStmt:
+			retPos = node.Pos()
+		case *ast.Ident:
+			if obj := origInfo.Defs[node]; obj != nil {
+				switch node.Name {
+				case "x":
+					origX = obj
+				case "y":
+					origY = obj
+				case "localK":
+					origK = obj
+				case "localT":
+					origT = obj
+				case "V":
+					origField = obj
+				}
+			}
+		}
+		return true
+	})
+	if !retPos.IsValid() || origX == nil || origY == nil || origK == nil || origT == nil || origField == nil {
+		t.Fatalf("missing orig objects: retPos=%v x=%v y=%v k=%v t=%v field=%v", retPos, origX, origY, origK, origT, origField)
+	}
+
+	for _, tc := range []struct {
+		expr string
+		want map[string]types.Object
+	}{
+		{expr: "y", want: map[string]types.Object{"y": origY}},
+		{expr: "x + y + localK", want: map[string]types.Object{"x": origX, "y": origY, "localK": origK}},
+		{expr: "localT{V: y}", want: map[string]types.Object{"localT": origT, "V": origField, "y": origY}},
+		{expr: "func(z int) int { return y + z }", want: map[string]types.Object{"y": origY}},
+	} {
+		expr, err := parser.ParseExpr(tc.expr)
+		if err != nil {
+			t.Fatalf("ParseExpr(%q): %v", tc.expr, err)
+		}
+		checkInfo := &types.Info{
+			Defs:   make(map[*ast.Ident]types.Object),
+			Uses:   make(map[*ast.Ident]types.Object),
+			Types:  make(map[ast.Expr]types.TypeAndValue),
+			Scopes: make(map[ast.Node]*types.Scope),
+		}
+		if err := types.CheckExpr(fset, pkg, retPos, expr, checkInfo); err != nil {
+			t.Fatalf("CheckExpr(%q) failed: %v", tc.expr, err)
+		}
+		for name, wantObj := range tc.want {
+			found := false
+			for id, gotObj := range checkInfo.Uses {
+				if id.Name == name {
+					found = true
+					if gotObj != wantObj {
+						t.Fatalf("CheckExpr(%q) Info.Uses[%s] = %p (%v), want %p (%v)", tc.expr, name, gotObj, gotObj, wantObj, wantObj)
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("CheckExpr(%q) did not record %s in Info.Uses", tc.expr, name)
+			}
+		}
+		if got := pkg.Scope().NumChildren(); got != 1 {
+			t.Fatalf("after CheckExpr(%q): pkg.Scope().NumChildren() = %d, want 1", tc.expr, got)
+		}
+	}
+}
+
+func TestDotImportPrunePreservesDependencyObjectIdentityInSharedContext(t *testing.T) {
+	for _, sameCtxDep := range []bool{true, false} {
+		name := "DepInSharedCtx"
+		if !sameCtxDep {
+			name = "DepInSeparateCtx"
+		}
+		t.Run(name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			sharedCtx := types.NewContext()
+
+			depSrc := `package dep
+type T struct{}
+const K = 7
+var V int
+func F() {}
+`
+			depFile, err := parser.ParseFile(fset, "dep.go", depSrc, 0)
+			if err != nil {
+				t.Fatalf("ParseFile dep.go: %v", err)
+			}
+			depConf := types.Config{}
+			if sameCtxDep {
+				depConf.Context = sharedCtx
+			}
+			depPkg, err := depConf.Check("example.com/dep", fset, []*ast.File{depFile}, nil)
+			if err != nil {
+				t.Fatalf("Check dep: %v", err)
+			}
+
+			imp := &mapImporter{pkgs: map[string]*types.Package{"example.com/dep": depPkg}}
+
+			p1Src := `package p1
+import . "example.com/dep"
+var _ T
+var _ = K + V
+var _ = F
+`
+			p1File, err := parser.ParseFile(fset, "p1.go", p1Src, 0)
+			if err != nil {
+				t.Fatalf("ParseFile p1.go: %v", err)
+			}
+			p1Info := &types.Info{Uses: make(map[*ast.Ident]types.Object)}
+			conf := types.Config{Context: sharedCtx, Importer: imp}
+			if _, err := conf.Check("example.com/p1", fset, []*ast.File{p1File}, p1Info); err != nil {
+				t.Fatalf("Check p1: %v", err)
+			}
+
+			p2Src := `package p2
+import "example.com/dep"
+var _ dep.T
+var _ = dep.K + dep.V
+var _ = dep.F
+`
+			p2File, err := parser.ParseFile(fset, "p2.go", p2Src, 0)
+			if err != nil {
+				t.Fatalf("ParseFile p2.go: %v", err)
+			}
+			p2Info := &types.Info{Uses: make(map[*ast.Ident]types.Object)}
+			if _, err := conf.Check("example.com/p2", fset, []*ast.File{p2File}, p2Info); err != nil {
+				t.Fatalf("Check p2: %v", err)
+			}
+
+			for _, pkgName := range []struct {
+				label string
+				info  *types.Info
+			}{
+				{"p1", p1Info},
+				{"p2", p2Info},
+			} {
+				for _, sym := range []string{"T", "K", "V", "F"} {
+					want := depPkg.Scope().Lookup(sym)
+					found := false
+					for id, got := range pkgName.info.Uses {
+						if id.Name == sym {
+							found = true
+							if got != want {
+								t.Fatalf("%s Info.Uses[%s] = %p (%v), want dep.Scope().Lookup(%q) = %p", pkgName.label, sym, got, got, sym, want)
+							}
+						}
+					}
+					if !found {
+						t.Fatalf("%s did not record %s in Info.Uses", pkgName.label, sym)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestConcurrentEvalAndCheckExprAfterPostCheckScopeInsert(t *testing.T) {
 	fset := token.NewFileSet()
 	checkedFile, err := parser.ParseFile(fset, "checked.go", "package checked\nconst Base = 10\n", 0)

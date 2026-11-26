@@ -1125,6 +1125,12 @@ func (c *Context) fromGoObjectLocked(obj gotypes.Object) Object {
 		}
 		return cached
 	}
+	if pub := c.findPublishedGoObjectLocked(obj); pub != nil {
+		if tn, isTN := pub.(*TypeName); isTN && tn.typ == nil && obj.Type() != nil {
+			tn.typ = c.fromGoLocked(obj.Type(), Go, false)
+		}
+		return pub
+	}
 	if obj.Parent() == gotypes.Universe {
 		if uo := Universe.Lookup(obj.Name()); uo != nil {
 			c.goObjs[obj] = uo
@@ -1222,6 +1228,9 @@ func (c *Context) fromGoFuncLocked(o *gotypes.Func) *Func {
 	if cached, ok := c.goObjs[o]; ok {
 		return cached.(*Func)
 	}
+	if pub, ok := c.findPublishedGoObjectLocked(o).(*Func); ok {
+		return pub
+	}
 	f := &Func{
 		object: object{
 			pos:   o.Pos(),
@@ -1273,6 +1282,12 @@ func (c *Context) fromGoVarWithKindLocked(o *gotypes.Var, kind VarKind) *Var {
 		}
 		return v
 	}
+	if pub, ok := c.findPublishedGoObjectLocked(o).(*Var); ok {
+		if kind == RecvVar || kind == ParamVar || kind == ResultVar || kind == FieldVar {
+			pub.kind = kind
+		}
+		return pub
+	}
 	v := &Var{
 		object: object{
 			pos:   o.Pos(),
@@ -1303,6 +1318,9 @@ func (c *Context) fromGoTypeNameShellLocked(o *gotypes.TypeName) *TypeName {
 	}
 	if cached, ok := c.goObjs[o]; ok {
 		return cached.(*TypeName)
+	}
+	if pub, ok := c.findPublishedGoObjectLocked(o).(*TypeName); ok {
+		return pub
 	}
 	if o.Parent() == gotypes.Universe {
 		if uo, ok := Universe.Lookup(o.Name()).(*TypeName); ok {
@@ -1358,9 +1376,65 @@ func (c *Context) fromGoPkgLocked(gp *gotypes.Package) *Package {
 	if gs := gp.Scope(); gs != nil {
 		p.scope.pos = gs.Pos()
 		p.scope.end = gs.End()
+		p.scope.goScope = gs
 		c.goScopes[gs] = p.scope
 	}
 	return p
+}
+
+func findChildByGoScope(parent *Scope, gs *gotypes.Scope) *Scope {
+	if parent == nil || gs == nil {
+		return nil
+	}
+	for _, ch := range parent.children {
+		if ch.goScope == gs {
+			return ch
+		}
+	}
+	return nil
+}
+
+// findPublishedGoScopeLocked locates an already-published LLGo *Scope matching
+// gs by walking up to the cached package scope and descending existing children,
+// without allocating new scopes or repopulating pruned cache entries.
+func (c *Context) findPublishedGoScopeLocked(gs *gotypes.Scope) *Scope {
+	if gs == nil {
+		return nil
+	}
+	if gs == gotypes.Universe {
+		return Universe
+	}
+	if cached, ok := c.goScopes[gs]; ok {
+		return cached
+	}
+	gp := gs.Parent()
+	if gp == nil {
+		return nil
+	}
+	parent := c.findPublishedGoScopeLocked(gp)
+	if parent == nil {
+		return nil
+	}
+	return findChildByGoScope(parent, gs)
+}
+
+func (c *Context) findPublishedGoObjectLocked(obj gotypes.Object) Object {
+	if obj == nil {
+		return nil
+	}
+	gp := obj.Parent()
+	if gp == nil {
+		return nil
+	}
+	parent := c.findPublishedGoScopeLocked(gp)
+	if parent == nil {
+		return nil
+	}
+	existing := parent.Lookup(obj.Name())
+	if carrier, ok := existing.(goObjectCarrier); ok && carrier.goObjectRef() == obj {
+		return existing
+	}
+	return nil
 }
 
 func (c *Context) fromGoScopeLocked(gs *gotypes.Scope) *Scope {
@@ -1373,6 +1447,9 @@ func (c *Context) fromGoScopeLocked(gs *gotypes.Scope) *Scope {
 	if cached, ok := c.goScopes[gs]; ok {
 		return cached
 	}
+	if pub := c.findPublishedGoScopeLocked(gs); pub != nil {
+		return pub
+	}
 	var parent *Scope
 	if gp := gs.Parent(); gp != nil {
 		parent = c.fromGoScopeLocked(gp)
@@ -1381,9 +1458,13 @@ func (c *Context) fromGoScopeLocked(gs *gotypes.Scope) *Scope {
 			if cached, ok := c.goScopes[gs]; ok {
 				return cached
 			}
+			if pub := findChildByGoScope(parent, gs); pub != nil {
+				return pub
+			}
 		}
 	}
 	s := NewScope(parent, gs.Pos(), gs.End(), "")
+	s.goScope = gs
 	c.goScopes[gs] = s
 	c.populateGoScopeObjectsLocked(gs, s)
 	return s
@@ -1400,7 +1481,12 @@ func (c *Context) lowerGoScopeChildrenLocked(gp *gotypes.Scope, parent *Scope) {
 		if _, ok := c.goScopes[gc]; ok {
 			continue
 		}
+		if pub := findChildByGoScope(parent, gc); pub != nil {
+			c.goScopes[gc] = pub
+			continue
+		}
 		cs := NewScope(parent, gc.Pos(), gc.End(), "")
+		cs.goScope = gc
 		c.goScopes[gc] = cs
 		created = append(created, gc)
 	}
@@ -1480,6 +1566,7 @@ func (c *Context) populateFromGoPackage(dstPkg *Package, goPkg *gotypes.Package,
 			if pkg.scope == nil {
 				pkg.scope = c.fromGoScopeLocked(gs)
 			} else {
+				pkg.scope.goScope = gs
 				c.goScopes[gs] = pkg.scope
 				c.populateGoScopeObjectsLocked(gs, pkg.scope)
 			}
@@ -1490,9 +1577,15 @@ func (c *Context) populateFromGoPackage(dstPkg *Package, goPkg *gotypes.Package,
 				gc := gs.Child(i)
 				cs, ok := c.goScopes[gc]
 				if !ok {
+					cs = findChildByGoScope(pkg.scope, gc)
+				}
+				if cs == nil {
 					cs = NewScope(pkg.scope, gc.Pos(), gc.End(), "")
+					cs.goScope = gc
 					c.goScopes[gc] = cs
 					c.populateGoScopeObjectsLocked(gc, cs)
+				} else {
+					c.goScopes[gc] = cs
 				}
 				c.lowerGoScopeTreeLocked(gc, cs)
 			}
@@ -1517,16 +1610,17 @@ func (c *Context) populateFromGoPackage(dstPkg *Package, goPkg *gotypes.Package,
 }
 
 // pruneLocalGoScopeLocked drops file-, function-, and block-local go/types
-// scopes and their declared objects from the Context cache after a package has
-// finished lowering into its LLGo Scope/Info. Package-level scopes/objects and
-// struct fields remain cached for cross-package identity.
+// scopes and the declarations owned by those scopes (obj.Parent() == gs) from
+// the Context cache after a package has finished lowering into its LLGo
+// Scope/Info. Objects owned by other scopes (such as dot-imported package
+// declarations) remain cached for cross-package identity.
 func (c *Context) pruneLocalGoScopeLocked(gs *gotypes.Scope) {
 	if gs == nil {
 		return
 	}
 	delete(c.goScopes, gs)
 	for _, name := range gs.Names() {
-		if obj := gs.Lookup(name); obj != nil {
+		if obj := gs.Lookup(name); obj != nil && obj.Parent() == gs {
 			delete(c.goObjs, obj)
 		}
 	}

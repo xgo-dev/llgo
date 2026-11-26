@@ -92,13 +92,18 @@ type object struct {
 	goObj  gotypes.Object
 }
 
-func (o *object) Parent() *Scope  { return o.parent }
-func (o *object) Pos() token.Pos  { return o.pos }
-func (o *object) Pkg() *Package   { return o.pkg }
-func (o *object) Name() string    { return o.name }
-func (o *object) Type() Type      { return o.typ }
-func (o *object) Exported() bool  { return token.IsExported(o.name) }
-func (o *object) llObjectMarker() {}
+type goObjectCarrier interface {
+	goObjectRef() gotypes.Object
+}
+
+func (o *object) Parent() *Scope              { return o.parent }
+func (o *object) Pos() token.Pos              { return o.pos }
+func (o *object) Pkg() *Package               { return o.pkg }
+func (o *object) Name() string                { return o.name }
+func (o *object) Type() Type                  { return o.typ }
+func (o *object) Exported() bool              { return token.IsExported(o.name) }
+func (o *object) llObjectMarker()             {}
+func (o *object) goObjectRef() gotypes.Object { return o.goObj }
 
 func (o *object) Id() string {
 	return Id(o.pkg, o.name)
@@ -338,6 +343,7 @@ type Scope struct {
 	elems    map[string]Object
 	pos, end token.Pos
 	comment  string
+	goScope  *gotypes.Scope
 }
 
 // NewScope creates a new Scope nested in parent (matching go/types.NewScope).
