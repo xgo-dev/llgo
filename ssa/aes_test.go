@@ -227,3 +227,33 @@ func TestAESBuilderRejectsInvalidConstants(t *testing.T) {
 		})
 	}
 }
+
+func TestAESHashAlignsKeySchedGlobal(t *testing.T) {
+	Initialize(InitAll)
+	prog := NewProgram(&Target{GOOS: "darwin", GOARCH: "arm64"})
+	defer prog.Dispose()
+
+	pkg := prog.NewPackage("runtime", PkgRuntime)
+	schedTy := types.NewPointer(types.NewArray(types.Typ[types.Uint8], 128))
+	sched := pkg.NewVar(PkgRuntime+".aeskeysched", schedTy, GoDecl)
+	if got := sched.impl.Alignment(); got != 1 {
+		t.Fatalf("initial aeskeysched alignment = %d, want 1", got)
+	}
+
+	ptr := types.NewPointer(types.Typ[types.Uint8])
+	params := types.NewTuple(
+		types.NewParam(token.NoPos, nil, "dst", ptr),
+		types.NewParam(token.NoPos, nil, "src", ptr),
+		types.NewParam(token.NoPos, nil, "key", ptr),
+	)
+	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
+	fn := pkg.NewFunc("aes_hash_probe", sig, CDecl)
+	b := fn.MakeBody(1)
+	b.AESRound(AESHashRound, fn.Param(0), fn.Param(1), fn.Param(2))
+	b.Return()
+	b.EndBuild()
+
+	if got := sched.impl.Alignment(); got < 16 {
+		t.Fatalf("aeskeysched alignment after AESHashRound = %d, want >= 16", got)
+	}
+}

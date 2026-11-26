@@ -31,6 +31,12 @@ func TestAppendBinaryWords(t *testing.T) {
 
 type appendBytes []byte
 
+type appendPaddedItem struct {
+	p    *int
+	tag  uint64
+	flag uint8
+}
+
 func appendFourBytes(dst appendBytes, src []byte) appendBytes {
 	return append(dst, src[1:5]...)
 }
@@ -69,6 +75,28 @@ func TestAppendOverlapAndGrowth(t *testing.T) {
 			if gotStrs[i] != w {
 				t.Fatalf("strings capacity %d: got %v, want %v", capacity, gotStrs, wantStrs)
 			}
+		}
+
+		padded := make([]appendPaddedItem, 8)
+		for i := range padded {
+			v := new(int)
+			*v = 100 + i
+			padded[i] = appendPaddedItem{p: v, tag: uint64(i*7 + 1), flag: uint8(i + 1)}
+		}
+		gotPadded := append(padded[:2:capacity], padded[1:5]...)
+		runtime.GC()
+		wantIdx := []int{0, 1, 1, 2, 3, 4}
+		if len(gotPadded) != len(wantIdx) {
+			t.Fatalf("padded capacity %d: len=%d, want %d", capacity, len(gotPadded), len(wantIdx))
+		}
+		for i, idx := range wantIdx {
+			g := gotPadded[i]
+			if g.p == nil || *g.p != 100+idx || g.tag != uint64(idx*7+1) || g.flag != uint8(idx+1) {
+				t.Fatalf("padded capacity %d idx %d: got %+v, want p=%d tag=%d flag=%d", capacity, i, g, 100+idx, idx*7+1, idx+1)
+			}
+		}
+		if (capacity == 8) != (&gotPadded[0] == &padded[0]) {
+			t.Fatalf("padded capacity %d: unexpected destination alias", capacity)
 		}
 	}
 

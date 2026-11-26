@@ -135,6 +135,51 @@ func TestDeferCaptureAggregateAcrossRecovery(t *testing.T) {
 	}
 }
 
+//go:noinline
+func deferredCaptureConditionalPointerAggregate(cond bool, callback func()) (result int) {
+	if cond {
+		var capture struct {
+			payload *deferCapturePayload
+			words   [6]uintptr
+		}
+		defer func() {
+			recovered := recover() != nil
+			runtime.GC()
+			if capture.payload == nil {
+				panic("conditional pointer aggregate root lost during GC")
+			}
+			result = capture.payload.value + int(capture.words[0]+capture.words[5])
+			if recovered {
+				result += 100
+			}
+		}()
+		capture.payload = newDeferCapturePayload(13)
+		capture.words[0] = 4
+		callback()
+		capture.words[5] = 5
+		return
+	}
+	runtime.GC()
+	return -7
+}
+
+func TestDeferCaptureConditionalBranchPointerAggregateGC(t *testing.T) {
+	for i := 0; i < 4; i++ {
+		if got := deferredCaptureConditionalPointerAggregate(false, func() {}); got != -7 {
+			t.Fatalf("skipped branch = %d, want -7", got)
+		}
+		if got := deferredCaptureConditionalPointerAggregate(true, runtime.GC); got != 22 {
+			t.Fatalf("conditional branch normal = %d, want 22", got)
+		}
+		if got := deferredCaptureConditionalPointerAggregate(true, func() {
+			runtime.GC()
+			panic("branch aggregate")
+		}); got != 117 {
+			t.Fatalf("conditional branch recovered = %d, want 117", got)
+		}
+	}
+}
+
 func TestDeferCaptureStorageGoexit(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {

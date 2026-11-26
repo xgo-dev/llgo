@@ -1,6 +1,9 @@
 package gotest
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 type mapFastNamed32 uint32
 type mapFastNamedString string
@@ -41,4 +44,65 @@ func TestMapFastPaths(t *testing.T) {
 	testMapFastPath(t, []*int{nil, &a, &b})
 	testMapFastPath(t, []chan int{nil, ch1, ch2})
 	testMapFastPath(t, []mapFastStructKey{{0}, {1}, {1 << 40}})
+}
+
+type smallScalarPair32 struct {
+	a, b uint32
+}
+
+type smallScalarPair64 struct {
+	a, b uint64
+}
+
+type smallScalarPadded struct {
+	a int16
+	b int32
+	c bool
+}
+
+func testReflectMapOfSmallScalar[K comparable](t *testing.T, keys []K) {
+	t.Helper()
+	mapTyp := reflect.MapOf(reflect.TypeFor[K](), reflect.TypeFor[int]())
+	rv := reflect.MakeMap(mapTyp)
+	for i, k := range keys {
+		rv.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(i+10))
+	}
+	staticMap, ok := rv.Interface().(map[K]int)
+	if !ok {
+		t.Fatalf("reflect.MakeMap(%v) did not convert to static map", mapTyp)
+	}
+	if len(staticMap) != len(keys) {
+		t.Fatalf("static map len = %d, want %d", len(staticMap), len(keys))
+	}
+	for i, k := range keys {
+		if got, ok := staticMap[k]; !ok || got != i+10 {
+			t.Fatalf("static lookup staticMap[%+v] = (%d, %v), want (%d, true)", k, got, ok, i+10)
+		}
+		staticMap[k] = i + 100
+		gotVal := rv.MapIndex(reflect.ValueOf(k))
+		if !gotVal.IsValid() || int(gotVal.Int()) != i+100 {
+			t.Fatalf("reflect lookup MapIndex(%+v) = %v, want %d", k, gotVal, i+100)
+		}
+	}
+	for _, k := range keys {
+		delete(staticMap, k)
+		if rv.MapIndex(reflect.ValueOf(k)).IsValid() {
+			t.Fatalf("reflect MapIndex(%+v) still valid after static delete", k)
+		}
+	}
+	if rv.Len() != 0 {
+		t.Fatalf("reflect map len = %d after deletes, want 0", rv.Len())
+	}
+}
+
+func TestReflectMapOfSmallScalarStructKeys(t *testing.T) {
+	testReflectMapOfSmallScalar(t, []smallScalarPair32{
+		{0, 0}, {1, 2}, {^uint32(0), 7}, {42, 99},
+	})
+	testReflectMapOfSmallScalar(t, []smallScalarPair64{
+		{0, 0}, {1, 1 << 40}, {^uint64(0), 3},
+	})
+	testReflectMapOfSmallScalar(t, []smallScalarPadded{
+		{0, 0, false}, {-1, 123456, true}, {7, -99, false}, {7, -99, true},
+	})
 }
