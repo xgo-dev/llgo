@@ -156,6 +156,12 @@ func main() { println(identity()()); var p [4]float32; ordinary(&p); gated(&p); 
 						caller = fast
 					}
 					assertDirectSIMDCall(t, caller, target)
+					decl := mod.NamedFunction(target)
+					want := entry.GetStringAttributeAtIndex(-1, "llgo.cpu.midway-floor")
+					got := decl.GetStringAttributeAtIndex(-1, "llgo.cpu.midway-floor")
+					if got.IsNil() != want.IsNil() || !got.IsNil() && got.GetStringValue() != want.GetStringValue() {
+						t.Fatalf("imported %s has a different Midway floor from %s", target, entry.Name())
+					}
 				}
 			}
 			kernels, err := Build(Invocation{Args: []string{"./kernel"}, Config: conf, Dir: dir})
