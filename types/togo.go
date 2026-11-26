@@ -611,6 +611,15 @@ func (g *toGoConverter) typ(t Type) gotypes.Type {
 				return inst
 			}
 		}
+		rhs := g.typ(u.rhs)
+		if goTypesErasesAliases() {
+			if u.obj != nil {
+				tn := gotypes.NewTypeName(u.obj.pos, g.pkg(u.obj.pkg), u.obj.name, rhs)
+				g.bindObj(u.obj, tn)
+			}
+			g.types[u] = rhs
+			return rhs
+		}
 		var tn *gotypes.TypeName
 		if u.obj != nil {
 			tn = gotypes.NewTypeName(u.obj.pos, g.pkg(u.obj.pkg), u.obj.name, nil)
@@ -618,7 +627,6 @@ func (g *toGoConverter) typ(t Type) gotypes.Type {
 		} else {
 			tn = gotypes.NewTypeName(token.NoPos, nil, "", nil)
 		}
-		rhs := g.typ(u.rhs)
 		var tps []*gotypes.TypeParam
 		if u.typeParams != nil && u.typeParams.Len() > 0 {
 			tps = make([]*gotypes.TypeParam, u.typeParams.Len())

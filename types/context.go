@@ -1456,7 +1456,7 @@ func (c *Context) fromGoTypeAndValueLocked(tv gotypes.TypeAndValue) TypeAndValue
 	}
 }
 
-func (c *Context) populateFromGoPackage(dstPkg *Package, goPkg *gotypes.Package, dstInfo *Info, goInfo *gotypes.Info, goVersion string, files []*ast.File) *Package {
+func (c *Context) populateFromGoPackage(dstPkg *Package, goPkg *gotypes.Package, dstInfo *Info, goInfo *gotypes.Info, goVersion string, files []*ast.File, startChild int) *Package {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -1483,7 +1483,19 @@ func (c *Context) populateFromGoPackage(dstPkg *Package, goPkg *gotypes.Package,
 				c.goScopes[gs] = pkg.scope
 				c.populateGoScopeObjectsLocked(gs, pkg.scope)
 			}
-			c.lowerGoScopeTreeLocked(gs, pkg.scope)
+			if startChild < 0 {
+				startChild = 0
+			}
+			for i := startChild; i < gs.NumChildren(); i++ {
+				gc := gs.Child(i)
+				cs, ok := c.goScopes[gc]
+				if !ok {
+					cs = NewScope(pkg.scope, gc.Pos(), gc.End(), "")
+					c.goScopes[gc] = cs
+					c.populateGoScopeObjectsLocked(gc, cs)
+				}
+				c.lowerGoScopeTreeLocked(gc, cs)
+			}
 		}
 		if imps := goPkg.Imports(); len(imps) > 0 {
 			pkg.imports = make([]*Package, len(imps))
@@ -1496,7 +1508,7 @@ func (c *Context) populateFromGoPackage(dstPkg *Package, goPkg *gotypes.Package,
 	c.populateInfoFromGoLocked(dstInfo, goInfo, goVersion, files)
 	if goPkg != nil {
 		if gs := goPkg.Scope(); gs != nil {
-			for i := 0; i < gs.NumChildren(); i++ {
+			for i := startChild; i < gs.NumChildren(); i++ {
 				c.pruneLocalGoScopeLocked(gs.Child(i))
 			}
 		}
@@ -1530,32 +1542,44 @@ func (c *Context) populateInfoFromGoLocked(info *Info, goInfo *gotypes.Info, goV
 	if goInfo != nil {
 		if info.Defs != nil {
 			for id, obj := range goInfo.Defs {
-				info.Defs[id] = c.fromGoObjectLocked(obj)
+				if _, exists := info.Defs[id]; !exists {
+					info.Defs[id] = c.fromGoObjectLocked(obj)
+				}
 			}
 		}
 		if info.Uses != nil {
 			for id, obj := range goInfo.Uses {
-				info.Uses[id] = c.fromGoObjectLocked(obj)
+				if _, exists := info.Uses[id]; !exists {
+					info.Uses[id] = c.fromGoObjectLocked(obj)
+				}
 			}
 		}
 		if info.Implicits != nil {
 			for node, obj := range goInfo.Implicits {
-				info.Implicits[node] = c.fromGoObjectLocked(obj)
+				if _, exists := info.Implicits[node]; !exists {
+					info.Implicits[node] = c.fromGoObjectLocked(obj)
+				}
 			}
 		}
 		if info.Types != nil {
 			for expr, tv := range goInfo.Types {
-				info.Types[expr] = c.fromGoTypeAndValueLocked(tv)
+				if _, exists := info.Types[expr]; !exists {
+					info.Types[expr] = c.fromGoTypeAndValueLocked(tv)
+				}
 			}
 		}
 		if info.Selections != nil {
 			for selExpr, sel := range goInfo.Selections {
-				info.Selections[selExpr] = c.fromGoSelectionLocked(sel)
+				if _, exists := info.Selections[selExpr]; !exists {
+					info.Selections[selExpr] = c.fromGoSelectionLocked(sel)
+				}
 			}
 		}
 		if info.Scopes != nil {
 			for node, sc := range goInfo.Scopes {
-				info.Scopes[node] = c.fromGoScopeLocked(sc)
+				if _, exists := info.Scopes[node]; !exists {
+					info.Scopes[node] = c.fromGoScopeLocked(sc)
+				}
 			}
 		}
 		if len(goInfo.InitOrder) > 0 {
@@ -1570,6 +1594,9 @@ func (c *Context) populateInfoFromGoLocked(info *Info, goInfo *gotypes.Info, goV
 		}
 		if info.Instances != nil {
 			for id, inst := range goInfo.Instances {
+				if _, exists := info.Instances[id]; exists {
+					continue
+				}
 				var args []Type
 				if inst.TypeArgs != nil && inst.TypeArgs.Len() > 0 {
 					args = make([]Type, inst.TypeArgs.Len())
