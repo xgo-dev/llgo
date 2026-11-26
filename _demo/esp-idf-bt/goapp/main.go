@@ -15,16 +15,10 @@
 package main
 
 import (
-	_ "unsafe" // for go:linkname
 
 	"github.com/xgo-dev/llgo/pkg/esp/bt"
 	"github.com/xgo-dev/llgo/pkg/esp/esperr"
 )
-
-// heapPrint prints the IDF heap pools from the C side (main/demo_glue.c).
-//
-//go:linkname heapPrint C.llgo_demo_heap
-func heapPrint(tag *byte, n int32)
 
 const (
 	// acceptWaitMs bounds the wait for the peer: the host-side bumble peer

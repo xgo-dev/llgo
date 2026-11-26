@@ -1,6 +1,6 @@
 //go:build !llgo.idf
 
-// Host build (go build / go vet): main.go declares pull //go:linkname externs
+// Host build (go build / go vet): linkname.go declares pull //go:linkname externs
 // whose definitions live in the ESP-IDF link environment (host/llgo_syms.S,
 // the net glue and this project's ble_glue.c). Push linkname supplies
 // same-named inert stubs on this side of the build split, so the package

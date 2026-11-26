@@ -33,20 +33,6 @@ import (
 	"github.com/xgo-dev/llgo/pkg/esp/nvs"
 )
 
-import _ "unsafe" // for the //go:linkname declarations below
-
-// restart is the IDF esp_restart: a soft reset. On the target the flash
-// keeps its contents; the probe's whole persistence claim rests on that.
-//
-//go:linkname restart C.esp_restart
-func restart()
-
-// heapPrint is the demo glue's ledger line: both IDF pools at one probe
-// stage ([c] nvs heap ...), for the report's memory note.
-//
-//go:linkname heapPrint C.llgo_demo_heap
-func heapPrint(tag *byte, n int32)
-
 func markHeap(stage string) {
 	b := []byte(stage)
 	heapPrint(&b[0], int32(len(b)))

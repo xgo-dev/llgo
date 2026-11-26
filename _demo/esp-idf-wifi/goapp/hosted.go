@@ -1,6 +1,6 @@
 //go:build !llgo.idf
 
-// Host build (go build / go vet): main.go declares pull //go:linkname
+// Host build (go build / go vet): linkname.go declares pull //go:linkname
 // externs whose definitions live in the ESP-IDF link environment (C glue,
 // FreeRTOS, heap_caps) or in the llgo runtime tree (tinygogc, which cannot
 // be imported from this module - runtime/internal is internal). Without
@@ -42,7 +42,7 @@ func stubHeapCapsMalloc(size, caps uint32) unsafe.Pointer {
 func stubHeapCapsFree(ptr unsafe.Pointer) { _ = ptr }
 
 // The gcExtBytes/gcExtHeapCap vars need no stubs: their pull linkname in
-// main.go renames the Go var to the C symbol, which defines it for the
+// linkname.go renames the Go var to the C symbol, which defines it for the
 // hosted link as well (they simply read zero on a host).
 
 //go:linkname stubHeapStats github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc.HeapStats

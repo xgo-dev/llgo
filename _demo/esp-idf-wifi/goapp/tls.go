@@ -14,12 +14,6 @@ import (
 // probe reports SKIP for the VERIFY_REQUIRED phase, exactly like the
 // scan-only wifi run. The buffer lives on the Go heap (a 2 KiB stack buffer
 // would violate the fiber-stack discipline).
-//
-//go:linkname demoTLSCA C.llgo_demo_tls_ca
-func demoTLSCA(buf *byte, cap int32, outLen *int32)
-
-//go:linkname demoTLSCAWrong C.llgo_demo_tls_ca_wrong
-func demoTLSCAWrong(buf *byte, cap int32, outLen *int32)
 
 func compiledCAPEM(buf *byte, outLen *int32, wrong bool) []byte {
 	if wrong {

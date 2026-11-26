@@ -31,18 +31,10 @@
 package main
 
 import (
-	_ "unsafe" // for go:linkname
 
 	"github.com/xgo-dev/llgo/pkg/esp/adc"
 	"github.com/xgo-dev/llgo/pkg/esp/esperr"
 )
-
-// vTaskDelay yields the CPU for ticks: the pacing between the probe's
-// sections, letting the console drain. On a host build the stub makes it a
-// no-op.
-//
-//go:linkname vTaskDelay C.vTaskDelay
-func vTaskDelay(ticks uint32)
 
 // dec32 formats v in decimal (no strconv: the stdlib drags reflect machinery
 // into a bare-metal image, the family rule every pkg/esp probe follows).

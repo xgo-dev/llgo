@@ -17,30 +17,9 @@ package main
 
 import (
 	"errors"
-	_ "unsafe" // for the //go:linkname declaration below
 
 	"github.com/xgo-dev/llgo/pkg/esp/opus"
 )
-
-// heapLedger is the C side's view of both IDF pools (demo_glue.c) - the
-// memory ledger's stage lines, interleaved with the probe's own [go] lines.
-//
-//go:linkname heapLedger C.llgo_opus_heap
-func heapLedger(tag *byte, n int32)
-
-// fixStreams repoints clite's stdout/stderr/stdin handles at the ESP-IDF
-// picolibc streams (host/llgo_syms.S): on baremetal clite opens its own
-// streams with Fopen("/dev/stdout"), which fails under ESP-IDF (no such VFS
-// device) and would leave every Go println writing to a NULL FILE*. Must run
-// after the Go package inits and before the first print.
-//
-// TODO(runtime): a mechanism-level fix is landing in clite's stdio selection
-// (under llgo.idf, reference the C streams directly instead of Fopen); once
-// it ships, this call and the llgo_syms.S shim are dead weight - remove them
-// with that change.
-//
-//go:linkname fixStreams C.llgoFixStreams
-func fixStreams()
 
 func markLedger(stage string) {
 	b := []byte(stage)

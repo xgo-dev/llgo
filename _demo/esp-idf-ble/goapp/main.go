@@ -14,16 +14,10 @@
 package main
 
 import (
-	_ "unsafe" // for go:linkname
 
 	"github.com/xgo-dev/llgo/pkg/esp/ble"
 	"github.com/xgo-dev/llgo/pkg/esp/esperr"
 )
-
-// heapPrint prints the IDF heap pools from the C side (main/demo_glue.c).
-//
-//go:linkname heapPrint C.llgo_demo_heap
-func heapPrint(tag *byte, n int32)
 
 const (
 	// peerName is the local name the host-side Bumble peer advertises

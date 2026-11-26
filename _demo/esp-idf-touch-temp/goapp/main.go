@@ -24,20 +24,12 @@
 package main
 
 import (
-	_ "unsafe" // for go:linkname
 
 	"github.com/xgo-dev/llgo/pkg/esp/esperr"
 	"github.com/xgo-dev/llgo/pkg/esp/nvs"
 	"github.com/xgo-dev/llgo/pkg/esp/temp"
 	"github.com/xgo-dev/llgo/pkg/esp/touch"
 )
-
-// vTaskDelay yields the CPU for ticks: the pacing between the temperature
-// reads and the touch scan rounds. On a host build the stub makes it a
-// no-op.
-//
-//go:linkname vTaskDelay C.vTaskDelay
-func vTaskDelay(ticks uint32)
 
 const (
 	// probeChans are the two channels the demo scans: Chan4 = GPIO10 and

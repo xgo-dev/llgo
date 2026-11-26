@@ -8,7 +8,6 @@ package main
 
 import (
 	"github.com/xgo-dev/llgo/pkg/esp/wifi"
-	_ "unsafe" // for the //go:linkname declarations
 )
 
 func produce(ch chan int, v int) {

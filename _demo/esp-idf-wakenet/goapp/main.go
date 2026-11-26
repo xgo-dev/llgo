@@ -18,30 +18,10 @@
 package main
 
 import (
-	_ "unsafe" // for go:linkname
 
 	"github.com/xgo-dev/llgo/pkg/esp/esperr"
 	"github.com/xgo-dev/llgo/pkg/esp/wakenet"
 )
-
-// llgoFixStreams is the assembly helper merged into llgo_out.o
-// (host/llgo_syms.S): it repoints clite's stdout/stderr/stdin handles at the
-// ESP-IDF picolibc streams, because clite's baremetal init fopen fails under
-// IDF's VFS. Must run after package init and before the first print.
-//
-//go:linkname fixStreams C.llgoFixStreams
-func fixStreams()
-
-// heapPrint prints the IDF heap pools from the C side (main/demo_glue.c).
-//
-//go:linkname heapPrint C.llgo_demo_heap
-func heapPrint(tag *byte, n int32)
-
-// injectTestPcm hands the demo's hilexin utterance to the glue's test source
-// (main/demo_glue.c) and returns the sample count.
-//
-//go:linkname injectTestPcm C.llgo_demo_test_pcm
-func injectTestPcm() int32
 
 const (
 	// The probe runs ~12 s of audio through the engine (a 3.77 s utterance
@@ -149,18 +129,6 @@ func main() {
 			dec32(uint32(passFrames)))
 	}
 }
-
-// nowMs is the glue's millisecond clock (wakenet_glue.c): the probe's run
-// window and stats cadence measure against it.
-//
-//go:linkname nowMs C.llgo_wakenet_now_ms
-func nowMs() uint32
-
-// gosched hands the fiber scheduler around while the probe waits - without
-// it the poller goroutine would never run.
-//
-//go:linkname gosched github.com/xgo-dev/llgo/runtime/internal/runtime.Gosched
-func gosched()
 
 // heapMark prints the IDF heap watermarks at one probe stage. The label is a
 // short literal, copied into a stack buffer so the C side sees plain bytes.

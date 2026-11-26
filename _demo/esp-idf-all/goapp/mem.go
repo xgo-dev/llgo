@@ -1,18 +1,9 @@
 package main
 
 import (
-	_ "unsafe" // for the //go:linkname declaration below
 
 	"github.com/xgo-dev/llgo/pkg/esp/wifi"
 )
-
-// dmaMax is the largest free contiguous DMA-capable internal block
-// (app_main.c helper): the WiFi driver needs ~1.6 KB of contiguous DMA
-// memory per packet, so this is the ledger line that actually predicts
-// whether the radio keeps working.
-//
-//go:linkname dmaMax C.llgo_all_dma_max
-func dmaMax() int32
 
 // memWatchMs is the ledger cadence during steady state. The bring-up
 // watermarks answer "did this stage fit"; a periodic line answers "is it

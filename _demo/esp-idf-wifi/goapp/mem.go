@@ -14,42 +14,6 @@ func heapMark(stage string) {
 		"| psram =", int(wifi.HeapSpiramFree()))
 }
 
-// heapStats reports the collector's own view of the Go heap: usable data
-// bytes, reserved bytes including block-state bytes, the number of segments,
-// and the bytes taken from PSRAM (runtime: tinygogc/gc_segment_idf.go).
-//
-//go:linkname heapStats github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc.HeapStats
-func heapStats() (usable, reserved uintptr, segments int, external uintptr)
-
-// gcCollect runs a full collection now. It is tinygogc.GC, the function behind
-// gcCollect() on baremetal. Kept as a direct linkname: importing the whole
-// runtime package for one function would pull its finalizer/reflect machinery
-// into the image (the libffi build gap that once forced this workaround is
-// fixed, but the image-size reason stands).
-//
-//go:linkname gcCollect github.com/xgo-dev/llgo/runtime/internal/runtime/tinygogc.GC
-func gcCollect()
-
-// gcExtBytes mirrors the C symbol the collector writes after each PSRAM
-// segment, so that the Go side and the C side of the ledger can be compared.
-//
-//go:linkname gcExtBytes C.llgo_gc_ext_bytes
-var gcExtBytes uintptr
-
-// gcExtHeapCap mirrors the budget the C side compiled in (app_main.c).
-//
-//go:linkname gcExtHeapCap C.llgo_gc_ext_heap_cap
-var gcExtHeapCap uintptr
-
-//go:linkname heapCapsMalloc C.heap_caps_malloc
-func heapCapsMalloc(size, caps uint32) unsafe.Pointer
-
-//go:linkname heapCapsFree C.heap_caps_free
-func heapCapsFree(ptr unsafe.Pointer)
-
-//go:linkname rdcycle C.llgo_demo_rdcycle
-func rdcycle() uint32
-
 // gcExtAnchor is a Go global, hence an address in internal SRAM.
 var gcExtAnchor byte
 

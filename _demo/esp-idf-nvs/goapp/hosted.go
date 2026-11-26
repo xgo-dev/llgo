@@ -1,6 +1,6 @@
 //go:build !llgo.idf
 
-// Host build (go build / go vet): main.go declares pull //go:linkname externs
+// Host build (go build / go vet): linkname.go declares pull //go:linkname externs
 // whose definitions live in the ESP-IDF link environment (esp_restart in the
 // IDF's esp_runtime component, the heap ledger in main/demo_glue.c). Without
 // definitions the hosted link fails on the unresolved relocations. Push

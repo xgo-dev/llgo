@@ -1,6 +1,6 @@
 //go:build !llgo.idf
 
-// Host build (go build / go vet): main.go declares pull //go:linkname externs
+// Host build (go build / go vet): linkname.go declares pull //go:linkname externs
 // whose definitions live in the ESP-IDF link environment (the demo glue in
 // host/llgo_syms.S and FreeRTOS). Without definitions the hosted link fails on
 // the unresolved relocations. Push linkname supplies same-named symbols that

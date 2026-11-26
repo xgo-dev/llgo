@@ -19,15 +19,11 @@
 package main
 
 import (
-	_ "unsafe" // for go:linkname
 
 	"github.com/xgo-dev/llgo/pkg/esp/adc"
 	"github.com/xgo-dev/llgo/pkg/esp/spi"
 	"github.com/xgo-dev/llgo/pkg/esp/uart"
 )
-
-//go:linkname vTaskDelay C.vTaskDelay
-func vTaskDelay(ticks uint32)
 
 func dec32(v uint32) string {
 	if v == 0 {

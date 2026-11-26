@@ -1,6 +1,6 @@
 //go:build !llgo.idf
 
-// Host build (go build / go vet): main.go declares pull //go:linkname externs
+// Host build (go build / go vet): linkname.go declares pull //go:linkname externs
 // whose definitions live in the ESP-IDF link environment (C glue, the llgo
 // runtime's stream handles). Without definitions the hosted link fails on the
 // unresolved relocations. Push linkname supplies same-named symbols that exist
@@ -27,6 +27,6 @@ func stubNowMs() uint32 { return 0 }
 func stubGosched() {}
 
 // fixStreams, heapPrint, injectTestPcm, nowMs and gosched keep their names on
-// both sides; the stubs above claim the C symbols on the host, so main.go's
+// both sides; the stubs above claim the C symbols on the host, so linkname.go's
 // declarations resolve either way. The llgo.idf build resolves the same names
 // against llgo_syms.S and the demo glue instead.

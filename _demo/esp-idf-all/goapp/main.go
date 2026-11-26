@@ -37,30 +37,10 @@ package main
 
 import (
 	"runtime"
-	_ "unsafe" // the //go:linkname declarations below need it
 
 	"github.com/xgo-dev/llgo/pkg/esp/ble"
 	"github.com/xgo-dev/llgo/pkg/esp/wifi"
 )
-
-// nowMs is the millisecond clock of the net glue (esp_timer domain), used
-// for the AP station-age checks.
-//
-//go:linkname nowMs C.llgo_net_now_ms
-func nowMs() uint32
-
-// The pairing passthroughs this firmware's glue copy (idfproj/main/ble_glue.c)
-// adds on top of the pkg/esp/ble template: secInitiate starts the SMP
-// procedure on a live connection (asynchronous; the pairing result prints on
-// the C side), connSec reports the link's security state as bits
-// (bit 0 encrypted, bit 1 authenticated, bit 2 bonded; -1 = not a live
-// connection).
-//
-//go:linkname secInitiate C.llgo_ble_security
-func secInitiate(conn uint32) int32
-
-//go:linkname connSec C.llgo_ble_conn_sec
-func connSec(conn uint32) int32
 
 func main() {
 	println("[go] all: llgo comprehensive verification firmware (WiFi AP + A2DP + BLE keyboard + audio)")
