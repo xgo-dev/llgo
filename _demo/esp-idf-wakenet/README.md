@@ -15,6 +15,13 @@ question without llgo in the picture.
 
 ```
 esp-idf-wakenet/
+├── gen-data.sh             Regenerates the wake-word sample data (NOT in git):
+│                           csmoke/main/samples/hilexin.h and
+│                           idfproj/main/wakenet_pcm.c. Run once after cloning,
+│                           before any build - both are ~15k lines of array
+│                           literals for the same 3.77 s "Hi, Lexin" utterance
+│                           (16 kHz 16-bit mono; from the esp-sr test apps,
+│                           Espressif MIT license)
 ├── go.mod                  Go module (module llgowakenet; requires + replaces
 │                           github.com/xgo-dev/llgo, the binding package's home)
 ├── goapp/main.go           Acceptance probe: Init → test-PCM injection → Start →
@@ -66,6 +73,12 @@ configuration the memory ledger says fits next to WiFi.
 Prerequisites: an llgo compiler (`/tmp/llgo-idf` below, built with
 `LLVM_CONFIG=... go build -o /tmp/llgo-idf ./cmd/llgo`), Docker image
 `espressif/idf:latest`, esp-emu for the emulator run.
+
+The wake-word sample data files (`csmoke/main/samples/hilexin.h`,
+`idfproj/main/wakenet_pcm.c`) are generated, not checked in - run
+`./gen-data.sh` once after cloning (it finds the esp-sr sample in a
+previous IDF build's managed_components, a local esp-sr clone, or
+downloads it from upstream) before building either project.
 
 ```sh
 cd idfproj
