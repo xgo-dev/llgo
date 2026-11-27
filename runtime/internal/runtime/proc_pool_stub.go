@@ -34,4 +34,6 @@ func mPoolStart(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callerg
 
 func mPoolPark(ctx *runtimeContext) bool { return false }
 
+func mPoolScrubStack() {}
+
 func mPoolDestroySlot(slot *mPoolSlot) {}

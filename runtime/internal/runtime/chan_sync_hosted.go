@@ -3,8 +3,6 @@
 package runtime
 
 import (
-	"unsafe"
-
 	"github.com/xgo-dev/llgo/runtime/internal/sync"
 )
 
@@ -48,15 +46,11 @@ func (s *chanSignal) park() {
 	TracebackWaiting(false)
 }
 
-//llgo:cdecl
-func parkIdleBlockingHosted(arg unsafe.Pointer) unsafe.Pointer {
-	s := (*chanSignal)(arg)
-	s.cond.Wait(&s.mutex)
-	return nil
-}
-
+// parkIdle waits for the next pooled goroutine assignment without touching
+// traceback wait state. On Linux and Windows, sync.Cond.Wait already wraps the
+// blocking syscall in BDWGC GC_do_blocking, so avoid nesting GC_do_blocking.
 func (s *chanSignal) parkIdle() {
-	mPoolDoBlocking(parkIdleBlockingHosted, unsafe.Pointer(s))
+	s.cond.Wait(&s.mutex)
 }
 
 func (s *chanSignal) ready() {

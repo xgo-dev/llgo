@@ -99,6 +99,7 @@ func mstart(arg unsafe.Pointer) unsafe.Pointer {
 		if parkCtx == nil {
 			return ret
 		}
+		mPoolScrubStack()
 		if !mPoolPark(parkCtx) {
 			finishRetiredM(parkCtx)
 			return nil

@@ -171,6 +171,13 @@ func mPoolPark(ctx *runtimeContext) bool {
 	return true
 }
 
+//go:linkname llgoScrubStack C.llgo_scrub_stack
+func llgoScrubStack()
+
+func mPoolScrubStack() {
+	llgoScrubStack()
+}
+
 func mPoolDestroySlot(slot *mPoolSlot) {
 	if slot.pooled {
 		slot.sig.destroy()
