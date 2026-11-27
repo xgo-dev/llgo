@@ -162,12 +162,12 @@ func (c *Context) absorbContextLocked(src *Context) {
 	}
 	for k, v := range src.goNamed {
 		if _, ok := c.goNamed[k]; !ok {
-			c.goNamed[k] = v
+			c.recordGoNamedLocked(k, v)
 		}
 	}
 	for k, v := range src.goAliases {
 		if _, ok := c.goAliases[k]; !ok {
-			c.goAliases[k] = v
+			c.recordGoAliasLocked(k, v)
 		}
 	}
 	for k, v := range src.goTParams {
@@ -306,11 +306,11 @@ func (g *toGoConverter) bindType(ll Type, gt gotypes.Type) {
 	g.ctx.goTypes[goTypeCacheKey{typ: gt, cc: Go, hasOverride: false}] = ll
 	if n, ok := ll.(*Named); ok {
 		if gn, ok := gt.(*gotypes.Named); ok {
-			g.ctx.goNamed[gn] = n
+			g.ctx.recordGoNamedLocked(gn, n)
 		}
 	}
 	if a, ok := ll.(*Alias); ok {
-		g.ctx.goAliases[gt] = a
+		g.ctx.recordGoAliasLocked(gt, a)
 	}
 	if tp, ok := ll.(*TypeParam); ok {
 		if gtp, ok := gt.(*gotypes.TypeParam); ok {

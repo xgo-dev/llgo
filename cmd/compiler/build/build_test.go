@@ -1259,7 +1259,7 @@ func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 	}
 }
 
-func TestEffectiveWasmTypeSizes(t *testing.T) {
+func TestWasmTypeContextSizes(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		profile crosscompile.WasmProfile

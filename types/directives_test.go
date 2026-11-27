@@ -340,4 +340,70 @@ var IntBox Box[int]
 	if got := pkg.Scope().Lookup("IntBox").Type().(*types.Named).Origin(); got != originBefore {
 		t.Fatalf("IntBox.Origin() changed after unrelated SetTypeCallConv")
 	}
+
+	// Idempotent re-registration must be a no-op, and updating an existing
+	// named/alias type via SetTypeCallConv must update it via the key index.
+	ctx.SetTypeCallConv("example.com/other.Callback", types.CDecl)
+	const cbSrc = `package cb
+type NamedFn func(int) int
+type AliasFn = func(int) int
+`
+	cbPkg, _ := checkSource(t, "example.com/cb", cbSrc, ctx)
+	_ = ctx.Sizeof(cbPkg.Scope().Lookup("NamedFn").Type())
+	ctx.SetTypeCallConv("example.com/cb.NamedFn", types.CDecl)
+	ctx.SetTypeCallConv("example.com/cb.AliasFn", types.CDecl)
+	if cc := cbPkg.Scope().Lookup("NamedFn").Type().(*types.Named).CallConv(); cc != types.CDecl {
+		t.Fatalf("NamedFn CallConv = %v, want CDecl", cc)
+	}
+	if al, ok := cbPkg.Scope().Lookup("AliasFn").Type().(*types.Alias); ok {
+		if al.CallConv() != types.CDecl {
+			t.Fatalf("AliasFn CallConv = %v, want CDecl", al.CallConv())
+		}
+	}
+}
+
+func TestApplyFuncDirectivesSinglePass(t *testing.T) {
+	const src = `package p
+
+//go:noinline
+//go:nointerface
+//go:noescape
+//go:uintptrescapes
+//go:nosplit
+//llgo:env
+//go:wasmimport env good_import
+//go:wasmexport exported_wasm
+//export c_exported
+func AllDirectives(x uintptr)
+
+//go:wasmimport env earlier_valid
+//go:wasmimport malformed_only_one_arg
+func LastWasmImportWins()
+
+//llgo:export legacy_wasm_export
+func LegacyWasmExport()
+`
+	pkg, _ := checkSource(t, "example.com/alldir", src, types.NewContext())
+	fn := pkg.Scope().Lookup("AllDirectives").(*types.Func)
+	if !fn.NoInline() || !fn.NoInterface() || !fn.NoEscape() || !fn.UintptrEscapes() || !fn.NoSplit() || !fn.HasClosureEnv() {
+		t.Fatalf("missing bool flags on AllDirectives: noinline=%v noiface=%v noesc=%v uintptresc=%v nosplit=%v env=%v",
+			fn.NoInline(), fn.NoInterface(), fn.NoEscape(), fn.UintptrEscapes(), fn.NoSplit(), fn.HasClosureEnv())
+	}
+	if fn.LinkName() != "c_exported" || fn.ExportName() != "c_exported" {
+		t.Fatalf("export/linkname = %q/%q", fn.LinkName(), fn.ExportName())
+	}
+	if wi := fn.WasmImport(); wi == nil || wi.Module != "env" || wi.Name != "good_import" {
+		t.Fatalf("WasmImport = %+v", wi)
+	}
+	if fn.WasmExport() != "exported_wasm" {
+		t.Fatalf("WasmExport = %q, want exported_wasm", fn.WasmExport())
+	}
+	lastWins := pkg.Scope().Lookup("LastWasmImportWins").(*types.Func)
+	if lastWins.WasmImport() != nil {
+		t.Fatalf("malformed last //go:wasmimport should override earlier valid one, got %+v", lastWins.WasmImport())
+	}
+	legacy := pkg.Scope().Lookup("LegacyWasmExport").(*types.Func)
+	if legacy.WasmExport() != "legacy_wasm_export" {
+		t.Fatalf("LegacyWasmExport WasmExport = %q", legacy.WasmExport())
+	}
 }

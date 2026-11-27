@@ -51,8 +51,45 @@ func (hw *cheaderWriter) writeTypedef(t types.Type) error {
 	return hw.writeTypedefRecursive(t, make(map[string]bool))
 }
 
+// isGoClosureFunc reports whether t is a Go-convention function type (which
+// lowers to a two-word {fn, env} closure struct and cannot be represented as a
+// one-word C function pointer in generated headers).
+func (hw *cheaderWriter) isGoClosureFunc(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	if hw.p != nil {
+		if _, isNative := hw.p.TypeContext().NativeTypeCallConv(t); isNative {
+			return false
+		}
+	}
+	switch u := t.(type) {
+	case *types.Alias:
+		if u.CallConv().IsNative() {
+			return false
+		}
+		return hw.isGoClosureFunc(types.Unalias(u))
+	case *types.Named:
+		if u.CallConv().IsNative() {
+			return false
+		}
+		if sig, ok := u.Underlying().(*types.Signature); ok {
+			return !sig.CallConv().IsNative()
+		}
+	case *types.Signature:
+		return !u.CallConv().IsNative()
+	}
+	return false
+}
+
 // writeTypedefRecursive writes typedefs recursively, handling dependencies
 func (hw *cheaderWriter) writeTypedefRecursive(t types.Type, visiting map[string]bool) error {
+	if hw.isGoClosureFunc(t) {
+		if named, ok := t.(*types.Named); ok && named.Obj() != nil {
+			return fmt.Errorf("closure type %s can't export to C header", named.Obj().Name())
+		}
+		return fmt.Errorf("closure type %s can't export to C header", t)
+	}
 	// Handle container types that only need element processing
 	switch typ := t.(type) {
 	case *types.Array:
@@ -120,10 +157,20 @@ func (hw *cheaderWriter) processDependentTypes(t types.Type, visiting map[string
 					return err
 				}
 			}
+		} else if sig, ok := underlying.(*types.Signature); ok {
+			// Native named function types already passed the closure check on
+			// the named wrapper; process only their parameter and result types.
+			return hw.processSignatureTypes(sig, visiting)
 		} else {
 			// For other named types, handle the underlying type
 			return hw.writeTypedefRecursive(underlying, visiting)
 		}
+	case *types.Alias:
+		unaliased := types.Unalias(typ)
+		if sig, ok := unaliased.(*types.Signature); ok {
+			return hw.processSignatureTypes(sig, visiting)
+		}
+		return hw.writeTypedefRecursive(unaliased, visiting)
 	case *types.Signature:
 		return hw.processSignatureTypes(typ, visiting)
 	}
@@ -226,15 +273,28 @@ retry:
 		}
 		return fmt.Sprintf("struct_%s", strings.Join(fields, "_"))
 	case *types.Named:
+		if hw.isGoClosureFunc(typ) {
+			panic("closure type can't export to C header")
+		}
 		// For named types, always use the named type
 		pkg := typ.Obj().Pkg()
 		return fmt.Sprintf("%s_%s", pkg.Name(), typ.Obj().Name())
 	case *types.Signature:
-		// Function types are represented as function pointers in C
+		if hw.isGoClosureFunc(typ) {
+			panic("closure type can't export to C header")
+		}
+		// Native function types are represented as function pointers in C
 		// Generate proper function pointer syntax
 		return hw.generateFunctionPointerType(typ)
 	case *types.Alias:
-		t = types.Unalias(typ)
+		if hw.isGoClosureFunc(typ) {
+			panic("closure type can't export to C header")
+		}
+		unaliased := types.Unalias(typ)
+		if sig, ok := unaliased.(*types.Signature); ok {
+			return hw.generateFunctionPointerType(sig)
+		}
+		t = unaliased
 		goto retry
 	}
 	panic(fmt.Errorf("unsupported type: %v", t))

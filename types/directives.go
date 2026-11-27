@@ -215,6 +215,8 @@ func resolveDeclVar(pkg *Package, info *Info, id *ast.Ident) *Var {
 func applyFuncDirectives(fn *Func, doc *ast.CommentGroup, inPkgName, rawInPkgName string, isTopLevel, cPkg bool) {
 	if doc != nil {
 		linkCollected := false
+		wasmImportCollected := false
+		wasmExportCollected := false
 		directives := directive.ParseGroup(doc)
 		for i := len(directives) - 1; i >= 0; i-- {
 			item := directives[i]
@@ -235,31 +237,52 @@ func applyFuncDirectives(fn *Func, doc *ast.CommentGroup, inPkgName, rawInPkgNam
 				fn.SetLinkName(item.Args)
 				fn.SetExportName(item.Args)
 				linkCollected = true
+			case "llgo:env":
+				fn.SetHasClosureEnv(true)
+			case "go:noinline":
+				if item.Args == "" {
+					fn.SetNoInline(true)
+				}
+			case "go:nointerface":
+				if item.Args == "" {
+					fn.SetNoInterface(true)
+				}
+			case "go:noescape":
+				if item.Args == "" {
+					fn.SetNoEscape(true)
+				}
+			case "go:uintptrescapes":
+				if item.Args == "" {
+					fn.SetUintptrEscapes(true)
+				}
+			case "go:nosplit":
+				if item.Args == "" {
+					fn.SetNoSplit(true)
+				}
+			case "go:wasmimport":
+				if wasmImportCollected {
+					continue
+				}
+				// Mirror directive.ParseWasmImport: the last //go:wasmimport
+				// directive wins even if malformed.
+				wasmImportCollected = true
+				fields := strings.Fields(item.Args)
+				if len(fields) == 2 {
+					fn.SetWasmImport(&directive.WasmImport{
+						Module: fields[0],
+						Name:   fields[1],
+						Pos:    item.Pos,
+					})
+				}
+			case "go:wasmexport", "llgo:export":
+				if wasmExportCollected || item.Args == "" {
+					continue
+				}
+				if fields := strings.Fields(item.Args); len(fields) > 0 {
+					fn.SetWasmExport(fields[0])
+					wasmExportCollected = true
+				}
 			}
-		}
-		if directive.HasClosureEnv(doc) {
-			fn.SetHasClosureEnv(true)
-		}
-		if directive.HasNoInline(doc) {
-			fn.SetNoInline(true)
-		}
-		if directive.HasNoInterface(doc) {
-			fn.SetNoInterface(true)
-		}
-		if directive.HasNoEscape(doc) {
-			fn.SetNoEscape(true)
-		}
-		if directive.HasUintptrEscapes(doc) {
-			fn.SetUintptrEscapes(true)
-		}
-		if directive.HasNoSplit(doc) {
-			fn.SetNoSplit(true)
-		}
-		if wi, ok, err := directive.ParseWasmImport(doc); ok && err == nil {
-			fn.SetWasmImport(&wi)
-		}
-		if name, _, ok := directive.ParseWasmExport(doc); ok {
-			fn.SetWasmExport(name)
 		}
 	}
 	if fn.LinkName() == "" && cPkg && isTopLevel && token.IsExported(inPkgName) {

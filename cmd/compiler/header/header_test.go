@@ -334,12 +334,12 @@ func TestGoCTypeName(t *testing.T) {
 		},
 		{
 			name:     "signature type",
-			goType:   types.NewSignature(nil, nil, nil, false),
+			goType:   types.NewSignature(nil, nil, nil, false).WithCallConv(types.CDecl),
 			expected: "void (*)(void)",
 		},
 		{
 			name:     "alias signature type",
-			goType:   types.NewAlias(types.NewTypeName(0, nil, "MyFunc", nil), types.NewSignature(nil, nil, nil, false)),
+			goType:   types.NewAlias(types.NewTypeName(0, nil, "MyFunc", nil), types.NewSignature(nil, nil, nil, false).WithCallConv(types.CDecl)),
 			expected: "void (*)(void)",
 		},
 	}
@@ -610,41 +610,41 @@ func TestProcessDependentTypesEdgeCases(t *testing.T) {
 		t.Errorf("processSignatureTypes(no results) error = %v", err)
 	}
 
-	// Test function type (callback) parameters - IntCallback
+	// Test function type (callback) parameters - IntCallback (native C callback)
 	intCallbackParams := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))
 	intCallbackResults := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
-	intCallbackSig := types.NewSignatureType(nil, nil, nil, intCallbackParams, intCallbackResults, false)
+	intCallbackSig := types.NewSignatureType(nil, nil, nil, intCallbackParams, intCallbackResults, false).WithCallConv(types.CDecl)
 	err = hw.writeTypedefRecursive(intCallbackSig, make(map[string]bool))
 	if err != nil {
 		t.Errorf("writeTypedefRecursive(IntCallback) error = %v", err)
 	}
 
-	// Test function type (callback) parameters - StringCallback
+	// Test function type (callback) parameters - StringCallback (native C callback)
 	stringCallbackParams := types.NewTuple(types.NewVar(0, nil, "s", types.Typ[types.String]))
 	stringCallbackResults := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.String]))
-	stringCallbackSig := types.NewSignatureType(nil, nil, nil, stringCallbackParams, stringCallbackResults, false)
+	stringCallbackSig := types.NewSignatureType(nil, nil, nil, stringCallbackParams, stringCallbackResults, false).WithCallConv(types.CDecl)
 	err = hw.writeTypedefRecursive(stringCallbackSig, make(map[string]bool))
 	if err != nil {
 		t.Errorf("writeTypedefRecursive(StringCallback) error = %v", err)
 	}
 
-	// Test function type (callback) parameters - VoidCallback
-	voidCallbackSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	// Test function type (callback) parameters - VoidCallback (native C callback)
+	voidCallbackSig := types.NewSignatureType(nil, nil, nil, nil, nil, false).WithCallConv(types.CDecl)
 	err = hw.writeTypedefRecursive(voidCallbackSig, make(map[string]bool))
 	if err != nil {
 		t.Errorf("writeTypedefRecursive(VoidCallback) error = %v", err)
 	}
 
-	// Test Named function type - this should trigger the function typedef generation
+	// Test Named native function type - this should trigger the function typedef generation
 	pkg := types.NewPackage("test", "test")
 	callbackParams := types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int]))
-	callbackSig := types.NewSignatureType(nil, nil, nil, callbackParams, nil, false)
+	callbackSig := types.NewSignatureType(nil, nil, nil, callbackParams, nil, false).WithCallConv(types.CDecl)
 	callbackTypeName := types.NewTypeName(0, pkg, "Callback", nil)
 	namedCallback := types.NewNamed(callbackTypeName, callbackSig, nil)
 
-	// Test Named function type with no parameters - NoParamCallback func() int
+	// Test Named native function type with no parameters - NoParamCallback func() int
 	noParamCallbackResults := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
-	noParamCallbackSig := types.NewSignatureType(nil, nil, nil, nil, noParamCallbackResults, false)
+	noParamCallbackSig := types.NewSignatureType(nil, nil, nil, nil, noParamCallbackResults, false).WithCallConv(types.CDecl)
 	noParamCallbackTypeName := types.NewTypeName(0, pkg, "NoParamCallback", nil)
 	namedNoParamCallback := types.NewNamed(noParamCallbackTypeName, noParamCallbackSig, nil)
 
@@ -680,11 +680,143 @@ func TestProcessDependentTypesEdgeCases(t *testing.T) {
 		types.NewVar(0, nil, "", types.Typ[types.Bool]),
 	)
 	unnamedResults := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Float64]))
-	unnamedSig := types.NewSignatureType(nil, nil, nil, unnamedParams, unnamedResults, false)
+	unnamedSig := types.NewSignatureType(nil, nil, nil, unnamedParams, unnamedResults, false).WithCallConv(types.CDecl)
 	err = hw.writeTypedefRecursive(unnamedSig, make(map[string]bool))
 	if err != nil {
 		t.Errorf("writeTypedefRecursive(unnamed params) error = %v", err)
 	}
+}
+
+func TestGenHeaderRejectsGoClosureAndAllowsNativeCallback(t *testing.T) {
+	t.Run("unnamed Go func param rejected", func(t *testing.T) {
+		prog := llvmgen.NewProgram(nil)
+		defer prog.Dispose()
+		pkg := prog.NewPackage("main", "example.com/closure/param")
+		cb := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int])),
+			types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), false)
+		sig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewVar(0, nil, "cb", cb)), nil, false)
+		pkg.NewFunc("WithClosure", sig, llvmgen.GoDecl)
+		pkg.SetExport("WithClosure", "WithClosure")
+
+		err := genHeader(prog, []llvmgen.Package{pkg}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "closure type") {
+			t.Fatalf("genHeader(unnamed Go func param) err = %v, want closure error", err)
+		}
+	})
+
+	t.Run("named Go func type rejected", func(t *testing.T) {
+		prog := llvmgen.NewProgram(nil)
+		defer prog.Dispose()
+		typesPkg := types.NewPackage("example.com/closure/named", "main")
+		cbSig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int])), nil, false)
+		cbNamed := types.NewNamed(types.NewTypeName(0, typesPkg, "Handler", nil), cbSig, nil)
+		pkg := prog.NewPackage("main", "example.com/closure/named")
+		sig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewVar(0, nil, "h", cbNamed)), nil, false)
+		pkg.NewFunc("WithNamedClosure", sig, llvmgen.GoDecl)
+		pkg.SetExport("WithNamedClosure", "WithNamedClosure")
+
+		err := genHeader(prog, []llvmgen.Package{pkg}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "closure type Handler can't export to C header") {
+			t.Fatalf("genHeader(named Go func) err = %v, want named closure error", err)
+		}
+	})
+
+	t.Run("struct field Go closure rejected", func(t *testing.T) {
+		prog := llvmgen.NewProgram(nil)
+		defer prog.Dispose()
+		typesPkg := types.NewPackage("example.com/closure/field", "main")
+		cbSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+		st := types.NewStruct([]*types.Var{types.NewField(0, typesPkg, "Fn", cbSig, false)}, nil)
+		stNamed := types.NewNamed(types.NewTypeName(0, typesPkg, "Holder", nil), st, nil)
+		pkg := prog.NewPackage("main", "example.com/closure/field")
+		sig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewVar(0, nil, "h", stNamed)), nil, false)
+		pkg.NewFunc("WithHolder", sig, llvmgen.GoDecl)
+		pkg.SetExport("WithHolder", "WithHolder")
+
+		err := genHeader(prog, []llvmgen.Package{pkg}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "closure type") {
+			t.Fatalf("genHeader(struct Go closure field) err = %v, want closure error", err)
+		}
+	})
+
+	t.Run("native cdecl callback allowed", func(t *testing.T) {
+		prog := llvmgen.NewProgram(nil)
+		defer prog.Dispose()
+		typesPkg := types.NewPackage("example.com/nativecb", "main")
+		cbSig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewVar(0, nil, "x", types.Typ[types.Int32])),
+			types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int32])), false)
+		cbNamed := types.NewNamed(types.NewTypeName(0, typesPkg, "CCallback", nil), cbSig, nil)
+		prog.SetTypeCallConv("example.com/nativecb.CCallback", llvmgen.CDecl)
+		cbAlias := types.NewAlias(types.NewTypeName(0, typesPkg, "CAlias", nil), cbSig)
+		prog.SetTypeCallConv("example.com/nativecb.CAlias", llvmgen.CDecl)
+
+		pkg := prog.NewPackage("main", "example.com/nativecb")
+		sig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(
+				types.NewVar(0, nil, "cb", cbNamed),
+				types.NewVar(0, nil, "al", cbAlias),
+			), nil, false)
+		pkg.NewFunc("Register", sig, llvmgen.GoDecl)
+		pkg.SetExport("Register", "Register")
+
+		var buf bytes.Buffer
+		if err := genHeader(prog, []llvmgen.Package{pkg}, &buf); err != nil {
+			t.Fatalf("genHeader(native callbacks) unexpected error: %v", err)
+		}
+		got := buf.String()
+		if !strings.Contains(got, "typedef int32_t (*main_CCallback)(int32_t);") {
+			t.Fatalf("missing CCallback typedef:\n%s", got)
+		}
+		if !strings.Contains(got, "Register(main_CCallback cb, int32_t (*)(int32_t) al);") {
+			t.Fatalf("missing Register decl:\n%s", got)
+		}
+	})
+
+	t.Run("isGoClosureFunc and goCTypeName guards", func(t *testing.T) {
+		prog := llvmgen.NewProgram(nil)
+		defer prog.Dispose()
+		hw := newCHeaderWriter(prog)
+		typesPkg := types.NewPackage("example.com/guard", "guard")
+		goSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+		goNamed := types.NewNamed(types.NewTypeName(0, typesPkg, "GoFn", nil), goSig, nil)
+		goAlias := types.NewAlias(types.NewTypeName(0, typesPkg, "GoAlias", nil), goSig)
+		intAlias := types.NewAlias(types.NewTypeName(0, typesPkg, "IntAlias", nil), types.Typ[types.Int32])
+		cdeclSig := goSig.WithCallConv(types.CDecl)
+		cdeclNamed := types.NewNamed(types.NewTypeName(0, typesPkg, "CFn", nil), cdeclSig, nil)
+		cdeclNamed.SetCallConv(types.CDecl)
+		cdeclAlias := types.NewAlias(types.NewTypeName(0, typesPkg, "CAlias", nil), cdeclSig)
+		cdeclAlias.SetCallConv(types.CDecl)
+
+		if hw.isGoClosureFunc(nil) || hw.isGoClosureFunc(intAlias) || hw.isGoClosureFunc(cdeclNamed) || hw.isGoClosureFunc(cdeclAlias) {
+			t.Fatal("unexpected true from isGoClosureFunc")
+		}
+		if !hw.isGoClosureFunc(goSig) || !hw.isGoClosureFunc(goNamed) || !hw.isGoClosureFunc(goAlias) {
+			t.Fatal("expected true from isGoClosureFunc for Go closure types")
+		}
+		if got := hw.goCTypeName(intAlias); got != "int32_t" {
+			t.Fatalf("goCTypeName(intAlias) = %q, want int32_t", got)
+		}
+		for _, typ := range []types.Type{goSig, goNamed, goAlias} {
+			panicked := false
+			func() {
+				defer func() {
+					if recover() != nil {
+						panicked = true
+					}
+				}()
+				_ = hw.goCTypeName(typ)
+			}()
+			if !panicked {
+				t.Fatalf("goCTypeName(%v) did not panic for Go closure", typ)
+			}
+		}
+	})
 }
 
 // Test generateParameterDeclaration function

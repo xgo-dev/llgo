@@ -121,6 +121,8 @@ type Context struct {
 	goTypes           map[goTypeCacheKey]Type
 	goNamed           map[*gotypes.Named]*Named
 	goAliases         map[gotypes.Type]*Alias
+	namedByKey        map[string][]*Named
+	aliasesByKey      map[string][]*Alias
 	goTParams         map[*gotypes.TypeParam]*TypeParam
 	incompleteNamed   []*Named
 	incompleteLLNamed map[*Named]Type
@@ -176,6 +178,8 @@ func NewContextWithConfig(cfg ContextConfig) *Context {
 		goTypes:            make(map[goTypeCacheKey]Type),
 		goNamed:            make(map[*gotypes.Named]*Named),
 		goAliases:          make(map[gotypes.Type]*Alias),
+		namedByKey:         make(map[string][]*Named),
+		aliasesByKey:       make(map[string][]*Alias),
 		goTParams:          make(map[*gotypes.TypeParam]*TypeParam),
 		layouts:            make(map[Type]*Layout),
 	}
@@ -204,33 +208,63 @@ func (c *Context) Spec() target.Spec {
 	return c.spec
 }
 
+func (c *Context) recordGoNamedLocked(gt *gotypes.Named, n *Named) {
+	if _, exists := c.goNamed[gt]; exists {
+		c.goNamed[gt] = n
+		return
+	}
+	c.goNamed[gt] = n
+	if n != nil {
+		if key := typeNameKey(n.obj); key != "" {
+			c.namedByKey[key] = append(c.namedByKey[key], n)
+		}
+	}
+}
+
+func (c *Context) recordGoAliasLocked(gt gotypes.Type, a *Alias) {
+	if _, exists := c.goAliases[gt]; exists {
+		c.goAliases[gt] = a
+		return
+	}
+	c.goAliases[gt] = a
+	if a != nil {
+		if key := typeNameKey(a.obj); key != "" {
+			c.aliasesByKey[key] = append(c.aliasesByKey[key], a)
+		}
+	}
+}
+
 // SetTypeCallConv registers a type-level calling convention directive (such as
 // //llgo:cdecl or //llgo:stdcall) by qualified type name ("pkg.Name") and
-// invalidates cached layouts so subsequent queries reflect it.
+// invalidates cached go/types lowerings and physical layouts when changed.
 func (c *Context) SetTypeCallConv(typeKey string, cc CallConv) {
 	c.mu.Lock()
+	if prev, exists := c.typeCallConvs[typeKey]; exists && prev == cc {
+		c.mu.Unlock()
+		return
+	}
 	c.typeCallConvs[typeKey] = cc
 	if cc.IsNative() {
 		c.hasNativeMetadata.Store(true)
 	}
-	for _, n := range c.goNamed {
-		if typeNameKey(n.obj) == typeKey {
-			n.callConv = cc
-			n.hasCallConv = true
-			n.resolved = false
+	for _, n := range c.namedByKey[typeKey] {
+		n.callConv = cc
+		n.hasCallConv = true
+		n.resolved = false
+	}
+	for _, a := range c.aliasesByKey[typeKey] {
+		a.callConv = cc
+		a.hasCallConv = true
+		if sig, ok := a.rhs.(*Signature); ok {
+			a.rhs = sig.WithCallConv(cc)
 		}
 	}
-	for _, a := range c.goAliases {
-		if typeNameKey(a.obj) == typeKey {
-			a.callConv = cc
-			a.hasCallConv = true
-			if sig, ok := a.rhs.(*Signature); ok {
-				a.rhs = sig.WithCallConv(cc)
-			}
-		}
+	if len(c.goTypes) > 0 {
+		c.goTypes = make(map[goTypeCacheKey]Type)
 	}
-	c.goTypes = make(map[goTypeCacheKey]Type)
-	c.layouts = make(map[Type]*Layout)
+	if len(c.layouts) > 0 {
+		c.layouts = make(map[Type]*Layout)
+	}
 	c.mu.Unlock()
 }
 
@@ -826,7 +860,7 @@ func (c *Context) fromGoLocked(t gotypes.Type, cc CallConv, hasOverride bool) Ty
 			tn.typ = a
 		}
 		if !hasOverride {
-			c.goAliases[t] = a
+			c.recordGoAliasLocked(t, a)
 		}
 		c.goTypes[key] = a
 		if orig, tps, targs := aliasGenericInfo(t); orig != nil || (tps != nil && tps.Len() > 0) || (targs != nil && targs.Len() > 0) {
@@ -975,7 +1009,7 @@ func (c *Context) fromGoNamedShellLocked(gt *gotypes.Named, cc CallConv, hasOver
 	if !hasOverride && gt.Obj() != nil && gt.Obj().Parent() == gotypes.Universe {
 		if uo := Universe.Lookup(gt.Obj().Name()); uo != nil {
 			if un, ok := uo.Type().(*Named); ok {
-				c.goNamed[gt] = un
+				c.recordGoNamedLocked(gt, un)
 				c.goTypes[goTypeCacheKey{typ: gt, cc: cc, hasOverride: hasOverride}] = un
 				return un
 			}
@@ -1014,7 +1048,7 @@ func (c *Context) fromGoNamedShellLocked(gt *gotypes.Named, cc CallConv, hasOver
 	}
 
 	if !hasOverride {
-		c.goNamed[gt] = n
+		c.recordGoNamedLocked(gt, n)
 	}
 	c.goTypes[goTypeCacheKey{typ: gt, cc: cc, hasOverride: hasOverride}] = n
 	if !hasOverride && orig != nil && orig != gt {
