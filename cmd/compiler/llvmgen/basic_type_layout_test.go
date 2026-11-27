@@ -71,7 +71,6 @@ func TestGoBasicTypeLLVMStorage(t *testing.T) {
 			defer prog.Dispose()
 			// Match the production frontend configuration, but never use this
 			// Sizes object (or Program.SizeOf) as the expected or observed size.
-			prog.TypeSizes(types.SizesFor("gc", target.arch))
 			setTestRuntime(t, prog)
 			pkg := prog.NewPackage("audit", "audit")
 			wordIR := fmt.Sprintf("i%d", target.word*8)

@@ -138,9 +138,9 @@ func (t Type) RawType() types.Type {
 }
 
 // TypeSizes returns the target-configured types.Sizes backed by p's canonical
-// *types.Context. The sizes parameter is retained for caller compatibility;
-// physical and Go word/alignment rules are determined by p's Target spec.
-func (p Program) TypeSizes(_ types.Sizes) types.Sizes {
+// *types.Context. Physical and Go word/alignment rules are determined by p's
+// Target spec.
+func (p Program) TypeSizes() types.Sizes {
 	return (*goProgram)(p)
 }
 

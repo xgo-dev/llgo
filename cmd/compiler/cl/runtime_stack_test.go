@@ -18,7 +18,6 @@ package cl
 
 import (
 	"fmt"
-	"github.com/xgo-dev/llgo/types"
 	"strings"
 	"testing"
 
@@ -47,7 +46,6 @@ func Size() uintptr { return goroutineStackSize }
 `)
 			prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", "amd64"))
 			prog.SetPthreadStackSize(tc.size)
 			pkg, err := NewPackage(prog, ssaPkg, files)
 			if err != nil {

@@ -22,7 +22,6 @@ import (
 	"github.com/xgo-dev/llgo/types"
 	"io"
 	"log"
-	"runtime"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
@@ -39,7 +38,6 @@ func TestMain(m *testing.M) {
 
 func TestMakeInterface(t *testing.T) {
 	prog := llvmgen.NewProgram(nil)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := llpkgs.SourceImporter().Import(llvmgen.PkgRuntime)
 		if err != nil {

@@ -19,7 +19,6 @@ func TestTypedAllocatorSelection(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
 			setTestRuntime(t, prog)
-			prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
 			pkg := prog.NewPackage("p", "example.com/typedalloc")
 			vectorPkg := types.NewPackage("simd/archsimd", "archsimd")
 			align16 := types.NewNamed(types.NewTypeName(0, vectorPkg, "v128", nil), types.NewStruct([]*types.Var{
@@ -124,7 +123,6 @@ func TestAppendSliceFastPath(t *testing.T) {
 	prog := NewProgram(target)
 	defer prog.Dispose()
 	setTestRuntime(t, prog)
-	prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
 	pkg := prog.NewPackage("p", "example.com/appendfast")
 
 	byteSlice := prog.Type(types.NewSlice(types.Typ[types.Byte]), GoDecl)

@@ -22,7 +22,6 @@ func TestDebugReplacedGlobalDoesNotLeaveCOFFReference(t *testing.T) {
 		t.Run(target.LLVMTarget, func(t *testing.T) {
 			prog := NewProgram(&target)
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
 			pkg := prog.NewPackage("p", "example.com/p")
 			pkg.InitDebug("p", "example.com/p", token.NewFileSet())
 			const placeholder = "example.com/p.__cgo_callback"

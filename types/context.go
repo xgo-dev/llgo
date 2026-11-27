@@ -113,6 +113,9 @@ type Context struct {
 	goCtx             *gotypes.Context
 	goPkgs            map[*gotypes.Package]*Package
 	llToGoPkgs        map[*Package]*gotypes.Package
+	llToGoTypes       map[Type]gotypes.Type
+	llToGoObjs        map[Object]gotypes.Object
+	llToGoTParams     map[*TypeParam]*gotypes.TypeParam
 	goScopes          map[*gotypes.Scope]*Scope
 	goObjs            map[gotypes.Object]Object
 	goTypes           map[goTypeCacheKey]Type
@@ -164,6 +167,10 @@ func NewContextWithConfig(cfg ContextConfig) *Context {
 		arrays:             make(map[arrayInternKey]*Array),
 		simds:              make(map[simdInternKey]*SIMDVec),
 		goPkgs:             make(map[*gotypes.Package]*Package),
+		llToGoPkgs:         make(map[*Package]*gotypes.Package),
+		llToGoTypes:        make(map[Type]gotypes.Type),
+		llToGoObjs:         make(map[Object]gotypes.Object),
+		llToGoTParams:      make(map[*TypeParam]*gotypes.TypeParam),
 		goScopes:           make(map[*gotypes.Scope]*Scope),
 		goObjs:             make(map[gotypes.Object]Object),
 		goTypes:            make(map[goTypeCacheKey]Type),

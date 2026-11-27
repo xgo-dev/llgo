@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"runtime"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/cl"
@@ -43,7 +42,6 @@ func Where() string {
 	}
 
 	prog := ssatest.NewProgramEx(t, nil, imp)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	ct := cl.NewCallerTracking()
 	ret, _, err := cl.NewPackageExWithEmbed(prog, ct, nil, nil, fooPkg, files, nil)
 	if err != nil {

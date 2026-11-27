@@ -6,7 +6,6 @@ import (
 	"go/constant"
 	"go/parser"
 	"go/token"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -50,7 +49,6 @@ func newLLSSAProg(t *testing.T) llvmgen.Program {
 		}
 		return rt
 	})
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	return prog
 }
 

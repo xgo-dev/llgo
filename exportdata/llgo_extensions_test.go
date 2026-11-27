@@ -144,11 +144,14 @@ var RoutineSlot uintptr
 	}
 }
 
-func TestExportDataRejectsLegacyV2Payload(t *testing.T) {
-	// Header: magic "LLGO" + version 2 (0x0002).
-	legacy := []byte{'L', 'L', 'G', 'O', 2, 0}
-	if _, err := exportdata.Read(bytes.NewReader(legacy), token.NewFileSet(), map[string]*types.Package{}, "p"); err == nil {
-		t.Fatal("expected legacy v2 payload to be rejected")
+func TestExportDataRejectsLegacyVersions(t *testing.T) {
+	// Real header format: 6-byte magic "LLGOEX" + 1-byte kind (1=package) +
+	// 4-byte little-endian uint32 version + minimal string table count (0).
+	for _, ver := range []byte{2, 3} {
+		payload := []byte{'L', 'L', 'G', 'O', 'E', 'X', 1, ver, 0, 0, 0, 0}
+		if _, err := exportdata.Read(bytes.NewReader(payload), token.NewFileSet(), map[string]*types.Package{}, "p"); err == nil {
+			t.Fatalf("expected legacy v%d payload to be rejected", ver)
+		}
 	}
 }
 
@@ -242,4 +245,116 @@ func Use(x interface{ Read([]byte) (int, error) }) int { return 0 }
 	if iface.NumMethods() != 1 || iface.Method(0).Name() != "Read" {
 		t.Fatalf("decoded unnamed interface = %v", iface)
 	}
+}
+
+func TestExportDataMultiPackageToGoIdentity(t *testing.T) {
+	const srcA = `package pkga
+
+type Object struct {
+	v int
+}
+
+func New() *Object { return &Object{} }
+`
+	const srcB = `package pkgb
+
+import "example.com/pkga"
+
+func Sqrt(x *pkga.Object) *pkga.Object { return x }
+`
+	const srcMain = `package main
+
+import (
+	"example.com/pkga"
+	"example.com/pkgb"
+)
+
+func Use() *pkga.Object {
+	return pkgb.Sqrt(pkga.New())
+}
+`
+	fset := token.NewFileSet()
+	parse := func(name, src string) *ast.File {
+		f, err := parser.ParseFile(fset, name, src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	fileA := parse("a.go", srcA)
+	pkgA, err := (&types.Config{}).Check("example.com/pkga", fset, []*ast.File{fileA}, nil)
+	if err != nil {
+		t.Fatalf("check pkga: %v", err)
+	}
+	fileB := parse("b.go", srcB)
+	pkgB, err := (&types.Config{
+		Importer: mapImporter{"example.com/pkga": pkgA},
+	}).Check("example.com/pkgb", fset, []*ast.File{fileB}, nil)
+	if err != nil {
+		t.Fatalf("check pkgb: %v", err)
+	}
+
+	var bufA, bufB bytes.Buffer
+	if err := exportdata.Write(&bufA, fset, pkgA); err != nil {
+		t.Fatalf("write pkga: %v", err)
+	}
+	if err := exportdata.Write(&bufB, fset, pkgB); err != nil {
+		t.Fatalf("write pkgb: %v", err)
+	}
+
+	// Decode both packages into a fresh imports map (both have goPkg == nil)
+	// and check main in both import orders against a shared *types.Context.
+	for _, tc := range []struct {
+		name       string
+		decodeA1st bool
+	}{
+		{"A_then_B", true},
+		{"B_then_A", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			imports := make(map[string]*types.Package)
+			var decA, decB *types.Package
+			var err error
+			if tc.decodeA1st {
+				decA, err = exportdata.Read(bytes.NewReader(bufA.Bytes()), fset, imports, "example.com/pkga")
+				if err != nil {
+					t.Fatalf("read pkga: %v", err)
+				}
+				decB, err = exportdata.Read(bytes.NewReader(bufB.Bytes()), fset, imports, "example.com/pkgb")
+				if err != nil {
+					t.Fatalf("read pkgb: %v", err)
+				}
+			} else {
+				decB, err = exportdata.Read(bytes.NewReader(bufB.Bytes()), fset, imports, "example.com/pkgb")
+				if err != nil {
+					t.Fatalf("read pkgb: %v", err)
+				}
+				decA, err = exportdata.Read(bytes.NewReader(bufA.Bytes()), fset, imports, "example.com/pkga")
+				if err != nil {
+					t.Fatalf("read pkga: %v", err)
+				}
+			}
+			ctx := types.NewContext()
+			fileMain := parse("main.go", srcMain)
+			_, err = (&types.Config{
+				Context: ctx,
+				Importer: mapImporter{
+					"example.com/pkga": decA,
+					"example.com/pkgb": decB,
+				},
+			}).Check("main", fset, []*ast.File{fileMain}, nil)
+			if err != nil {
+				t.Fatalf("check main with decoded pkga + pkgb failed: %v", err)
+			}
+		})
+	}
+}
+
+type mapImporter map[string]*types.Package
+
+func (m mapImporter) Import(path string) (*types.Package, error) {
+	if pkg, ok := m[path]; ok {
+		return pkg, nil
+	}
+	return nil, types.Error{Msg: "missing package " + path}
 }

@@ -34,7 +34,6 @@ func newJ32Program(t *testing.T) Program {
 		LLVMTarget:  "wasm32-unknown-emscripten",
 		WasmProfile: "j32",
 	})
-	prog.TypeSizes(&types.StdSizes{WordSize: 8, MaxAlign: 8})
 	t.Cleanup(prog.Dispose)
 	return prog
 }

@@ -28,7 +28,7 @@ func TestHostLayout(t *testing.T) {
 		t.Run(tc.os+"/"+tc.arch, func(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: tc.os, GOARCH: tc.arch, WasmProfile: tc.profile})
 			defer prog.Dispose()
-			sizes := prog.TypeSizes(types.SizesFor("gc", tc.arch))
+			sizes := prog.TypeSizes()
 			setTestRuntime(t, prog)
 			fset := token.NewFileSet()
 			file, err := parser.ParseFile(fset, "host.go", `package host

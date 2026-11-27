@@ -1299,6 +1299,7 @@ func (b Builder) ConvertEx(t Type, x Expr, heap bool) (ret Expr) {
 			return
 		}
 	case *types.Pointer:
+		ret.Type = b.Prog.withoutNativeStorage(t)
 		ret.impl = castPtr(b.impl, x.impl, t.ll)
 		return
 	case *types.Slice:
@@ -1685,8 +1686,8 @@ func (b Builder) emitFunctionCall(fn Expr, args []Expr, cc llvm.CallConv) Expr {
 	}
 	physicalParams := ll.ParamTypes()
 	hasEnv := false
-	if fn.kind == vkFuncDecl {
-		if entry := b.Pkg.FuncOf(fn.impl.Name()); entry != nil && entry.NeedsEnv() && len(physicalParams) == len(args)+1 {
+	if fn.kind == vkFuncDecl && len(physicalParams) == len(args)+1 {
+		if entry := b.Pkg.FuncOf(fn.impl.Name()); entry != nil && entry.NeedsEnv() {
 			hasEnv = true
 		}
 	}

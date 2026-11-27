@@ -36,10 +36,15 @@ func (T) M() int { return 7 }
 //go:noinline
 func (T) Drop() int { panic("Drop should be unreachable") }
 
+//go:noinline
+func invokeM(v I) int {
+	return v.M()
+}
+
 //export Callback
 func Callback() C.int {
 	var v I = T{}
-	return C.int(v.M())
+	return C.int(invokeM(v))
 }
 
 func main() {

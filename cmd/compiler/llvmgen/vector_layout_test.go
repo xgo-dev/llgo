@@ -18,7 +18,7 @@ func TestOrdinarySourceLayoutAllocations(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	base := types.SizesFor("gc", "amd64")
-	sizes := prog.TypeSizes(base)
+	sizes := prog.TypeSizes()
 	field := types.NewField(token.NoPos, nil, "x", types.Typ[types.Int64], false)
 	nested := types.NewStruct([]*types.Var{field}, nil)
 	fields := make([]*types.Var, 128)
@@ -59,7 +59,7 @@ func TestOrdinaryNamedLayoutAllocations(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	base := types.SizesFor("gc", "amd64")
-	sizes := prog.TypeSizes(base)
+	sizes := prog.TypeSizes()
 	pkg := types.NewPackage("example.com/ordinary/package/path", "ordinary")
 	named := func(name string, underlying types.Type) *types.Named {
 		return types.NewNamed(types.NewTypeName(token.NoPos, pkg, name, nil), underlying, nil)
@@ -119,7 +119,7 @@ func TestNativeVectorFieldOffsets(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/positions=%t", arch, sourcePositions), func(t *testing.T) {
 				prog := NewProgram(&Target{GOOS: "linux", GOARCH: arch})
 				defer prog.Dispose()
-				sizes := prog.TypeSizes(types.SizesFor("gc", arch))
+				sizes := prog.TypeSizes()
 				_, vector := layoutTestVector()
 				pkg := types.NewPackage("example.com/native", "native")
 				fields := []*types.Var{
@@ -177,7 +177,7 @@ func TestVectorSourceLayoutArrayOverflow(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "amd64"})
 	defer prog.Dispose()
 	tag, vector := layoutTestVector()
-	sizes := prog.TypeSizes(types.SizesFor("gc", "amd64"))
+	sizes := prog.TypeSizes()
 	for _, tc := range []struct {
 		name string
 		typ  types.Type
@@ -224,7 +224,6 @@ func TestAlignedStorageHelpers(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
 			setTestRuntime(t, prog)
-			prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
 			tag, vector := layoutTestVector()
 			typ, tagType := prog.rawType(vector), prog.rawType(tag)
 			pkg := prog.NewPackage("p", "p")
@@ -303,7 +302,6 @@ func TestVectorNativeFunctionFieldLayout(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: "linux", GOARCH: arch})
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", arch))
 			_, vector := layoutTestVector()
 			fields := []*types.Var{
 				types.NewField(token.NoPos, nil, "vector", vector, false),

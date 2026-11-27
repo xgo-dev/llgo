@@ -597,6 +597,10 @@ const (
 	funcMetaNoEscape
 	funcMetaUintptrEscapes
 	funcMetaNoSplit
+
+	funcMetaAllFlags = funcMetaLinkName | funcMetaExportName | funcMetaWasmImport |
+		funcMetaWasmExport | funcMetaClosureEnv | funcMetaNoInline | funcMetaNoInterface |
+		funcMetaNoEscape | funcMetaUintptrEscapes | funcMetaNoSplit
 )
 
 func (w *pkgWriter) writeFuncMeta(fn *types.Func) {
@@ -654,7 +658,21 @@ const (
 	varMetaLinkName byte = 1 << iota
 	varMetaExportName
 	varMetaLocality
+
+	varMetaAllFlags = varMetaLinkName | varMetaExportName | varMetaLocality
 )
+
+func validPackageKind(b byte) bool {
+	return b <= byte(directive.PkgLinkExtern)
+}
+
+func validCallConv(b byte) bool {
+	return b <= byte(types.Wasm)
+}
+
+func validLocality(b byte) bool {
+	return b <= byte(directive.LocalityGoroutine)
+}
 
 func (w *pkgWriter) writeVarMeta(v *types.Var) {
 	var flags byte
@@ -986,6 +1004,9 @@ func (r *pkgReader) readHeader() error {
 	if err != nil {
 		return err
 	}
+	if !validPackageKind(kind) {
+		return errCorrupt
+	}
 	kindParam, err := r.dec.readStr()
 	if err != nil {
 		return err
@@ -1135,6 +1156,9 @@ func (r *pkgReader) decodeBody() error {
 		if err != nil {
 			return err
 		}
+		if !validCallConv(cc) {
+			return errCorrupt
+		}
 		r.namedCC[i] = types.CallConv(cc)
 		owner := r.pkgByID(pkgID)
 		if pkgID == 0 {
@@ -1189,6 +1213,9 @@ func (r *pkgReader) decodeBody() error {
 		cc, err := r.dec.readByte()
 		if err != nil {
 			return err
+		}
+		if !validCallConv(cc) {
+			return errCorrupt
 		}
 		owner := r.pkgByID(pkgID)
 		r.aliasOwners[i] = owner
@@ -1450,6 +1477,9 @@ func (r *pkgReader) readFuncMeta() (decodedFuncMeta, error) {
 	if err != nil {
 		return decodedFuncMeta{}, err
 	}
+	if flags&^funcMetaAllFlags != 0 {
+		return decodedFuncMeta{}, errCorrupt
+	}
 	m := decodedFuncMeta{
 		hasClosureEnv:  flags&funcMetaClosureEnv != 0,
 		noInline:       flags&funcMetaNoInline != 0,
@@ -1513,6 +1543,9 @@ func (r *pkgReader) readVarMeta() (decodedVarMeta, error) {
 	if err != nil {
 		return decodedVarMeta{}, err
 	}
+	if flags&^varMetaAllFlags != 0 {
+		return decodedVarMeta{}, errCorrupt
+	}
 	var m decodedVarMeta
 	if flags&varMetaLinkName != 0 {
 		if m.linkName, err = r.dec.readStr(); err != nil {
@@ -1528,6 +1561,9 @@ func (r *pkgReader) readVarMeta() (decodedVarMeta, error) {
 		loc, err := r.dec.readByte()
 		if err != nil {
 			return decodedVarMeta{}, err
+		}
+		if !validLocality(loc) {
+			return decodedVarMeta{}, errCorrupt
 		}
 		m.locality = directive.Locality(loc)
 	}
@@ -1794,6 +1830,9 @@ func (r *pkgReader) readType() (types.Type, error) {
 		cc, err := r.dec.readByte()
 		if err != nil {
 			return nil, err
+		}
+		if !validCallConv(cc) {
+			return nil, errCorrupt
 		}
 		variadic, err := r.dec.readBool()
 		if err != nil {

@@ -26,7 +26,6 @@ func TestGoBasicAccessAlignment(t *testing.T) {
 			prog := NewProgram(&target)
 			defer prog.Dispose()
 			sizes := types.SizesFor("gc", target.GOARCH)
-			prog.TypeSizes(sizes)
 			pkg := prog.NewPackage("example.com/alignment", "alignment")
 			for _, basic := range []types.BasicKind{types.Byte, types.Int32, types.Int64, types.Float32, types.Float64, types.Complex64, types.Complex128} {
 				raw := types.Typ[basic]
@@ -89,7 +88,6 @@ func TestGoAtomicAccessAlignment(t *testing.T) {
 			prog := NewProgram(&target)
 			defer prog.Dispose()
 			sizes := types.SizesFor("gc", target.GOARCH)
-			prog.TypeSizes(sizes)
 			pkg := prog.NewPackage("example.com/atomic_alignment", "atomic_alignment")
 			for _, basic := range []types.BasicKind{types.Uint8, types.Int32, types.Int64, types.Uint64, types.Uintptr, types.UnsafePointer} {
 				raw := types.Typ[basic]

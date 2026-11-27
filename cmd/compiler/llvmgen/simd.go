@@ -216,12 +216,41 @@ func simdLanes(typ types.Type) *types.Array {
 	return lanes
 }
 
+func simdLaneBytes(elem types.Type) int64 {
+	basic, ok := elem.Underlying().(*types.Basic)
+	if !ok {
+		return 0
+	}
+	switch basic.Kind() {
+	case types.Int8, types.Uint8:
+		return 1
+	case types.Int16, types.Uint16:
+		return 2
+	case types.Int32, types.Uint32, types.Float32:
+		return 4
+	case types.Int64, types.Uint64, types.Float64:
+		return 8
+	default:
+		return 0
+	}
+}
+
+// SIMDVectorBytes returns the byte width of a validated SIMD vector or mask
+// storage type, or 0 when typ is not a SIMD vector.
+func SIMDVectorBytes(typ types.Type) int64 {
+	lanes, ok := SIMDVectorShape(typ)
+	if !ok {
+		return 0
+	}
+	return lanes.Len() * simdLaneBytes(lanes.Elem())
+}
+
 // Pointers and slices are explicit memory interfaces and do not carry a vector
 // by value. Go aggregates containing vectors still need the same native-boundary
 // restriction as a direct vector parameter or result.
 func containsWideSIMD(typ types.Type) bool {
-	if lanes, ok := SIMDVectorShape(typ); ok {
-		return types.SizesFor("gc", "amd64").Sizeof(lanes) > 16
+	if width := SIMDVectorBytes(typ); width > 0 {
+		return width > 16
 	}
 	switch typ := typ.Underlying().(type) {
 	case *types.Array:

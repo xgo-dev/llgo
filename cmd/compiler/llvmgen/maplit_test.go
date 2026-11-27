@@ -6,7 +6,6 @@ import (
 	"fmt"
 	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/types"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -15,7 +14,6 @@ import (
 
 func TestMapLitLoopArrays(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	defer prog.Dispose()
 	prog.SetRuntime(func() *types.Package {
 		p, e := llpkgs.SourceImporter().Import(PkgRuntime)
@@ -72,7 +70,6 @@ func TestMapLitLoopRejectsInvalidLengths(t *testing.T) {
 
 func TestMapLitArrayNameCompatibility(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	defer prog.Dispose()
 	pkg := prog.NewPackage("maplit", "maplit")
 	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
@@ -129,7 +126,6 @@ func BenchmarkMapLitArray(b *testing.B) {
 	for _, n := range []int{16, 256, 4096} {
 		b.Run(fmt.Sprint(n), func(b *testing.B) {
 			prog := NewProgram(nil)
-			prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 			defer prog.Dispose()
 			pkg := prog.NewPackage("maplit", "maplit")
 			sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)

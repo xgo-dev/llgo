@@ -94,7 +94,7 @@ func ToEmpty(a Empty) [0]uintptr { return [0]uintptr(a) }
 				if err := ParsePkgSyntax(prog, fset, raw, files); err != nil {
 					t.Fatal(err)
 				}
-				pkg, _, err := ssautil.BuildPackage(&types.Config{Importer: imp, Sizes: prog.TypeSizes(types.SizesFor("gc", "wasm"))}, fset, raw, files, ssa.SanityCheckFunctions)
+				pkg, _, err := ssautil.BuildPackage(&types.Config{Importer: imp, Sizes: prog.TypeSizes()}, fset, raw, files, ssa.SanityCheckFunctions)
 				if err != nil {
 					t.Fatal(err)
 				}

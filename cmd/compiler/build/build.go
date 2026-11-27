@@ -1972,6 +1972,7 @@ type context struct {
 	llgoFilesCache    map[*packages.Package][]llgoFileInput
 	llgoFilesFrozen   bool
 	llgoFileHashCache map[llgoFileHashKey]string
+	llgoFileErrCache  map[llgoFileHashKey]error
 
 	// plan9asm package policy parsed from env.
 	plan9asmOnce  sync.Once

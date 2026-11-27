@@ -8,7 +8,6 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -36,7 +35,6 @@ func compileSource(t *testing.T, src, file string) string {
 	}
 
 	prog := ssatest.NewProgramEx(t, nil, imp)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	ret, err := cl.NewPackage(prog, foo, files)
 	if err != nil {
 		t.Fatalf("cl.NewPackage failed: %v", err)

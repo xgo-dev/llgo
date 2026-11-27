@@ -7,7 +7,6 @@ import (
 	"go/constant"
 	"go/parser"
 	"go/token"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -50,11 +49,6 @@ func compileWithRewritesModeTarget(t *testing.T, src string, rewrites map[string
 		t.Fatalf("build package failed: %v", err)
 	}
 	prog := ssatest.NewProgramEx(t, target, importer)
-	goarch := runtime.GOARCH
-	if target != nil && target.GOARCH != "" {
-		goarch = target.GOARCH
-	}
-	prog.TypeSizes(types.SizesFor("gc", goarch))
 	ret, _, err := NewPackageEx(prog, nil, rewrites, pkg, []*ast.File{file})
 	if err != nil {
 		t.Fatalf("NewPackageEx failed: %v", err)

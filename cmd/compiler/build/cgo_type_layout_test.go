@@ -200,7 +200,6 @@ func cgoLayoutDifferences(t *testing.T, target cLayoutTarget, goPkg *types.Packa
 	llvmgen.Initialize(llvmgen.InitAll)
 	prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: target.os, GOARCH: target.arch, LLVMTarget: target.triple, WasmProfile: target.profile})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", target.arch))
 	pkg := prog.NewPackage("layout", "layout")
 	td := prog.TargetData()
 	diffs := []string{}

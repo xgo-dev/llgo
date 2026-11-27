@@ -18,7 +18,7 @@ func TestHostLayoutAddressableStorage(t *testing.T) {
 		t.Run(target.WasmProfile, func(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
-			sizes := prog.TypeSizes(types.SizesFor("gc", "wasm"))
+			sizes := prog.TypeSizes()
 			setTestRuntime(t, prog)
 			fs := token.NewFileSet()
 			file, err := parser.ParseFile(fs, "storage.go", `package storage
@@ -88,7 +88,7 @@ func TestHostLayoutZeroSizedTail(t *testing.T) {
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
-			sizes := prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
+			sizes := prog.TypeSizes()
 			markerPkg, err := llpkgs.DefaultImporter().Import("structs")
 			if err != nil {
 				t.Fatal(err)

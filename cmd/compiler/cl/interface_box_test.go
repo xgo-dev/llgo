@@ -6,7 +6,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -118,7 +117,6 @@ func compileInterfaceBoxIR(t *testing.T, src string, mode ssa.BuilderMode, targe
 	prog := newLLSSAProgForTarget(t, target)
 	defer prog.Dispose()
 	if target == nil {
-		prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	}
 	prog.EnableGCRoots(roots)
 	compiled, _, err := NewPackageEx(prog, nil, nil, pkg, files)

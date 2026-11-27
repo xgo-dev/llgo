@@ -390,18 +390,8 @@ func (p *context) processLinknameByDoc(doc *ast.CommentGroup, fullName, inPkgNam
 }
 
 func (p *context) processNoInterfaceByDoc(doc *ast.CommentGroup, fullName string) {
-	if doc == nil {
-		return
-	}
-	for n := len(doc.List) - 1; n >= 0; n-- {
-		d, ok := directive.Parse(doc.List[n])
-		if !ok || !strings.HasPrefix(d.Name, "go:") {
-			return
-		}
-		if d.Name == "go:nointerface" && d.Args == "" {
-			p.prog.SetNoInterfaceMethod(fullName)
-			return
-		}
+	if directive.HasNoInterface(doc) {
+		p.prog.SetNoInterfaceMethod(fullName)
 	}
 }
 

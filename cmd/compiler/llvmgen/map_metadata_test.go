@@ -91,7 +91,6 @@ func TestWasmMapMetadata(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: tc.goos, GOARCH: tc.arch, LLVMTarget: tc.triple, WasmProfile: tc.profile})
 			defer prog.Dispose()
-			prog.TypeSizes(&types.StdSizes{WordSize: 8, MaxAlign: 8})
 			prog.SetRuntime(func() *types.Package { return runtimePkg })
 			prog.EnableDeadcodeDrop(tc.dce)
 			prog.EnableGoGlobalDCE(true)

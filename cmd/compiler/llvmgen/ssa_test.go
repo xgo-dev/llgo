@@ -24,7 +24,6 @@ import (
 	"math"
 	"os"
 	"reflect"
-	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -1411,7 +1410,6 @@ func TestDevLTOGlobalDCEAbiTypeFakeUseFieldIndexes(t *testing.T) {
 func TestRecordTypeChildren(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	disabledPkg := prog.NewPackage("pkg", "pkg/disabled")
 	(&aBuilder{Prog: prog, Pkg: disabledPkg}).recordTypeChildren("pkg.disabled", types.Typ[types.Int], false)
 	if disabledPkg.metaBuilder != nil {
@@ -1504,7 +1502,6 @@ pkg.struct:
 func TestAbiTypeLazyPtrToThis(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -1539,7 +1536,6 @@ func TestAbiTypeLazyPtrToThis(t *testing.T) {
 func TestRecordMethodSlots(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -1763,7 +1759,6 @@ func TestDevLTOGlobalDCEAbiTypeFakeUsesRecordedDuringAbiTypeBuild(t *testing.T) 
 	requireGoGlobalDCE(t)
 
 	prog := NewProgram(nil)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -1801,7 +1796,6 @@ func TestDevLTOGlobalDCEAbiTypeFakeUsesRecordedDuringAbiTypeBuild(t *testing.T) 
 
 func TestMapKeyPtrCoverage(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -3059,7 +3053,6 @@ attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 func TestArrayEqualLowering(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -3166,7 +3159,6 @@ func TestCanInlineArrayEqual(t *testing.T) {
 func TestStructEqualLowering(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {

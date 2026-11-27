@@ -20,7 +20,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"runtime"
 	"testing"
 
 	"github.com/xgo-dev/llgo/types"
@@ -137,7 +136,7 @@ func TestCFunctionAliasKeepsNativeRepresentation(t *testing.T) {
 			t.Fatalf("Go callback %s representation = (%v, %d bytes), want two-word closure", alias.Obj().Name(), got.kind, prog.SizeOf(got))
 		}
 	}
-	sizes := prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	sizes := prog.TypeSizes()
 	for _, alias := range []*types.Alias{callback, outer} {
 		if got := sizes.Sizeof(alias); got != int64(prog.PointerSize()) {
 			t.Fatalf("C callback %s Go size = %d, want pointer size", alias.Obj().Name(), got)

@@ -743,7 +743,8 @@ func (b diBuilder) doCreateStructType(name string, ty Type, pos token.Position, 
 }
 
 func (b diBuilder) createClosureType(name string, ty Type, sig *types.Signature, pos token.Position) DIType {
-	return b.doCreateStructType(name, ty, pos, func(ditStruct DIType) []llvm.Metadata {
+	closureName := fmt.Sprintf("struct{$f %s; $data unsafe.Pointer}", diTypeName(sig))
+	return b.doCreateStructType(closureName, ty, pos, func(ditStruct DIType) []llvm.Metadata {
 		fnPtr := b.prog.funcPtrType(sig)
 		return []llvm.Metadata{
 			b.createMemberTypeEx("$f", ty, fnPtr, 0, pos, 0),

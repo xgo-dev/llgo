@@ -7,7 +7,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -45,7 +44,6 @@ func compileLocalitySourceMode(t *testing.T, src string, options Options, logica
 		t.Fatal(err)
 	}
 	prog := ssatest.NewProgramEx(t, nil, imp)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(localityRuntimePackage())
 	prog.EnableLogicalGoroutineLocality(logicalGLS)
 	if err := ParsePkgSyntaxWithOptions(prog, fset, pkg, files, options); err != nil {
@@ -518,7 +516,6 @@ func Values() (int, *int) { return dep.Values() }
 	}))
 
 	prog := ssatest.NewProgram(t, nil)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(localityRuntimePackage())
 	for _, input := range []struct {
 		pkg   *types.Package

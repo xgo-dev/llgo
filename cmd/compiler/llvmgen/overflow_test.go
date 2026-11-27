@@ -14,7 +14,6 @@ func TestUMulOverflowResultLayout(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: "windows", GOARCH: arch})
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", arch))
 			pkg := prog.NewPackage("overflow", "overflow")
 			fn := pkg.NewFunc("test", NoArgsNoRet, CDecl)
 			b := fn.MakeBody(1)

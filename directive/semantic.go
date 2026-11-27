@@ -259,19 +259,9 @@ func HasNoInline(doc *ast.CommentGroup) bool {
 
 // HasNoInterface reports whether doc contains a //go:nointerface directive.
 func HasNoInterface(doc *ast.CommentGroup) bool {
-	if doc == nil {
-		return false
-	}
-	for n := len(doc.List) - 1; n >= 0; n-- {
-		d, ok := Parse(doc.List[n])
-		if !ok {
-			return false
-		}
+	for _, d := range ParseGroup(doc) {
 		if d.Name == "go:nointerface" && d.Args == "" {
 			return true
-		}
-		if !strings.HasPrefix(d.Name, "go:") && !strings.HasPrefix(d.Name, "llgo:") && d.Name != "export" {
-			return false
 		}
 	}
 	return false

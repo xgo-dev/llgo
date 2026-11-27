@@ -19,7 +19,6 @@ func TestDebugNativeFunctionSnapshots(t *testing.T) {
 				t.Run(target.GOOS+"/"+target.GOARCH+"/"+target.LLVMTarget+"/"+level.String()+"/"+kind, func(t *testing.T) {
 					prog := NewProgram(&target)
 					defer prog.Dispose()
-					prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
 					prog.SetRuntime(newDebugRuntimePackage())
 					pkg := prog.NewPackage("p", "example.com/p")
 					pkg.InitDebug("p", pkg.Path(), token.NewFileSet())

@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -160,7 +159,6 @@ type T19 T18
 	}
 
 	prog := NewProgram(nil)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	t18 := pkg.Scope().Lookup("T18").Type()
 	if got, want := prog.Type(t18, GoDecl).ll.String(), prog.tyVoidPtr().String(); got != want {
 		t.Fatalf("recursive named pointer LLVM type = %q, want %q", got, want)
@@ -169,7 +167,7 @@ type T19 T18
 
 func TestGoProgramSizesUnaliasFunctionFieldStruct(t *testing.T) {
 	prog := NewProgram(nil)
-	sizes := prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
+	sizes := prog.TypeSizes()
 
 	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
 	fnStruct := types.NewStruct([]*types.Var{
@@ -192,7 +190,6 @@ func TestGoProgramSizesUnaliasFunctionFieldStruct(t *testing.T) {
 
 func TestNamedStructLayoutEquivalent(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 
 	pkg := types.NewPackage("example.com/p", "p")
 	s1 := types.NewStruct([]*types.Var{

@@ -22,10 +22,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/ssatest"
 	"github.com/xgo-dev/llgo/exportdata"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/ssautil"
@@ -92,8 +92,8 @@ func TestNativeSSAStaticByteArrayWithoutASTStrip(t *testing.T) {
 	if g := ssaPkg.Var("Table"); len(g.StaticBytes) != n {
 		t.Fatalf("Table.StaticBytes len = %d, want %d", len(g.StaticBytes), n)
 	}
-	llprog := ssatest.NewProgramEx(t, nil, nil)
-	llprog.TypeSizes(types.SizesFor("gc", "arm64"))
+	llprog := newLLSSAProg(t)
+	defer llprog.Dispose()
 	// Deliberately pass empty Options{} (no StaticByteArrays side table).
 	ret, _, err := NewPackageExWithEmbedMetaOptions(llprog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{})
 	if err != nil {
@@ -166,5 +166,10 @@ func CallViaValue(x int) int { f := dep.EnvTarget; return f(x) }
 	decl := mustNamedFunction(t, mod, "example.com/dep.EnvTarget")
 	if got := len(decl.Params()); got != 2 {
 		t.Fatalf("imported //llgo:env declaration param count = %d, want 2 (env + x):\n%s", got, decl.String())
+	}
+	callIR := mustNamedFunction(t, mod, "example.com/root.Call").String()
+	callPat := regexp.MustCompile(`call i(?:32|64) @"example\.com/dep\.EnvTarget"\(ptr (?:swiftself )?null,`)
+	if !callPat.MatchString(callIR) {
+		t.Fatalf("direct call to imported //llgo:env function did not pass leading null env argument:\n%s", callIR)
 	}
 }

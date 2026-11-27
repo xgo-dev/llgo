@@ -55,7 +55,6 @@ func TestNativeCallbackTypeMetadata(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: "windows", GOARCH: arch})
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", arch))
 			prog.SetRuntime(runtimePkg)
 			pkg := prog.NewPackage("p", "example.com/p")
 			b := pkg.NewFunc("use", NoArgsNoRet, GoDecl).MakeBody(1)
@@ -114,7 +113,6 @@ func TestNativeCallbackTypeMetadata(t *testing.T) {
 func TestWasm32NativeAliasDescriptors(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", "wasm"))
 	runtimePkg, err := llpkgs.SourceImporter().Import(PkgRuntime)
 	if err != nil {
 		t.Fatal(err)

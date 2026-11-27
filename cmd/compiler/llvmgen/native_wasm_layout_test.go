@@ -15,7 +15,7 @@ func TestWasmNativeSourceLayoutMatchesStorage(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: tc.goos, GOARCH: "wasm", WasmProfile: tc.profile})
 			defer prog.Dispose()
 			setTestRuntime(t, prog)
-			sizes := prog.TypeSizes(types.SizesFor("gc", "wasm"))
+			sizes := prog.TypeSizes()
 			fset := token.NewFileSet()
 			file, err := parser.ParseFile(fset, "native.go", `package native
 type Inner struct { P *byte; W uintptr }
@@ -82,7 +82,7 @@ func TestWasmNativeSourceLayoutDuringTypeCompletion(t *testing.T) {
 			}
 			prog := NewProgram(&Target{GOOS: goos, GOARCH: "wasm", WasmProfile: profile})
 			defer prog.Dispose()
-			sizes := prog.TypeSizes(types.SizesFor("gc", "wasm"))
+			sizes := prog.TypeSizes()
 			pkg := types.NewPackage("native", "native")
 			record := types.NewNamed(types.NewTypeName(0, pkg, "Record", nil), types.NewStruct(nil, nil), nil)
 			prog.SetTypeCallConv("native.Record", CDecl)

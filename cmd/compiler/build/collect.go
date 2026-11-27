@@ -363,16 +363,20 @@ func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error)
 		if loaded == nil {
 			loaded = &aPackage{Package: dep}
 		}
-		key, err := c.frontend.inputKey(loaded)
-		if err != nil {
-			return entry, err
-		}
 		// Source closure + this dependency's context-specific initializer plan is
 		// complete without recursively hashing archive keys through replacement
 		// cycles. The common target/feature policy is in every parent manifest.
 		plans := append([]string{}, c.frontendOptions.UnusedGlobalInits.CacheKeys(loaded.SSA)...)
 		if loaded.AltPkg != nil {
 			plans = append(plans, c.frontendOptions.UnusedGlobalInits.CacheKeys(c.progSSA.Package(loaded.AltPkg.Types))...)
+		}
+		if v := moduleVersion(dep.Module); v != "" && loaded.AltPkg == nil && len(plans) == 0 && !packageHasOverlay(dep, c.buildConf) {
+			entry.Version = v
+			return entry, nil
+		}
+		key, err := c.frontend.inputKey(loaded)
+		if err != nil {
+			return entry, err
 		}
 		slices.Sort(plans)
 		entry.Fingerprint = frontendDigest([]byte(key + fmt.Sprint(plans)))
@@ -401,6 +405,28 @@ func (c *context) dependencyFingerprint(dep *packages.Package) (depEntry, error)
 	}
 	entry.Fingerprint = temp.Fingerprint
 	return entry, nil
+}
+
+func packageHasOverlay(pkg *packages.Package, conf *Config) bool {
+	if pkg == nil || conf == nil || len(conf.Overlay) == 0 {
+		return false
+	}
+	for _, f := range pkg.GoFiles {
+		if _, ok := conf.Overlay[f]; ok {
+			return true
+		}
+	}
+	for _, f := range pkg.OtherFiles {
+		if _, ok := conf.Overlay[f]; ok {
+			return true
+		}
+	}
+	for _, f := range pkg.EmbedFiles {
+		if _, ok := conf.Overlay[f]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func moduleVersion(mod *gopackages.Module) string {
@@ -709,7 +735,7 @@ func (c *context) saveToCache(pkg *aPackage) error {
 	if pkg.SSA != nil {
 		_ = c.writeExportMetaSidecar(paths.Export, pkg)
 	}
-	// Persist binary llgo/types exportdata v3 sidecar for AST-free incremental hits.
+	// Persist binary llgo/types exportdata v4 sidecar for AST-free incremental hits.
 	if pkg.Types != nil {
 		_ = c.writePackageTypesSidecar(paths.Types, pkg)
 	}

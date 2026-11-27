@@ -18,7 +18,6 @@ func TestWasmGlobalScanPolicyUsesGoTypes(t *testing.T) {
 			defer prog.Dispose()
 			setTestRuntime(t, prog)
 			if target.GOARCH == "wasm" {
-				prog.TypeSizes(&types.StdSizes{WordSize: 8, MaxAlign: 8})
 			}
 			prog.EnableGCRoots(roots)
 			pkg := prog.NewPackage("globals", "globals")

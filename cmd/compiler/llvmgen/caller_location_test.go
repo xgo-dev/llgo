@@ -3,7 +3,6 @@ package llvmgen
 import (
 	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"runtime"
 	"testing"
 
 	"github.com/xgo-dev/llvm"
@@ -99,7 +98,6 @@ func TestLocationRecordAfterClosureContext(t *testing.T) {
 func TestLocationRecordDebugPositions(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	pkg := prog.NewPackage("foo", "foo")
 	pkg.InitDebug("foo", "foo", token.NewFileSet())
 	fn := pkg.NewFunc("foo.f", NoArgsNoRet, GoDecl)

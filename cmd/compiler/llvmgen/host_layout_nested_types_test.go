@@ -20,7 +20,7 @@ func TestHostLayoutNestedNativeTypes(t *testing.T) {
 		t.Run(target.GOARCH, func(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
-			sizes := prog.TypeSizes(&types.StdSizes{WordSize: 4, MaxAlign: 4})
+			sizes := prog.TypeSizes()
 			setTestRuntime(t, prog)
 			fs := token.NewFileSet()
 			file, err := parser.ParseFile(fs, "native.go", `package native
@@ -139,7 +139,7 @@ func TestHostLayoutOverflow(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			prog := NewProgram(&Target{GOOS: "linux", GOARCH: arch})
 			defer prog.Dispose()
-			sizes := prog.TypeSizes(types.SizesFor("gc", arch))
+			sizes := prog.TypeSizes()
 			pkg, err := llpkgs.DefaultImporter().Import("structs")
 			if err != nil {
 				t.Fatal(err)

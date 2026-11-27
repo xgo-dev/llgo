@@ -136,7 +136,6 @@ func TestStdcallLoopDeferIR(t *testing.T) {
 		t.Run(arch, func(t *testing.T) {
 			prog := ssatest.NewProgram(t, &llvmgen.Target{GOOS: "windows", GOARCH: arch})
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", arch))
 			goPkg := types.NewPackage("callback", "callback")
 			typ := types.NewNamed(types.NewTypeName(token.NoPos, goPkg, "Stdcall", nil), llvmgen.NoArgsNoRet, nil)
 			prog.SetTypeCallConv("callback.Stdcall", llvmgen.Stdcall)

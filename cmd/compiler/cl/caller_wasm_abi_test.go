@@ -1,7 +1,6 @@
 package cl
 
 import (
-	"github.com/xgo-dev/llgo/types"
 	"strings"
 	"testing"
 
@@ -22,7 +21,6 @@ func TestWasmCallerLocationScalarABI(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			prog := newLLSSAProgForTarget(t, &test.target)
 			if test.name == "EC64" {
-				prog.TypeSizes(types.SizesFor("gc", "amd64"))
 			}
 			pkg := prog.NewPackage("foo", "example.com/foo")
 			fn := pkg.NewFunc("example.com/foo.f", llvmgen.NoArgsNoRet, llvmgen.GoDecl)

@@ -27,7 +27,7 @@ func TestGoArrayAccessAlignment(t *testing.T) {
 		t.Run(target.GOOS+"/"+target.GOARCH+target.GOARM, func(t *testing.T) {
 			prog := NewProgram(&target)
 			defer prog.Dispose()
-			sizes := prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
+			sizes := prog.TypeSizes()
 			pkg := prog.NewPackage("example.com/arrayalignment", "arrayalignment")
 			rawPkg := types.NewPackage("example.com/arrayalignment", "arrayalignment")
 			field := func(name string, typ types.Type) *types.Var {

@@ -147,7 +147,6 @@ func newLLSSAProgForTarget(t *testing.T, target *llvmgen.Target) llvmgen.Program
 		return rt
 	})
 	if target != nil && target.GOARCH != "" {
-		prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
 	}
 	return prog
 }

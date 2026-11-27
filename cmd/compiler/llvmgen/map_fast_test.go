@@ -4,7 +4,6 @@ import (
 	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -178,7 +177,6 @@ func TestMapFastRuntimeNames(t *testing.T) {
 func TestLargeMapLookupUsesFatAccessAndPackageZero(t *testing.T) {
 	prog := NewProgram(nil)
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := llpkgs.SourceImporter().Import(PkgRuntime)
 		if err != nil {

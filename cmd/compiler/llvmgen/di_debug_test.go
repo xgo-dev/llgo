@@ -7,7 +7,6 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -93,7 +92,6 @@ func inspect() {
 
 	prog := NewProgram(&Target{OptLevel: optlevel.O0})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	pkg := prog.NewPackage("p", "example.com/p")
 	pkg.InitDebug("p", "example.com/p", fset)
 	fn := pkg.NewFunc("debugTypes", NoArgsNoRet, GoDecl)
@@ -184,7 +182,6 @@ func inspect(first, second int) {}
 
 			prog := NewProgram(&Target{OptLevel: tc.opt})
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 			pkg := prog.NewPackage("p", "example.com/p")
 			pkg.InitDebug("p", "example.com/p", fset)
 			function := pkg.NewFunc("example.com/p.inspect", signature, GoDecl)
@@ -278,7 +275,6 @@ type Shape struct {
 
 			prog := NewProgram(nil)
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 			prog.SetRuntime(newDebugRuntimePackage())
 			pkg := prog.NewPackage(packageName, "example.com/p")
 			pkg.InitDebug(packageName, "example.com/p", fset)
@@ -346,7 +342,6 @@ func TestWindowsDebugPointerParameter(t *testing.T) {
 
 			prog := NewProgram(&Target{GOOS: test.goos, GOARCH: goarch, OptLevel: optlevel.O0})
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", goarch))
 			pkg := prog.NewPackage("p", "example.com/p")
 			pkg.InitDebug("p", "example.com/p", fset)
 			fn := pkg.NewFunc("example.com/p.f", sig, GoDecl)
@@ -399,7 +394,6 @@ func TestWindows386WideIntegerDebugValue(t *testing.T) {
 
 	prog := NewProgram(&Target{GOOS: "windows", GOARCH: goarch, OptLevel: optlevel.O0})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", goarch))
 	pkg := prog.NewPackage("p", "example.com/p")
 	pkg.InitDebug("p", "example.com/p", fset)
 	fn := pkg.NewFunc("example.com/p.f", sig, GoDecl)
@@ -443,7 +437,6 @@ func f() {}
 
 	prog := NewProgram(&Target{OptLevel: optlevel.O0})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	pkg := prog.NewPackage("p", "example.com/p")
 	pkg.InitDebug("p", "example.com/p", fset)
 	decl := file.Decls[0].(*ast.FuncDecl)
@@ -483,7 +476,6 @@ func TestSyntheticBuilderDebugLocation(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			prog := NewProgram(&Target{OptLevel: optlevel.O0})
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 			pkg := prog.NewPackage("p", "example.com/p")
 			fn := pkg.NewFunc("example.com/p.f", NoArgsNoRet, GoDecl)
 			body := fn.MakeBody(1)
@@ -538,7 +530,6 @@ func TestSyntheticBuilderDebugLocation(t *testing.T) {
 func TestSetBlockRestoresTrackedDebugLocation(t *testing.T) {
 	prog := NewProgram(&Target{OptLevel: optlevel.O0})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	pkg := prog.NewPackage("p", "example.com/p")
 	pkg.InitDebug("p", "example.com/p", token.NewFileSet())
 	fn := pkg.NewFunc("example.com/p.f", NoArgsNoRet, GoDecl)
@@ -650,7 +641,6 @@ func TestDebugMapSnapshotUsesMapValueStorage(t *testing.T) {
 		t.Run(target.LLVMTarget, func(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
 			prog.SetRuntime(newDebugRuntimePackage())
 			pkg := prog.NewPackage("mapsnapshot", "mapsnapshot")
 			pkg.InitDebug("mapsnapshot", "mapsnapshot", token.NewFileSet())
@@ -723,7 +713,6 @@ func f() {}
 
 	prog := NewProgram(&Target{OptLevel: optlevel.O0})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	pkg := prog.NewPackage("p", "example.com/p")
 	pkg.InitDebug("p", "example.com/p", fset)
 	decl := file.Decls[0].(*ast.FuncDecl)

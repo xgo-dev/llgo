@@ -246,6 +246,16 @@ func (f *frontendCache) importBodies() error {
 	return nil
 }
 
+func (f *frontendCache) markUncacheable(pkg Package) {
+	if pkg == nil {
+		return
+	}
+	if f.uncacheable == nil {
+		f.uncacheable = make(map[Package]bool)
+	}
+	f.uncacheable[pkg] = true
+}
+
 // certify runs only after all layout/feature/initializer inputs are fixed.
 func (f *frontendCache) certify() error {
 	span := f.ctx.buildTrace.startCoordinator("certify frontend exports", nil)
@@ -261,7 +271,9 @@ func (f *frontendCache) certify() error {
 			continue
 		}
 		if err := f.ctx.collectFingerprint(pkg); err != nil {
-			return err
+			f.markUncacheable(pkg)
+			f.source(pkg, selected, "fingerprint-error")
+			continue
 		}
 		if record.Archive != pkg.Fingerprint || !f.ctx.tryLoadFromCache(pkg) {
 			f.source(pkg, selected, "archive-mismatch")
@@ -282,10 +294,21 @@ func (f *frontendCache) certify() error {
 		return err
 	}
 	// Inline preflight also needs archive state for the source-built packages.
+	// Skip packages that are decl-only/empty-link or fail speculative
+	// fingerprinting (e.g. unused cross-build runtime packages); real build
+	// errors are surfaced by prePackageBuild only if the package is needed.
 	for _, pkg := range f.orderedPackages() {
+		if f.uncacheable[pkg] {
+			continue
+		}
+		task := newPackageBuildTask(pkg)
+		if task.isDeclOnly() || (task.isLinkOnly() && !task.hasSource()) {
+			continue
+		}
 		if pkg.Fingerprint == "" {
 			if err := f.ctx.collectFingerprint(pkg); err != nil {
-				return err
+				f.markUncacheable(pkg)
+				continue
 			}
 		}
 		f.ctx.tryLoadFromCache(pkg)

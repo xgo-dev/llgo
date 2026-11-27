@@ -48,7 +48,7 @@ func TestSIMDValueAndStorageLayout(t *testing.T) {
 				types.NewField(token.NoPos, rawPkg, "tag", marker, false),
 				types.NewField(token.NoPos, rawPkg, "vals", types.NewArray(types.Typ[types.Float32], 4), false),
 			}, nil), nil)
-			sizes := prog.TypeSizes(&types.StdSizes{WordSize: int64(prog.GoWordSize()), MaxAlign: int64(prog.GoWordSize())})
+			sizes := prog.TypeSizes()
 			// Query source types before any importer, native metadata
 			// registration, or LLVM type construction has run.
 			defined := types.NewNamed(types.NewTypeName(token.NoPos, types.NewPackage("p", "p"), "V", nil), raw.Underlying(), nil)
@@ -129,7 +129,7 @@ func TestSIMDTagNativeAlignment(t *testing.T) {
 			}
 			prog := NewProgram(target)
 			defer prog.Dispose()
-			sizes := prog.TypeSizes(&types.StdSizes{WordSize: int64(prog.GoWordSize()), MaxAlign: int64(prog.GoWordSize())})
+			sizes := prog.TypeSizes()
 			pkg := types.NewPackage("simd/archsimd", "archsimd")
 			for _, width := range []int{16, 32, 64} {
 				tag := types.NewNamed(types.NewTypeName(token.NoPos, pkg, fmt.Sprintf("v%d", width*8), nil), types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "tag", types.NewArray(types.Typ[types.Uint8], 0), false)}, nil), nil)

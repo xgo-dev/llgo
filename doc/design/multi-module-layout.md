@@ -19,7 +19,7 @@ github.com/xgo-dev/llgo              (root go.mod — strict Go baseline: go 1.2
 │   └── ssautil/                     1:1 golang.org/x/tools/go/ssa/ssautil
 ├── callgraph/                       1:1 golang.org/x/tools/go/callgraph                                         [API-guarded]
 │   └── rta/                         1:1 golang.org/x/tools/go/callgraph/rta                                     [API-guarded]
-├── exportdata/                      1:1 golang.org/x/tools/go/gcexportdata (format v3 with LLGo metadata)       [API-guarded]
+├── exportdata/                      1:1 golang.org/x/tools/go/gcexportdata (format v4 with LLGo metadata)       [API-guarded]
 └── runtime/go.mod                   (separate module, go 1.20)
 
 github.com/xgo-dev/llgo/cmd          (cmd/go.mod — latest Go toolchain, go 1.27.0)
@@ -44,11 +44,11 @@ go.work                              Coordinates `.`, `./cmd`, `./runtime`, `./t
 
 | Upstream counterpart | `github.com/xgo-dev/llgo` package | Role |
 |---|---|---|
-| `go/types` | `llgo/types` | 1:1 non-deprecated `go/types` parity + first-class LLGo metadata (`Package`/`Func`/`Var` directives, `CallConv`, `Locality`, `WasmImport`/`WasmExport`, `NoInline`/`NoInterface`/`NoEscape`, `HasClosureEnv`, `Skip*`) & canonical `Context` layout/ABI/SIMD (`types/api_guard_test.go`) |
+| `go/types` | `llgo/types` | 1:1 non-deprecated `go/types` parity + first-class LLGo metadata (`Package`/`Func`/`Var` directives, `CallConv`, `Locality`, `WasmImport`/`WasmExport`, `NoInline`/`NoInterface`/`NoEscape`/`UintptrEscapes`/`NoSplit`, `HasClosureEnv`, `Skip*`) & canonical `Context` layout/ABI/SIMD (`types/api_guard_test.go`) |
 | `x/tools/go/types/typeutil` | `llgo/types/typeutil` | 1:1 `Hasher`, `Map`, `MethodSetCache`, `Callee`, `StaticCallee`, `Dependencies`, `IntuitiveMethodSet` |
 | `x/tools/go/ssa` + `ssautil` | `llgo/ssa`, `llgo/ssa/ssautil` | 1:1 `Program`, `Package`, `Function`, `BasicBlock`, `Value`, `Instruction`, all 37 instructions + source-level LLGo facts (`CallKind`, `Intrinsic`, `RecvNilCheck`); backend codegen policies (`NoScan`, `StaticBytes`) belong in `cmd/compiler/ssaopt` (`cmd/compiler/cl/xtools_parity_guard_test.go`) |
 | `x/tools/go/callgraph` + `callgraph/rta` | `llgo/callgraph`, `llgo/callgraph/rta` | 1:1 `Graph`/`Node`/`Edge`/helpers and Rapid Type Analysis (`rta.Analyze`/`Result`) |
-| `x/tools/go/gcexportdata` | `llgo/exportdata` | 1:1 `Read`, `Write`, `ReadBundle`, `WriteBundle`, `NewImporter` (`types.ImporterFrom`); format v3 round-trips all LLGo `Package`/`Func`/`Method`/`Var` metadata |
+| `x/tools/go/gcexportdata` | `llgo/exportdata` | 1:1 `Read`, `Write`, `ReadBundle`, `WriteBundle`, `NewImporter` (`types.ImporterFrom`); format v4 round-trips all LLGo `Package`/`Func`/`Method`/`Var` metadata |
 | *(LLGo-specific)* | `llgo/directive`, `llgo/target` | Directive parsing & target/ABI spec model |
 
 ## Single Canonical Type Context & Direct Lowering Contract (M0)
@@ -167,7 +167,7 @@ Decouple **Dev Incremental Mode** (separate per-package compilation) from
 **Release Whole-Program Mode** (`-Os`/whole-program escape/RTA/`-deadcodedrop`/`-lto=full`)
 using two cleanly separated cache layers alongside each cached package `.a`:
 
-1. **Public type export layer (`llgo/exportdata` v3 `.llgotypes`)**:
+1. **Public type export layer (`llgo/exportdata` v4 `.llgotypes`)**:
    - Persists binary `llgo/types.Package` scopes including all LLGo directives
      and metadata (explicitly covering `pkg.Module == nil` stdlib and
      runtime-patched effective scopes) so unchanged dependencies skip Go source
@@ -185,8 +185,8 @@ using two cleanly separated cache layers alongside each cached package `.a`:
 
 | Milestone | Scope | Independent Acceptance Gate |
 |---|---|---|
-| **M0 (#3220 + #3254)** | Pure-Go Go 1.20 core, native `llgo/ssa` cutover, multi-module split, LLGo extensions internalized (`directive`/`types`/`exportdata` v3/`ssa`), single canonical `prog.TypeContext()`, `gocvt` removal | Root Go 1.20/1.22/1.27 matrix + zero `llvm`/`x/tools` deps; full `cmd/compiler/llvmgen`, `cmd/cl`, `cmd/compiler/build`, and ABI/closure/CGo/Wasm tests green |
+| **M0 (#3220 + #3254)** | Pure-Go Go 1.20 core, native `llgo/ssa` cutover, multi-module split, LLGo extensions internalized (`directive`/`types`/`exportdata` v4/`ssa`), single canonical `prog.TypeContext()`, `gocvt` removal | Root Go 1.20/1.22/1.27 matrix + zero `llvm`/`x/tools` deps; full `cmd/compiler/llvmgen`, `cmd/cl`, `cmd/compiler/build`, and ABI/closure/CGo/Wasm tests green |
 | **`cl` Relocation** | Mechanical move `cmd/cl` → `cmd/compiler/cl` (updating imports, test generators, fixture paths, CI, coverage) | Zero semantic diff; `cmd/compiler/cl`, `cmd/chore/*`, and CI workflows green |
-| **M1 (Incremental Cache Hit Skip)** | Wire `.llgotypes` (`exportdata` v3) + private summary/on-demand body cache into production `packages`/`build` loading path | Warm 1-line edit verifies both wall-clock reduction **and** actual count of unchanged dependency packages skipping parse, type-check, and SSA build |
+| **M1 (Incremental Cache Hit Skip)** | Wire `.llgotypes` (`exportdata` v4) + private summary/on-demand body cache into production `packages`/`build` loading path | Warm 1-line edit verifies both wall-clock reduction **and** actual count of unchanged dependency packages skipping parse, type-check, and SSA build |
 | **M2 (`cmd/compiler/ssaopt` v1)** | Decouple `PrepareEscapeAnalysis` from LLVM; add pure-Go `ssaopt` (`FunctionPlan` + `VerifyPlan`); pilot receiver nil-check single-owner pipeline (`RecvNilCheck` → `FunctionPlan` → `cl`); migrate `Alloc.NoScan` & `StaticBytes` codegen policies from root `ssa` into `ssaopt` | Zero `llvm` imports in `ssaopt`/`goescape`; `ssa.VerifyFunction` + `ssaopt.VerifyPlan` green; `-O0` semantics & panic evaluation order verified by execution tests |
 | **M3 (Go-Semantic Passes)** | Expand `ssaopt` `FunctionPlan` across interface boxing placement, slice/array/string bounds check elimination (preserving wide-index Wasm32 safety), and interface devirtualization (preserving nil checks) | Golden IR + execution regressions green; evaluate private MIR only if concrete memory-effect passes or profiling justify it |

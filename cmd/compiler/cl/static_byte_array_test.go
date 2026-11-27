@@ -77,7 +77,6 @@ func TestStripLargeStaticByteArraySkipsSSAStores(t *testing.T) {
 	}
 
 	llprog := ssatest.NewProgramEx(t, nil, conf.Importer)
-	llprog.TypeSizes(types.SizesFor("gc", "arm64"))
 	ret, _, err := NewPackageExWithEmbedMetaOptions(llprog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{StaticByteArrays: payloads})
 	if err != nil {
 		t.Fatal(err)
@@ -656,7 +655,6 @@ func TestInitStaticByteArrayGlobalKeepsPatchSkipStores(t *testing.T) {
 	}
 
 	llprog := ssatest.NewProgramEx(t, nil, conf.Importer)
-	llprog.TypeSizes(types.SizesFor("gc", "arm64"))
 	ret, _, err := NewPackageExWithEmbedMetaOptions(llprog, nil, Patches{
 		"p": {Alt: altSSA, Types: typepatch.Clone(altPkg)},
 	}, nil, origSSA, []*ast.File{origFile, altFile}, nil, false, Options{StaticByteArrays: payloads})
@@ -700,7 +698,6 @@ func TestInitStaticByteArrayGlobalUsesObjectPackage(t *testing.T) {
 	ssaPkg.Pkg = types.NewPackage("github.com/xgo-dev/llgo/runtime/internal/lib/p", "p")
 
 	llprog := ssatest.NewProgramEx(t, nil, conf.Importer)
-	llprog.TypeSizes(types.SizesFor("gc", "arm64"))
 	ret, _, err := NewPackageExWithEmbedMetaOptions(llprog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{StaticByteArrays: payloads})
 	if err != nil {
 		t.Fatal(err)
@@ -746,7 +743,6 @@ func compileWithPayload(t *testing.T, src string, payloads map[string][]byte) {
 	ssaPkg := prog.CreatePackage(pkg, []*ast.File{file}, info, true)
 	ssaPkg.Build()
 	llprog := ssatest.NewProgramEx(t, nil, conf.Importer)
-	llprog.TypeSizes(types.SizesFor("gc", "arm64"))
 	if _, _, err := NewPackageExWithEmbedMetaOptions(llprog, nil, nil, nil, ssaPkg, []*ast.File{file}, nil, false, Options{StaticByteArrays: payloads}); err != nil {
 		t.Fatal(err)
 	}

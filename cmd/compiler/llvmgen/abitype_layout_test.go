@@ -13,7 +13,6 @@ import (
 func TestAbiStructFieldsUseGo386Offsets(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "windows", GOARCH: "386"})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", "386"))
 
 	st := types.NewStruct([]*types.Var{
 		types.NewField(token.NoPos, nil, "I", types.Typ[types.Int], false),
@@ -29,7 +28,6 @@ func TestAbiStructFieldsUseGo386Offsets(t *testing.T) {
 func TestGo386AtomicCmpXchgUsesNativeLLVMResult(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "windows", GOARCH: "386"})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", "386"))
 	pkg := prog.NewPackage("example.com/p", "p")
 	b := pkg.NewFunc("example.com/p.f", NoArgsNoRet, GoDecl).MakeBody(1)
 	valueType := prog.Uint64()
@@ -46,7 +44,6 @@ func TestGo386AtomicCmpXchgUsesNativeLLVMResult(t *testing.T) {
 func TestGo386StructPhysicalLayoutDiffersFromC(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "windows", GOARCH: "386"})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", "386"))
 
 	fields := []*types.Var{
 		types.NewField(token.NoPos, nil, "I", types.Typ[types.Int], false),
@@ -134,7 +131,6 @@ func TestGo386StructLayoutEdgeCases(t *testing.T) {
 func TestGo386TupleUsesGoStructLayout(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "windows", GOARCH: "386"})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", "386"))
 
 	results := types.NewTuple(
 		types.NewVar(token.NoPos, nil, "", types.Typ[types.Int64]),
@@ -166,7 +162,6 @@ func TestGo386TupleUsesGoStructLayout(t *testing.T) {
 func TestConstStructValueAsUsesDestinationLLVMType(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "windows", GOARCH: "386"})
 	defer prog.Dispose()
-	prog.TypeSizes(types.SizesFor("gc", "386"))
 
 	fields := []*types.Var{
 		types.NewField(token.NoPos, nil, "B", types.Typ[types.Uint8], false),

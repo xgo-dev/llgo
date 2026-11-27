@@ -21,7 +21,7 @@ func TestHostLayoutPreservesLegacySourceQueries(t *testing.T) {
 		t.Run(target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
-			sizes := prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
+			sizes := prog.TypeSizes()
 			setTestRuntime(t, prog)
 			fs := token.NewFileSet()
 			file, err := parser.ParseFile(fs, "legacy.go", `package legacy

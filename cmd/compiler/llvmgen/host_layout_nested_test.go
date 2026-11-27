@@ -13,7 +13,7 @@ func TestHostLayoutNestedNativeStorage(t *testing.T) {
 	Initialize(InitAll)
 	prog := NewProgram(&Target{GOOS: "linux", GOARCH: "arm"})
 	defer prog.Dispose()
-	sizes := prog.TypeSizes(types.SizesFor("gc", "arm"))
+	sizes := prog.TypeSizes()
 	setTestRuntime(t, prog)
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "probe.go", `package probe

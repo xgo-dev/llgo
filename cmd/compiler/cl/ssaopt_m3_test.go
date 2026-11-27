@@ -20,7 +20,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -44,7 +43,6 @@ func compileSSAOptIR(t *testing.T, src string, level optlevel.Level, target *llv
 	prog := newLLSSAProgForTarget(t, target)
 	defer prog.Dispose()
 	if target == nil {
-		prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	}
 	typeCtx := prog.TypeContext()
 	pkg, _, err := ssautil.BuildPackage(

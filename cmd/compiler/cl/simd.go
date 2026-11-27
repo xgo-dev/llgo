@@ -825,10 +825,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 }
 
 func simdVectorBits(typ types.Type) int64 {
-	if shape, ok := llvmgen.SIMDVectorShape(typ); ok {
-		return types.SizesFor("gc", "amd64").Sizeof(shape) * 8
-	}
-	return 0
+	return llvmgen.SIMDVectorBytes(typ) * 8
 }
 
 // Wide operations include the portable256 bridge's intrinsic dependencies.

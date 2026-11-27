@@ -31,6 +31,13 @@ type wasmReflectBridgePair struct {
 // wasmReflectBridge returns package-local bridges shared by every function
 // type with the same Go and native call conversions and reflection frame layout.
 func (p Package) wasmReflectBridge(sig *types.Signature) wasmReflectBridgePair {
+	if sig.Recv() != nil {
+		clean := types.NewSignatureType(nil, nil, nil, sig.Params(), sig.Results(), sig.Variadic())
+		if cc := sig.CallConv(); cc != types.Go {
+			clean = clean.WithCallConv(cc)
+		}
+		sig = clean
+	}
 	goType := p.Prog.toLLVMFunc(sig)
 	nativeType := p.Prog.toLLVMFuncBackground(sig, CDecl)
 	key, hasAttrs := p.Prog.wasmCallShape(sig, sig, goType, nativeType)

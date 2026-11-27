@@ -21,6 +21,29 @@ import (
 	gotypes "go/types"
 )
 
+func (c *Context) newToGoConverterLocked(goCtx *gotypes.Context) *toGoConverter {
+	if c.llToGoPkgs == nil {
+		c.llToGoPkgs = make(map[*Package]*gotypes.Package)
+	}
+	if c.llToGoTypes == nil {
+		c.llToGoTypes = make(map[Type]gotypes.Type)
+	}
+	if c.llToGoObjs == nil {
+		c.llToGoObjs = make(map[Object]gotypes.Object)
+	}
+	if c.llToGoTParams == nil {
+		c.llToGoTParams = make(map[*TypeParam]*gotypes.TypeParam)
+	}
+	return &toGoConverter{
+		ctx:     c,
+		goCtx:   goCtx,
+		pkgs:    c.llToGoPkgs,
+		types:   c.llToGoTypes,
+		objs:    c.llToGoObjs,
+		tparams: c.llToGoTParams,
+	}
+}
+
 // toGoPackage converts or binds an LLGo *Package into a go/types.Package
 // registered in c so that go/types.Checker sees its full declaration graph and
 // every resulting go/types object/type lowers back to the exact same LLGo
@@ -51,14 +74,7 @@ func (c *Context) toGoPackage(pkg *Package) *gotypes.Package {
 	if gp, ok := c.llToGoPkgs[pkg]; ok {
 		return gp
 	}
-	conv := &toGoConverter{
-		ctx:     c,
-		goCtx:   goCtx,
-		pkgs:    make(map[*Package]*gotypes.Package),
-		types:   make(map[Type]gotypes.Type),
-		objs:    make(map[Object]gotypes.Object),
-		tparams: make(map[*TypeParam]*gotypes.TypeParam),
-	}
+	conv := c.newToGoConverterLocked(goCtx)
 	return conv.pkg(pkg)
 }
 
@@ -99,14 +115,8 @@ func (c *Context) syncPackageScopeToGoLocked(pkg *Package) {
 	goCtx := c.ensureGoContext()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	conv := &toGoConverter{
-		ctx:     c,
-		goCtx:   goCtx,
-		pkgs:    map[*Package]*gotypes.Package{pkg: pkg.goPkg},
-		types:   make(map[Type]gotypes.Type),
-		objs:    make(map[Object]gotypes.Object),
-		tparams: make(map[*TypeParam]*gotypes.TypeParam),
-	}
+	conv := c.newToGoConverterLocked(goCtx)
+	conv.pkgs[pkg] = pkg.goPkg
 	for _, obj := range missing {
 		if _, ok := obj.(*TypeName); ok {
 			if goObj := conv.obj(obj); goObj != nil {
@@ -163,6 +173,46 @@ func (c *Context) absorbContextLocked(src *Context) {
 	for k, v := range src.goTParams {
 		if _, ok := c.goTParams[k]; !ok {
 			c.goTParams[k] = v
+		}
+	}
+	if len(src.llToGoPkgs) > 0 {
+		if c.llToGoPkgs == nil {
+			c.llToGoPkgs = make(map[*Package]*gotypes.Package, len(src.llToGoPkgs))
+		}
+		for k, v := range src.llToGoPkgs {
+			if _, ok := c.llToGoPkgs[k]; !ok {
+				c.llToGoPkgs[k] = v
+			}
+		}
+	}
+	if len(src.llToGoTypes) > 0 {
+		if c.llToGoTypes == nil {
+			c.llToGoTypes = make(map[Type]gotypes.Type, len(src.llToGoTypes))
+		}
+		for k, v := range src.llToGoTypes {
+			if _, ok := c.llToGoTypes[k]; !ok {
+				c.llToGoTypes[k] = v
+			}
+		}
+	}
+	if len(src.llToGoObjs) > 0 {
+		if c.llToGoObjs == nil {
+			c.llToGoObjs = make(map[Object]gotypes.Object, len(src.llToGoObjs))
+		}
+		for k, v := range src.llToGoObjs {
+			if _, ok := c.llToGoObjs[k]; !ok {
+				c.llToGoObjs[k] = v
+			}
+		}
+	}
+	if len(src.llToGoTParams) > 0 {
+		if c.llToGoTParams == nil {
+			c.llToGoTParams = make(map[*TypeParam]*gotypes.TypeParam, len(src.llToGoTParams))
+		}
+		for k, v := range src.llToGoTParams {
+			if _, ok := c.llToGoTParams[k]; !ok {
+				c.llToGoTParams[k] = v
+			}
 		}
 	}
 }
@@ -303,17 +353,21 @@ func (g *toGoConverter) obj(o Object) gotypes.Object {
 			g.bindObj(v, v.goObj)
 			return v.goObj
 		}
+		ownerPkg := g.pkg(v.pkg)
+		if goObj, ok := g.objs[v]; ok {
+			return goObj
+		}
 		if v.isAlias {
 			if a, ok := v.typ.(*Alias); ok {
 				ga := g.typ(a)
 				if goObj, ok := g.objs[v]; ok {
 					return goObj
 				}
-				tn := gotypes.NewTypeName(v.pos, g.pkg(v.pkg), v.name, ga)
+				tn := gotypes.NewTypeName(v.pos, ownerPkg, v.name, ga)
 				g.bindObj(v, tn)
 				return tn
 			}
-			tn := gotypes.NewTypeName(v.pos, g.pkg(v.pkg), v.name, g.typ(v.typ))
+			tn := gotypes.NewTypeName(v.pos, ownerPkg, v.name, g.typ(v.typ))
 			g.bindObj(v, tn)
 			return tn
 		}
@@ -323,7 +377,7 @@ func (g *toGoConverter) obj(o Object) gotypes.Object {
 				return goObj
 			}
 		}
-		tn := gotypes.NewTypeName(v.pos, g.pkg(v.pkg), v.name, nil)
+		tn := gotypes.NewTypeName(v.pos, ownerPkg, v.name, nil)
 		g.bindObj(v, tn)
 		if v.typ != nil {
 			_ = g.typ(v.typ)
@@ -335,8 +389,12 @@ func (g *toGoConverter) obj(o Object) gotypes.Object {
 			g.bindObj(v, v.goObj)
 			return v.goObj
 		}
+		ownerPkg := g.pkg(v.pkg)
+		if goObj, ok := g.objs[v]; ok {
+			return goObj
+		}
 		sig, _ := g.typ(v.typ).(*gotypes.Signature)
-		fn := gotypes.NewFunc(v.pos, g.pkg(v.pkg), v.name, sig)
+		fn := gotypes.NewFunc(v.pos, ownerPkg, v.name, sig)
 		g.bindObj(v, fn)
 		return fn
 
@@ -345,13 +403,17 @@ func (g *toGoConverter) obj(o Object) gotypes.Object {
 			g.bindObj(v, v.goObj)
 			return v.goObj
 		}
+		ownerPkg := g.pkg(v.pkg)
+		if goObj, ok := g.objs[v]; ok {
+			return goObj
+		}
 		var gv *gotypes.Var
 		if v.isField {
-			gv = gotypes.NewField(v.pos, g.pkg(v.pkg), v.name, g.typ(v.typ), v.embedded)
+			gv = gotypes.NewField(v.pos, ownerPkg, v.name, g.typ(v.typ), v.embedded)
 		} else if v.kind == ParamVar || v.kind == RecvVar || v.kind == ResultVar {
-			gv = gotypes.NewParam(v.pos, g.pkg(v.pkg), v.name, g.typ(v.typ))
+			gv = gotypes.NewParam(v.pos, ownerPkg, v.name, g.typ(v.typ))
 		} else {
-			gv = gotypes.NewVar(v.pos, g.pkg(v.pkg), v.name, g.typ(v.typ))
+			gv = gotypes.NewVar(v.pos, ownerPkg, v.name, g.typ(v.typ))
 		}
 		g.bindObj(v, gv)
 		return gv
@@ -361,7 +423,11 @@ func (g *toGoConverter) obj(o Object) gotypes.Object {
 			g.bindObj(v, v.goObj)
 			return v.goObj
 		}
-		gc := gotypes.NewConst(v.pos, g.pkg(v.pkg), v.name, g.typ(v.typ), v.val)
+		ownerPkg := g.pkg(v.pkg)
+		if goObj, ok := g.objs[v]; ok {
+			return goObj
+		}
+		gc := gotypes.NewConst(v.pos, ownerPkg, v.name, g.typ(v.typ), v.val)
 		g.bindObj(v, gc)
 		return gc
 
@@ -392,7 +458,11 @@ func (g *toGoConverter) tparam(tp *TypeParam) *gotypes.TypeParam {
 	}
 	var tn *gotypes.TypeName
 	if tp.obj != nil {
-		tn = gotypes.NewTypeName(tp.obj.pos, g.pkg(tp.obj.pkg), tp.obj.name, nil)
+		ownerPkg := g.pkg(tp.obj.pkg)
+		if gtp, ok := g.tparams[tp]; ok {
+			return gtp
+		}
+		tn = gotypes.NewTypeName(tp.obj.pos, ownerPkg, tp.obj.name, nil)
 		g.bindObj(tp.obj, tn)
 	} else {
 		tn = gotypes.NewTypeName(token.NoPos, nil, "T", nil)
@@ -578,7 +648,11 @@ func (g *toGoConverter) typ(t Type) gotypes.Type {
 		}
 		var tn *gotypes.TypeName
 		if u.obj != nil {
-			tn = gotypes.NewTypeName(u.obj.pos, g.pkg(u.obj.pkg), u.obj.name, nil)
+			ownerPkg := g.pkg(u.obj.pkg)
+			if gt, ok := g.types[u]; ok {
+				return gt
+			}
+			tn = gotypes.NewTypeName(u.obj.pos, ownerPkg, u.obj.name, nil)
 			g.bindObj(u.obj, tn)
 		} else {
 			tn = gotypes.NewTypeName(token.NoPos, nil, "", nil)
@@ -620,10 +694,17 @@ func (g *toGoConverter) typ(t Type) gotypes.Type {
 				return inst
 			}
 		}
+		var ownerPkg *gotypes.Package
+		if u.obj != nil {
+			ownerPkg = g.pkg(u.obj.pkg)
+			if gt, ok := g.types[u]; ok {
+				return gt
+			}
+		}
 		rhs := g.typ(u.rhs)
 		if goTypesErasesAliases() {
 			if u.obj != nil {
-				tn := gotypes.NewTypeName(u.obj.pos, g.pkg(u.obj.pkg), u.obj.name, rhs)
+				tn := gotypes.NewTypeName(u.obj.pos, ownerPkg, u.obj.name, rhs)
 				g.bindObj(u.obj, tn)
 			}
 			g.types[u] = rhs
@@ -631,7 +712,7 @@ func (g *toGoConverter) typ(t Type) gotypes.Type {
 		}
 		var tn *gotypes.TypeName
 		if u.obj != nil {
-			tn = gotypes.NewTypeName(u.obj.pos, g.pkg(u.obj.pkg), u.obj.name, nil)
+			tn = gotypes.NewTypeName(u.obj.pos, ownerPkg, u.obj.name, nil)
 			g.bindObj(u.obj, tn)
 		} else {
 			tn = gotypes.NewTypeName(token.NoPos, nil, "", nil)

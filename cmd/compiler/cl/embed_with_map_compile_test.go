@@ -6,7 +6,6 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -53,7 +52,6 @@ var files embed.FS
 	}
 
 	prog := ssatest.NewProgramEx(t, nil, imp)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	ret, _, err := cl.NewPackageExWithEmbed(prog, nil, nil, nil, fooPkg, files, embedMap)
 	if err != nil {
 		t.Fatalf("NewPackageExWithEmbed failed: %v", err)

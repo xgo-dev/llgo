@@ -17,6 +17,7 @@
 package build
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -751,6 +752,9 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 		}
 		preprocessedHash, ok := ctx.llgoFileHashCache[cacheKey]
 		if !ok {
+			if cachedErr, failed := ctx.llgoFileErrCache[cacheKey]; failed {
+				return nil, cachedErr
+			}
 			var depPath string
 			depKey := ""
 			if cacheEnabled() && overlay[input.path] == nil {
@@ -764,8 +768,22 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 				}
 			}
 			if !ok {
+				recordErr := func(err error, stderr string) error {
+					if msg := strings.TrimSpace(stderr); msg != "" {
+						err = fmt.Errorf("preprocess file %q: %w\n%s", input.path, err, msg)
+					} else {
+						err = fmt.Errorf("preprocess file %q: %w", input.path, err)
+					}
+					if ctx.llgoFileErrCache == nil {
+						ctx.llgoFileErrCache = make(map[llgoFileHashKey]error)
+					}
+					ctx.llgoFileErrCache[cacheKey] = err
+					return err
+				}
 				hash := sha256.New()
+				var stderr bytes.Buffer
 				cmd.Stdout = hash
+				cmd.Stderr = &stderr
 				var tmpDep string
 				if depPath != "" {
 					if f, err := os.CreateTemp("", "llgo-dep-*.d"); err == nil {
@@ -782,16 +800,18 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 						_ = os.Remove(tmpDep)
 						tmpDep = ""
 						hash.Reset()
+						stderr.Reset()
 						cmd = ctx.compilerForSource(input.path)
 						cmd.Stdout = hash
+						cmd.Stderr = &stderr
 						if err := cmd.Compile(append(slices.Clone(compilerArgs), "-E", input.path)...); err != nil {
-							return nil, fmt.Errorf("preprocess file %q: %w", input.path, err)
+							return nil, recordErr(err, stderr.String())
 						}
 					}
 				} else {
 					preprocessArgs := append(slices.Clone(compilerArgs), "-E", input.path)
 					if err := cmd.Compile(preprocessArgs...); err != nil {
-						return nil, fmt.Errorf("preprocess file %q: %w", input.path, err)
+						return nil, recordErr(err, stderr.String())
 					}
 				}
 				preprocessedHash = hex.EncodeToString(hash.Sum(nil))

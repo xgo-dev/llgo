@@ -21,7 +21,6 @@ func TestNativeFunctionCommaOKAssertion(t *testing.T) {
 		t.Run(target.GOOS+"/"+target.GOARCH+"/"+target.WasmProfile, func(t *testing.T) {
 			prog := NewProgram(target)
 			defer prog.Dispose()
-			prog.TypeSizes(types.SizesFor("gc", target.GOARCH))
 			prog.SetRuntime(func() *types.Package {
 				runtime, err := llpkgs.SourceImporter().Import(PkgRuntime)
 				if err != nil {

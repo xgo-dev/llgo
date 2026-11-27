@@ -910,7 +910,6 @@ func CompileIREx(t *testing.T, src any, fname string, dbg bool, configure func(l
 	}
 	foo.WriteTo(os.Stderr)
 	prog := ssatest.NewProgramEx(t, nil, imp)
-	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	if configure != nil {
 		configure(prog)
 	}

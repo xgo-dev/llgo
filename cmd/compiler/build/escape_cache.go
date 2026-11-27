@@ -121,7 +121,7 @@ func (ctx *context) escapeBodyKeys() func(*ssa.Function) string {
 	sort.Strings(ids)
 	for _, id := range ids {
 		pkg := ctx.pkgByID[id]
-		if ctx.collectFingerprint(pkg) != nil || ctx.packageCacheDisabled(id) {
+		if (ctx.frontend != nil && ctx.frontend.uncacheable[pkg]) || ctx.collectFingerprint(pkg) != nil || ctx.packageCacheDisabled(id) {
 			continue
 		}
 		add(pkg.Types, pkg.Fingerprint)

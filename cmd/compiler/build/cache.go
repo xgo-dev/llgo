@@ -64,7 +64,7 @@ type cachePaths struct {
 	Meta     string // Path to .meta file
 	LinkSnap string // Path to binary exportdata.LinkSnapshot sidecar
 	Export   string // Path to binary exportdata.PackageMeta sidecar
-	Types    string // Path to binary exportdata v3 .llgotypes sidecar
+	Types    string // Path to binary exportdata v4 .llgotypes sidecar
 }
 
 // PackagePaths returns the cache paths for a package

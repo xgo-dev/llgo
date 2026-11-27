@@ -550,6 +550,12 @@ func (b Builder) stringSliceUnchecked(x, low, high Expr) Expr {
 }
 
 func (b Builder) sliceUnchecked(t Type, base, low, high, upper Expr) Expr {
+	// Normalize array pointers (*[N]T) to element pointers (*T) so Advance
+	// strides by element size rather than whole-array size.
+	elemPtr := b.Prog.Pointer(b.Prog.Index(t))
+	if base.Type != elemPtr {
+		base = Expr{base.impl, elemPtr}
+	}
 	length := b.impl.CreateSub(high.impl, low.impl, "")
 	capacity := b.impl.CreateSub(upper.impl, low.impl, "")
 	advanced := b.Advance(base, low)

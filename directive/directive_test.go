@@ -160,6 +160,13 @@ func TestParseSemanticHelpers(t *testing.T) {
 		t.Fatalf("directive flags mismatch: noinline=%v noescape=%v nointerface=%v uintptrescapes=%v nosplit=%v",
 			HasNoInline(flagsDoc), HasNoEscape(flagsDoc), HasNoInterface(flagsDoc), HasUintptrEscapes(flagsDoc), HasNoSplit(flagsDoc))
 	}
+	mixedNoIfaceDoc := commentGroup(
+		"//go:nointerface",
+		"// Trailing prose comment after directive in the same comment group.",
+	)
+	if !HasNoInterface(mixedNoIfaceDoc) {
+		t.Fatal("HasNoInterface returned false for //go:nointerface followed by prose comment in same group")
+	}
 	for _, tc := range []struct {
 		target string
 		ns     LinkNamespace
