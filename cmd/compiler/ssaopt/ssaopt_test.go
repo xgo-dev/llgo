@@ -33,6 +33,15 @@ import (
 	"github.com/xgo-dev/llgo/types"
 )
 
+type unsafeOnlyImporter struct{}
+
+func (unsafeOnlyImporter) Import(path string) (*types.Package, error) {
+	if path == "unsafe" {
+		return types.Unsafe, nil
+	}
+	return nil, types.Error{Msg: "unexpected import " + path}
+}
+
 func buildTestSSAForSpec(t *testing.T, src string, spec target.Spec) (*ssa.Package, *types.Context) {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -43,7 +52,7 @@ func buildTestSSAForSpec(t *testing.T, src string, spec target.Spec) (*ssa.Packa
 	ctx := types.NewContextWithConfig(types.ContextConfig{
 		Spec: target.ResolveSpec(spec),
 	})
-	pkg, _, err := ssautil.BuildPackage(&types.Config{Context: ctx, Sizes: ctx}, fset, types.NewPackage("example.com/test", "test"), []*ast.File{file}, ssa.SanityCheckFunctions)
+	pkg, _, err := ssautil.BuildPackage(&types.Config{Context: ctx, Sizes: ctx, Importer: unsafeOnlyImporter{}}, fset, types.NewPackage("example.com/test", "test"), []*ast.File{file}, ssa.SanityCheckFunctions)
 	if err != nil {
 		t.Fatalf("build SSA: %v", err)
 	}
@@ -55,7 +64,8 @@ func buildTestSSA(t *testing.T, src string) (*ssa.Package, *types.Context) {
 }
 
 // TestSSAOptZeroLLVMDependency enforces the architectural guardrail that
-// cmd/compiler/ssaopt and cmd/compiler/goescape never depend on LLVM or llvmgen.
+// cmd/compiler/ssaopt, cmd/compiler/goescape, and cmd/compiler/abipolicy
+// never depend on LLVM/llvmgen (transitively) and never import go/ast directly.
 func TestSSAOptZeroLLVMDependency(t *testing.T) {
 	for _, pkg := range []string{
 		"github.com/xgo-dev/llgo/cmd/compiler/ssaopt",
@@ -64,12 +74,21 @@ func TestSSAOptZeroLLVMDependency(t *testing.T) {
 	} {
 		out, err := exec.Command("go", "list", "-f", `{{join .Deps "\n"}}`, pkg).CombinedOutput()
 		if err != nil {
-			t.Fatalf("go list %s: %v\n%s", pkg, err, out)
+			t.Fatalf("go list deps %s: %v\n%s", pkg, err, out)
 		}
 		for _, dep := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 			if dep == "github.com/xgo-dev/llvm" || strings.HasPrefix(dep, "github.com/xgo-dev/llvm/") ||
 				dep == "github.com/xgo-dev/llgo/cmd/compiler/llvmgen" {
 				t.Fatalf("%s unexpectedly depends on LLVM backend package %s", pkg, dep)
+			}
+		}
+		impOut, err := exec.Command("go", "list", "-f", `{{join .Imports "\n"}}`, pkg).CombinedOutput()
+		if err != nil {
+			t.Fatalf("go list imports %s: %v\n%s", pkg, err, impOut)
+		}
+		for _, imp := range strings.Split(strings.TrimSpace(string(impOut)), "\n") {
+			if imp == "go/ast" {
+				t.Fatalf("%s unexpectedly imports go/ast directly (source directives must come from llgo/types or llgo/ssa)", pkg)
 			}
 		}
 	}
@@ -601,6 +620,15 @@ func spin(n int) int {
 	}
 	return sum
 }
+
+//go:nosplit
+func noSplitSpin(n int) int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += i
+	}
+	return sum
+}
 `
 	pkg, ctx := buildTestSSA(t, src)
 	plan, err := ssaopt.PlanFunction(pkg.Func("spin"), ssaopt.Config{
@@ -610,10 +638,76 @@ func spin(n int) int {
 		Verify:                true,
 	})
 	if err != nil {
-		t.Fatalf("PlanFunction: %v", err)
+		t.Fatalf("PlanFunction(spin): %v", err)
 	}
-	if len(plan.SafepointBackedges) == 0 {
-		t.Fatalf("expected cooperative safepoint backedges for loop function")
+	if !plan.SafepointPlanned || !plan.SafepointEntry || len(plan.SafepointBackedges) == 0 {
+		t.Fatalf("expected cooperative safepoint entry + backedges for loop function: %+v", plan)
+	}
+	noSplitPlan, err := ssaopt.PlanFunction(pkg.Func("noSplitSpin"), ssaopt.Config{
+		TypeCtx:               ctx,
+		OptLevel:              optlevel.O2,
+		CooperativeSafepoints: true,
+		Verify:                true,
+	})
+	if err != nil {
+		t.Fatalf("PlanFunction(noSplitSpin): %v", err)
+	}
+	if !noSplitPlan.SafepointPlanned || noSplitPlan.SafepointEntry || len(noSplitPlan.SafepointBackedges) != 0 {
+		t.Fatalf("//go:nosplit function must not get cooperative safepoints: entry=%v backedges=%d",
+			noSplitPlan.SafepointEntry, len(noSplitPlan.SafepointBackedges))
+	}
+}
+
+func TestGCRootPassInFunctionPlan(t *testing.T) {
+	const src = `package test
+
+import "unsafe"
+
+//go:noinline
+func allocSomething() *int { return new(int) }
+
+//go:uintptrescapes
+//go:noinline
+func keepPtr(p uintptr) int {
+	_ = allocSomething()
+	return int(p)
+}
+
+func caller(x *int) int {
+	y := allocSomething()
+	return keepPtr(uintptr(unsafe.Pointer(x))) + *y
+}
+`
+	pkg, ctx := buildTestSSAForSpec(t, src, target.Spec{GOOS: "wasip1", GOARCH: "wasm"})
+	keepPlan, err := ssaopt.PlanFunction(pkg.Func("keepPtr"), ssaopt.Config{
+		TypeCtx:  ctx,
+		OptLevel: optlevel.O2,
+		GCRoots:  true,
+		Verify:   true,
+	})
+	if err != nil {
+		t.Fatalf("PlanFunction(keepPtr): %v", err)
+	}
+	if !keepPlan.GCRootPlanned {
+		t.Fatal("keepPtr GCRootPlanned = false")
+	}
+	paramRoot := keepPlan.GCRoots[pkg.Func("keepPtr").Params[0]]
+	if paramRoot != 1 {
+		t.Fatalf("//go:uintptrescapes uintptr param slots = %d, want 1", paramRoot)
+	}
+
+	callerPlan, err := ssaopt.PlanFunction(pkg.Func("caller"), ssaopt.Config{
+		TypeCtx:  ctx,
+		OptLevel: optlevel.O2,
+		GCRoots:  true,
+		Verify:   true,
+	})
+	if err != nil {
+		t.Fatalf("PlanFunction(caller): %v", err)
+	}
+	if !callerPlan.GCRootPlanned || len(callerPlan.GCRoots) == 0 || !callerPlan.GCClosureRoot {
+		t.Fatalf("caller GCRootPlan unexpected: planned=%v roots=%d closure=%v",
+			callerPlan.GCRootPlanned, len(callerPlan.GCRoots), callerPlan.GCClosureRoot)
 	}
 }
 

@@ -1363,7 +1363,6 @@ func (ctx *context) releaseSingleExecutableBackend() {
 	ctx.patches = nil
 	ctx.frontendOptions.EscapeAnalysis = nil
 	ctx.frontendOptions.OptPlan = nil
-	ctx.frontendOptions.ReceiverNilChecks = nil
 	ctx.pkgs = nil
 	ctx.pkgByID = nil
 	// Return unused Go heap pages before the linker/optimizer allocates its

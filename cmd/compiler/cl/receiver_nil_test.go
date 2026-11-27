@@ -1,7 +1,6 @@
 package cl
 
 import (
-	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -9,8 +8,10 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/cmd/compiler/ssaopt"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/ssautil"
+	"github.com/xgo-dev/llgo/types"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -39,21 +40,14 @@ func savedPromotedExpression(p *P) { f := (*P).M; f(p, arg()) }
 		t.Fatal(err)
 	}
 	files := []*ast.File{file}
-	ssaPkg, info, err := ssautil.BuildPackage(&types.Config{Importer: packages.NewImporter(fset)}, fset,
+	ssaPkg, _, err := ssautil.BuildPackage(&types.Config{Importer: packages.NewImporter(fset)}, fset,
 		types.NewPackage("foo", "foo"), files, ssa.SanityCheckFunctions)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checks := CollectReceiverNilChecks(files, nil, info)
-	if checks == nil || len(checks.calls) != 7 || len(checks.values) != 8 {
-		t.Fatalf("receiver check collection = %#v, want 7 calls and 8 selections", checks)
-	}
-	if CollectReceiverNilChecks(files, nil) != nil || receiverNeedsAddressCheck(nil) {
-		t.Fatal("absent type information must not invent receiver checks")
-	}
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
-	pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, files, nil, false, Options{ReceiverNilChecks: checks})
+	pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, files, nil, false, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,13 +122,9 @@ func Invoke(p *dep.T, arg func() int) { dep.Call(p, arg, 1); dep.Bound(p, 1)(arg
 	goProg.CreatePackage(dep, []*ast.File{depFile}, depInfo, true)
 	rootSSA := goProg.CreatePackage(root, []*ast.File{rootFile}, rootInfo, true)
 	goProg.Build()
-	if checks := CollectReceiverNilChecks([]*ast.File{rootFile}, rootInfo); checks != nil {
-		t.Fatal("the caller's syntax must not contain the dependency's receiver selections")
-	}
-	checks := CollectReceiverNilChecks([]*ast.File{rootFile, depFile}, rootInfo, depInfo)
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
-	pkg, _, err := newPackageEx(prog, nil, nil, nil, rootSSA, []*ast.File{rootFile}, nil, false, Options{ReceiverNilChecks: checks})
+	pkg, _, err := newPackageEx(prog, nil, nil, nil, rootSSA, []*ast.File{rootFile}, nil, false, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,74 +149,6 @@ func Invoke(p *dep.T, arg func() int) { dep.Call(p, arg, 1); dep.Bound(p, 1)(arg
 	}
 }
 
-func TestReceiverNilChecksRejectNoPos(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		invalidate func(*ast.CallExpr, []*ast.SelectorExpr)
-		calls      int
-		values     int
-	}{
-		{"valid", func(*ast.CallExpr, []*ast.SelectorExpr) {}, 1, 2},
-		{"call", func(call *ast.CallExpr, _ []*ast.SelectorExpr) { call.Lparen = token.NoPos }, 0, 2},
-		{"selector", func(_ *ast.CallExpr, selectors []*ast.SelectorExpr) { selectors[0].Sel.NamePos = token.NoPos }, 0, 1},
-		{"receiver", func(_ *ast.CallExpr, selectors []*ast.SelectorExpr) {
-			selectors[0].X.(*ast.Ident).NamePos = token.NoPos
-		}, 0, 1},
-		{"bound", func(_ *ast.CallExpr, selectors []*ast.SelectorExpr) { selectors[1].Sel.NamePos = token.NoPos }, 1, 1},
-		{"all", func(call *ast.CallExpr, selectors []*ast.SelectorExpr) {
-			call.Lparen = token.NoPos
-			for _, selector := range selectors {
-				selector.Sel.NamePos = token.NoPos
-			}
-		}, 0, 0},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			fset := token.NewFileSet()
-			file, err := parser.ParseFile(fset, "receiver.go", `package foo
-type T struct{}
-func (*T) M() {}
-func F(p *T) { p.M(); _ = p.M }
-`, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			info := &types.Info{Selections: make(map[*ast.SelectorExpr]*types.Selection)}
-			if _, err := new(types.Config).Check("foo", fset, []*ast.File{file}, info); err != nil {
-				t.Fatal(err)
-			}
-			var call *ast.CallExpr
-			var selectors []*ast.SelectorExpr
-			ast.Inspect(file, func(node ast.Node) bool {
-				switch node := node.(type) {
-				case *ast.CallExpr:
-					call = node
-				case *ast.SelectorExpr:
-					selectors = append(selectors, node)
-				}
-				return true
-			})
-			test.invalidate(call, selectors)
-			checks := CollectReceiverNilChecks([]*ast.File{file}, info)
-			if test.calls == 0 && test.values == 0 {
-				if checks != nil {
-					t.Fatalf("positionless selections produced checks: %#v", checks)
-				}
-				return
-			}
-			if checks == nil || len(checks.calls) != test.calls || len(checks.values) != test.values {
-				t.Fatalf("checks = %#v, want %d calls and %d values", checks, test.calls, test.values)
-			}
-			for _, table := range []map[token.Pos]receiverNilCheck{checks.calls, checks.values} {
-				for pos, check := range table {
-					if !pos.IsValid() || !check.pos.IsValid() {
-						t.Fatalf("source metadata contains invalid position: key=%v check=%#v", pos, check)
-					}
-				}
-			}
-		})
-	}
-}
-
 func TestReceiverNilDerefChecksWithoutSourceMetadata(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "wrapper.go", `package foo
@@ -247,8 +169,11 @@ func F(p *P) { (*P).M(p) }
 		if !isMethodReceiverWrapper(fn) {
 			continue
 		}
-		_, checks := collectMethodNilDerefChecks(fn, nil)
-		protected += len(checks)
+		plan, err := ssaopt.PlanFunction(fn, ssaopt.Config{Verify: true})
+		if err != nil {
+			t.Fatalf("PlanFunction(%s): %v", fn, err)
+		}
+		protected += len(plan.RecvNilDerefChecks)
 	}
 	if protected == 0 {
 		t.Fatal("promoted pointer wrapper lost its receiver-load checks without source metadata")
@@ -270,21 +195,24 @@ func promoted(value *U) { value.M() }
 		t.Fatal(err)
 	}
 	files := []*ast.File{file}
-	ssaPkg, info, err := ssautil.BuildPackage(new(types.Config), fset, types.NewPackage("foo", "foo"), files, ssa.SanityCheckFunctions)
+	ssaPkg, _, err := ssautil.BuildPackage(new(types.Config), fset, types.NewPackage("foo", "foo"), files, ssa.SanityCheckFunctions)
 	if err != nil {
 		t.Fatal(err)
 	}
-	checks := CollectReceiverNilChecks(files, info)
 	for _, name := range []string{"receive", "receiveBound", "local"} {
 		// A channel receive is also an SSA UnOp, but is not a pointer
 		// load. Its result can legally be a nil pointer-method receiver.
-		if _, loads := collectMethodNilDerefChecks(ssaPkg.Func(name), checks); len(loads) != 0 {
-			t.Fatalf("%s invented receiver pointer loads: %v", name, loads)
+		plan, err := ssaopt.PlanFunction(ssaPkg.Func(name), ssaopt.Config{Verify: true})
+		if err != nil {
+			t.Fatalf("PlanFunction(%s): %v", name, err)
+		}
+		if len(plan.RecvNilDerefChecks) != 0 {
+			t.Fatalf("%s invented receiver pointer loads: %v", name, plan.RecvNilDerefChecks)
 		}
 	}
 	prog := newLLSSAProg(t)
 	defer prog.Dispose()
-	pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, files, nil, false, Options{ReceiverNilChecks: checks})
+	pkg, _, err := newPackageEx(prog, nil, nil, nil, ssaPkg, files, nil, false, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,23 +225,6 @@ func promoted(value *U) { value.M() }
 			t.Fatalf("%s must permit a received nil or known non-nil local receiver:\n%s", name, body)
 		}
 	}
-	// An unrelated closure with no source metadata requires neither a
-	// receiver check nor a builder. Keep that fast path independent of LLVM.
+	// An unrelated closure with no optPlan requires neither a receiver check nor a builder.
 	new(context).checkBoundMethodReceiver(nil, new(ssa.MakeClosure))
-	// Selection.Index exposes a mutable slice. Malformed metadata must be
-	// rejected by the existing guard instead of indexing outside the struct.
-	for _, selection := range info.Selections {
-		indices := selection.Index()
-		if len(indices) > 1 {
-			saved := indices[0]
-			indices[0] = 100
-			got := receiverNeedsAddressCheck(selection)
-			indices[0] = saved
-			if got {
-				t.Fatal("invalid embedded-field index produced a receiver check")
-			}
-			return
-		}
-	}
-	t.Fatal("missing promoted selection for the invalid-index guard")
 }

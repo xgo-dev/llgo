@@ -76,6 +76,8 @@ type marker int
 //llgo:link cSin C.sin
 //go:noinline
 //go:noescape
+//go:uintptrescapes
+//go:nosplit
 func cSin(x float64) float64
 
 //llgo:link winCb stdcall.WinProc
@@ -137,8 +139,9 @@ var (
 	if ns, sym := cSin.LinkTarget(); ns != directive.LinkC || sym != "sin" {
 		t.Fatalf("cSin.LinkTarget() = (%v, %q), want (LinkC, sin)", ns, sym)
 	}
-	if !cSin.NoInline() || !cSin.NoEscape() || cSin.CallConv() != types.CDecl {
-		t.Fatalf("cSin metadata = (NoInline=%v NoEscape=%v CallConv=%v)", cSin.NoInline(), cSin.NoEscape(), cSin.CallConv())
+	if !cSin.NoInline() || !cSin.NoEscape() || !cSin.UintptrEscapes() || !cSin.NoSplit() || cSin.CallConv() != types.CDecl {
+		t.Fatalf("cSin metadata = (NoInline=%v NoEscape=%v UintptrEscapes=%v NoSplit=%v CallConv=%v)",
+			cSin.NoInline(), cSin.NoEscape(), cSin.UintptrEscapes(), cSin.NoSplit(), cSin.CallConv())
 	}
 
 	winCb := pkg.Scope().Lookup("winCb").(*types.Func)

@@ -287,6 +287,26 @@ func HasNoEscape(doc *ast.CommentGroup) bool {
 	return false
 }
 
+// HasUintptrEscapes reports whether doc contains a //go:uintptrescapes directive.
+func HasUintptrEscapes(doc *ast.CommentGroup) bool {
+	for _, d := range ParseGroup(doc) {
+		if d.Name == "go:uintptrescapes" && d.Args == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasNoSplit reports whether doc contains a //go:nosplit directive.
+func HasNoSplit(doc *ast.CommentGroup) bool {
+	for _, d := range ParseGroup(doc) {
+		if d.Name == "go:nosplit" && d.Args == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // LinkNamespace classifies the target namespace of a //go:linkname or
 // //llgo:link target string.
 type LinkNamespace uint8

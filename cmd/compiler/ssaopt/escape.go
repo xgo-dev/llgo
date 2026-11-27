@@ -17,7 +17,6 @@
 package ssaopt
 
 import (
-	"go/ast"
 	"go/constant"
 	"go/token"
 	"sort"
@@ -439,7 +438,7 @@ func shouldInspectEscapeBody(fn *ssa.Function, cfg EscapeConfig) bool {
 	}
 	// If the function carries a Go-to-Go linkname pointing at a different symbol,
 	// its body is not the symbol that lowering calls.
-	link := effectiveFuncLinkName(fn)
+	link := effectiveFuncLinkName(fn, cfg.Linkname)
 	if link != "" {
 		ns, target := directive.ParseLinkTarget(link)
 		if ns != directive.LinkGo {
@@ -462,11 +461,18 @@ func escapeCallContract(fn *ssa.Function, cfg EscapeConfig) (goescape.Summary, b
 		_, intr = cfg.ResolveIntrinsic(fn)
 	} else {
 		intr = fn.Intrinsic()
+		if intr == ssa.IntrinsicNone && cfg.Linkname != nil {
+			if link := effectiveFuncLinkName(fn, cfg.Linkname); link != "" {
+				if ns, name := directive.ParseLinkTarget(link); ns == directive.LinkLLGo {
+					intr = ssa.LookupIntrinsic(name)
+				}
+			}
+		}
 	}
 	if intr != ssa.IntrinsicNone {
 		return IntrinsicEscapeContract(intr, fn.Signature)
 	}
-	if len(fn.Blocks) == 0 && (fn.NoEscape || hasFuncDirective(fn, "go:noescape")) {
+	if len(fn.Blocks) == 0 && (fn.NoEscape || funcHasNoEscape(fn)) {
 		summary := SignatureEscapeSummary(fn.Signature)
 		for i := range summary.Parameters {
 			summary.Parameters[i].Mutator = 1
@@ -475,6 +481,19 @@ func escapeCallContract(fn *ssa.Function, cfg EscapeConfig) (goescape.Summary, b
 		return summary, true
 	}
 	return goescape.Summary{}, false
+}
+
+func funcHasNoEscape(fn *ssa.Function) bool {
+	if fn == nil {
+		return false
+	}
+	if obj, ok := fn.Object().(*types.Func); ok && obj.NoEscape() {
+		return true
+	}
+	if orig := fn.Origin(); orig != nil && orig != fn {
+		return funcHasNoEscape(orig)
+	}
+	return false
 }
 
 // SignatureEscapeSummary allocates a zero-effect escape summary matching sig.
@@ -569,7 +588,7 @@ func noEscapeSignature(sig *types.Signature) bool {
 		types.Identical(sig.Results().At(0).Type(), types.Typ[types.UnsafePointer])
 }
 
-func effectiveFuncLinkName(fn *ssa.Function) string {
+func effectiveFuncLinkName(fn *ssa.Function, lookup func(string) (string, bool)) string {
 	if fn == nil {
 		return ""
 	}
@@ -577,12 +596,21 @@ func effectiveFuncLinkName(fn *ssa.Function) string {
 		return fn.LinkName
 	}
 	if orig := fn.Origin(); orig != nil && orig != fn {
-		if ln := effectiveFuncLinkName(orig); ln != "" {
+		if ln := effectiveFuncLinkName(orig, lookup); ln != "" {
 			return ln
 		}
 	}
 	if obj, ok := fn.Object().(*types.Func); ok && obj != nil {
-		return obj.LinkName()
+		if ln := obj.LinkName(); ln != "" {
+			return ln
+		}
+	}
+	if lookup != nil {
+		if sym := canonicalFuncSymbol(fn); sym != "" {
+			if target, ok := lookup(sym); ok {
+				return target
+			}
+		}
 	}
 	return ""
 }
@@ -604,7 +632,7 @@ func canonicalFuncSymbol(fn *ssa.Function) string {
 	if fn == nil || fn.Pkg == nil || fn.Pkg.Pkg == nil {
 		return ""
 	}
-	pkgPath := fn.Pkg.Pkg.Path()
+	pkgPath := llgenabi.PathOf(fn.Pkg.Pkg)
 	if recv := fn.Signature.Recv(); recv != nil {
 		return pkgPath + "." + recvSymbolName(recv.Type()) + "." + fn.Name()
 	}
@@ -698,22 +726,6 @@ func collectPackageMethods(pkg *ssa.Package) []*ssa.Function {
 		}
 	}
 	return methods
-}
-
-func hasFuncDirective(f *ssa.Function, name string) bool {
-	if f == nil {
-		return false
-	}
-	decl, _ := f.Syntax().(*ast.FuncDecl)
-	if decl == nil || decl.Doc == nil {
-		return false
-	}
-	for _, item := range directive.ParseGroup(decl.Doc) {
-		if item.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 // FreshNilAppendSource identifies backing storage that can become an

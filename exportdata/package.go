@@ -587,7 +587,7 @@ func (w *pkgWriter) writeSubBlob(fn func()) {
 }
 
 const (
-	funcMetaLinkName byte = 1 << iota
+	funcMetaLinkName uint64 = 1 << iota
 	funcMetaExportName
 	funcMetaWasmImport
 	funcMetaWasmExport
@@ -595,10 +595,12 @@ const (
 	funcMetaNoInline
 	funcMetaNoInterface
 	funcMetaNoEscape
+	funcMetaUintptrEscapes
+	funcMetaNoSplit
 )
 
 func (w *pkgWriter) writeFuncMeta(fn *types.Func) {
-	var flags byte
+	var flags uint64
 	if fn != nil {
 		if fn.LinkName() != "" {
 			flags |= funcMetaLinkName
@@ -624,8 +626,14 @@ func (w *pkgWriter) writeFuncMeta(fn *types.Func) {
 		if fn.NoEscape() {
 			flags |= funcMetaNoEscape
 		}
+		if fn.UintptrEscapes() {
+			flags |= funcMetaUintptrEscapes
+		}
+		if fn.NoSplit() {
+			flags |= funcMetaNoSplit
+		}
 	}
-	w.enc.writeByte(flags)
+	w.enc.writeUvarint(flags)
 	if flags&funcMetaLinkName != 0 {
 		w.enc.writeStr(fn.LinkName())
 	}
@@ -1389,14 +1397,16 @@ func (r *pkgReader) decodeTypeBlob(blob []byte) (types.Type, error) {
 }
 
 type decodedFuncMeta struct {
-	linkName      string
-	exportName    string
-	wasmImport    *directive.WasmImport
-	wasmExport    string
-	hasClosureEnv bool
-	noInline      bool
-	noInterface   bool
-	noEscape      bool
+	linkName       string
+	exportName     string
+	wasmImport     *directive.WasmImport
+	wasmExport     string
+	hasClosureEnv  bool
+	noInline       bool
+	noInterface    bool
+	noEscape       bool
+	uintptrEscapes bool
+	noSplit        bool
 }
 
 func (m decodedFuncMeta) apply(fn *types.Func) {
@@ -1427,18 +1437,26 @@ func (m decodedFuncMeta) apply(fn *types.Func) {
 	if m.noEscape {
 		fn.SetNoEscape(true)
 	}
+	if m.uintptrEscapes {
+		fn.SetUintptrEscapes(true)
+	}
+	if m.noSplit {
+		fn.SetNoSplit(true)
+	}
 }
 
 func (r *pkgReader) readFuncMeta() (decodedFuncMeta, error) {
-	flags, err := r.dec.readByte()
+	flags, err := r.dec.readUvarint()
 	if err != nil {
 		return decodedFuncMeta{}, err
 	}
 	m := decodedFuncMeta{
-		hasClosureEnv: flags&funcMetaClosureEnv != 0,
-		noInline:      flags&funcMetaNoInline != 0,
-		noInterface:   flags&funcMetaNoInterface != 0,
-		noEscape:      flags&funcMetaNoEscape != 0,
+		hasClosureEnv:  flags&funcMetaClosureEnv != 0,
+		noInline:       flags&funcMetaNoInline != 0,
+		noInterface:    flags&funcMetaNoInterface != 0,
+		noEscape:       flags&funcMetaNoEscape != 0,
+		uintptrEscapes: flags&funcMetaUintptrEscapes != 0,
+		noSplit:        flags&funcMetaNoSplit != 0,
 	}
 	if flags&funcMetaLinkName != 0 {
 		if m.linkName, err = r.dec.readStr(); err != nil {

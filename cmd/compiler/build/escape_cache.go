@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
+	"github.com/xgo-dev/llgo/cmd/compiler/ssaopt"
 	"github.com/xgo-dev/llgo/ssa"
 )
 
@@ -53,7 +53,43 @@ func (ctx *context) prepareEscapeAnalysis(event func(int, int)) *goescape.Result
 	if ctx.frontend != nil {
 		imports, keys, roots = ctx.frontend.imports, ctx.frontend.importKeys, ctx.frontend.methods
 	}
-	result := cl.PrepareEscapeAnalysisImported(ctx.prog, ctx.progSSA, ctx.patches, cache, imports, keys, roots)
+	var patchPkgs map[string]*ssa.Package
+	var patchTypes map[string]*types.Package
+	if len(ctx.patches) > 0 {
+		patchPkgs = make(map[string]*ssa.Package, len(ctx.patches))
+		patchTypes = make(map[string]*types.Package, len(ctx.patches))
+		for path, patch := range ctx.patches {
+			if patch.Alt != nil {
+				patchPkgs[path] = patch.Alt
+			}
+			if patch.Types != nil {
+				patchTypes[path] = patch.Types
+			}
+		}
+	}
+	var typeCtx *types.Context
+	var gcRoots bool
+	var runtimePkg *types.Package
+	var linkname func(string) (string, bool)
+	if ctx.prog != nil {
+		typeCtx = ctx.prog.TypeContext()
+		gcRoots = ctx.prog.GCRootsEnabled()
+		runtimePkg = ctx.prog.RuntimePkg()
+		linkname = ctx.prog.Linkname
+	}
+	result := ssaopt.PrepareEscapeAnalysis(ctx.progSSA, ssaopt.EscapeConfig{
+		TypeCtx:         typeCtx,
+		GCRoots:         gcRoots,
+		PreloadedSyntax: true,
+		RuntimePkg:      runtimePkg,
+		Patches:         patchPkgs,
+		PatchTypes:      patchTypes,
+		Cache:           cache,
+		Imports:         imports,
+		ImportKeys:      keys,
+		ExtraRoots:      roots,
+		Linkname:        linkname,
+	})
 	if files != nil {
 		files.flush()
 	}

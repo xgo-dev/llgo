@@ -99,10 +99,7 @@ type Options struct {
 	// demand (e.g. O0 preserves every required semantic check).
 	OptLevel optlevel.Level
 	// OptPlan provides precomputed, verified pure-Go ssaopt FunctionPlans.
-	OptPlan *ssaopt.ProgramPlan
-	// ReceiverNilChecks retains pointer-method selection semantics erased
-	// during Go SSA construction. It is collected from checked source info.
-	ReceiverNilChecks *ReceiverNilChecks
+	OptPlan           *ssaopt.ProgramPlan
 	UnusedGlobalInits *UnusedGlobalInits
 	// StaticByteArrays are package-level [N]byte payloads extracted after
 	// type checking and before ssa.Package.Build so go/ssa does not emit
@@ -1033,7 +1030,8 @@ func (p *context) compileFuncDecl(pkg llvmgen.Package, f *ssa.Function) (llvmgen
 				p.methodNilDerefChecks = p.optPlan.MethodNilDerefChecks
 				p.recvNilDerefChecks = p.optPlan.RecvNilDerefChecks
 			} else {
-				p.methodNilDerefChecks, p.recvNilDerefChecks = collectMethodNilDerefChecks(f, p.options.ReceiverNilChecks)
+				p.methodNilDerefChecks = nil
+				p.recvNilDerefChecks = nil
 			}
 			p.prepareCooperativeSafepoints(f, isCgo)
 			p.prepareGCRoots(f, hasCtx)
@@ -1106,6 +1104,7 @@ func (p *context) optPlanFor(f *ssa.Function) *ssaopt.FunctionPlan {
 		TypeCtx:               p.prog.TypeContext(),
 		OptLevel:              p.options.OptLevel,
 		GCRoots:               p.prog.GCRootsEnabled(),
+		DeadcodeDrop:          p.prog.DeadcodeDropEnabled(),
 		CooperativeSafepoints: p.prog.CooperativeSafepointsEnabled(),
 		Escape:                p.options.EscapeAnalysis,
 		PatchTypes:            patchTypes,

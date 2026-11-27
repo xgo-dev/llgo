@@ -21,27 +21,29 @@ import (
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/safepointplan"
+	"github.com/xgo-dev/llgo/cmd/compiler/ssaopt"
 	"github.com/xgo-dev/llgo/ssa"
 )
 
 func (p *context) prepareCooperativeSafepoints(fn *ssa.Function, isCgo bool) {
 	p.safepointEntry = false
 	p.safepoints = nil
-	if !p.prog.CooperativeSafepointsEnabled() || fn == nil || len(fn.Blocks) == 0 ||
-		isCgo || hasFuncDirective(fn, "go:nosplit") {
+	if !p.prog.CooperativeSafepointsEnabled() || fn == nil || len(fn.Blocks) == 0 || isCgo {
 		return
 	}
-	// Package-less SSA wrappers only forward into a declared function and may
-	// represent runtime helpers, so the declared function owns the poll.
+	if p.optPlan != nil && p.optPlan.SafepointPlanned {
+		p.safepointEntry = p.optPlan.SafepointEntry
+		p.safepoints = p.optPlan.SafepointBackedges
+		return
+	}
+	if ssaopt.HasNoSplitDirective(fn) || hasFuncDirective(fn, "go:nosplit") {
+		return
+	}
 	if path := safepointPackagePath(fn); path == "" || excludeSafepointPackage(path) {
 		return
 	}
 	p.safepointEntry = true
-	if p.optPlan != nil {
-		p.safepoints = p.optPlan.SafepointBackedges
-	} else {
-		p.safepoints = safepointplan.Backedges(fn)
-	}
+	p.safepoints = safepointplan.Backedges(fn)
 }
 
 func safepointPackagePath(fn *ssa.Function) string {
@@ -59,9 +61,6 @@ func safepointPackagePath(fn *ssa.Function) string {
 }
 
 func excludeSafepointPackage(path string) bool {
-	// Runtime critical sections use the public typed atomic wrappers too.
-	// Yielding at those method entries can suspend a G after its status has
-	// changed to waiting or dead but before the context switch has completed.
 	if path == "runtime" || path == "sync/atomic" || strings.HasPrefix(path, "internal/runtime/") {
 		return true
 	}

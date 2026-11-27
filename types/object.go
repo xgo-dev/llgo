@@ -128,16 +128,18 @@ func Id(pkg *Package, name string) string {
 // declaration metadata.
 type Func struct {
 	object
-	origin        *Func
-	scope         *Scope
-	linkName      string
-	exportName    string
-	wasmImport    *directive.WasmImport
-	wasmExport    string
-	hasClosureEnv bool
-	noInline      bool
-	noInterface   bool
-	noEscape      bool
+	origin         *Func
+	scope          *Scope
+	linkName       string
+	exportName     string
+	wasmImport     *directive.WasmImport
+	wasmExport     string
+	hasClosureEnv  bool
+	noInline       bool
+	noInterface    bool
+	noEscape       bool
+	uintptrEscapes bool
+	noSplit        bool
 }
 
 // NewFunc constructs a function or method object (matching go/types.NewFunc).
@@ -337,6 +339,48 @@ func (f *Func) NoEscape() bool {
 func (f *Func) SetNoEscape(v bool) {
 	if f != nil {
 		f.noEscape = v
+	}
+}
+
+// UintptrEscapes reports whether f carries a //go:uintptrescapes directive.
+func (f *Func) UintptrEscapes() bool {
+	if f == nil {
+		return false
+	}
+	if f.uintptrEscapes {
+		return true
+	}
+	if f.origin != nil && f.origin != f {
+		return f.origin.UintptrEscapes()
+	}
+	return false
+}
+
+// SetUintptrEscapes sets whether f carries a //go:uintptrescapes directive.
+func (f *Func) SetUintptrEscapes(v bool) {
+	if f != nil {
+		f.uintptrEscapes = v
+	}
+}
+
+// NoSplit reports whether f carries a //go:nosplit directive.
+func (f *Func) NoSplit() bool {
+	if f == nil {
+		return false
+	}
+	if f.noSplit {
+		return true
+	}
+	if f.origin != nil && f.origin != f {
+		return f.origin.NoSplit()
+	}
+	return false
+}
+
+// SetNoSplit sets whether f carries a //go:nosplit directive.
+func (f *Func) SetNoSplit(v bool) {
+	if f != nil {
+		f.noSplit = v
 	}
 }
 

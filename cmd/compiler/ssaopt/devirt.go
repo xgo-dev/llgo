@@ -261,7 +261,7 @@ func lookupDevirtCallee(prog *ssa.Program, concrete types.Type, mthd *types.Func
 	if !types.Identical(types.Unalias(recv.Type()), types.Unalias(concrete)) {
 		return nil
 	}
-	if hasFuncDirective(target, "go:nointerface") {
+	if obj, ok := target.Object().(*types.Func); ok && obj.NoInterface() {
 		return nil
 	}
 	callSig := call.Call.Signature()

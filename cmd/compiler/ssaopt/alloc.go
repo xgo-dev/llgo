@@ -178,7 +178,7 @@ func HasUintptrEscapesDirective(fn *ssa.Function) bool {
 		if origin := fn.Origin(); origin != nil && visit(origin) {
 			return true
 		}
-		if hasFuncDirective(fn, "go:uintptrescapes") {
+		if obj, ok := fn.Object().(*types.Func); ok && obj.UintptrEscapes() {
 			return true
 		}
 		if !strings.HasPrefix(fn.Synthetic, "wrapper for ") &&

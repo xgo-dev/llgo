@@ -205,5 +205,27 @@ func VerifyPlan(fn *ssa.Function, plan *FunctionPlan) error {
 		}
 	}
 
+	if len(plan.GCRoots) > 0 {
+		params := make(map[ssa.Value]struct{}, len(fn.Params))
+		for _, p := range fn.Params {
+			params[p] = struct{}{}
+		}
+		for val, slots := range plan.GCRoots {
+			if slots <= 0 {
+				return fmt.Errorf("ssaopt: %s: GCRoots[%v] has non-positive slot count %d", fn.String(), val, slots)
+			}
+			if _, isParam := params[val]; isParam {
+				continue
+			}
+			ins, ok := val.(ssa.Instruction)
+			if !ok {
+				return fmt.Errorf("ssaopt: %s: GCRoots key %T is neither a parameter nor an instruction", fn.String(), val)
+			}
+			if _, ok := positions[ins]; !ok {
+				return fmt.Errorf("ssaopt: %s: GCRoots key %T does not belong to function", fn.String(), val)
+			}
+		}
+	}
+
 	return nil
 }

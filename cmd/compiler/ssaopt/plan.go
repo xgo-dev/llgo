@@ -43,6 +43,7 @@ type Config struct {
 	OptLevel              optlevel.Level
 	DisableBoundsChecks   bool
 	GCRoots               bool
+	DeadcodeDrop          bool
 	CooperativeSafepoints bool
 	WholeProgram          bool
 	Verify                bool
@@ -207,9 +208,20 @@ type FunctionPlan struct {
 	// Devirt maps interface *ssa.Call sites to devirtualized direct targets (M3).
 	Devirt map[*ssa.Call]DevirtTarget
 
+	// SafepointPlanned records whether SafepointPass ran for this function.
+	SafepointPlanned bool
+	// SafepointEntry records whether function entry requires a cooperative poll.
+	SafepointEntry bool
 	// SafepointBackedges records CFG backedge terminators requiring cooperative
 	// safepoint polls (populated when Config.CooperativeSafepoints is true).
 	SafepointBackedges map[ssa.Instruction]struct{}
+
+	// GCRootPlanned records whether GCRootPass ran for this function.
+	GCRootPlanned bool
+	// GCRoots maps each SSA value requiring explicit GC root slots to its slot count.
+	GCRoots map[ssa.Value]int
+	// GCClosureRoot reports whether a closure context parameter requires a root slot.
+	GCClosureRoot bool
 
 	// InLoopBlock records whether block i participates in a CFG cycle (SCC).
 	InLoopBlock []bool
@@ -236,6 +248,7 @@ func DefaultPipeline() Pipeline {
 			IfacePass{},
 			DevirtPass{},
 			SafepointPass{},
+			GCRootPass{},
 		},
 	}
 }

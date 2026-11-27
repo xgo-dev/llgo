@@ -19,7 +19,7 @@ import (
 	"github.com/xgo-dev/llgo/ssa"
 )
 
-const frontendExportVersion = 4
+const frontendExportVersion = 5
 
 type frontendFunction struct {
 	ID       string

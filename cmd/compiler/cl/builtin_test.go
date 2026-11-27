@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/ssaopt"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 )
@@ -461,8 +462,12 @@ func TestCollectMethodNilDerefChecksSkipsDynamicDeferGo(t *testing.T) {
 			},
 		}},
 	}
-	if got, receiverGot := collectMethodNilDerefChecks(fn, nil); len(got) != 0 || len(receiverGot) != 0 {
-		t.Fatalf("collectMethodNilDerefChecks() = %v, %v, want no static checks", got, receiverGot)
+	plan, err := ssaopt.PlanFunction(fn, ssaopt.Config{})
+	if err != nil {
+		t.Fatalf("PlanFunction: %v", err)
+	}
+	if len(plan.MethodNilDerefChecks) != 0 || len(plan.RecvNilDerefChecks) != 0 {
+		t.Fatalf("NilCheckPass = %v, %v, want no static checks", plan.MethodNilDerefChecks, plan.RecvNilDerefChecks)
 	}
 }
 

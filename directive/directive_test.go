@@ -150,13 +150,15 @@ func TestParseSemanticHelpers(t *testing.T) {
 		"//go:noinline",
 		"//go:noescape",
 		"//go:nointerface",
+		"//go:uintptrescapes",
+		"//go:nosplit",
 	)
 	if name, _, ok := ParseWasmExport(flagsDoc); !ok || name != "hostMain" {
 		t.Fatalf("ParseWasmExport = (%q, %v)", name, ok)
 	}
-	if !HasNoInline(flagsDoc) || !HasNoEscape(flagsDoc) || !HasNoInterface(flagsDoc) {
-		t.Fatalf("directive flags mismatch: noinline=%v noescape=%v nointerface=%v",
-			HasNoInline(flagsDoc), HasNoEscape(flagsDoc), HasNoInterface(flagsDoc))
+	if !HasNoInline(flagsDoc) || !HasNoEscape(flagsDoc) || !HasNoInterface(flagsDoc) || !HasUintptrEscapes(flagsDoc) || !HasNoSplit(flagsDoc) {
+		t.Fatalf("directive flags mismatch: noinline=%v noescape=%v nointerface=%v uintptrescapes=%v nosplit=%v",
+			HasNoInline(flagsDoc), HasNoEscape(flagsDoc), HasNoInterface(flagsDoc), HasUintptrEscapes(flagsDoc), HasNoSplit(flagsDoc))
 	}
 	for _, tc := range []struct {
 		target string

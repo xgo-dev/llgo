@@ -249,6 +249,12 @@ func applyFuncDirectives(fn *Func, doc *ast.CommentGroup, inPkgName, rawInPkgNam
 		if directive.HasNoEscape(doc) {
 			fn.SetNoEscape(true)
 		}
+		if directive.HasUintptrEscapes(doc) {
+			fn.SetUintptrEscapes(true)
+		}
+		if directive.HasNoSplit(doc) {
+			fn.SetNoSplit(true)
+		}
 		if wi, ok, err := directive.ParseWasmImport(doc); ok && err == nil {
 			fn.SetWasmImport(&wi)
 		}

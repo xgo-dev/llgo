@@ -39,6 +39,8 @@ type marker int
 //llgo:link CAdd C.add
 //go:noinline
 //go:noescape
+//go:uintptrescapes
+//go:nosplit
 func CAdd(a, b int32) int32
 
 //go:wasmimport env host_log
@@ -97,8 +99,9 @@ var RoutineSlot uintptr
 	}
 
 	cAdd := got.Scope().Lookup("CAdd").(*types.Func)
-	if cAdd.LinkName() != "C.add" || !cAdd.NoInline() || !cAdd.NoEscape() {
-		t.Fatalf("CAdd = (LinkName=%q NoInline=%v NoEscape=%v)", cAdd.LinkName(), cAdd.NoInline(), cAdd.NoEscape())
+	if cAdd.LinkName() != "C.add" || !cAdd.NoInline() || !cAdd.NoEscape() || !cAdd.UintptrEscapes() || !cAdd.NoSplit() {
+		t.Fatalf("CAdd = (LinkName=%q NoInline=%v NoEscape=%v UintptrEscapes=%v NoSplit=%v)",
+			cAdd.LinkName(), cAdd.NoInline(), cAdd.NoEscape(), cAdd.UintptrEscapes(), cAdd.NoSplit())
 	}
 
 	hostLog := got.Scope().Lookup("HostLog").(*types.Func)

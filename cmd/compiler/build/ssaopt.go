@@ -42,11 +42,13 @@ func (ctx *context) newOptPlan() *ssaopt.ProgramPlan {
 	}
 	var typeCtx *types.Context
 	var gcRoots bool
+	var deadcodeDrop bool
 	var coopSafepoints bool
 	var runtimePkg *types.Package
 	if ctx.prog != nil {
 		typeCtx = ctx.prog.TypeContext()
 		gcRoots = ctx.prog.GCRootsEnabled()
+		deadcodeDrop = ctx.prog.DeadcodeDropEnabled()
 		coopSafepoints = ctx.prog.CooperativeSafepointsEnabled()
 		runtimePkg = ctx.prog.RuntimePkg()
 	}
@@ -57,6 +59,7 @@ func (ctx *context) newOptPlan() *ssaopt.ProgramPlan {
 		OptLevel:              ctx.buildConf.OptLevel,
 		DisableBoundsChecks:   ctx.buildConf.DisableBoundsChecks,
 		GCRoots:               gcRoots,
+		DeadcodeDrop:          deadcodeDrop,
 		CooperativeSafepoints: coopSafepoints,
 		Escape:                ctx.frontendOptions.EscapeAnalysis,
 		Patches:               patchPkgs,
