@@ -9,7 +9,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/xgo-dev/llgo/cmd/cl"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/build/funcinfo"
 	"github.com/xgo-dev/llgo/cmd/compiler/pclnmap"
 	"github.com/xgo-dev/llgo/cmd/compiler/wasmdebug"

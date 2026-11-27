@@ -31,7 +31,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xgo-dev/llgo/cmd/cl"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/env"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"

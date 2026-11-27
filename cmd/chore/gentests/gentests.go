@@ -23,7 +23,7 @@ import (
 	"strings"
 
 	"github.com/goplus/mod"
-	"github.com/xgo-dev/llgo/cmd/cl/cltest"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl/cltest"
 	"github.com/xgo-dev/llgo/cmd/compiler/build"
 	"github.com/xgo-dev/llgo/cmd/compiler/lto"
 	"github.com/xgo-dev/llgo/cmd/xtool/env/llvm"
@@ -34,23 +34,23 @@ func main() {
 	dir, _, err := mod.FindGoMod(".")
 	check(err)
 
-	genMetaDir(dir + "/cl/_testmeta")
+	genMetaDir(dir, dir + "/compiler/cl/_testmeta")
 
 	genExpects(dir)
 }
 
 func genExpects(root string) {
-	runExpectDir(root, "cl/_testlibc")
-	runExpectDir(root, "cl/_testrt")
-	runExpectDir(root, "cl/_testgo")
-	runExpectDir(root, "cl/_testlto", func(conf *build.Config) {
+	runExpectDir(root, "compiler/cl/_testlibc")
+	runExpectDir(root, "compiler/cl/_testrt")
+	runExpectDir(root, "compiler/cl/_testgo")
+	runExpectDir(root, "compiler/cl/_testlto", func(conf *build.Config) {
 		conf.LTO = lto.Full
 	})
-	runExpectDir(root, "cl/_testpy")
-	runExpectDir(root, "cl/_testdata")
+	runExpectDir(root, "compiler/cl/_testpy")
+	runExpectDir(root, "compiler/cl/_testdata")
 }
 
-func genMetaDir(dir string) {
+func genMetaDir(root, dir string) {
 	fis, err := os.ReadDir(dir)
 	check(err)
 	for _, fi := range fis {
@@ -65,7 +65,7 @@ func genMetaDir(dir string) {
 			}
 			check(err)
 		}
-		relPath, err := filepath.Rel(filepath.Dir(filepath.Dir(dir)), testDir)
+		relPath, err := filepath.Rel(root, testDir)
 		check(err)
 		relPath = filepath.ToSlash(relPath)
 		fmt.Fprintln(os.Stderr, "meta", relPath)

@@ -257,6 +257,6 @@ matching platform CI.
 
 Example:
 
-- [cmd/cl/_testlibc/setjmp/in.go](../cmd/cl/_testlibc/setjmp/in.go) demonstrates a handwritten default-stage cross-target matrix.
-- [cmd/cl/_testgo/postabi/in.go](../cmd/cl/_testgo/postabi/in.go) demonstrates a handwritten post-ABI check with shared assertions and target-specific prefixes.
-- [cmd/cl/_testdata/floatint/in.go](../cmd/cl/_testdata/floatint/in.go) demonstrates an automatically maintained post-ABI target matrix.
+- [cmd/compiler/cl/_testlibc/setjmp/in.go](../cmd/compiler/cl/_testlibc/setjmp/in.go) demonstrates a handwritten default-stage cross-target matrix.
+- [cmd/compiler/cl/_testgo/postabi/in.go](../cmd/compiler/cl/_testgo/postabi/in.go) demonstrates a handwritten post-ABI check with shared assertions and target-specific prefixes.
+- [cmd/compiler/cl/_testdata/floatint/in.go](../cmd/compiler/cl/_testdata/floatint/in.go) demonstrates an automatically maintained post-ABI target matrix.

@@ -36,6 +36,7 @@ TEST_DIRS = {
     "test",
     "cl/cltest",
     "cmd/cl/cltest",
+    "cmd/compiler/cl/cltest",
     "internal/filecheck",
     "cmd/compiler/filecheck",
     "internal/littest",
@@ -109,7 +110,7 @@ def classify_path(raw_path: str) -> str:
         name.endswith("_test.go")
         or "testdata" in PurePosixPath(path).parts
         or _under_any(path, TEST_DIRS)
-        or path.startswith(("cl/_test", "cmd/cl/_test"))
+        or path.startswith(("cl/_test", "cmd/cl/_test", "cmd/compiler/cl/_test"))
     ):
         return "test"
     if _under(path, "benchmark"):

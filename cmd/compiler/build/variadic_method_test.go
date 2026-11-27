@@ -16,7 +16,7 @@ func TestCVariadicPromotedMethod(t *testing.T) {
 			path string
 			want string
 		}{
-			{"../../cl/_testrt/vamethod", "hello (100)\n(200) world\nifmt (100,200)\n"},
+			{"../cl/_testrt/vamethod", "hello (100)\n(200) world\nifmt (100,200)\n"},
 			{"./testdata/variadicmethod", "variadic-method-ok\n"},
 			{"./testdata/variadicunrelated", "variadic-unrelated-ok\n"},
 		} {

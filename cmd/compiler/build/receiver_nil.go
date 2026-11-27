@@ -4,7 +4,7 @@ import (
 	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 
-	"github.com/xgo-dev/llgo/cmd/cl"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 )
 

@@ -11,11 +11,11 @@ import (
 )
 
 func TestCgoDeferExportEntries(t *testing.T) {
-	testCExportEntries(t, "../../cl/_testgo/cgodefer", []string{"go_callback", "go_callback_c_only"})
+	testCExportEntries(t, "../cl/_testgo/cgodefer", []string{"go_callback", "go_callback_c_only"})
 }
 
 func TestCExportCallbackEntries(t *testing.T) {
-	testCExportEntries(t, "../../cl/_testdrop/c_export_callback", []string{"Callback"})
+	testCExportEntries(t, "../cl/_testdrop/c_export_callback", []string{"Callback"})
 }
 
 func testCExportEntries(t *testing.T, fixture string, names []string) {

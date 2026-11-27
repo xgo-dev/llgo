@@ -628,7 +628,7 @@ func (a *runtimeAuditor) compilerUses(report *RuntimeOwnership) error {
 			}
 		}
 	}
-	for _, pkg := range []string{"cmd/compiler/llvmgen", "cmd/cl"} {
+	for _, pkg := range []string{"cmd/compiler/llvmgen", "cmd/compiler/cl"} {
 		dir := filepath.Join(filepath.Dir(a.runtimeDir), pkg)
 		entries, err := os.ReadDir(dir)
 		if err != nil {

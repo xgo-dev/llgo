@@ -78,7 +78,7 @@ def main():
                               "minimum: (error=-2147483648)", "maximum: (error=2147483647)"])
         for mode in ("thin", "full"):
             print(f"Testing WASI {mode} LTO", flush=True)
-            fixture = ROOT / "cmd/cl/_testlto/globaldce_interface_matrix"
+            fixture = ROOT / "cmd/compiler/cl/_testlto/globaldce_interface_matrix"
             module = build(env, directory, mode, fixture)
             run(env, module, (fixture / "expect.txt").read_text().splitlines())
             # Keep the original method-summary DCE covered alongside Full LTO;

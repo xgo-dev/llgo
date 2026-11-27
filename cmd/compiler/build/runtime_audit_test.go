@@ -328,7 +328,7 @@ func TestRuntimeAuditUpgradeDiagnostics(t *testing.T) {
 		{"new-stdlib-hook", "go/src/consumer/use.go", "package consumer\nimport \"runtime\"\nfunc use() { runtime.NewHook() }", "missing"},
 		{"new-compiler-hook", "cmd/compiler/llvmgen/use.go", "package llvmgen\nfunc use() { p.rtFunc(\"NewHook\") }", "missing"},
 		{"new-compiler-type", "cmd/compiler/llvmgen/use.go", "package llvmgen\nfunc use() { p.rtType(\"NewType\") }", "missing"},
-		{"new-compiler-declaration", "cmd/cl/use.go", "package cl\nfunc use() { p.runtimeFunc(\"NewHook\", signature) }", "missing"},
+		{"new-compiler-declaration", "cmd/compiler/cl/use.go", "package cl\nfunc use() { p.runtimeFunc(\"NewHook\", signature) }", "missing"},
 		{"changed-upstream-helper", "go/src/runtime/utf8.go", "package runtime\nfunc encoderune(p []int, r rune) int { return 0 }", "unreviewed helper"},
 		{"malformed-patch", "runtime/_patch/sync/bad.go", "package sync\nfunc (", "parse source patch directives"},
 		{"duplicate-runtime", "runtime/internal/runtime/duplicate.go", "package runtime\nfunc countrunes(s string) int { return 0 }", "duplicate runtime declaration"},
@@ -339,7 +339,7 @@ func TestRuntimeAuditUpgradeDiagnostics(t *testing.T) {
 		{"invalid-assembly-selection", "go/src/consumer/bad.s", "//go:build &&\n\nTEXT runtime·hook(SB),NOSPLIT,$0-0\nRET", "parsing //go:build line"},
 		{"malformed-alternative", "runtime/internal/lib/internal/abi/bad.go", "package abi\nfunc (", "expected"},
 		{"malformed-inactive-runtime", "runtime/internal/runtime/bad_windows.go", "package runtime\nfunc (", "expected"},
-		{"malformed-compiler", "cmd/cl/use.go", "package cl\nfunc (", "expected"},
+		{"malformed-compiler", "cmd/compiler/cl/use.go", "package cl\nfunc (", "expected"},
 		{"missing-compiler", "", "", "requires compiler sources"},
 		{"no-compiler-go-files", "", "", "requires compiler sources"},
 	} {
@@ -374,7 +374,7 @@ func encoderune(p []byte, r rune) int { return 0 }
 			write("runtime/internal/lib/runtime/crash_fd_go123.go", "package runtime\nfunc setCrashFD(fd uintptr) uintptr\n")
 			write("go/src/sync/base.go", "package sync\n")
 			write("cmd/compiler/llvmgen/use.go", "package llvmgen\nfunc use() { p.rtFunc(\"countrunes\"); p.rtFunc(name) }\n")
-			write("cmd/cl/use.go", "package cl\n")
+			write("cmd/compiler/cl/use.go", "package cl\n")
 			goVersion := "go1.27.0"
 			if test.name == "legacy-coverage" {
 				goVersion = "go1.22.0"
@@ -391,11 +391,11 @@ func encoderune(p []byte, r rune) int { return 0 }
 				write(test.path, test.source)
 			}
 			if test.name == "missing-compiler" || test.name == "no-compiler-go-files" {
-				if err := os.RemoveAll(filepath.Join(root, "cmd/cl")); err != nil {
+				if err := os.RemoveAll(filepath.Join(root, "cmd/compiler/cl")); err != nil {
 					t.Fatal(err)
 				}
 				if test.name == "no-compiler-go-files" {
-					write("cmd/cl/README.md", "A directory without compiler sources must not produce a complete report.")
+					write("cmd/compiler/cl/README.md", "A directory without compiler sources must not produce a complete report.")
 				}
 			}
 			report, err := auditRuntimeSources(filepath.Join(root, "runtime"), filepath.Join(root, "go"), sourcePatchBuildContext{goos: "linux", goarch: "amd64", goversion: goVersion, buildFlags: []string{"-tags=llgo"}})

@@ -19,7 +19,7 @@ class FilterHostCoverageTests(unittest.TestCase):
 
     def test_excludes_entire_test_tree_without_changing_other_records(self):
         keep = [
-            "github.com/xgo-dev/llgo/cmd/cl/compile.go:10.2,14.3 3 2\n",
+            "github.com/xgo-dev/llgo/cmd/compiler/cl/compile.go:10.2,14.3 3 2\n",
             "github.com/xgo-dev/llgo/ssa/test.go:1.1,3.2 1 0\n",
             "github.com/xgo-dev/llgo/testing/a.go:1.1,3.2 1 1\n",
         ]

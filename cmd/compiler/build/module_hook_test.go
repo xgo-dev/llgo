@@ -16,7 +16,7 @@ func TestModuleHookReceivesMainPackageModule(t *testing.T) {
 		}
 	}
 
-	pkgs, err := Do([]string{"../../cl/_testgo/print"}, conf)
+	pkgs, err := Do([]string{"../cl/_testgo/print"}, conf)
 	if err != nil {
 		t.Fatalf("Do failed: %v", err)
 	}

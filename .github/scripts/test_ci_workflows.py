@@ -254,7 +254,7 @@ if sys.argv[1] == 'list':
 else:
     args = sys.argv[1:]
     suite = next((name for package, name in (
-        ('./cmd/compiler/build', 'build'), ('./cmd/cl', 'compiler'), ('./test/go', 'language'))
+        ('./cmd/compiler/build', 'build'), ('./cmd/compiler/cl', 'compiler'), ('./test/go', 'language'))
         if package in args), 'main')
     root = Path(os.environ['TEST_GO_LOG']).parent
     with (root / 'commands.jsonl').open('a') as stream:
@@ -323,7 +323,7 @@ sys.exit(subprocess.call(command + ['./cmd/compiler/build']))
                 for suite in expected_suites:
                     self.assertTrue((root / (suite + ".finished")).exists())
                     self.assertIn(f"### Go tests: {suite} (exit {7 if suite == failure else 0})", report)
-                for package in ("./cmd/cl", "./cmd/compiler/build", "./test/go"):
+                for package in ("./cmd/compiler/cl", "./cmd/compiler/build", "./test/go"):
                     for args in (args for args in calls if package in args):
                         self.assertEqual([arg for arg in args if arg.startswith("-overlay=")],
                                          [f"-overlay={overlay}"] if overlay else [])

@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/cmd/cl"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/buildenv"
 	"github.com/xgo-dev/llgo/cmd/compiler/crosscompile"
 	"github.com/xgo-dev/llgo/cmd/compiler/env"
@@ -555,7 +555,7 @@ func TestConcurrentDeadcodeBuildsUseIndependentWorkerContexts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := filepath.Join(repoRoot, "cl", "_testdrop", "direct_method")
+	fixture := filepath.Join(repoRoot, "cmd", "compiler", "cl", "_testdrop", "direct_method")
 	t.Setenv("LLGO_ROOT", repoRoot)
 	t.Setenv(llgoBuildCache, "0")
 
@@ -600,7 +600,7 @@ func TestDeadcodeBuildColdAndHotPackageCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := filepath.Join(repoRoot, "cl", "_testdrop", "direct_method")
+	fixture := filepath.Join(repoRoot, "cmd", "compiler", "cl", "_testdrop", "direct_method")
 	t.Setenv("LLGO_ROOT", repoRoot)
 	t.Setenv(llgoBuildCache, "1")
 
@@ -1620,12 +1620,12 @@ func mockRun(args []string, cfg *Config) {
 }
 
 func TestRun(t *testing.T) {
-	mockRun([]string{"../../cl/_testgo/print"}, &Config{Mode: ModeRun})
+	mockRun([]string{"../cl/_testgo/print"}, &Config{Mode: ModeRun})
 }
 
 func TestTest(t *testing.T) {
 	// FIXME(zzy): with builtin package test in a llgo test ./... will cause duplicate symbol error
-	mockRun([]string{"../../cl/_testgo/runtest"}, &Config{Mode: ModeTest})
+	mockRun([]string{"../cl/_testgo/runtest"}, &Config{Mode: ModeTest})
 }
 
 func TestExtest(t *testing.T) {
@@ -1648,7 +1648,7 @@ func TestExtest(t *testing.T) {
 	// through tracing so the same build also exercises the native parallel DAG.
 	trace := filepath.Join(t.TempDir(), "build.json")
 	conf := &Config{Mode: ModeTest, BuildParallelism: 2, BuildTrace: trace}
-	mockRun([]string{"../../cl/_testgo/runextest/..."}, conf)
+	mockRun([]string{"../cl/_testgo/runextest/..."}, conf)
 
 	w.Close()
 	got := <-outputChan
@@ -1683,10 +1683,10 @@ func TestExtest(t *testing.T) {
 		t.Errorf("non-verbose package-list mode exposed successful test output:\n%s", got)
 	}
 	for _, pkg := range []string{
-		"github.com/xgo-dev/llgo/cmd/cl/_testgo/runextest",
-		"github.com/xgo-dev/llgo/cmd/cl/_testgo/runextest/bar",
-		"github.com/xgo-dev/llgo/cmd/cl/_testgo/runextest/bar/barinner",
-		"github.com/xgo-dev/llgo/cmd/cl/_testgo/runextest/foo",
+		"github.com/xgo-dev/llgo/cmd/compiler/cl/_testgo/runextest",
+		"github.com/xgo-dev/llgo/cmd/compiler/cl/_testgo/runextest/bar",
+		"github.com/xgo-dev/llgo/cmd/compiler/cl/_testgo/runextest/bar/barinner",
+		"github.com/xgo-dev/llgo/cmd/compiler/cl/_testgo/runextest/foo",
 	} {
 		if !strings.Contains(got, "ok  \t"+pkg+"\t") {
 			t.Errorf("output does not contain result for %s:\n%s", pkg, got)
@@ -1695,7 +1695,7 @@ func TestExtest(t *testing.T) {
 }
 
 func TestExtestNativeTestDAGFailFast(t *testing.T) {
-	mockRun([]string{"../../cl/_testgo/runextest/..."}, &Config{
+	mockRun([]string{"../cl/_testgo/runextest/..."}, &Config{
 		Mode:              ModeTest,
 		BuildParallelism:  2,
 		RunArgs:           []string{"-test.not-a-real-flag"},
@@ -1708,7 +1708,7 @@ func TestExtestNativeTestDAGFailFast(t *testing.T) {
 }
 
 func TestCmpTest(t *testing.T) {
-	mockRun([]string{"../../cl/_testgo/runtest"}, &Config{Mode: ModeCmpTest})
+	mockRun([]string{"../cl/_testgo/runtest"}, &Config{Mode: ModeCmpTest})
 }
 
 func TestFilterTestPackages(t *testing.T) {
@@ -1763,9 +1763,9 @@ func TestFilterTestPackages(t *testing.T) {
 }
 
 const (
-	rewriteMainPkg = "github.com/xgo-dev/llgo/cmd/cl/_testgo/rewrite"
+	rewriteMainPkg = "github.com/xgo-dev/llgo/cmd/compiler/cl/_testgo/rewrite"
 	rewriteDepPkg  = rewriteMainPkg + "/dep"
-	rewriteDirPath = "../../cl/_testgo/rewrite"
+	rewriteDirPath = "../cl/_testgo/rewrite"
 )
 
 func TestAddDefaultRuntimeGlobalsUsesSourceGOROOTVersion(t *testing.T) {
@@ -2025,7 +2025,7 @@ func runBinary(t *testing.T, path string, args ...string) string {
 func TestRunStdioNobuf(t *testing.T) {
 	t.Setenv(llgoStdioNobuf, "1")
 	// allocstr owns the consolidated C string/printf integration fixture.
-	mockRun([]string{"../../cl/_testrt/allocstr"}, &Config{Mode: ModeRun})
+	mockRun([]string{"../cl/_testrt/allocstr"}, &Config{Mode: ModeRun})
 }
 
 func TestTestOutputFileLogic(t *testing.T) {
@@ -2565,7 +2565,7 @@ func TestTestMultiplePackagesWithOutputFile(t *testing.T) {
 
 	// Create a scenario that would have multiple test packages
 	// This should error during Do() validation
-	args := []string{"../../cl/_testgo/runextest/..."}
+	args := []string{"../cl/_testgo/runextest/..."}
 	_, err := Do(args, cfg)
 	if err == nil {
 		t.Fatal("Expected error when using -o flag with multiple packages, got nil")
