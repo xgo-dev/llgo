@@ -1018,7 +1018,7 @@ func assertInOrder(t *testing.T, s string, wants ...string) {
 	for _, want := range wants {
 		i := strings.Index(s[offset:], want)
 		if i < 0 {
-			t.Fatalf("main module IR missing ordered entry %q after byte %d:\n%s", want, offset, s)
+			t.Fatalf("IR missing ordered entry %q after byte %d:\n%s", want, offset, s)
 		}
 		offset += i + len(want)
 	}
