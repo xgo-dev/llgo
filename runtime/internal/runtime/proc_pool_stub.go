@@ -28,6 +28,8 @@ func MPoolIdleForTesting() int { return 0 }
 
 func markTouchedLocal() {}
 
+func MarkTouchedLocal() {}
+
 func mPoolStart(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callergp *g) bool {
 	return false
 }

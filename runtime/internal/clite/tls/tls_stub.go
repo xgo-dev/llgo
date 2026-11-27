@@ -24,6 +24,9 @@ type Handle[T any] struct{}
 // Alloc returns a stub TLS handle that ignores all operations.
 func Alloc[T any](func(*T)) Handle[T] { return Handle[T]{} }
 
+// AllocReusable returns a stub TLS handle that ignores all operations.
+func AllocReusable[T any](func(*T)) Handle[T] { return Handle[T]{} }
+
 // Get always returns the zero value.
 func (Handle[T]) Get() (zero T) { return zero }
 

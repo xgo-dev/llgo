@@ -52,6 +52,13 @@ func markTouchedLocal() {
 	}
 }
 
+// MarkTouchedLocal records that the current OS thread holds goroutine-scoped
+// host TLS state (such as a runtime/internal/clite/tls slot) and must exit
+// rather than return to the worker pool so native TLS destructors run.
+func MarkTouchedLocal() {
+	markTouchedLocal()
+}
+
 func ensureMPool() {
 	if atomic.Load(&mPool.inited) == 2 {
 		return
