@@ -681,6 +681,10 @@ func (c *Context) resolveNamedMethods(n *Named) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.resolveNamedMethodsLocked(n)
+}
+
+func (c *Context) resolveNamedMethodsLocked(n *Named) {
 	if n.methodsResolved || n.goNamed == nil {
 		return
 	}
@@ -704,6 +708,10 @@ func (c *Context) resolveInterface(iface *Interface) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.resolveInterfaceLocked(iface)
+}
+
+func (c *Context) resolveInterfaceLocked(iface *Interface) {
 	if iface.resolved || iface.goIface == nil {
 		return
 	}

@@ -502,7 +502,9 @@ func (g *toGoConverter) typ(t Type) gotypes.Type {
 		return gt
 
 	case *Interface:
-		if u.ctx != nil && u.ctx != g.ctx {
+		if u.ctx == g.ctx {
+			g.ctx.resolveInterfaceLocked(u)
+		} else if u.ctx != nil {
 			u.resolve()
 		}
 		methods := make([]*gotypes.Func, len(u.explicitMethods))
@@ -551,21 +553,28 @@ func (g *toGoConverter) typ(t Type) gotypes.Type {
 				return uo.Type()
 			}
 		}
-		if orig := u.Origin(); orig != nil && orig != u && u.TypeArgs().Len() > 0 {
+		if u.ctx == g.ctx {
+			g.ctx.resolveNamedLocked(u)
+			g.ctx.resolveNamedMethodsLocked(u)
+		} else if u.ctx != nil {
+			u.resolve()
+			u.resolveMethods()
+		}
+		// Read u.origin and u.typeArgs directly rather than calling u.Origin()
+		// because g.ctx.mu is held: for synthetic instantiations created via
+		// types.Instantiate (e.g. from exportdata), u.Origin() would lazily
+		// resolve u.synthInstOrigin and re-enter g.ctx.resolveNamed -> deadlock.
+		if orig := u.origin; orig != nil && orig != u && u.typeArgs != nil && u.typeArgs.Len() > 0 {
 			gOrig := g.typ(orig)
-			gArgs := make([]gotypes.Type, u.TypeArgs().Len())
-			for i := 0; i < u.TypeArgs().Len(); i++ {
-				gArgs[i] = g.typ(u.TypeArgs().At(i))
+			gArgs := make([]gotypes.Type, u.typeArgs.Len())
+			for i := 0; i < u.typeArgs.Len(); i++ {
+				gArgs[i] = g.typ(u.typeArgs.At(i))
 			}
 			inst, err := gotypes.Instantiate(g.goCtx, gOrig, gArgs, false)
 			if err == nil {
 				g.bindType(u, inst)
 				return inst
 			}
-		}
-		if u.ctx != nil && u.ctx != g.ctx {
-			u.resolve()
-			u.resolveMethods()
 		}
 		var tn *gotypes.TypeName
 		if u.obj != nil {
@@ -576,7 +585,7 @@ func (g *toGoConverter) typ(t Type) gotypes.Type {
 		}
 		gn := gotypes.NewNamed(tn, nil, nil)
 		g.bindType(u, gn)
-		if tps := u.TypeParams(); tps != nil && tps.Len() > 0 {
+		if tps := u.typeParams; tps != nil && tps.Len() > 0 {
 			list := make([]*gotypes.TypeParam, tps.Len())
 			for i := 0; i < tps.Len(); i++ {
 				list[i] = g.tparam(tps.At(i))
@@ -599,11 +608,11 @@ func (g *toGoConverter) typ(t Type) gotypes.Type {
 				return uo.Type()
 			}
 		}
-		if orig := u.Origin(); orig != nil && orig != u && u.TypeArgs().Len() > 0 {
+		if orig := u.origin; orig != nil && orig != u && u.typeArgs != nil && u.typeArgs.Len() > 0 {
 			gOrig := g.typ(orig)
-			gArgs := make([]gotypes.Type, u.TypeArgs().Len())
-			for i := 0; i < u.TypeArgs().Len(); i++ {
-				gArgs[i] = g.typ(u.TypeArgs().At(i))
+			gArgs := make([]gotypes.Type, u.typeArgs.Len())
+			for i := 0; i < u.typeArgs.Len(); i++ {
+				gArgs[i] = g.typ(u.typeArgs.At(i))
 			}
 			inst, err := gotypes.Instantiate(g.goCtx, gOrig, gArgs, false)
 			if err == nil {
