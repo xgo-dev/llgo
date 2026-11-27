@@ -15,21 +15,20 @@ type outlineKey struct {
 	signature llvm.Type
 }
 
-type outlineSite struct {
+type guardedIntrinsic struct {
 	call     llvm.Value
-	width    int
 	required uint64
 }
 
-// Check guarded intrinsics before mutating any public definition. Include
-// the widest register body, where additional intrinsics can be outlined.
+// Check every guarded intrinsic before mutating any public definition.
+// A wider body may outline an intrinsic that the baseline lowers in place.
 func (a *wideABI) validateOutlines(fn llvm.Value, queries map[llvm.Value]uint64, enabled uint64) error {
-	for _, s := range a.outlineSites(fn, 512, queries, enabled) {
+	for _, s := range a.guardedIntrinsics(fn, queries, enabled) {
 		call := s.call
 		if hasOutlineBundles(call) {
 			return fmt.Errorf("SIMD FMV cannot outline call with an operand bundle in %s", fn.Name())
 		}
-		if !call.IsACallInst().IsNil() && call.TailCallKind() == llvm.TailCallKindMustTail {
+		if call.TailCallKind() == llvm.TailCallKindMustTail {
 			return fmt.Errorf("SIMD FMV cannot outline musttail call in %s", fn.Name())
 		}
 	}
@@ -39,11 +38,16 @@ func (a *wideABI) validateOutlines(fn llvm.Value, queries map[llvm.Value]uint64,
 func (a *wideABI) outlineBody(fn llvm.Value, baseline string, queries map[llvm.Value]uint64, enabled uint64) {
 	floor := a.registerFloor(fn, baseline)
 	traps := false
-	for _, s := range a.outlineSites(fn, floor, queries, enabled) {
-		if s.width > floor {
-			a.trapBeforeCall(s.call)
+	a.calls(fn, func(call llvm.Value, width int) {
+		if width > floor {
+			a.trapBeforeCall(call)
 			traps = true
-		} else {
+		}
+	})
+	for _, s := range a.guardedIntrinsics(fn, queries, enabled) {
+		// Leave the generic intrinsic in place if the private call would
+		// need wider registers for its arguments or result.
+		if a.signature(s.call.CalledFunctionType()) <= floor {
 			a.outlineIntrinsic(s.call, s.required)
 		}
 	}
@@ -54,31 +58,26 @@ func (a *wideABI) outlineBody(fn llvm.Value, baseline string, queries map[llvm.V
 	}
 }
 
-func (a *wideABI) outlineSites(fn llvm.Value, floor int, queries map[llvm.Value]uint64, enabled uint64) []outlineSite {
+func (a *wideABI) guardedIntrinsics(fn llvm.Value, queries map[llvm.Value]uint64, enabled uint64) []guardedIntrinsic {
 	facts := blockGuards(fn, queries)
-	// Visit the original sites before replacing calls or removing dead blocks.
-	var sites []outlineSite
+	var sites []guardedIntrinsic
 	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		if facts[bb] == 0 {
+			continue
+		}
 		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
-			if w := a.callWidth(i); w > floor {
-				sites = append(sites, outlineSite{call: i, width: w})
-				continue
-			}
 			// The arithmetic intrinsics eligible for ISA outlining are calls.
 			// LLVM does not allow them as invoke targets.
 			if i.IsACallInst().IsNil() {
 				continue
 			}
-			c := directGuardCallee(i)
+			c := i.CalledValue().IsAFunction()
 			if c.IsNil() || c.IntrinsicID() == 0 {
 				continue
 			}
 			req := a.intrinsicGuards(i, c)
-			// A generic intrinsic can be lowered at a narrower width.
-			// Outline for its optional ISA only when the caller already
-			// has every register needed by the private signature.
-			if req&^enabled != 0 && req&^(facts[bb]|enabled) == 0 && a.signature(c.GlobalValueType()) <= floor {
-				sites = append(sites, outlineSite{call: i, required: req})
+			if req&^enabled != 0 && req&^(facts[bb]|enabled) == 0 {
+				sites = append(sites, guardedIntrinsic{call: i, required: req})
 			}
 		}
 	}
