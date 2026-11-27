@@ -80,9 +80,9 @@ type aGlobal struct {
 type Global = *aGlobal
 
 const (
-	moduleZeroName               = "__llgo.moduleZeroSizedAlloc$"
-	moduleMapZeroName            = "__llgo.map.zero"
-	directClosureNilEnvName      = "__llgo.directClosureNilEnv$"
+	moduleZeroName              = "__llgo.moduleZeroSizedAlloc$"
+	moduleMapZeroName           = "__llgo.map.zero"
+	directClosureNilEnvName     = "__llgo.directClosureNilEnv$"
 	runtimeZeroSizedAllocSymbol = "zeroSizedAlloc"
 
 	// Keep runtimeMemProfileShardsSym and runtimeMemProfileShardsAlign in sync
