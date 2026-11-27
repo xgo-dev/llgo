@@ -36,6 +36,12 @@ func wnPoll(out *evRecord) int32 { _ = out; return 0 }
 
 func wnOverflowDelta() int32 { return 0 }
 
+func wnLastRMS() int32 { return 0 }
+
+func wnPeakRMS() int32 { return 0 }
+
+func wnHits() int32 { return 0 }
+
 func wnStats(frames *int32, avgUs *int32, maxUs *int32) int32 {
 	_, _, _ = frames, avgUs, maxUs
 	return errUnsupported

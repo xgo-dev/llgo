@@ -41,6 +41,15 @@ func wnOverflowDelta() int32
 //go:linkname wnStats C.llgo_wakenet_stats
 func wnStats(frames *int32, avgUs *int32, maxUs *int32) int32
 
+//go:linkname wnLastRMS C.llgo_wakenet_last_rms
+func wnLastRMS() int32
+
+//go:linkname wnPeakRMS C.llgo_wakenet_peak_rms
+func wnPeakRMS() int32
+
+//go:linkname wnHits C.llgo_wakenet_hits
+func wnHits() int32
+
 // vTaskDelay yields the CPU for ticks. The poller rests one tick per pass: a
 // measured FreeRTOS tick (10 ms at the IDF default 100 Hz), which also feeds
 // the idle tasks and the watchdog.

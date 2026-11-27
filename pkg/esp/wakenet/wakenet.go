@@ -405,6 +405,38 @@ func ModelName() string { return modelName }
 // (512 for wn9 = 32 ms at 16 kHz; 0 before Init).
 func ChunkSamples() int32 { return chunkN }
 
+// LastRMS is the root-mean-square level of the audio chunk the engine saw
+// most recently (int16 scale). It separates "the engine hears nothing" from
+// "the engine hears silence": a stopped frame counter means a dead feed, a
+// stuck-near-zero RMS means a dead microphone path (codec register state or
+// a pin another owner re-routed).
+func LastRMS() int32 {
+	if !session {
+		return 0
+	}
+	return wnLastRMS()
+}
+
+// PeakRMS is the loudest chunk since the last Start - sampled once per beat,
+// LastRMS misses a short wake word, this cannot.
+func PeakRMS() int32 {
+	if !session {
+		return 0
+	}
+	return wnPeakRMS()
+}
+
+// Hits counts the chunks where the engine's detect call returned a positive
+// state since the last Start. Hits without detections means the event path
+// dropped something; no hits at all means the engine itself stopped
+// recognising (the audio feed is alive - check LastRMS/PeakRMS).
+func Hits() int32 {
+	if !session {
+		return 0
+	}
+	return wnHits()
+}
+
 // SampleRate returns the engine's sample rate in Hz (16000; 0 before Init).
 func SampleRate() int32 { return rateHz }
 
@@ -435,9 +467,16 @@ func Start() error {
 
 // Stop parks the session task's audio loop. Cooperative: the loop notices
 // at its top and stops capturing within one chunk period, never mid-C-call,
-// so the engine's state stays consistent for a re-Start. Events already in
-// flight stay readable. Errors: ErrNotReady before Init, ErrInvalidState
-// when the engine is not running, esperr.ErrClosed after Close.
+// so the engine's state stays consistent for a re-Start. Stop also hands the
+// I2S pins back: the capture channel is deleted (the board's I2S pins are
+// single-owner, so a conversation round can open its own channels while the
+// engine is parked) and Start rebuilds it. Stop blocks up to 2 s waiting for
+// that teardown. The engine itself stays alive - model mapping and working
+// buffers included - which is what makes a Stop/Start cycle cheap and free
+// of the re-create failures a Close/Init cycle hits on a fragmented heap.
+// Events already in flight stay readable. Errors: ErrNotReady before Init,
+// ErrInvalidState when the engine is not running, ErrTimeout when the bus
+// did not come free, esperr.ErrClosed after Close.
 func Stop() error {
 	if shutdown {
 		return esperr.Wrap("wakenet: stop", esperr.ErrClosed)

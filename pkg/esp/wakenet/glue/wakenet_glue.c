@@ -111,7 +111,18 @@ static int32_t s_state;                     /* scheduler-task written */
 static int32_t s_source;                    /* scheduler-task written */
 static int32_t s_threshold_milli;           /* scheduler-task written */
 static char s_model_name[WN_MODEL_NAME_MAX];
-static i2s_chan_handle_t s_i2s;             /* created at Init (scheduler
+/* The I2S RX pin set, kept so the capture channel can be released for the
+ * length of a conversation round and rebuilt on Start. The board's I2S pins
+ * are single-owner: a parked-but-live channel still routes BCLK/WS through
+ * the GPIO matrix and the round's own channel then never clocks (measured:
+ * playback write timeout 263). */
+static int32_t s_i2s_bclk = -1, s_i2s_ws = -1, s_i2s_din = -1;
+static volatile int s_bus_free = 1;         /* 1 = no capture channel exists */
+static volatile int32_t s_last_rms;         /* RMS of the chunk the engine last saw */
+static volatile int32_t s_peak_rms;         /* max RMS since Start */
+static volatile int32_t s_hits;             /* chunks where detect() returned >0 since Start */
+
+static i2s_chan_handle_t s_i2s;                    /* created at Init (scheduler
                                              * task), used by the session task */
 
 /* ---- engine (session-task owned after its create; Close uses it only
@@ -216,6 +227,56 @@ static void wn_test_fill(int16_t *buf, int32_t samples)
     }
 }
 
+/* Create the capture channel from the stored pin set. Runs on the session
+ * task (Start edge) or the scheduler task (Init). */
+static esp_err_t wn_i2s_open(void)
+{
+    i2s_chan_config_t ch_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    ch_cfg.dma_desc_num = 8;
+    ch_cfg.dma_frame_num = 256;
+    esp_err_t e = i2s_new_channel(&ch_cfg, NULL, &s_i2s);
+    if (e != ESP_OK) {
+        s_i2s = NULL;
+        return e;
+    }
+    i2s_std_config_t std_cfg = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
+                                                        I2S_SLOT_MODE_STEREO),
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = (s_i2s_bclk >= 0) ? (gpio_num_t)s_i2s_bclk : I2S_GPIO_UNUSED,
+            .ws = (s_i2s_ws >= 0) ? (gpio_num_t)s_i2s_ws : I2S_GPIO_UNUSED,
+            .dout = I2S_GPIO_UNUSED,
+            .din = (s_i2s_din >= 0) ? (gpio_num_t)s_i2s_din : I2S_GPIO_UNUSED,
+        },
+    };
+    e = i2s_channel_init_std_mode(s_i2s, &std_cfg);
+    if (e != ESP_OK) {
+        i2s_del_channel(s_i2s);
+        s_i2s = NULL;
+        return e;
+    }
+    s_bus_free = 0;
+    return ESP_OK;
+}
+
+/* Hand the pins back to whoever runs next (the conversation round). */
+static void wn_i2s_release(void)
+{
+    if (s_i2s == NULL) {
+        s_bus_free = 1;
+        return;
+    }
+    if (s_i2s_enabled) {
+        i2s_channel_disable(s_i2s);
+        s_i2s_enabled = 0;
+    }
+    i2s_del_channel(s_i2s);
+    s_i2s = NULL;
+    s_bus_free = 1;
+}
+
 /* ---- the session task (core 1): engine create + audio + detect ---- */
 
 static void wakenet_task(void *arg)
@@ -289,9 +350,24 @@ static void wakenet_task(void *arg)
             s_avg_us = 0;
             s_max_us = 0;
             s_test_pos = 0;
+            s_peak_rms = 0;
+            s_hits = 0;
             if (s_source == WN_SRC_I2S) {
+                if (s_i2s == NULL) {
+                    esp_err_t oe = wn_i2s_open();
+                    if (oe != ESP_OK) {
+                        wn_post_event(WN_EV_ERROR, (int32_t)oe);
+                        s_run = 0;
+                        continue;
+                    }
+                }
                 i2s_channel_enable(s_i2s);
                 s_i2s_enabled = 1;
+                /* TX stays disabled until the first playback write: with
+                 * the pair enabled together the RX frames carried audio
+                 * (levels normal) but the engine never detected again
+                 * (measured: hits stuck at 0), so the playback side is
+                 * armed lazily. */
             }
         }
         const size_t chunk_bytes = (size_t)s_chunk_samples * sizeof(int16_t);
@@ -326,10 +402,37 @@ static void wakenet_task(void *arg)
                 wn_test_fill(s_chunk, s_chunk_samples);
             }
 
+            /* RMS of what the engine is about to see: the difference
+             * between "no wake word" and "no microphone" - the frame
+             * counter alone cannot tell them apart. */
+            {
+                int64_t acc = 0;
+                for (int32_t i = 0; i < s_chunk_samples; i++) {
+                    int32_t v = s_chunk[i];
+                    acc += (int64_t)v * v;
+                }
+                uint32_t mean = (uint32_t)(acc / s_chunk_samples);
+                uint32_t r = 0;
+                for (uint32_t bit = 1u << 15; bit != 0; bit >>= 1) {
+                    uint32_t trial = r | bit;
+                    if (trial * trial <= mean) {
+                        r = trial;
+                    }
+                }
+                s_last_rms = (int32_t)r;
+                if ((int32_t)r > s_peak_rms) {
+                    s_peak_rms = (int32_t)r;
+                }
+            }
+
             /* detect, with the per-call timing the Go side prints. */
             int64_t t0 = esp_timer_get_time();
             wakenet_state_t st = s_wn->detect(s_md, s_chunk);
             uint32_t dt = (uint32_t)(esp_timer_get_time() - t0);
+
+            if (st > 0) {
+                s_hits = s_hits + 1;
+            }
 
             uint32_t f = s_frames + 1;
             s_avg_us = (uint32_t)((int32_t)s_avg_us
@@ -374,10 +477,10 @@ static void wakenet_task(void *arg)
             }
         }
 
-        /* s_run dropped: stop the capture channel until the next Start. */
-        if (s_source == WN_SRC_I2S && s_i2s_enabled) {
-            i2s_channel_disable(s_i2s);
-            s_i2s_enabled = 0;
+        /* s_run dropped: hand the I2S pins back so the conversation round
+         * can open its own channels; Start rebuilds the capture channel. */
+        if (s_source == WN_SRC_I2S) {
+            wn_i2s_release();
         }
     }
 
@@ -450,46 +553,15 @@ int32_t llgo_wakenet_init(const uint8_t *model, int32_t model_len,
     }
 
     if (source == WN_SRC_I2S) {
-        /* The DMA descriptor ring is the capture buffer the task reads from:
-         * 8 descriptors x 256 frames = 2048 samples = 128 ms of slack at
-         * 16 kHz, far above the worst single-detect time. The bus is
+        /* The channel itself opens lazily (wn_i2s_open): the pins are
+         * single-owner, so the engine only holds them while it is running.
+         * The DMA ring is 8 x 256 frames = 128 ms at 16 kHz; the bus is
          * configured STEREO because that is what the codec actually drives
-         * (measured: a mono slot config still delivered 2 bytes per frame per
-         * slot, doubling the read rate); the task deinterleaves slot 0. */
-        i2s_chan_config_t ch_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
-        ch_cfg.dma_desc_num = 8;
-        ch_cfg.dma_frame_num = 256;
-        esp_err_t e = i2s_new_channel(&ch_cfg, NULL, &s_i2s);
-        if (e != ESP_OK) {
-            esp_srmodel_deinit(s_models);
-            s_models = NULL;
-            return e;
-        }
-        /* The sample rate comes from the engine, which does not exist until
-         * the session task creates it; the standard wake-word rate is set
-         * here and the task reconfigures after create if the engine says
-         * otherwise. 16 kHz is wn9/wn10's rate (get_samp_rate has returned
-         * 16000 for every wakenet model esp-sr ships). */
-        i2s_std_config_t std_cfg = {
-            .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
-            .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT,
-                                                            I2S_SLOT_MODE_STEREO),
-            .gpio_cfg = {
-                .mclk = I2S_GPIO_UNUSED,
-                .bclk = (bclk >= 0) ? (gpio_num_t)bclk : I2S_GPIO_UNUSED,
-                .ws = (ws >= 0) ? (gpio_num_t)ws : I2S_GPIO_UNUSED,
-                .dout = I2S_GPIO_UNUSED,
-                .din = (din >= 0) ? (gpio_num_t)din : I2S_GPIO_UNUSED,
-            },
-        };
-        e = i2s_channel_init_std_mode(s_i2s, &std_cfg);
-        if (e != ESP_OK) {
-            i2s_del_channel(s_i2s);
-            s_i2s = NULL;
-            esp_srmodel_deinit(s_models);
-            s_models = NULL;
-            return e;
-        }
+         * (measured: a mono slot config still delivered 2 bytes per frame
+         * per slot, doubling the read rate). */
+        s_i2s_bclk = bclk;
+        s_i2s_ws = ws;
+        s_i2s_din = din;
     }
 
     s_ev = xEventGroupCreate();
@@ -593,6 +665,18 @@ int32_t llgo_wakenet_stop(void)
     }
     s_run = 0;
     s_state = WN_ST_READY;
+    /* I2S source: block (bounded) until the session task has deleted the
+     * capture channel. Coming back before that lets the caller open its own
+     * channel on pins the parked one still routes. */
+    if (s_source == WN_SRC_I2S) {
+        for (int i = 0; i < 200; i++) { /* 2 s cap */
+            if (s_bus_free) {
+                return ESP_OK;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        return ESP_ERR_TIMEOUT;
+    }
     return ESP_OK;
 }
 
@@ -679,6 +763,21 @@ int32_t llgo_wakenet_overflow_delta(void)
     int32_t delta = (int32_t)(d - s_dropped_seen);
     s_dropped_seen = d;
     return delta;
+}
+
+int32_t llgo_wakenet_peak_rms(void)
+{
+    return s_peak_rms;
+}
+
+int32_t llgo_wakenet_hits(void)
+{
+    return s_hits;
+}
+
+int32_t llgo_wakenet_last_rms(void)
+{
+    return s_last_rms;
 }
 
 int32_t llgo_wakenet_stats(int32_t *frames, int32_t *avg_us, int32_t *max_us)
