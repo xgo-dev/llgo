@@ -127,10 +127,7 @@ func (p Program) withNativeStorage(t Type) Type {
 	p.nativeStorage[t] = &view
 	p.nativeStorage[&view] = &view
 	if cc := p.nativeCallConvOf(t); isNativeCallConv(cc) {
-		if p.nativeCC == nil {
-			p.nativeCC = make(map[Type]CallConv)
-		}
-		p.nativeCC[&view] = cc
+		p.markNativeCallConv(&view, cc)
 	}
 	return &view
 }

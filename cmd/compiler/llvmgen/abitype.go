@@ -984,7 +984,11 @@ func (b Builder) abiTypeEx(t types.Type, publicFunc bool) Expr {
 					cc, spelling = prog.stdcallCallConv(), "stdcall"
 				}
 				if !HasNameValist(sig) && (cc != llvm.CCallConv || b.needsNativeFuncval(fn)) {
-					entry = b.funcvalAdapterFor(fn, sig, cc, spelling).impl
+					goSig := sig
+					if goSig.CallConv() != types.Go {
+						goSig = goSig.WithCallConv(types.Go)
+					}
+					entry = b.funcvalAdapterFor(fn, goSig, cc, spelling).impl
 					pkg.recordAbiTypeFakeUse(g.impl, entry)
 				}
 			}
@@ -1188,6 +1192,9 @@ func (p Program) publicReflectFuncEx(t types.Type, publicFunc bool) *types.Signa
 		return public
 	}
 	if alias, ok := t.(*types.Alias); ok && p.nativeFuncAliasABI(alias) != "" {
+		if public.CallConv() != types.Go {
+			return public.WithCallConv(types.Go)
+		}
 		return public
 	}
 	return nil

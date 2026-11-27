@@ -1435,6 +1435,8 @@ func (n *Named) resolveMethods() {
 				msig, _ := substType(m.typ, msubst, seen).(*Signature)
 				if msig != nil {
 					cp := *msig
+					cp.goType = nil
+					cp.ctx = nil
 					cp.recvTypeParams = nil
 					msig = &cp
 				}
@@ -1832,7 +1834,7 @@ func identical(x, y Type, ignoreTags bool) bool {
 		return true
 	case *Signature:
 		y, ok := y.(*Signature)
-		if !ok || x.callConv != y.callConv || x.variadic != y.variadic {
+		if !ok || x.callConv != y.callConv || x.variadic != y.variadic || x.typeParams.Len() != y.typeParams.Len() {
 			return false
 		}
 		return identical(x.params, y.params, ignoreTags) && identical(x.results, y.results, ignoreTags)

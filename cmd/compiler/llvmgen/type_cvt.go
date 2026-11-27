@@ -71,13 +71,7 @@ func (p Program) nativeView(base Type, cc CallConv) Type {
 		return v
 	}
 	view := *base
-	if p.nativeViews == nil {
-		p.nativeViews = make(map[nativeViewKey]Type)
-		p.nativeCC = make(map[Type]CallConv)
-	}
-	p.nativeViews[k] = &view
-	p.nativeCC[&view] = cc
-	return &view
+	return p.registerNativeView(k, &view, cc)
 }
 
 func (p Program) hasNativeFuncDiff(typ types.Type) bool {
@@ -122,13 +116,7 @@ func (p Program) nativeType(typ types.Type, cc CallConv) Type {
 		}
 		elem := p.nativeType(u.Elem(), cc)
 		view := &aType{llvm.ArrayType(elem.ll, int(u.Len())), rawType{typ}, vkArray}
-		if p.nativeViews == nil {
-			p.nativeViews = make(map[nativeViewKey]Type)
-			p.nativeCC = make(map[Type]CallConv)
-		}
-		p.nativeViews[k] = view
-		p.nativeCC[view] = cc
-		return view
+		return p.registerNativeView(k, view, cc)
 	case *types.Struct:
 		k := nativeViewKey{typ: typ, cc: cc}
 		if v := p.nativeViews[k]; v != nil {
@@ -147,13 +135,7 @@ func (p Program) nativeType(typ types.Type, cc CallConv) Type {
 		}
 		ll := p.ctx.StructType(fields, false)
 		view := &aType{ll, rawType{typ}, vkStruct}
-		if p.nativeViews == nil {
-			p.nativeViews = make(map[nativeViewKey]Type)
-			p.nativeCC = make(map[Type]CallConv)
-		}
-		p.nativeViews[k] = view
-		p.nativeCC[view] = cc
-		return view
+		return p.registerNativeView(k, view, cc)
 	case *types.Named:
 		if _, ok := u.Underlying().(*types.Signature); ok {
 			return p.funcPtrType(typ)
@@ -165,16 +147,18 @@ func (p Program) nativeType(typ types.Type, cc CallConv) Type {
 			}
 			elem := p.nativeType(arr.Elem(), cc)
 			view := &aType{llvm.ArrayType(elem.ll, int(arr.Len())), rawType{typ}, vkArray}
-			if p.nativeViews == nil {
-				p.nativeViews = make(map[nativeViewKey]Type)
-				p.nativeCC = make(map[Type]CallConv)
-			}
-			p.nativeViews[k] = view
-			p.nativeCC[view] = cc
-			return view
+			return p.registerNativeView(k, view, cc)
 		}
 	}
 	return p.rawType(typ)
+}
+
+func (p Program) registerNativeView(k nativeViewKey, view Type, cc CallConv) Type {
+	if p.nativeViews == nil {
+		p.nativeViews = make(map[nativeViewKey]Type)
+	}
+	p.nativeViews[k] = view
+	return p.markNativeCallConv(view, cc)
 }
 
 func (p Program) markNativeCallConv(t Type, cc CallConv) Type {

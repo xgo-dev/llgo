@@ -1550,6 +1550,8 @@ func substType(t Type, subst map[*TypeParam]Type, seen map[Type]Type) Type {
 				if params != sig.params || results != sig.results {
 					changed = true
 					cp := *sig
+					cp.goType = nil
+					cp.ctx = nil
 					cp.params = params
 					cp.results = results
 					cp.recv = NewVar(m.pos, m.pkg, "", out)
@@ -1721,6 +1723,8 @@ func substSignature(s *Signature, subst map[*TypeParam]Type, seen map[Type]Type)
 		return nil
 	}
 	cp := *s
+	cp.goType = nil
+	cp.ctx = nil
 	if s.recv != nil {
 		rt := substType(s.recv.typ, subst, seen)
 		if rt != s.recv.typ {
