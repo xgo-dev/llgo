@@ -96,6 +96,11 @@ _Static_assert(llgoFiberFrameArgOff == 52, "a0 argument slot must stay inside th
  * bits, so the return/size type mismatches with newlib's prototypes are
  * harmless and the results are ignored. */
 extern int _write(int fd, const void *buf, unsigned int len);
+/* Weak: libc variants that do not export the stdout global (llgo's own
+ * newlib-esp32 builds keep it inside _reent) still link, and the guard below
+ * folds to a never-taken branch. ESP-IDF's libc exports it, so IDF firmware
+ * keeps flushing. */
+extern void *stdout __attribute__((weak));
 extern int fflush(void *streams);
 /* Weak: SRAM-direct links carry no libc stdio globals at all, and the fatal
  * path must stay linkable there. IDF firmware resolves it to the real FILE*. */
