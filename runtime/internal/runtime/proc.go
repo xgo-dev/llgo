@@ -99,6 +99,7 @@ func freeRuntimeContext(ctx *runtimeContext) {
 		return
 	}
 	root := ctx.root
+	freeChanWaiter(&ctx.g)
 	freeSelectCache(&ctx.g)
 	leaveSynctest(&ctx.g)
 	unregisterTraceback(&ctx.g)

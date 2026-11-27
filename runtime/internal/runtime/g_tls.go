@@ -143,6 +143,7 @@ func destroyG(ptr c.Pointer) {
 		FreeRoot(unsafe.Pointer(node))
 	}
 	freeSelectCache(gp)
+	freeChanWaiter(gp)
 	ctx := gp.context
 	unregisterTraceback(gp)
 	if ctx != nil && ctx.root != nil {

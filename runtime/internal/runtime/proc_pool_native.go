@@ -139,6 +139,10 @@ func mPoolStart(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callerg
 	retainG()
 
 	slot := &ctx.platform.pool
+	if slot.sig.useFast() {
+		slot.sig.readyFast()
+		return true
+	}
 	slot.sig.lock()
 	slot.hasWork = true
 	slot.sig.ready()
@@ -153,8 +157,24 @@ func mPoolPark(ctx *runtimeContext) bool {
 	ensureMPool()
 	slot := &ctx.platform.pool
 	if !slot.pooled {
-		slot.sig.init()
+		slot.sig.initFast()
 		slot.pooled = true
+	}
+	if slot.sig.useFast() {
+		slot.sig.resetFast()
+		mPool.mu.Lock()
+		if mPool.idle >= mPool.maxIdle {
+			mPool.mu.Unlock()
+			return false
+		}
+		slot.next = mPool.head
+		mPool.head = ctx
+		mPool.idle++
+		atomic.Store(&mPool.idleCount, uint32(mPool.idle))
+		mPool.mu.Unlock()
+
+		slot.sig.parkIdleFast()
+		return true
 	}
 	slot.sig.lock()
 	slot.hasWork = false
