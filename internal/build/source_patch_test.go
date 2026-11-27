@@ -1396,3 +1396,35 @@ func TestCompaction(t *testing.T) {
 		t.Fatalf("hashtriemap regression: %v\n%s", err, output)
 	}
 }
+
+func TestFilterSourcePatchFileKeepsVersionedImport(t *testing.T) {
+	src := []byte(`package demo
+
+import (
+	"math/rand/v2"
+	"strings"
+)
+
+func keep() int {
+	return rand.IntN(10)
+}
+
+func drop() string {
+	return strings.ToUpper("a")
+}
+`)
+	filtered, changed, err := filterSourcePatchFile(src, map[string]struct{}{"drop": {}})
+	if err != nil {
+		t.Fatalf("filterSourcePatchFile failed: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected file to change")
+	}
+	got := string(filtered)
+	if !strings.Contains(got, "\t\"math/rand/v2\"\n") {
+		t.Fatalf("expected versioned math/rand/v2 import to remain active, got:\n%s", got)
+	}
+	if !strings.Contains(got, "// \"strings\"") {
+		t.Fatalf("expected unused strings import to be commented out, got:\n%s", got)
+	}
+}
