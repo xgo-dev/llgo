@@ -178,7 +178,11 @@ func (a *analyzer) cacheIdentity() (string, []cacheFunction) {
 		} else {
 			body.Reset()
 			ssa.WriteFunction(&body, fn)
-			h.Write(body.Bytes())
+			raw := body.Bytes()
+			if isPositionIndependentFunc(fn) {
+				raw = stripSSALocationLine(raw)
+			}
+			h.Write(raw)
 		}
 		for _, param := range fn.Params {
 			hashType(h, param.Type(), typeKeys)
@@ -236,6 +240,26 @@ func (a *analyzer) cacheIdentity() (string, []cacheFunction) {
 }
 
 func qualifier(pkg *types.Package) string { return pkg.Path() }
+
+// stripSSALocationLine removes the diagnostic "# Location: ...\n" header emitted
+// by ssa.WriteFunction so position-independent functions (such as synthetic
+// method wrappers recreated from exportdata without source positions) keep the
+// same body hash as their source-parsed counterparts.
+func stripSSALocationLine(raw []byte) []byte {
+	const prefix = "\n# Location: "
+	idx := bytes.Index(raw, []byte(prefix))
+	if idx < 0 {
+		return raw
+	}
+	end := bytes.IndexByte(raw[idx+1:], '\n')
+	if end < 0 {
+		return raw[:idx]
+	}
+	out := make([]byte, 0, len(raw)-end-1)
+	out = append(out, raw[:idx]...)
+	out = append(out, raw[idx+1+end:]...)
+	return out
+}
 
 func isPositionIndependentFunc(fn *ssa.Function) bool {
 	if fn == nil || fn.Parent() != nil || fn.Name() == "_" {

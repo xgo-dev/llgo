@@ -398,3 +398,18 @@ func TestCacheExternalKeyFastPath(t *testing.T) {
 		t.Fatalf("expected cache miss on ExternalKey change (misses=%d)", m.misses)
 	}
 }
+
+func TestStripSSALocationLine(t *testing.T) {
+	withLoc := []byte("# Name: (*p.T).M\n# Synthetic: wrapper\n# Location: /tmp/a.go:10:2\nfunc (t *p.T) M():\n")
+	want := []byte("# Name: (*p.T).M\n# Synthetic: wrapper\nfunc (t *p.T) M():\n")
+	if got := stripSSALocationLine(withLoc); !bytes.Equal(got, want) {
+		t.Fatalf("stripSSALocationLine(withLoc) = %q, want %q", got, want)
+	}
+	if got := stripSSALocationLine(want); !bytes.Equal(got, want) {
+		t.Fatalf("stripSSALocationLine(noLoc) = %q, want %q", got, want)
+	}
+	atEOF := []byte("# Name: (*p.T).M\n# Location: /tmp/a.go:10:2")
+	if got := stripSSALocationLine(atEOF); string(got) != "# Name: (*p.T).M" {
+		t.Fatalf("stripSSALocationLine(atEOF) = %q", got)
+	}
+}
