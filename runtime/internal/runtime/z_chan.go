@@ -65,10 +65,17 @@ type chanWaiter struct {
 	queued bool
 	status waitStatus
 
-	signal chanSignal
+	// Non-nil for ordinary single-channel waiters; select waiters share
+	// sel.signal so they do not carry unused per-case chanSignal storage.
+	signal *chanSignal
 
 	sel       *selectState
 	caseIndex int
+}
+
+type singleChanWaiter struct {
+	waiter chanWaiter
+	signal chanSignal
 }
 
 type selectState struct {
@@ -84,10 +91,17 @@ type selectCache struct {
 	waiters [selectInlineChanCount]chanWaiter
 }
 
+func resetSelectState(state *selectState) {
+	state.synctest = nil
+	state.status = waitPending
+	state.chosen = -1
+}
+
 func acquireSelectCache() *selectCache {
 	if gp := getg(); gp != nil && gp.selectCache != nil {
 		sc := gp.selectCache
 		gp.selectCache = nil
+		resetSelectState(&sc.state)
 		return sc
 	}
 	sc := (*selectCache)(c.Malloc(unsafe.Sizeof(selectCache{})))
@@ -96,13 +110,12 @@ func acquireSelectCache() *selectCache {
 	}
 	c.Memset(unsafe.Pointer(sc), 0, unsafe.Sizeof(selectCache{}))
 	sc.state.signal.init()
+	resetSelectState(&sc.state)
 	return sc
 }
 
 func releaseSelectCache(sc *selectCache, used int) {
 	sc.state.synctest = nil
-	sc.state.status = waitPending
-	sc.state.chosen = -1
 	for i := 0; i < used; i++ {
 		sc.waiters[i] = chanWaiter{}
 	}
@@ -258,14 +271,15 @@ func chanBuf(p *Chan, i int) unsafe.Pointer {
 }
 
 func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanWaiter {
-	var w *chanWaiter
+	var sw *singleChanWaiter
 	if gp := getg(); gp != nil {
-		w = gp.chanWaiter
+		sw = gp.chanWaiter
 		gp.chanWaiter = nil
 	}
-	if w == nil {
-		w = new(chanWaiter)
+	if sw == nil {
+		sw = new(singleChanWaiter)
 	}
+	w := &sw.waiter
 	if ch.bubble != nil {
 		w.synctest = NewSynctestWaiter()
 	}
@@ -273,8 +287,9 @@ func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanW
 	w.elem = elem
 	w.size = eltSize
 	w.send = send
-	w.signal.init()
-	w.signal.lock()
+	w.signal = &sw.signal
+	sw.signal.init()
+	sw.signal.lock()
 	return w
 }
 
@@ -294,21 +309,23 @@ func newSelectWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool, stat
 }
 
 func (w *chanWaiter) wait() waitStatus {
+	sig := w.signal
 	for !w.status.done() {
 		w.synctest.Block()
-		w.signal.park()
+		sig.park()
 	}
-	w.signal.unlock()
-	w.signal.destroy()
+	sig.unlock()
+	sig.destroy()
 	status := w.status
 	// finish holds the signal lock through notification. After reacquiring it,
 	// no further users remain: mutex destruction/reuse is permitted after
 	// release even if the previous unlock call has not returned yet.
 	// Clear channel/element pointers before caching, including on panic wakes.
-	*w = chanWaiter{}
+	sw := (*singleChanWaiter)(unsafe.Pointer(w))
+	*sw = singleChanWaiter{}
 	// A nested operation may already have filled this one-entry cache.
 	if gp := getg(); gp != nil && gp.chanWaiter == nil {
-		gp.chanWaiter = w
+		gp.chanWaiter = sw
 	}
 	return status
 }
@@ -349,7 +366,13 @@ func claimWaiter(w *chanWaiter) bool {
 	return true
 }
 
-func (w *chanWaiter) hasSynctest() bool {
+// wakeUnderLock reports whether w must be woken before releasing Chan.mutex.
+// Durable synctest waiters keep in-lock completion so bubble wake/idle accounting
+// stays serialized with the channel state transition. Non-durable waiters
+// (including a bubbled goroutine operating on an unbubbled channel, where
+// synctest is nil) defer finish() until after Chan.mutex is released so OS wake
+// syscalls do not extend the channel critical section.
+func (w *chanWaiter) wakeUnderLock() bool {
 	return w.synctest != nil || (w.sel != nil && w.sel.synctest != nil)
 }
 
@@ -362,7 +385,7 @@ func completeRecvWaiter(w *chanWaiter, src unsafe.Pointer, eltSize int, status w
 	} else {
 		zeroChanRecv(w.elem, eltSize)
 	}
-	if w.hasSynctest() {
+	if w.wakeUnderLock() {
 		w.finish(status)
 		return true, nil
 	}
@@ -373,7 +396,7 @@ func completeSendWaiter(w *chanWaiter, status waitStatus) (bool, *chanWaiter) {
 	if !claimWaiter(w) {
 		return false, nil
 	}
-	if w.hasSynctest() {
+	if w.wakeUnderLock() {
 		w.finish(status)
 		return true, nil
 	}
@@ -385,7 +408,7 @@ func recvFromSendWaiter(dst unsafe.Pointer, w *chanWaiter, eltSize int) (bool, *
 		return false, nil
 	}
 	copyChanElem(dst, w.elem, eltSize)
-	if w.hasSynctest() {
+	if w.wakeUnderLock() {
 		w.finish(waitSendOK)
 		return true, nil
 	}
@@ -510,7 +533,7 @@ func chanTryRecvLocked(p *Chan, v unsafe.Pointer, eltSize int) (recvOK bool, try
 				p.sendx = 0
 			}
 			p.qcount++
-			if w.hasSynctest() {
+			if w.wakeUnderLock() {
 				w.finish(waitSendOK)
 			} else {
 				wake = w
@@ -573,9 +596,12 @@ func ChanClose(p *Chan) {
 		panic("close of closed channel")
 	}
 	p.closed = true
-	// A woken receiver can observe close before this goroutine unlocks.
-	// Publish first so its subsequent nonblocking receive cannot miss close.
+	// Publish the closed bit before waking any synctest waiter in-lock and before
+	// releasing p.mutex so subsequent lock-free close checks observe close.
 	p.publishRecvClosed()
+	// Reusing w.next for the deferred wake lists is safe because dequeue cleared
+	// next/queued, at most one waiter per select can win claimWaiter, and each
+	// claimed waiter cannot return or be cleaned up until w.finish runs below.
 	var wakeRecvs, wakeRecvsTail *chanWaiter
 	for {
 		w := p.recvq.dequeue()
@@ -800,9 +826,6 @@ func Select(ops ...ChanOp) (isel int, recvOK bool) {
 
 	sc := acquireSelectCache()
 	state := &sc.state
-	state.chosen = -1
-	state.status = waitPending
-	state.synctest = nil
 	durable := CurrentSynctestBubble() != nil
 	for _, op := range ops {
 		if op.C != nil && op.C.bubble == nil {

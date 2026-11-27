@@ -146,14 +146,24 @@ func (s *chanSignal) waitOnAddress() {
 		}
 	}
 	// The notifier must release the lock before this signal can be reused.
-	// Try briefly in userspace first: ready() has already called wake and is
-	// returning from the kernel toward s.unlock(), so avoiding a contended
-	// fair-share mutex wait prevents a second kernel sleep/wake round-trip.
-	for i := 0; i < 512; i++ {
-		if s.mutex.TryLock() {
-			return
+	// When spare spinner slots remain, try briefly in userspace first so the
+	// woken waiter catches s.unlock() without a second kernel mutex sleep/wake
+	// round-trip, while avoiding RMW storms under broadcast wakes (ChanClose).
+	postWakeSpin := chanSignalSpinLimit
+	if postWakeSpin > 64 {
+		postWakeSpin = 64
+	}
+	if maxSpin := atomic.Load(&chanMaxSpinners); maxSpin > 0 && atomic.Load(&chanActiveSpinners) < maxSpin {
+		if atomic.Add(&chanActiveSpinners, uint32(1)) < maxSpin {
+			for i := 0; i < postWakeSpin; i++ {
+				if s.mutex.TryLock() {
+					atomic.Sub(&chanActiveSpinners, uint32(1))
+					return
+				}
+				chanSignalSpinHint(chanSignalSpinInstruction)
+			}
 		}
-		chanSignalSpinHint(chanSignalSpinInstruction)
+		atomic.Sub(&chanActiveSpinners, uint32(1))
 	}
 	s.lock()
 }

@@ -121,7 +121,6 @@ func TestSelectMoreThanInlineCases(t *testing.T) {
 			idx := round % len(ch)
 			ch[idx] <- round + 1
 		}
-		close(ch[11])
 	}()
 
 	for round := 0; round < 20; round++ {
@@ -145,33 +144,77 @@ func TestSelectMoreThanInlineCases(t *testing.T) {
 		}
 	}
 
-	// Verify heap-allocated waiter slot (index 11) observes close cleanly.
+	// Block across all 12 open channels (so 4 cases spill past the 8 inline slots
+	// to heap-allocated waiters) while another goroutine closes one channel.
+	closeDone := make(chan struct{})
+	go func() {
+		defer close(closeDone)
+		time.Sleep(time.Millisecond)
+		close(ch[11])
+	}()
 	select {
+	case v, ok := <-ch[0]:
+		t.Fatalf("unexpected recv on ch[0]: (%d, %v)", v, ok)
+	case v, ok := <-ch[1]:
+		t.Fatalf("unexpected recv on ch[1]: (%d, %v)", v, ok)
+	case v, ok := <-ch[2]:
+		t.Fatalf("unexpected recv on ch[2]: (%d, %v)", v, ok)
+	case v, ok := <-ch[3]:
+		t.Fatalf("unexpected recv on ch[3]: (%d, %v)", v, ok)
+	case v, ok := <-ch[4]:
+		t.Fatalf("unexpected recv on ch[4]: (%d, %v)", v, ok)
+	case v, ok := <-ch[5]:
+		t.Fatalf("unexpected recv on ch[5]: (%d, %v)", v, ok)
+	case v, ok := <-ch[6]:
+		t.Fatalf("unexpected recv on ch[6]: (%d, %v)", v, ok)
+	case v, ok := <-ch[7]:
+		t.Fatalf("unexpected recv on ch[7]: (%d, %v)", v, ok)
+	case v, ok := <-ch[8]:
+		t.Fatalf("unexpected recv on ch[8]: (%d, %v)", v, ok)
+	case v, ok := <-ch[9]:
+		t.Fatalf("unexpected recv on ch[9]: (%d, %v)", v, ok)
+	case v, ok := <-ch[10]:
+		t.Fatalf("unexpected recv on ch[10]: (%d, %v)", v, ok)
 	case v, ok := <-ch[11]:
 		if v != 0 || ok {
 			t.Fatalf("closed ch[11] = (%d, %v), want (0, false)", v, ok)
 		}
-	case <-ch[0]:
-		t.Fatal("unexpected recv on ch[0]")
 	}
+	<-closeDone
 	<-done
 
-	// Verify panic-on-send-closed releases the cached select state cleanly for reuse.
+	// Verify a blocking send-on-closed wake releases the cached select state cleanly
+	// and allows a subsequent blocking select to reuse it.
+	sendClosed := make(chan int)
+	panicCloseDone := make(chan struct{})
+	go func() {
+		defer close(panicCloseDone)
+		time.Sleep(time.Millisecond)
+		close(sendClosed)
+	}()
 	expectChannelPanicContaining(t, "send on closed channel", func() {
 		select {
-		case ch[11] <- 1:
+		case sendClosed <- 1:
 		case <-ch[0]:
 		}
 	})
-	go func() { ch[10] <- 99 }()
+	<-panicCloseDone
+
+	reuseDone := make(chan struct{})
+	go func() {
+		defer close(reuseDone)
+		time.Sleep(time.Millisecond)
+		ch[10] <- 99
+	}()
 	select {
 	case v := <-ch[10]:
 		if v != 99 {
-			t.Fatalf("post-panic select got %d, want 99", v)
+			t.Fatalf("post-panic blocking select got %d, want 99", v)
 		}
 	case <-ch[0]:
 		t.Fatal("unexpected recv on ch[0]")
 	}
+	<-reuseDone
 }
 
 func TestChannelCloseWakesManyWaiters(t *testing.T) {
