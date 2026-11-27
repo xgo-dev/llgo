@@ -24,6 +24,8 @@ type mPoolSlot struct{}
 
 func mPoolEnabled() bool { return false }
 
+func MPoolIdleForTesting() int { return 0 }
+
 func markTouchedLocal() {}
 
 func mPoolStart(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callergp *g) bool {

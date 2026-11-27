@@ -1,6 +1,7 @@
 /* The bridge deliberately has no Windows SDK header dependency, matching the
  * runtime's existing cross-compilable Windows exception shims. */
 #include "traceback.h"
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -46,6 +47,7 @@ static void *registry_lock;
 __declspec(dllexport) thread_node *llgo_debugger_threads_v1;
 static _Thread_local thread_node *current;
 static _Thread_local uintptr_t *fault_buffer;
+static _Thread_local int attached_once;
 
 /* Preserve the old stack-copy limit independently of the PC-buffer limit. */
 #define LLGO_TRACEBACK_COPY_MAX (1u << 23)
@@ -99,6 +101,8 @@ void llgo_traceback_attach(void *raw)
 {
     thread_node *n = raw;
     if (!n || current == n) return;
+    int reused = attached_once;
+    attached_once = 1;
     if (!fault_buffer)
         fault_buffer = VirtualAlloc(0, LLGO_TRACEBACK_MAX*sizeof(uintptr_t), 0x2000, 4);
     DWORD tid = GetCurrentThreadId();
@@ -108,6 +112,8 @@ void llgo_traceback_attach(void *raw)
     n->thread_id = tid; n->thread = thread; n->state = 2;
     current = n;
     ReleaseSRWLockExclusive(&registry_lock);
+    if (reused)
+        errno = 0;
 }
 
 void llgo_traceback_unregister(void *raw)

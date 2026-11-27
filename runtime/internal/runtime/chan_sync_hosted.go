@@ -2,7 +2,11 @@
 
 package runtime
 
-import "github.com/xgo-dev/llgo/runtime/internal/sync"
+import (
+	"unsafe"
+
+	"github.com/xgo-dev/llgo/runtime/internal/sync"
+)
 
 type chanMutex struct {
 	mutex sync.Mutex
@@ -44,8 +48,15 @@ func (s *chanSignal) park() {
 	TracebackWaiting(false)
 }
 
-func (s *chanSignal) parkIdle() {
+//llgo:cdecl
+func parkIdleBlockingHosted(arg unsafe.Pointer) unsafe.Pointer {
+	s := (*chanSignal)(arg)
 	s.cond.Wait(&s.mutex)
+	return nil
+}
+
+func (s *chanSignal) parkIdle() {
+	mPoolDoBlocking(parkIdleBlockingHosted, unsafe.Pointer(s))
 }
 
 func (s *chanSignal) ready() {

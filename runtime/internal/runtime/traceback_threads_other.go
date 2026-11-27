@@ -9,6 +9,7 @@ func attachTraceback(gp *g)           {}
 func unregisterTraceback(gp *g)       {}
 func detachTraceback(gp *g)           {}
 func releaseTracebackThread()         {}
+func allThreadsControlled() bool      { return false }
 func releaseFaultSnapshot()           {}
 
 func TracebackWaiting(bool) {}

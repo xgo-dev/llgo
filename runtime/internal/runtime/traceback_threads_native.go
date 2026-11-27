@@ -51,6 +51,8 @@ func detachTraceback(gp *g) {
 
 func releaseTracebackThread() { stacktrace.ReleaseThread() }
 
+func allThreadsControlled() bool { return stacktrace.AllThreadsControlled() }
+
 func releaseFaultSnapshot() { stacktrace.ReleaseFaultBuffer() }
 
 func TracebackWaiting(waiting bool) {

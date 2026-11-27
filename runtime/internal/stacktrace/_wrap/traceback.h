@@ -29,6 +29,7 @@ void llgo_traceback_attach(void *);
 void llgo_traceback_unregister(void *);
 void llgo_traceback_detach(void *);
 void llgo_traceback_release_thread(void);
+int llgo_traceback_allthreads_controlled(void);
 void llgo_traceback_state(void *, uint32_t);
 llgo_traceback_snapshot *llgo_traceback_capture(uint64_t);
 void llgo_traceback_free(llgo_traceback_snapshot *);

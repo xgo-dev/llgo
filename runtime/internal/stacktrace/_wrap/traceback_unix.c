@@ -275,7 +275,8 @@ void llgo_traceback_attach(void *raw)
     thread_node *node = raw;
     if (!node || current == node)
         return;
-    if (!cached_thread_info) {
+    int reused = cached_thread_info;
+    if (!reused) {
         pthread_once(&handler_once, install_handler);
         if (!fault_buffer)
             fault_buffer = map_buffer();
@@ -297,9 +298,6 @@ void llgo_traceback_attach(void *raw)
 #endif
         cached_stack_low = low;
         cached_stack_high = high;
-        sigset_t mask;
-        sigemptyset(&mask); sigaddset(&mask, SIGURG);
-        pthread_sigmask(SIG_UNBLOCK, &mask, 0);
         cached_thread_info = 1;
     } else if (!fault_buffer) {
         fault_buffer = map_buffer();
@@ -317,6 +315,15 @@ void llgo_traceback_attach(void *raw)
     node->state = 2;
     current = node;
     pthread_mutex_unlock(&registry_lock);
+    /* Always ensure SIGURG is unblocked: a prior goroutine or C call on a
+     * pooled thread may have modified the thread signal mask. */
+    sigset_t mask;
+    sigemptyset(&mask); sigaddset(&mask, SIGURG);
+    pthread_sigmask(SIG_UNBLOCK, &mask, 0);
+    /* A reused pooled thread must start each new goroutine with errno == 0,
+     * matching a freshly spawned OS thread (e.g. for cgo errno checks). */
+    if (reused)
+        errno = 0;
 }
 
 static void unregister_node(void *raw, int release_buffer)
@@ -331,7 +338,10 @@ static void unregister_node(void *raw, int release_buffer)
     if (node->next) node->next->prev = node->prev;
     int retired = 0;
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
-    retired = allcall_retire_owned(node);
+    /* Only retire nodes onto allcall_retired on actual OS thread exit; a
+     * detached pooled thread never exits so retiring it would leak nodes/fds. */
+    if (release_buffer)
+        retired = allcall_retire_owned(node);
 #endif
     int was_current = current == node;
     /* A disabled-mode prune may free retired nodes as soon as we unlock. */
@@ -441,3 +451,13 @@ void llgo_traceback_free(llgo_traceback_snapshot *head)
 }
 
 #include "allthreads_linux.h"
+
+int llgo_traceback_allthreads_controlled(void)
+{
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    return __atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) == 1 ||
+           llgo_allthreads_controlled_enabled();
+#else
+    return 0;
+#endif
+}

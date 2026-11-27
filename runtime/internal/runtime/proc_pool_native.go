@@ -43,6 +43,9 @@ var mPool struct {
 
 func mPoolEnabled() bool { return true }
 
+// MPoolIdleForTesting reports the current number of idle pooled worker threads.
+func MPoolIdleForTesting() int { return int(atomic.Load(&mPool.idleCount)) }
+
 func markTouchedLocal() {
 	if gp := (*g)(unsafe.Pointer(currentG)); gp != nil && gp.m != nil {
 		gp.m.touchedLocal = true
@@ -56,11 +59,11 @@ func ensureMPool() {
 	if _, won := atomic.CompareAndExchange(&mPool.inited, uint32(0), uint32(1)); won {
 		mPool.mu.init()
 		maxIdle := CPUCount() * 2
-		if maxIdle < 16 {
-			maxIdle = 16
+		if maxIdle < 8 {
+			maxIdle = 8
 		}
-		if maxIdle > 64 {
-			maxIdle = 64
+		if maxIdle > 32 {
+			maxIdle = 32
 		}
 		mPool.maxIdle = maxIdle
 		atomic.Store(&mPool.inited, uint32(2))
@@ -98,6 +101,9 @@ func mPoolStart(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callerg
 	ctx := mPoolPop()
 	if ctx == nil {
 		return false
+	}
+	if ctx.platform.m.touchedLocal || ctx.platform.m.curg != nil || ctx.g.lockedOSThread != 0 || ctx.g.panic_ != nil || ctx.g.defer_ != nil {
+		fatal("runtime: pooled worker retained dirty goroutine state")
 	}
 
 	savedWaiter := ctx.g.chanWaiter

@@ -170,6 +170,8 @@ func LockOSThread() {
 }
 
 // UnlockOSThread releases one LockOSThread count on the current goroutine.
+// Matching Go's runtime.UnlockOSThread (where lockedExt == 0 returns without
+// throwing), unlocking an unlocked goroutine is a no-op.
 //
 //go:noinline
 func UnlockOSThread() {

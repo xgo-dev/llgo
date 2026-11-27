@@ -6,7 +6,7 @@
 package runtime
 
 import (
-	_ "unsafe"
+	"unsafe"
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/clite/os"
@@ -98,12 +98,30 @@ func (s *chanSignal) park() {
 	TracebackWaiting(false)
 }
 
+const chanIdleSpinLimit = 64
+
+//llgo:cdecl
+func parkIdleBlockingDarwin(arg unsafe.Pointer) unsafe.Pointer {
+	s := (*chanSignal)(arg)
+	if s.address {
+		s.waitOnAddress()
+	} else {
+		s.cond.Wait(&s.mutex)
+	}
+	return nil
+}
+
 // parkIdle parks a pooled worker thread with no attached G, skipping traceback
-// state updates while allowing a brief uncontended spin before sleeping.
+// state updates while allowing a brief uncontended spin before sleeping outside
+// BDWGC's active thread set via GC_do_blocking.
 func (s *chanSignal) parkIdle() {
 	atomic.Store(&s.notified, uint32(0))
 	s.unlock()
-	for i := 0; i < 64; i++ {
+	spinLimit := chanSignalSpinLimit
+	if spinLimit > chanIdleSpinLimit {
+		spinLimit = chanIdleSpinLimit
+	}
+	for i := 0; i < spinLimit; i++ {
 		if atomic.Load(&s.notified) != 0 && s.mutex.TryLock() {
 			return
 		}
@@ -112,11 +130,7 @@ func (s *chanSignal) parkIdle() {
 	s.lock()
 	if atomic.Load(&s.notified) == 0 {
 		s.sleeping = true
-		if s.address {
-			s.waitOnAddress()
-		} else {
-			s.cond.Wait(&s.mutex)
-		}
+		mPoolDoBlocking(parkIdleBlockingDarwin, unsafe.Pointer(s))
 		s.sleeping = false
 	}
 }

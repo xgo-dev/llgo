@@ -115,8 +115,9 @@ func unregisterTraceback(gp *g) {
 	c.Free(unsafe.Pointer(node))
 }
 
-func detachTraceback(gp *g)   { unregisterTraceback(gp) }
-func releaseTracebackThread() {}
+func detachTraceback(gp *g)      { unregisterTraceback(gp) }
+func releaseTracebackThread()    {}
+func allThreadsControlled() bool { return false }
 
 func publishWasmCallerStore(store *callerLocationStore) {
 	if gp := getg(); gp != nil {
