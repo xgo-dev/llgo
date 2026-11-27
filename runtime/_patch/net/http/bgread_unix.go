@@ -1,4 +1,4 @@
-//go:build (darwin || linux) && !baremetal
+//go:build (darwin || linux) && !baremetal && go1.27 && !go1.28
 
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
@@ -78,6 +78,7 @@ var httpBgMgr struct {
 	poller        *httpBgPoller
 	shards        [bgShardCount]bgWatchShard
 	totalArmed    atomic.Int64
+	pendingCount  atomic.Int64
 	polledDisarms atomic.Int64
 	sleeping      atomic.Int32
 }
@@ -89,6 +90,10 @@ var bgEntryPool = sync.Pool{
 func bgShardFor(cr *connReader) *bgWatchShard {
 	h := uintptr(unsafe.Pointer(cr))
 	return &httpBgMgr.shards[(h>>6)&(bgShardCount-1)]
+}
+
+func isNonPeekableErrno(err error) bool {
+	return err == syscall.ENOTSOCK || err == syscall.EOPNOTSUPP || err == syscall.EINVAL
 }
 
 func ensureHTTPBgWatcher() bool {
@@ -120,12 +125,23 @@ func httpBgWatchArm(cr *connReader) bool {
 	e.seen = false
 	e.disarmed.Store(false)
 
+	var replacedState uint8
 	sh := bgShardFor(cr)
 	sh.mu.Lock()
+	if prev, ok := sh.entries[cr]; ok {
+		replacedState = prev.state
+		prev.state = bgStateDisarm
+		prev.disarmed.Store(true)
+	}
 	sh.entries[cr] = e
 	sh.mu.Unlock()
 
-	httpBgMgr.totalArmed.Add(1)
+	if replacedState == bgStateUnused {
+		httpBgMgr.totalArmed.Add(1)
+	}
+	if replacedState != bgStatePend {
+		httpBgMgr.pendingCount.Add(1)
+	}
 	if httpBgMgr.sleeping.Load() != 0 {
 		if httpBgMgr.sleeping.CompareAndSwap(1, 0) {
 			httpBgMgr.poller.wake()
@@ -155,6 +171,15 @@ func httpBgWatchDisarm(cr *connReader) bool {
 	sh.mu.Unlock()
 
 	httpBgMgr.totalArmed.Add(-1)
+	if prevState == bgStatePend {
+		httpBgMgr.pendingCount.Add(-1)
+		e.cr = nil
+		e.rawConn = nil
+		e.fd = -1
+		e.seen = false
+		bgEntryPool.Put(e)
+		return true
+	}
 	if prevState == bgStateFallbk {
 		return false
 	}
@@ -164,26 +189,46 @@ func httpBgWatchDisarm(cr *connReader) bool {
 				httpBgMgr.poller.del(int(u))
 			})
 		}
-		httpBgMgr.polledDisarms.Add(1)
+		if httpBgMgr.polledDisarms.Add(1) >= 64 && httpBgMgr.sleeping.Load() != 0 {
+			if httpBgMgr.sleeping.CompareAndSwap(1, 0) {
+				httpBgMgr.poller.wake()
+			}
+		}
 		// Do not recycle e here: runHTTPBgWatcher's byFD map may still hold e
 		// until the next prune pass.
 		return true
 	}
-	if prevState == bgStatePend {
-		e.cr = nil
-		e.rawConn = nil
-		e.fd = -1
-		e.seen = false
-		bgEntryPool.Put(e)
-	}
 	return true
+}
+
+func httpBgReleaseFallback(cr *connReader, e *bgWatchEntry) {
+	sh := bgShardFor(cr)
+	sh.mu.Lock()
+	if sh.entries[cr] == e {
+		delete(sh.entries, cr)
+		e.state = bgStateDisarm
+		e.disarmed.Store(true)
+		sh.mu.Unlock()
+		httpBgMgr.totalArmed.Add(-1)
+		return
+	}
+	sh.mu.Unlock()
+}
+
+func httpBgStartFallback(cr *connReader, e *bgWatchEntry) {
+	cr.rwc.SetReadDeadline(time.Time{})
+	go func() {
+		cr.backgroundRead()
+		httpBgReleaseFallback(cr, e)
+	}()
 }
 
 // peekAndArmSocket checks whether rawConn has unread data or has reached
 // EOF/error without consuming any pipelined request byte, and if EAGAIN,
 // registers the fd on p while still holding internal/poll's fdmu inside
 // rawConn.Control. This prevents fd-close/reuse races even under concurrent
-// Server.Close().
+// Server.Close(). Non-stream descriptors (ENOTSOCK/EOPNOTSUPP/EINVAL) return
+// closed=false, armed=false so the caller falls back to cr.backgroundRead().
 func peekAndArmSocket(rawConn syscall.RawConn, p *httpBgPoller) (fd int, hasData bool, closed bool, armed bool, err error) {
 	fd = -1
 	var buf [1]byte
@@ -201,6 +246,9 @@ func peekAndArmSocket(rawConn syscall.RawConn, p *httpBgPoller) (fd int, hasData
 				return
 			}
 			if rerr != nil {
+				if isNonPeekableErrno(rerr) {
+					return
+				}
 				closed = true
 				err = rerr
 				return
@@ -226,12 +274,14 @@ func runHTTPBgWatcher(p *httpBgPoller) {
 	readyFDs := make([]int, 0, 64)
 
 	for {
-		// Wait for kernel readability events or next pending-promotion tick.
+		// Only run the 500us promotion tick while at least one entry is still
+		// pending. Once slow handlers have been promoted to kqueue/epoll, block
+		// in p.wait(-1) with zero timer wakeups or shard scans.
 		var timeoutNs int64 = bgPollTickNs
-		if httpBgMgr.totalArmed.Load() == 0 && len(byFD) == 0 {
+		if httpBgMgr.pendingCount.Load() == 0 && httpBgMgr.polledDisarms.Load() == 0 {
 			httpBgMgr.sleeping.Store(1)
 			// Re-check after publishing sleeping=1 to prevent a missed wake.
-			if httpBgMgr.totalArmed.Load() == 0 {
+			if httpBgMgr.pendingCount.Load() == 0 && httpBgMgr.polledDisarms.Load() == 0 {
 				timeoutNs = -1
 			} else {
 				httpBgMgr.sleeping.Store(0)
@@ -253,7 +303,7 @@ func runHTTPBgWatcher(p *httpBgPoller) {
 
 		// 2. Promote entries that survived at least one full tick (~500us) to
 		// kqueue/epoll or fallback goroutine.
-		if httpBgMgr.totalArmed.Load() > 0 {
+		if httpBgMgr.pendingCount.Load() > 0 {
 			pending = pending[:0]
 			for i := range httpBgMgr.shards {
 				sh := &httpBgMgr.shards[i]
@@ -317,6 +367,7 @@ func promotePendingBgEntry(p *httpBgPoller, cr *connReader, byFD map[int]*bgWatc
 				e.state = bgStateDisarm
 				e.disarmed.Store(true)
 				sh.mu.Unlock()
+				httpBgMgr.pendingCount.Add(-1)
 				httpBgMgr.totalArmed.Add(-1)
 				e.cr = nil
 				e.rawConn = nil
@@ -347,6 +398,7 @@ func promotePendingBgEntry(p *httpBgPoller, cr *connReader, byFD map[int]*bgWatc
 				e.state = bgStatePoll
 				byFD[fd] = e
 				sh.mu.Unlock()
+				httpBgMgr.pendingCount.Add(-1)
 				return
 			}
 			sh.mu.Unlock()
@@ -357,7 +409,7 @@ func promotePendingBgEntry(p *httpBgPoller, cr *connReader, byFD map[int]*bgWatc
 		}
 	}
 
-	// Fallback for TLS, net.Pipe, custom net.Conn mocks, or poller add error.
+	// Fallback for TLS, net.Pipe, non-stream syscall.Conn, or poller add error.
 	sh.mu.Lock()
 	if sh.entries[cr] != e || e.state != bgStatePend {
 		sh.mu.Unlock()
@@ -365,9 +417,9 @@ func promotePendingBgEntry(p *httpBgPoller, cr *connReader, byFD map[int]*bgWatc
 	}
 	e.state = bgStateFallbk
 	sh.mu.Unlock()
+	httpBgMgr.pendingCount.Add(-1)
 
-	cr.rwc.SetReadDeadline(time.Time{})
-	go cr.backgroundRead()
+	httpBgStartFallback(cr, e)
 }
 
 func handleReadyBgEntry(p *httpBgPoller, e *bgWatchEntry, byFD map[int]*bgWatchEntry) {
@@ -397,13 +449,12 @@ func handleReadyBgEntry(p *httpBgPoller, e *bgWatchEntry, byFD map[int]*bgWatchE
 		return
 	}
 	if !closed && !hasData {
-		// Re-arm failed; fall back to standard backgroundRead.
+		// Re-arm failed or fd is non-peekable; fall back to standard backgroundRead.
 		sh.mu.Lock()
 		if sh.entries[cr] == e && e.state == bgStatePoll {
 			e.state = bgStateFallbk
 			sh.mu.Unlock()
-			cr.rwc.SetReadDeadline(time.Time{})
-			go cr.backgroundRead()
+			httpBgStartFallback(cr, e)
 			return
 		}
 		sh.mu.Unlock()

@@ -1,4 +1,4 @@
-//go:build linux && !baremetal
+//go:build linux && !baremetal && go1.27 && !go1.28
 
 /*
  * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.

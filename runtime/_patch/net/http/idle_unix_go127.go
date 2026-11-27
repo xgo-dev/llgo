@@ -228,7 +228,14 @@ func httpIdlePark(c *conn, ctx context.Context, cancelCtx context.CancelFunc, ra
 				httpIdleMgr.mu.Unlock()
 				return
 			}
-			if rerr != nil || n == 0 {
+			if rerr != nil {
+				if isNonPeekableErrno(rerr) {
+					return
+				}
+				closed = true
+				return
+			}
+			if n == 0 {
 				closed = true
 				return
 			}
@@ -510,6 +517,56 @@ func (c *conn) serve(ctx context.Context) {
 	c.serveHTTP1(ctx, cancelCtx, false, time.Time{})
 }
 
+const (
+	idleWaitReady    = 0
+	idleWaitTimeout  = 1
+	idleWaitClosed   = 2
+	idleWaitFallback = 3
+)
+
+// httpIdleWaitReadable waits until rawConn has at least one byte readable or
+// graceDeadline expires, using MSG_PEEK via rawConn.Read so no read error ever
+// passes through connReader.Read (which would cancel the connection-level
+// c.cancelCtx on a hot-grace timeout).
+func httpIdleWaitReadable(c *conn, rawConn syscall.RawConn, graceDeadline time.Time) int {
+	c.rwc.SetReadDeadline(graceDeadline)
+	var buf [1]byte
+	status := idleWaitTimeout
+	readErr := rawConn.Read(func(u uintptr) bool {
+		fd := int(u)
+		for {
+			n, _, rerr := syscall.Recvfrom(fd, buf[:], syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
+			if rerr == syscall.EINTR {
+				continue
+			}
+			if rerr == syscall.EAGAIN || rerr == syscall.EWOULDBLOCK {
+				return false
+			}
+			if rerr != nil {
+				if isNonPeekableErrno(rerr) {
+					status = idleWaitFallback
+					return true
+				}
+				status = idleWaitClosed
+				return true
+			}
+			if n == 0 {
+				status = idleWaitClosed
+				return true
+			}
+			status = idleWaitReady
+			return true
+		}
+	})
+	if readErr != nil {
+		if os.IsTimeout(readErr) {
+			return idleWaitTimeout
+		}
+		return idleWaitClosed
+	}
+	return status
+}
+
 func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, resumed bool, resumedIdleDeadline time.Time) {
 	var inFlightResponse *response
 	handedOff := false
@@ -668,15 +725,14 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 
 		if cachedRawConn != nil && c.bufr.Buffered() == 0 && !c.r.hasByte {
 			needPark := false
+			fallback := false
 			if hotSlot {
 				graceDeadline := time.Now().Add(httpIdleHotGrace)
 				if !idleDeadline.IsZero() && idleDeadline.Before(graceDeadline) {
 					graceDeadline = idleDeadline
 				}
-				c.rwc.SetReadDeadline(graceDeadline)
-				_, peekErr := c.bufr.Peek(1)
-
-				if peekErr == nil {
+				switch httpIdleWaitReadable(c, cachedRawConn, graceDeadline) {
+				case idleWaitReady:
 					// Next request arrived during hot-grace window.
 					if !idleDeadline.IsZero() {
 						c.rwc.SetReadDeadline(idleDeadline)
@@ -692,35 +748,21 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 						c.rwc.SetReadDeadline(time.Time{})
 					}
 					continue
-				}
-				if !os.IsTimeout(peekErr) {
+				case idleWaitClosed:
 					return
-				}
-				if !idleDeadline.IsZero() && !time.Now().Before(idleDeadline) {
-					return
-				}
-				if c.bufr.Buffered() > 0 {
-					if !idleDeadline.IsZero() {
-						c.rwc.SetReadDeadline(idleDeadline)
-					} else {
-						c.rwc.SetReadDeadline(time.Time{})
-					}
-					if _, err := c.bufr.Peek(4); err != nil {
+				case idleWaitFallback:
+					fallback = true
+				case idleWaitTimeout:
+					if !idleDeadline.IsZero() && !time.Now().Before(idleDeadline) {
 						return
 					}
-					if readHeaderTO > 0 {
-						c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
-					} else if !idleDeadline.IsZero() {
-						c.rwc.SetReadDeadline(time.Time{})
-					}
-					continue
+					needPark = true
 				}
-				needPark = true
 			} else {
 				needPark = true
 			}
 
-			if needPark {
+			if !fallback && needPark {
 				c.rwc.SetReadDeadline(time.Time{})
 				parked, hasData, closed := httpIdlePark(c, ctx, cancelCtx, cachedRawConn, idleDeadline)
 				if parked {

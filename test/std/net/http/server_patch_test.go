@@ -9,10 +9,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -468,5 +470,134 @@ func TestServerElasticWorkerPoolNoSelfCallDeadlock(t *testing.T) {
 	close(errs)
 	for err := range errs {
 		t.Fatalf("concurrent self-call failed: %v", err)
+	}
+}
+
+func TestServerIdleKeepAlivePreservesRequestContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.Context().Err(); err != nil {
+			http.Error(w, "ctx err: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		io.WriteString(w, "ok:"+r.URL.Path)
+	}))
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	br := bufio.NewReader(conn)
+
+	for _, path := range []string{"/r1", "/r2", "/r3"} {
+		if _, err := io.WriteString(conn, "GET "+path+" HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+		resp, err := http.ReadResponse(br, nil)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || string(body) != "ok:"+path {
+			t.Fatalf("%s: got status=%d body=%q, want 200 ok:%s", path, resp.StatusCode, string(body), path)
+		}
+		// Pause past the 5ms hot-grace window so the connection parks on the
+		// shared idle watcher and resumes for the next request with live ctx.
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+type nonSocketRawConn struct {
+	fd uintptr
+}
+
+func (r nonSocketRawConn) Control(f func(fd uintptr)) error {
+	f(r.fd)
+	return nil
+}
+
+func (r nonSocketRawConn) Read(f func(fd uintptr) (done bool)) error {
+	f(r.fd)
+	return nil
+}
+
+func (r nonSocketRawConn) Write(f func(fd uintptr) (done bool)) error {
+	f(r.fd)
+	return nil
+}
+
+type nonSocketSyscallConn struct {
+	net.Conn
+	fd uintptr
+}
+
+func (c *nonSocketSyscallConn) SyscallConn() (syscall.RawConn, error) {
+	return nonSocketRawConn{fd: c.fd}, nil
+}
+
+func TestServerBackgroundReadNonSocketSyscallConnFallback(t *testing.T) {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	ln := newPipeListener()
+	entered := make(chan struct{})
+	cancelled := make(chan struct{})
+	var ctxErrDuringFirst atomic.Value
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/first" {
+			// Survive past backgroundRead promotion; ENOTSOCK from recvfrom
+			// must fall back to standard backgroundRead instead of canceling ctx.
+			time.Sleep(15 * time.Millisecond)
+			if err := r.Context().Err(); err != nil {
+				ctxErrDuringFirst.Store(err.Error())
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			io.WriteString(w, "first-ok")
+			return
+		}
+		close(entered)
+		<-r.Context().Done()
+		close(cancelled)
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	cSide, sSide := net.Pipe()
+	defer cSide.Close()
+	ln.ch <- &nonSocketSyscallConn{Conn: sSide, fd: pr.Fd()}
+
+	br := bufio.NewReader(cSide)
+	if _, err := io.WriteString(cSide, "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatalf("write first: %v", err)
+	}
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("read first: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(body) != "first-ok" {
+		t.Fatalf("first: status=%d body=%q ctxErr=%v", resp.StatusCode, string(body), ctxErrDuringFirst.Load())
+	}
+
+	// Second request on same keep-alive non-socket conn: closing peer must cancel ctx via fallback.
+	go func() {
+		_, _ = io.WriteString(cSide, "GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n")
+	}()
+	<-entered
+	time.Sleep(10 * time.Millisecond)
+	cSide.Close()
+	select {
+	case <-cancelled:
+	case <-time.After(1 * time.Second):
+		t.Fatal("non-socket syscall.Conn fallback did not observe client close promptly")
 	}
 }
