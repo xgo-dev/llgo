@@ -47,10 +47,11 @@ func (s *chanSignal) park() {
 }
 
 // parkIdle waits for the next pooled goroutine assignment without touching
-// traceback wait state. On Linux and Windows, sync.Cond.Wait already wraps the
-// blocking syscall in BDWGC GC_do_blocking, so avoid nesting GC_do_blocking.
+// traceback wait state. WaitInactive always wraps the blocking syscall in a
+// single BDWGC GC_do_blocking frame (including on Windows ARM64 MSVC, where
+// Wait stays active for LLDB Go-frame unwinding) without nesting GC_do_blocking.
 func (s *chanSignal) parkIdle() {
-	s.cond.Wait(&s.mutex)
+	s.cond.WaitInactive(&s.mutex)
 }
 
 func (s *chanSignal) ready() {
