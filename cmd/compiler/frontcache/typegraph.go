@@ -24,9 +24,12 @@ type TypeNode struct {
 	Object                        Object
 	Elem, Base                    int
 	Basic, Direction              int
+	CallConv, PtrKind             uint8 `json:",omitempty"`
 	Length                        int64
 	Variadic                      bool
 	Implicit                      bool
+	NativeLayout                  bool `json:",omitempty"`
+	IsMask                        bool `json:",omitempty"`
 	Universe                      bool
 	Types, Params, Results        []int    `json:",omitempty"`
 	TypeParams, RecvParams        []int    `json:",omitempty"`
@@ -83,7 +86,7 @@ func (g *TypeGraph) Add(typ types.Type) int {
 	case *types.Basic:
 		n.Kind, n.Basic = "basic", int(v.Kind())
 	case *types.Pointer:
-		n.Kind, n.Elem = "pointer", g.Add(v.Elem())
+		n.Kind, n.Elem, n.PtrKind = "pointer", g.Add(v.Elem()), uint8(v.Kind())
 	case *types.Slice:
 		n.Kind, n.Elem = "slice", g.Add(v.Elem())
 	case *types.Array:
@@ -93,7 +96,7 @@ func (g *TypeGraph) Add(typ types.Type) int {
 	case *types.Map:
 		n.Kind, n.Elem, n.Base = "map", g.Add(v.Elem()), g.Add(v.Key())
 	case *types.Named:
-		n.Kind = "named"
+		n.Kind, n.CallConv = "named", uint8(v.CallConv())
 		n.Universe = types.Universe.Lookup(v.Obj().Name()) == v.Obj()
 		n.Object = Object{Name: v.Obj().Name(), Package: g.types.PackageID(v.Obj().Pkg()), Position: Position(g.fset, v.Obj().Pos())}
 		if v.Origin() != v {
@@ -110,7 +113,7 @@ func (g *TypeGraph) Add(typ types.Type) int {
 	case *types.Alias:
 		// Alias identity is its target's identity; retaining a separate node
 		// nevertheless preserves declarations used by the type importer.
-		n.Kind = "alias"
+		n.Kind, n.CallConv = "alias", uint8(v.CallConv())
 		n.Universe = types.Universe.Lookup(v.Obj().Name()) == v.Obj()
 		n.Object = Object{Name: v.Obj().Name(), Package: g.types.PackageID(v.Obj().Pkg()), Position: Position(g.fset, v.Obj().Pos())}
 		if v.Origin() != v {
@@ -125,7 +128,7 @@ func (g *TypeGraph) Add(typ types.Type) int {
 		n.Kind, n.Elem = "parameter", g.Add(v.Constraint())
 		n.Object = Object{Name: v.Obj().Name(), Package: g.types.PackageID(v.Obj().Pkg()), Position: Position(g.fset, v.Obj().Pos())}
 	case *types.Signature:
-		n.Kind, n.Variadic = "func", v.Variadic()
+		n.Kind, n.Variadic, n.CallConv = "func", v.Variadic(), uint8(v.CallConv())
 		n.TypeParams, n.RecvParams = addParams(v.TypeParams()), addParams(v.RecvTypeParams())
 		n.Params, n.Results = addTuple(v.Params()), addTuple(v.Results())
 		for i := 0; i < v.Params().Len(); i++ {
@@ -144,12 +147,14 @@ func (g *TypeGraph) Add(typ types.Type) int {
 			n.Elements = append(n.Elements, g.object(v.At(i)))
 		}
 	case *types.Struct:
-		n.Kind = "struct"
+		n.Kind, n.NativeLayout = "struct", v.NativeLayout()
 		for i := 0; i < v.NumFields(); i++ {
 			f := g.object(v.Field(i))
 			f.Embedded, f.Tag = v.Field(i).Embedded(), []byte(v.Tag(i))
 			n.Fields = append(n.Fields, f)
 		}
+	case *types.SIMDVec:
+		n.Kind, n.Basic, n.Length, n.IsMask = "simdvec", int(v.Elem().Kind()), int64(v.Len()), v.IsMask()
 	case *types.Interface:
 		n.Kind, n.Implicit = "interface", v.IsImplicit()
 		for i := 0; i < v.NumExplicitMethods(); i++ {
@@ -293,7 +298,11 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 		}
 		result = types.Typ[n.Basic]
 	case "pointer":
-		result = types.NewPointer(get(n.Elem))
+		if types.PtrKind(n.PtrKind) != types.GoPtr {
+			result = types.NewPointerWithKind(get(n.Elem), types.PtrKind(n.PtrKind))
+		} else {
+			result = types.NewPointer(get(n.Elem))
+		}
 	case "slice":
 		result = types.NewSlice(get(n.Elem))
 	case "array":
@@ -331,6 +340,9 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 			defer func() { p.active = savedActive }()
 			named.SetTypeParams(parameters(n.TypeParams))
 			named.SetUnderlying(get(n.Elem))
+			if types.CallConv(n.CallConv) != types.Go {
+				named.SetCallConv(types.CallConv(n.CallConv))
+			}
 			for _, m := range n.Methods {
 				named.AddMethod(method(m))
 			}
@@ -350,6 +362,9 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 		} else {
 			obj := types.NewTypeName(pos(n.Object), owner(n.Object), n.Object.Name, nil)
 			alias := types.NewAlias(obj, get(n.Elem))
+			if types.CallConv(n.CallConv) != types.Go {
+				alias.SetCallConv(types.CallConv(n.CallConv))
+			}
 			alias.SetTypeParams(parameters(n.TypeParams))
 			result = alias
 		}
@@ -365,7 +380,11 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 			obj := *n.Receiver
 			recv = types.NewVar(pos(obj), owner(obj), obj.Name, get(obj.Type))
 		}
-		result = types.NewSignatureType(recv, parameters(n.RecvParams), parameters(n.TypeParams), namedTuple(n.Params, n.Parameters), namedTuple(n.Results, n.Returns), n.Variadic)
+		sig := types.NewSignatureType(recv, parameters(n.RecvParams), parameters(n.TypeParams), namedTuple(n.Params, n.Parameters), namedTuple(n.Results, n.Returns), n.Variadic)
+		if types.CallConv(n.CallConv) != types.Go {
+			sig = sig.WithCallConv(types.CallConv(n.CallConv))
+		}
+		result = sig
 	case "tuple":
 		result = namedTuple(n.Types, n.Elements)
 	case "struct":
@@ -374,7 +393,16 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 		for _, f := range n.Fields {
 			fields, tags = append(fields, variable(f)), append(tags, string(f.Tag))
 		}
-		result = types.NewStruct(fields, tags)
+		st := types.NewStruct(fields, tags)
+		if n.NativeLayout {
+			st.SetNativeLayout(true)
+		}
+		result = st
+	case "simdvec":
+		if n.Basic < 0 || n.Basic >= len(types.Typ) || types.Typ[n.Basic] == nil || n.Length <= 0 {
+			return nil, fmt.Errorf("invalid frontend simdvec")
+		}
+		result = types.NewSIMDVec(types.Typ[n.Basic], int(n.Length), n.IsMask)
 	case "interface":
 		var methods []*types.Func
 		var embeds []types.Type

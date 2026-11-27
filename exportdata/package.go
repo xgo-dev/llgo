@@ -505,6 +505,7 @@ func (w *pkgWriter) encode() {
 		}
 		w.enc.writeUvarint(pkgID)
 		w.enc.writeStr(name)
+		w.enc.writeByte(byte(a.CallConv()))
 	}
 
 	// Emit TypeParam constraints as length-prefixed sub-blobs so decoding can
@@ -721,24 +722,10 @@ func (w *pkgWriter) writeType(t types.Type) {
 			w.writeVar(u.At(i))
 		}
 	case *types.Signature:
-		w.enc.writeByte(typeTagSignature)
-		w.enc.writeByte(byte(u.CallConv()))
-		w.enc.writeBool(u.Variadic())
-		w.writeVar(u.Recv())
-		rtps := u.RecvTypeParams()
-		w.enc.writeUvarint(uint64(rtps.Len()))
-		for i := 0; i < rtps.Len(); i++ {
-			w.enc.writeUvarint(w.tpIndex[rtps.At(i)])
-		}
-		tps := u.TypeParams()
-		w.enc.writeUvarint(uint64(tps.Len()))
-		for i := 0; i < tps.Len(); i++ {
-			w.enc.writeUvarint(w.tpIndex[tps.At(i)])
-		}
-		w.writeType(u.Params())
-		w.writeType(u.Results())
+		w.writeSignature(u, false)
 	case *types.Struct:
 		w.enc.writeByte(typeTagStruct)
+		w.enc.writeBool(u.NativeLayout())
 		w.enc.writeUvarint(uint64(u.NumFields()))
 		for i := 0; i < u.NumFields(); i++ {
 			w.writeVar(u.Field(i))
@@ -752,6 +739,12 @@ func (w *pkgWriter) writeType(t types.Type) {
 			m := u.ExplicitMethod(i)
 			w.enc.writeUvarint(w.internPkg(m.Pkg()))
 			w.enc.writeStr(m.Name())
+			if sig, ok := m.Type().(*types.Signature); ok && sig.Recv() != nil {
+				if _, isIface := sig.Recv().Type().(*types.Interface); isIface {
+					w.writeSignature(sig, true)
+					continue
+				}
+			}
 			w.writeType(m.Type())
 		}
 		w.enc.writeUvarint(uint64(u.NumEmbeddeds()))
@@ -803,6 +796,29 @@ func (w *pkgWriter) writeType(t types.Type) {
 	default:
 		w.enc.writeByte(typeTagNil)
 	}
+}
+
+func (w *pkgWriter) writeSignature(u *types.Signature, omitRecv bool) {
+	w.enc.writeByte(typeTagSignature)
+	w.enc.writeByte(byte(u.CallConv()))
+	w.enc.writeBool(u.Variadic())
+	if omitRecv {
+		w.writeVar(nil)
+	} else {
+		w.writeVar(u.Recv())
+	}
+	rtps := u.RecvTypeParams()
+	w.enc.writeUvarint(uint64(rtps.Len()))
+	for i := 0; i < rtps.Len(); i++ {
+		w.enc.writeUvarint(w.tpIndex[rtps.At(i)])
+	}
+	tps := u.TypeParams()
+	w.enc.writeUvarint(uint64(tps.Len()))
+	for i := 0; i < tps.Len(); i++ {
+		w.enc.writeUvarint(w.tpIndex[tps.At(i)])
+	}
+	w.writeType(u.Params())
+	w.writeType(u.Results())
 }
 
 func (w *pkgWriter) writeConst(v constant.Value) {
@@ -913,6 +929,7 @@ type pkgReader struct {
 
 	aliasOwners    []*types.Package
 	aliasNames     []string
+	aliasCC        []types.CallConv
 	aliasReused    []bool
 	aliasBlobs     [][]byte
 	aliasResolved  []bool
@@ -1148,6 +1165,7 @@ func (r *pkgReader) decodeBody() error {
 	r.aliases = make([]*types.Alias, aliasCount)
 	r.aliasOwners = make([]*types.Package, aliasCount)
 	r.aliasNames = make([]string, aliasCount)
+	r.aliasCC = make([]types.CallConv, aliasCount)
 	r.aliasReused = make([]bool, aliasCount)
 	r.aliasResolved = make([]bool, aliasCount)
 	r.aliasResolving = make([]bool, aliasCount)
@@ -1160,9 +1178,14 @@ func (r *pkgReader) decodeBody() error {
 		if err != nil {
 			return err
 		}
+		cc, err := r.dec.readByte()
+		if err != nil {
+			return err
+		}
 		owner := r.pkgByID(pkgID)
 		r.aliasOwners[i] = owner
 		r.aliasNames[i] = aName
+		r.aliasCC[i] = types.CallConv(cc)
 		if pkgID == 0 {
 			if obj := types.Universe.Lookup(aName); obj != nil {
 				if existing, ok := obj.Type().(*types.Alias); ok {
@@ -1550,6 +1573,9 @@ func (r *pkgReader) resolveNamed(idx int) error {
 			under = sig.WithCallConv(r.namedCC[idx])
 		}
 		r.nameds[idx].SetUnderlying(under)
+		if r.namedCC[idx] != types.Go {
+			r.nameds[idx].SetCallConv(r.namedCC[idx])
+		}
 		for _, mr := range methods {
 			fn := types.NewFunc(token.NoPos, mr.pkg, mr.name, mr.sig)
 			mr.meta.apply(fn)
@@ -1587,7 +1613,13 @@ func (r *pkgReader) resolveAlias(idx int) (*types.Alias, error) {
 			return nil
 		}
 		tn := types.NewTypeName(token.NoPos, r.aliasOwners[idx], r.aliasNames[idx], nil)
+		if sig, ok := rhs.(*types.Signature); ok && r.aliasCC[idx] != types.Go {
+			rhs = sig.WithCallConv(r.aliasCC[idx])
+		}
 		a := types.NewAlias(tn, rhs)
+		if r.aliasCC[idx] != types.Go {
+			a.SetCallConv(r.aliasCC[idx])
+		}
 		if len(tps) > 0 {
 			a.SetTypeParams(tps)
 		}
@@ -1777,6 +1809,10 @@ func (r *pkgReader) readType() (types.Type, error) {
 		}
 		return sig, nil
 	case typeTagStruct:
+		nativeLayout, err := r.dec.readBool()
+		if err != nil {
+			return nil, err
+		}
 		n, err := r.dec.readUvarint()
 		if err != nil {
 			return nil, err
@@ -1802,7 +1838,11 @@ func (r *pkgReader) readType() (types.Type, error) {
 		if !hasTags {
 			tags = nil
 		}
-		return types.NewStruct(fields, tags), nil
+		st := types.NewStruct(fields, tags)
+		if nativeLayout {
+			st.SetNativeLayout(true)
+		}
+		return st, nil
 	case typeTagInterface:
 		implicit, err := r.dec.readBool()
 		if err != nil {
@@ -1947,11 +1987,11 @@ func (r *pkgReader) readType() (types.Type, error) {
 		if err != nil {
 			return nil, err
 		}
-		_, err = r.dec.readBool()
+		isMask, err := r.dec.readBool()
 		if err != nil {
 			return nil, err
 		}
-		return types.NewArray(types.Typ[types.BasicKind(k)], int64(n)), nil
+		return types.NewSIMDVec(types.Typ[types.BasicKind(k)], int(n), isMask), nil
 	default:
 		return nil, errCorrupt
 	}

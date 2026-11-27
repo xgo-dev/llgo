@@ -12,6 +12,7 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
+	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/ssautil"
 )
@@ -21,6 +22,9 @@ func (f *frontendCache) build(selected map[*ssa.Package]bool) {
 	for _, entry := range f.entries {
 		if !f.built[entry.pkg] && selected[entry.pkg] {
 			if f.ctx.dedup.IsExported(entry.id) {
+				if f.ctx.buildConf.Verbose {
+					fmt.Fprintf(os.Stderr, "FRONTEND SOURCE REQUIRED: %s (reason=%s)\n", entry.id, f.sourceReason[entry.id])
+				}
 				f.err = errFrontendSourceRequired
 				return
 			}
@@ -41,12 +45,18 @@ func (f *frontendCache) buildAll() {
 	f.build(selected)
 }
 
-func (f *frontendCache) source(pkg Package, selected map[*ssa.Package]bool) {
+func (f *frontendCache) source(pkg Package, selected map[*ssa.Package]bool, reason string) {
 	selected[pkg.SSA] = true
 	if pkg.AltPkg != nil {
 		selected[f.ctx.progSSA.Package(pkg.AltPkg.Types)] = true
 	}
 	pkg.frontendOpaque = nil
+	if f.sourceReason == nil {
+		f.sourceReason = make(map[string]string)
+	}
+	if _, exists := f.sourceReason[pkg.ID]; !exists {
+		f.sourceReason[pkg.ID] = reason
+	}
 }
 
 func (f *frontendCache) indexTypes() {
@@ -72,12 +82,12 @@ func (f *frontendCache) prepare() error {
 		if record != nil && pkg.Name != "main" && !f.ctx.packageCacheDisabled(pkg.ID) {
 			f.records[pkg.ID] = record
 		} else {
-			f.source(pkg, selected)
+			f.source(pkg, selected, "prepare-miss")
 		}
 	}
 	for _, root := range f.ctx.initial {
 		if pkg := f.ctx.pkgs[root]; pkg != nil {
-			f.source(pkg, selected)
+			f.source(pkg, selected, "initial-root")
 		}
 	}
 	for _, entry := range f.entries {
@@ -117,7 +127,7 @@ func (f *frontendCache) materialize() error {
 		}
 		if !valid {
 			selected := make(map[*ssa.Package]bool)
-			f.source(pkg, selected)
+			f.source(pkg, selected, "materialize-runtime-type")
 			f.build(selected)
 		}
 	}
@@ -171,7 +181,8 @@ func (f *frontendCache) bindFunctions() {
 // which actually lower code may import an eligible dependency body; cached
 // packages that only contribute declarations do not request optimization bodies.
 func (f *frontendCache) importBodies() error {
-	if f.ctx.frontendOptions.DisableInlineBodyImports {
+	if f.ctx.frontendOptions.DisableInlineBodyImports || devIncrementalModeEnabled() ||
+		(f.ctx.buildConf != nil && f.ctx.buildConf.OptLevel == optlevel.O0) {
 		return nil
 	}
 	bodyBudget, _, depth := cl.FrontendInlinePolicy()
@@ -209,7 +220,7 @@ func (f *frontendCache) importBodies() error {
 				}
 				if cost, ok := costs[frontcache.FunctionID(target, f.types)]; ok && cost <= bodyBudget {
 					if owner := f.owners[target.Pkg]; owner != nil && !f.built[target.Pkg] {
-						f.source(owner, needed)
+						f.source(owner, needed, "inline-body")
 					}
 					visit(target, level+1, needed)
 				}
@@ -246,19 +257,19 @@ func (f *frontendCache) certify() error {
 			continue
 		}
 		if f.uncacheable[pkg] {
-			f.source(pkg, selected)
+			f.source(pkg, selected, "uncacheable")
 			continue
 		}
 		if err := f.ctx.collectFingerprint(pkg); err != nil {
 			return err
 		}
 		if record.Archive != pkg.Fingerprint || !f.ctx.tryLoadFromCache(pkg) {
-			f.source(pkg, selected)
+			f.source(pkg, selected, "archive-mismatch")
 			continue
 		}
 		snapshot, err := f.importLink(record.Link)
 		if err != nil {
-			f.source(pkg, selected)
+			f.source(pkg, selected, "import-link:"+err.Error())
 			continue
 		}
 		pkg.frontendOpaque, pkg.linkSnapshot = record, snapshot
@@ -303,7 +314,7 @@ func (f *frontendCache) certify() error {
 				continue
 			}
 			if _, found := inventories[f.functionPackage(fn)][id]; !found || f.uncacheable[owner] {
-				f.source(owner, selected)
+				f.source(owner, selected, "missing-inventory:"+id)
 			}
 		}
 		if len(selected) == 0 {
@@ -349,6 +360,10 @@ func (f *frontendCache) certify() error {
 	}
 	if f.loader != nil {
 		span.setArg("type_exports", len(f.loader.selected))
+		span.setArg("types_exportdata", len(f.loader.exportDataHits))
+	}
+	if f.ctx.dedup != nil {
+		span.setArg("skipped_parse", f.ctx.dedup.SkippedParseCount())
 	}
 	if f.program != nil {
 		if err := f.restoreInitializers(); err != nil {

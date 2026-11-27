@@ -64,6 +64,7 @@ type cachePaths struct {
 	Meta     string // Path to .meta file
 	LinkSnap string // Path to binary exportdata.LinkSnapshot sidecar
 	Export   string // Path to binary exportdata.PackageMeta sidecar
+	Types    string // Path to binary exportdata v3 .llgotypes sidecar
 }
 
 // PackagePaths returns the cache paths for a package
@@ -77,6 +78,7 @@ func (cm *cacheManager) PackagePaths(targetTriple, pkgPath, fingerprint string) 
 		Meta:     filepath.Join(dir, fingerprint+cacheMetaExt),
 		LinkSnap: filepath.Join(dir, fingerprint+cacheLinkSnapExt),
 		Export:   filepath.Join(dir, fingerprint+cacheExportExt),
+		Types:    filepath.Join(dir, fingerprint+cacheTypesExt),
 	}
 }
 

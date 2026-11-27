@@ -446,10 +446,11 @@ func buildVerifiedLLGoExtensions() map[string]bool {
 		"type:DataKind":      true,
 		"type:NativeIntExt":  true,
 
-		// 5 verified LLGo-only top-level functions.
+		// 6 verified LLGo-only top-level functions.
 		"func:NewContextWithConfig":     true,
 		"func:NewPointerWithKind":       true,
 		"func:NewSignatureWithCallConv": true,
+		"func:NewSIMDVec":               true,
 		"func:DataKindOf":               true,
 		"func:NativeIntExtForSpec":      true,
 
@@ -459,8 +460,12 @@ func buildVerifiedLLGoExtensions() map[string]bool {
 		"method:Signature.WithCallConv": true,
 		"method:Signature.IsClosure":    true,
 		"method:Signature.IsNative":     true,
+		"method:Struct.NativeLayout":    true,
+		"method:Struct.SetNativeLayout": true,
 		"method:Named.CallConv":         true,
+		"method:Named.SetCallConv":      true,
 		"method:Alias.CallConv":         true,
+		"method:Alias.SetCallConv":      true,
 
 		// Verified LLGo declaration & package metadata methods.
 		"method:Func.LinkName":         true,

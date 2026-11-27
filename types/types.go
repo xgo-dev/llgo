@@ -1184,6 +1184,8 @@ func (s *Struct) Tag(i int) string {
 	return ""
 }
 func (s *Struct) HasHostLayout() bool     { return s.hostLayout }
+func (s *Struct) NativeLayout() bool      { return s.nativeLayout }
+func (s *Struct) SetNativeLayout(v bool)  { s.nativeLayout = v }
 func (s *Struct) SIMDTagIndex() int       { return s.simdTagIndex }
 func (s *Struct) SIMDVec() *SIMDVec       { return nil }
 func (s *Struct) Underlying() Type        { return s }
@@ -1267,6 +1269,11 @@ type SIMDVec struct {
 	isMask   bool
 	tagIndex int // 0=128-bit, 1=256-bit, 2=512-bit
 	goType   gotypes.Type
+}
+
+// NewSIMDVec constructs a canonical SIMD vector or mask type.
+func NewSIMDVec(elem *Basic, length int, isMask bool) *SIMDVec {
+	return newSIMDVec(elem, length, isMask)
 }
 
 // newSIMDVec constructs a canonical SIMD vector or mask type.
@@ -1491,6 +1498,21 @@ func (n *Named) AddMethod(m *Func) {
 
 func (n *Named) CallConv() CallConv { return n.callConv }
 
+// SetCallConv attaches an LLGo calling convention directive (such as CDecl or
+// Stdcall) directly to n and updates native layout metadata accordingly.
+func (n *Named) SetCallConv(cc CallConv) {
+	n.callConv = cc
+	n.hasCallConv = cc != Go
+	if n.hasCallConv && cc.IsNative() {
+		switch n.underlying.(type) {
+		case *Struct, *Array:
+			n.nativeLayout = true
+		}
+	} else {
+		n.nativeLayout = false
+	}
+}
+
 func (n *Named) IsHostLayoutMarker() bool {
 	if n.obj != nil && n.obj.pkg != nil && isStructsPkgPath(n.obj.pkg.path) && n.obj.name == "HostLayout" {
 		return true
@@ -1553,6 +1575,12 @@ func (n *Named) SetUnderlying(u Type) {
 	n.resolved = true
 	if u != nil {
 		n.hostLayout = u.HasHostLayout()
+		if n.hasCallConv && n.callConv.IsNative() {
+			switch u.(type) {
+			case *Struct, *Array:
+				n.nativeLayout = true
+			}
+		}
 	} else {
 		n.hostLayout = false
 	}
@@ -1622,8 +1650,14 @@ func (a *Alias) SetTypeParams(tparams []*TypeParam) {
 	}
 	a.typeParams = newTypeParamList(tparams)
 }
-func (a *Alias) TypeArgs() *TypeList     { return a.typeArgs }
-func (a *Alias) CallConv() CallConv      { return a.callConv }
+func (a *Alias) TypeArgs() *TypeList { return a.typeArgs }
+func (a *Alias) CallConv() CallConv  { return a.callConv }
+
+// SetCallConv attaches an LLGo calling convention directive directly to a.
+func (a *Alias) SetCallConv(cc CallConv) {
+	a.callConv = cc
+	a.hasCallConv = cc != Go
+}
 func (a *Alias) goTypeRef() gotypes.Type { return a.goType }
 func (a *Alias) llTypeMarker()           {}
 

@@ -70,7 +70,11 @@ func (t *Types) Key(typ types.Type) string {
 			fmt.Fprintf(&b, "local:%q", Position(t.fset, obj.Pos()))
 		}
 	case *types.Pointer:
-		fmt.Fprintf(&b, "pointer:%q", t.Key(v.Elem()))
+		if v.Kind() != types.GoPtr {
+			fmt.Fprintf(&b, "pointer:%d:%q", v.Kind(), t.Key(v.Elem()))
+		} else {
+			fmt.Fprintf(&b, "pointer:%q", t.Key(v.Elem()))
+		}
 	case *types.Slice:
 		fmt.Fprintf(&b, "slice:%q", t.Key(v.Elem()))
 	case *types.Array:
@@ -80,7 +84,11 @@ func (t *Types) Key(typ types.Type) string {
 	case *types.Chan:
 		fmt.Fprintf(&b, "chan:%d:%q", v.Dir(), t.Key(v.Elem()))
 	case *types.Signature:
-		fmt.Fprintf(&b, "func:%v[", v.Variadic())
+		if v.CallConv() != types.Go {
+			fmt.Fprintf(&b, "func:%d:%v[", v.CallConv(), v.Variadic())
+		} else {
+			fmt.Fprintf(&b, "func:%v[", v.Variadic())
+		}
 		for i := 0; i < v.TypeParams().Len(); i++ {
 			fmt.Fprintf(&b, "%q;", t.Key(v.TypeParams().At(i)))
 		}
@@ -93,7 +101,11 @@ func (t *Types) Key(typ types.Type) string {
 		b.WriteString("tuple:")
 		list(v)
 	case *types.Struct:
-		b.WriteString("struct:")
+		if v.NativeLayout() {
+			b.WriteString("struct:native:")
+		} else {
+			b.WriteString("struct:")
+		}
 		for i := 0; i < v.NumFields(); i++ {
 			f := v.Field(i)
 			owner := ""
@@ -102,6 +114,8 @@ func (t *Types) Key(typ types.Type) string {
 			}
 			fmt.Fprintf(&b, "%q:%q:%v:%q:%q;", owner, f.Name(), f.Embedded(), v.Tag(i), t.Key(f.Type()))
 		}
+	case *types.SIMDVec:
+		fmt.Fprintf(&b, "simd:%d:%d:%v", v.Elem().Kind(), v.Len(), v.IsMask())
 	case *types.Interface:
 		v.Complete()
 		b.WriteString("interface:")

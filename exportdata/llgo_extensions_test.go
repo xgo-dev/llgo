@@ -148,3 +148,95 @@ func TestExportDataRejectsLegacyV2Payload(t *testing.T) {
 		t.Fatal("expected legacy v2 payload to be rejected")
 	}
 }
+
+func TestExportDataV3RoundTripSIMDAndNativeTypes(t *testing.T) {
+	pkg := types.NewPackage("example.com/native", "native")
+
+	// SIMD vector and mask types.
+	vecT := types.NewSIMDVec(types.Typ[types.Float32], 4, false)
+	maskT := types.NewSIMDVec(types.Typ[types.Int32], 4, true)
+	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "Vec", vecT))
+	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "Mask", maskT))
+
+	// //llgo:cdecl named struct with nativeLayout=true.
+	cbSig := types.NewSignatureWithCallConv(nil, nil, nil, false, types.CDecl)
+	st := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, pkg, "cb", cbSig, false),
+	}, nil)
+	st.SetNativeLayout(true)
+	cStructName := types.NewTypeName(token.NoPos, pkg, "CStruct", nil)
+	cStruct := types.NewNamed(cStructName, st, nil)
+	cStruct.SetCallConv(types.CDecl)
+	pkg.Scope().Insert(cStructName)
+
+	// //llgo:cdecl alias.
+	aliasName := types.NewTypeName(token.NoPos, pkg, "CCallback", nil)
+	cAlias := types.NewAlias(aliasName, types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	cAlias.SetCallConv(types.CDecl)
+	pkg.Scope().Insert(aliasName)
+	pkg.MarkComplete()
+
+	var buf bytes.Buffer
+	if err := exportdata.Write(&buf, token.NewFileSet(), pkg); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := exportdata.Read(bytes.NewReader(buf.Bytes()), token.NewFileSet(), map[string]*types.Package{}, pkg.Path())
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+
+	gotVec, ok := got.Scope().Lookup("Vec").Type().(*types.SIMDVec)
+	if !ok || gotVec.IsMask() || gotVec.Len() != 4 || gotVec.Elem().Kind() != types.Float32 {
+		t.Fatalf("Vec = %T (%v), want non-mask 4xfloat32 SIMDVec", got.Scope().Lookup("Vec").Type(), got.Scope().Lookup("Vec").Type())
+	}
+	gotMask, ok := got.Scope().Lookup("Mask").Type().(*types.SIMDVec)
+	if !ok || !gotMask.IsMask() || gotMask.Len() != 4 || gotMask.Elem().Kind() != types.Int32 {
+		t.Fatalf("Mask = %T (%v), want mask 4xint32 SIMDVec", got.Scope().Lookup("Mask").Type(), got.Scope().Lookup("Mask").Type())
+	}
+
+	gotStruct := got.Scope().Lookup("CStruct").(*types.TypeName).Type().(*types.Named)
+	if gotStruct.CallConv() != types.CDecl {
+		t.Fatalf("CStruct.CallConv() = %v, want CDecl", gotStruct.CallConv())
+	}
+	gotUnder, ok := gotStruct.Underlying().(*types.Struct)
+	if !ok || !gotUnder.NativeLayout() {
+		t.Fatalf("CStruct underlying = %T (NativeLayout=%v), want Struct with NativeLayout=true", gotStruct.Underlying(), ok && gotUnder.NativeLayout())
+	}
+
+	gotAlias, ok := got.Scope().Lookup("CCallback").(*types.TypeName).Type().(*types.Alias)
+	if !ok || gotAlias.CallConv() != types.CDecl {
+		t.Fatalf("CCallback = %T (CallConv=%v), want Alias with CDecl", got.Scope().Lookup("CCallback").Type(), gotAlias.CallConv())
+	}
+	if sig, ok := gotAlias.Rhs().(*types.Signature); !ok || sig.CallConv() != types.CDecl {
+		t.Fatalf("CCallback.Rhs() = %T (%v), want CDecl signature", gotAlias.Rhs(), gotAlias.Rhs())
+	}
+}
+
+func TestExportDataV3RoundTripUnnamedInterfaceMethod(t *testing.T) {
+	const src = `package ifacepkg
+
+func Use(x interface{ Read([]byte) (int, error) }) int { return 0 }
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "ifacepkg.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	pkg, err := (&types.Config{}).Check("example.com/ifacepkg", fset, []*ast.File{file}, nil)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := exportdata.Write(&buf, fset, pkg); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	got, err := exportdata.Read(bytes.NewReader(buf.Bytes()), token.NewFileSet(), map[string]*types.Package{}, pkg.Path())
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	fn := got.Scope().Lookup("Use").(*types.Func)
+	iface := fn.Signature().Params().At(0).Type().(*types.Interface)
+	if iface.NumMethods() != 1 || iface.Method(0).Name() != "Read" {
+		t.Fatalf("decoded unnamed interface = %v", iface)
+	}
+}

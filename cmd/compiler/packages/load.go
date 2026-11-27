@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/xgo-dev/llgo/types"
 	"golang.org/x/tools/go/packages"
@@ -90,10 +91,11 @@ type aDeduper struct {
 	preload     func(pkg *Package)
 	prepare     func([]*Package, *Config) error
 	rewrite     func(*Package) (bool, error)
-	llgoFiles   map[string][]string
-	importTypes func(*Package, *token.FileSet) bool
-	exported    sync.Map
-	typeCtx     *types.Context
+	llgoFiles    map[string][]string
+	importTypes  func(*Package, *token.FileSet) bool
+	exported     sync.Map
+	skippedParse atomic.Int64
+	typeCtx      *types.Context
 }
 
 type Deduper = *aDeduper
@@ -110,8 +112,9 @@ func (p Deduper) SetTypeContext(ctx *types.Context) {
 	}
 }
 
-// SetImportTypes installs a validated dependency type-export reader. Syntax is
-// still parsed for compiler directives; a true result replaces type checking.
+// SetImportTypes installs a validated dependency type-export reader. When a
+// dependency hits the cache before parsing, both parsing and type checking are
+// skipped and pkg.Syntax remains empty.
 func (p Deduper) SetImportTypes(fn func(*Package, *token.FileSet) bool) { p.importTypes = fn }
 func (p Deduper) IsExported(id string) bool {
 	if p == nil {
@@ -119,6 +122,15 @@ func (p Deduper) IsExported(id string) bool {
 	}
 	_, ok := p.exported.Load(id)
 	return ok
+}
+
+// SkippedParseCount reports how many packages skipped source parsing via
+// SetImportTypes.
+func (p Deduper) SkippedParseCount() int {
+	if p == nil {
+		return 0
+	}
+	return int(p.skippedParse.Load())
 }
 
 func (p Deduper) SetPreload(fn func(pkg *Package)) {
@@ -592,6 +604,21 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 		pkg.Errors = append(pkg.Errors, errs...)
 	}
 
+	attemptedImport := false
+	if len(pkg.Errors) == 0 && len(pkg.Syntax) == 0 &&
+		tc.origMode&(NeedTypes|NeedTypesInfo) != 0 &&
+		tc.dedup != nil && tc.dedup.importTypes != nil {
+		attemptedImport = true
+		if tc.dedup.importTypes(pkg, fset) {
+			tc.dedup.exported.Store(pkg.ID, true)
+			tc.dedup.skippedParse.Add(1)
+			if tc.dedup.preload != nil {
+				tc.dedup.preload(pkg)
+			}
+			return
+		}
+	}
+
 	if len(pkg.Syntax) == 0 && len(pkg.CompiledGoFiles) > 0 {
 		for _, file := range pkg.CompiledGoFiles {
 			f, err := tc.parseFile(file, fset)
@@ -610,7 +637,7 @@ func (tc *typecheckContext) typecheckPackage(pkg *Package) {
 		return
 	}
 
-	if tc.dedup != nil && tc.dedup.importTypes != nil && tc.dedup.importTypes(pkg, fset) {
+	if !attemptedImport && tc.dedup != nil && tc.dedup.importTypes != nil && tc.dedup.importTypes(pkg, fset) {
 		tc.dedup.exported.Store(pkg.ID, true)
 		if tc.dedup.preload != nil {
 			tc.dedup.preload(pkg)

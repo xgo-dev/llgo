@@ -1075,6 +1075,88 @@ func ParsePkgSyntaxWithOptions(prog llvmgen.Program, fset *token.FileSet, pkg *t
 	return nil
 }
 
+// HydrateExportedPackageSyntax populates Program-side declaration metadata
+// directly from a decoded llgo/types.Package without requiring parsed ASTs.
+func HydrateExportedPackageSyntax(prog llvmgen.Program, pkg *types.Package) {
+	if pkg == nil || prog.PackageSyntaxParsed(pkg) {
+		return
+	}
+	pkgPath := llvmgen.PathOf(pkg)
+	cPkg := IsCPackage(pkg.Name())
+	applyFuncMeta := func(fn *types.Func) {
+		if fn == nil {
+			return
+		}
+		fullName, inPkgName := typesFuncName(pkgPath, fn)
+		linkName := fn.LinkName()
+		exportName := fn.ExportName()
+		if linkName != "" {
+			prog.SetLinkname(fullName, linkName)
+		}
+		if exportName != "" {
+			prog.SetPackageExport(fullName, exportName)
+		} else if linkName == "" && cPkg && fn.Signature().Recv() == nil && token.IsExported(inPkgName) {
+			exp := strings.TrimPrefix(inPkgName, "X")
+			prog.SetLinkname(fullName, exp)
+			prog.SetPackageExport(fullName, exp)
+		}
+		if wi := fn.WasmImport(); wi != nil {
+			prog.SetWasmImport(fullName, wi.Module, wi.Name)
+		}
+		if fn.NoInterface() {
+			prog.SetNoInterfaceMethod(fullName)
+		}
+	}
+	toGenCC := func(cc types.CallConv) llvmgen.CallConv {
+		switch cc {
+		case types.CDecl:
+			return llvmgen.CDecl
+		case types.Stdcall:
+			return llvmgen.Stdcall
+		case types.Py:
+			return llvmgen.PyDecl
+		default:
+			return llvmgen.GoDecl
+		}
+	}
+	scope := pkg.Scope()
+	for _, name := range scope.Names() {
+		switch obj := scope.Lookup(name).(type) {
+		case *types.Func:
+			applyFuncMeta(obj)
+		case *types.Var:
+			fullName := pkgPath + "." + obj.Name()
+			if ln := obj.LinkName(); ln != "" {
+				prog.SetLinkname(fullName, ln)
+			}
+			if en := obj.ExportName(); en != "" {
+				prog.SetPackageExport(fullName, en)
+			}
+			switch obj.Locality() {
+			case directive.LocalityThread:
+				prog.DeclareLocality(pkg, obj.Name(), llvmgen.LocalityInfo{Locality: llvmgen.ThreadLocal})
+			case directive.LocalityGoroutine:
+				prog.DeclareLocality(pkg, obj.Name(), llvmgen.LocalityInfo{Locality: llvmgen.GoroutineLocal})
+			}
+		case *types.TypeName:
+			switch t := obj.Type().(type) {
+			case *types.Named:
+				if cc := t.CallConv(); cc != types.Go {
+					prog.SetNativeTypeDecl(pkg, obj.Name(), toGenCC(cc))
+				}
+				for i := 0; i < t.NumMethods(); i++ {
+					applyFuncMeta(t.Method(i))
+				}
+			case *types.Alias:
+				if cc := t.CallConv(); cc != types.Go {
+					prog.SetNativeTypeDecl(pkg, obj.Name(), toGenCC(cc))
+				}
+			}
+		}
+	}
+	prog.MarkPackageSyntaxParsed(pkg)
+}
+
 func validateInternalDirectives(fset *token.FileSet, pkgPath string, files []*ast.File, allow bool) error {
 	if allow || pkgPath == env.LLGoRuntimePkg || strings.HasPrefix(pkgPath, env.LLGoRuntimePkg+"/") {
 		return nil

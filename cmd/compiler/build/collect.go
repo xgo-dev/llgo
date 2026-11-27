@@ -709,6 +709,10 @@ func (c *context) saveToCache(pkg *aPackage) error {
 	if pkg.SSA != nil {
 		_ = c.writeExportMetaSidecar(paths.Export, pkg)
 	}
+	// Persist binary llgo/types exportdata v3 sidecar for AST-free incremental hits.
+	if pkg.Types != nil {
+		_ = c.writePackageTypesSidecar(paths.Types, pkg)
+	}
 
 	// Link a cache miss from the same stable archive path used by a cache hit.
 	// Darwin records this path in its N_OSO debug map.

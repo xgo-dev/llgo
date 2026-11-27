@@ -21,9 +21,7 @@ func (ctx *context) prepareEscapeAnalysis(event func(int, int)) *goescape.Result
 	var cache *goescape.Cache
 	var files *escapeCacheFiles
 	hits, misses := 0, 0
-	// Validation can cost more than solving small functions. Keep persistence
-	// opt-in until representative builds establish a worthwhile saving.
-	if cacheEnabled() && isEnvOn(llgoEscapeCache, false) {
+	if cacheEnabled() && isEnvOn(llgoEscapeCache, true) {
 		// Share the archive cache's target, compiler, source toolchain and
 		// feature identities. The analyzer additionally hashes exact SSA,
 		// named type bodies, replacement effects and backend layout policies.

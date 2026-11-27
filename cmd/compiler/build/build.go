@@ -856,6 +856,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		if pkg.Name == "main" && pkg.ForTest != "" {
 			pkg.Types.Scope().Insert(types.NewConst(0, pkg.Types, abi.ForTestMarker, types.Typ[types.UntypedBool], constant.MakeBool(true)))
 		}
+		if dedup.IsExported(pkg.ID) && len(pkg.Syntax) == 0 {
+			cl.HydrateExportedPackageSyntax(prog, pkg.Types)
+			return
+		}
 		options := preloadOptions
 		options.AllowInternalDirectives = isStandardLibraryPackage(pkg, sourcePatchGOROOT)
 		if err := cl.ParsePkgSyntaxWithOptions(prog, cfg.Fset, pkg.Types, pkg.Syntax, options); err != nil {
@@ -923,6 +927,12 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		})
 	}
 
+	// Default runtime globals must be registered before frontend cache keys are
+	// computed and before packages are built. The generated program must report
+	// the GOROOT whose standard library is being compiled, which may differ from
+	// the toolchain used to build llgo.
+	addDefaultRuntimeGlobals(conf, sourcePatchGOROOT, sourcePatchGoVersion)
+
 	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourcePatchGoVersion, mode: conf.Mode})
 	if typeLoader != nil {
 		dedup.SetImportTypes(typeLoader.load)
@@ -931,6 +941,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		"patterns": slices.Clone(patterns),
 	})
 	initial, err := packages.LoadExWithSourceOverlay(dedup, sizes, cfg, conf.GoVersion, conf.Overlay, patterns...)
+	loadSpan.setArg("skipped_parse", dedup.SkippedParseCount())
 	loadSpan.done()
 	if err != nil {
 		return nil, err
@@ -1084,10 +1095,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		}
 	}
 
-	// default runtime globals must be registered before packages are built
-	// The generated program must report the GOROOT whose standard library is
-	// being compiled, which may differ from the toolchain used to build llgo.
-	addDefaultRuntimeGlobals(conf, sourcePatchGOROOT, sourcePatchGoVersion)
 	pkgs, pkgEntries, err := registerSSAPkgs(ctx, initial, verbose)
 	if err != nil {
 		return nil, err
@@ -2365,6 +2372,12 @@ func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 // executePackageBuild creates the package module and runs its LLVM backend.
 func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
 	aPkg := task.pkg
+	if aPkg.CacheHit && aPkg.linkSnapshot != nil &&
+		!ctx.buildConf.deadcodeDropEnabled() && ctx.buildConf.ModuleHook == nil &&
+		ctx.buildConf.BuildMode == BuildModeExe &&
+		(ctx.mode == ModeBuild || ctx.mode == ModeTest && len(ctx.initial) == 1) {
+		return nil
+	}
 	if err := buildPkg(ctx, aPkg, verbose); err != nil {
 		return err
 	}

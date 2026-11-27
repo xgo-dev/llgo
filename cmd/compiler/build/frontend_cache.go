@@ -19,7 +19,7 @@ import (
 	"github.com/xgo-dev/llgo/ssa"
 )
 
-const frontendExportVersion = 3
+const frontendExportVersion = 4
 
 type frontendFunction struct {
 	ID       string
@@ -64,6 +64,7 @@ type frontendCache struct {
 	importKeys   map[*ssa.Function]string
 	ambiguous    map[string]bool
 	uncacheable  map[Package]bool
+	sourceReason map[string]string
 	loader       *frontendTypeLoader
 	err          error
 	programInput string
@@ -71,7 +72,7 @@ type frontendCache struct {
 }
 
 func (c *context) newFrontendCache(entries []ssaBuildEntry, mode ssa.BuilderMode) *frontendCache {
-	if !cacheEnabled() || !isEnvOn(llgoEscapeCache, false) || c.buildConf.ForceRebuild || c.buildConf.ModuleHook != nil ||
+	if !cacheEnabled() || !isEnvOn(llgoEscapeCache, true) || c.buildConf.ForceRebuild || c.buildConf.ModuleHook != nil ||
 		c.mode == ModeGen || c.buildConf.BuildMode != BuildModeExe || c.buildConf.deadcodeDropEnabled() || c.buildConf.DependencyEscapeDiagnostics > 0 {
 		return nil
 	}
