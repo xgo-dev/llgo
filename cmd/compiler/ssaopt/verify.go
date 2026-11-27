@@ -183,8 +183,25 @@ func VerifyPlan(fn *ssa.Function, plan *FunctionPlan) error {
 		if dt.Target == nil {
 			return fmt.Errorf("ssaopt: %s: Devirt target is nil for %v", fn.String(), call)
 		}
+		if dt.Target.Signature == nil || dt.Target.Signature.Recv() == nil {
+			return fmt.Errorf("ssaopt: %s: Devirt target %s lacks method receiver for %v", fn.String(), dt.Target.String(), call)
+		}
+		if dt.Target.Signature.Params().Len() != len(call.Call.Args) {
+			return fmt.Errorf("ssaopt: %s: Devirt target %s param count mismatch for %v", fn.String(), dt.Target.String(), call)
+		}
+		if dt.Receiver != nil {
+			if recvIns, ok := dt.Receiver.(ssa.Instruction); ok && !strictlyDominates(recvIns, call) {
+				return fmt.Errorf("ssaopt: %s: Devirt receiver %T does not dominate %v", fn.String(), recvIns, call)
+			}
+		}
 		if dt.ProofAnchor != nil && !strictlyDominates(dt.ProofAnchor, call) {
 			return fmt.Errorf("ssaopt: %s: Devirt proof anchor %T does not dominate %v", fn.String(), dt.ProofAnchor, call)
+		}
+	}
+
+	for ins := range plan.SafepointBackedges {
+		if _, ok := positions[ins]; !ok {
+			return fmt.Errorf("ssaopt: %s: SafepointBackedges key %T does not belong to function", fn.String(), ins)
 		}
 	}
 

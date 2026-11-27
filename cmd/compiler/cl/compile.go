@@ -1103,12 +1103,13 @@ func (p *context) optPlanFor(f *ssa.Function) *ssaopt.FunctionPlan {
 		}
 	}
 	plan, _ := ssaopt.PlanFunction(f, ssaopt.Config{
-		TypeCtx:    p.prog.TypeContext(),
-		OptLevel:   p.options.OptLevel,
-		GCRoots:    p.prog.GCRootsEnabled(),
-		Escape:     p.options.EscapeAnalysis,
-		PatchTypes: patchTypes,
-		RuntimePkg: p.prog.RuntimePkg(),
+		TypeCtx:               p.prog.TypeContext(),
+		OptLevel:              p.options.OptLevel,
+		GCRoots:               p.prog.GCRootsEnabled(),
+		CooperativeSafepoints: p.prog.CooperativeSafepointsEnabled(),
+		Escape:                p.options.EscapeAnalysis,
+		PatchTypes:            patchTypes,
+		RuntimePkg:            p.prog.RuntimePkg(),
 	})
 	return plan
 }
@@ -1893,7 +1894,7 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 			break
 		}
 		p.checkMethodCallReceiver(b, v, &v.Call)
-		ret = p.call(b, llvmgen.Call, &v.Call)
+		ret = p.callExInstr(b, llvmgen.Call, v, &v.Call, nil)
 		if p.rangeFuncCallNeedsDeferDrain(&v.Call) {
 			b.DeferStackDrain()
 		}
@@ -2146,12 +2147,24 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 		if isPointerGoType(vx.Type()) && p.needsRecoverableNilGuard(vx) {
 			p.emitNilDerefBaseCheck(b, vx)
 		}
-		ret = b.IndexAddr(x, idx)
+		checkBounds := true
+		if p.optPlan != nil {
+			if bp, ok := p.optPlan.Bounds[v]; ok {
+				checkBounds = bp.CheckBounds
+			}
+		}
+		ret = b.IndexAddrEx(x, idx, checkBounds)
 	case *ssa.Index:
 		x := p.compileValue(b, v.X)
 		idx := p.compileValue(b, v.Index)
 		p.recordPanicSite(b, v.Pos())
-		ret = b.Index(x, idx, func() (addr llvmgen.Expr, zero bool) {
+		checkBounds := true
+		if p.optPlan != nil {
+			if bp, ok := p.optPlan.Bounds[v]; ok {
+				checkBounds = bp.CheckBounds
+			}
+		}
+		ret = b.IndexEx(x, idx, checkBounds, func() (addr llvmgen.Expr, zero bool) {
 			switch n := v.X.(type) {
 			case *ssa.Const:
 				zero = true
@@ -2188,7 +2201,13 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 		if isPointerGoType(vx.Type()) && p.needsRecoverableNilGuard(vx) {
 			p.emitNilDerefBaseCheck(b, vx)
 		}
-		ret = b.Slice(x, low, high, max)
+		checkBounds := true
+		if p.optPlan != nil {
+			if bp, ok := p.optPlan.Bounds[v]; ok {
+				checkBounds = bp.CheckBounds
+			}
+		}
+		ret = b.SliceEx(x, low, high, max, checkBounds)
 		ret.Type = p.type_(v.Type(), llvmgen.GoDecl)
 	case *ssa.MakeInterface:
 		if p.keepAliveDataOnly(v) {
@@ -2232,7 +2251,15 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 			}
 		}
 		x := p.compileValue(b, v.X)
-		ret = b.MakeInterfaceEx(t, x, !p.stackStorage(v))
+		heap := !p.stackStorage(v)
+		noScan := !x.Type.RawType().HasPtrData()
+		if p.optPlan != nil {
+			if ib, ok := p.optPlan.IfaceBoxes[v]; ok {
+				heap = ib.Kind != ssaopt.IfaceBoxStack
+				noScan = ib.NoScan
+			}
+		}
+		ret = b.MakeInterfaceWithPlan(t, x, heap, noScan)
 	case *ssa.MakeSlice:
 		t := p.type_(v.Type(), llvmgen.GoDecl)
 		nLen := p.compileValue(b, v.Len)
@@ -2269,7 +2296,21 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 		x := p.compileValue(b, v.X)
 		t := p.type_(v.AssertedType, llvmgen.GoDecl)
 		p.recordPanicSite(b, v.Pos())
-		ret = b.TypeAssert(x, t, v.CommaOk)
+		handled := false
+		if p.optPlan != nil {
+			if ic, ok := p.optPlan.IfaceConvs[v]; ok {
+				if ic.Kind == ssaopt.IfaceConvStaticSuccess && ic.KnownType != nil {
+					ret = b.TypeAssertStaticSuccess(x, t, ic.KnownType, v.CommaOk)
+					handled = true
+				} else if ic.Kind == ssaopt.IfaceConvStaticFail && v.CommaOk {
+					ret = b.TypeAssertStaticFailOk(t)
+					handled = true
+				}
+			}
+		}
+		if !handled {
+			ret = b.TypeAssert(x, t, v.CommaOk)
+		}
 	case *ssa.Extract:
 		x := p.compileValue(b, v.Tuple)
 		ret = b.Extract(x, v.Index)
@@ -2286,9 +2327,15 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 		iter := p.compileValue(b, v.Iter)
 		ret = b.Next(typ, iter, v.IsString)
 	case *ssa.ChangeInterface:
-		t := v.Type()
+		t := p.type_(v.Type(), llvmgen.GoDecl)
 		x := p.compileValue(b, v.X)
-		ret = b.ChangeInterface(p.type_(t, llvmgen.GoDecl), x)
+		if p.optPlan != nil {
+			if ic, ok := p.optPlan.IfaceConvs[v]; ok && ic.Kind == ssaopt.IfaceConvKnownConcrete && ic.KnownType != nil {
+				ret = b.ChangeInterfaceKnown(t, x, ic.KnownType)
+				break
+			}
+		}
+		ret = b.ChangeInterface(t, x)
 	case *ssa.Field:
 		x := p.compileValue(b, v.X)
 		ret = b.Field(x, v.Field)
@@ -2312,7 +2359,13 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 		t := p.type_(v.Type(), llvmgen.GoDecl)
 		x := p.compileValue(b, v.X)
 		p.recordPanicSite(b, v.Pos())
-		ret = b.SliceToArrayPointer(x, t)
+		checkBounds := true
+		if p.optPlan != nil {
+			if bp, ok := p.optPlan.Bounds[v]; ok {
+				checkBounds = bp.CheckBounds
+			}
+		}
+		ret = b.SliceToArrayPointerEx(x, t, checkBounds)
 	default:
 		panic(fmt.Sprintf("compileInstrAndValue: unknown instr - %T\n", iv))
 	}

@@ -37,7 +37,11 @@ func (p *context) prepareCooperativeSafepoints(fn *ssa.Function, isCgo bool) {
 		return
 	}
 	p.safepointEntry = true
-	p.safepoints = safepointplan.Backedges(fn)
+	if p.optPlan != nil {
+		p.safepoints = p.optPlan.SafepointBackedges
+	} else {
+		p.safepoints = safepointplan.Backedges(fn)
+	}
 }
 
 func safepointPackagePath(fn *ssa.Function) string {

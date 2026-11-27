@@ -2046,8 +2046,14 @@ func (b Builder) SelectValue(cond Expr, a Expr, bExpr Expr) Expr {
 //
 //	t1 = slice to array pointer *[4]byte <- []byte (t0)
 func (b Builder) SliceToArrayPointer(x Expr, typ Type) (ret Expr) {
+	return b.SliceToArrayPointerEx(x, typ, !b.Prog.disableBoundsChecks)
+}
+
+// SliceToArrayPointerEx lowers slice-to-array-pointer conversion with an
+// explicit bounds-check decision from ssaopt.
+func (b Builder) SliceToArrayPointerEx(x Expr, typ Type, checkBounds bool) (ret Expr) {
 	ret.Type = typ
-	if !b.Prog.disableBoundsChecks {
+	if checkBounds && !b.Prog.disableBoundsChecks {
 		max := b.Prog.IntVal(uint64(typ.RawType().Underlying().(*types.Pointer).Elem().Underlying().(*types.Array).Len()), b.Prog.Int())
 		failed := Expr{llvm.CreateICmp(b.impl, llvm.IntSLT, b.SliceLen(x).impl, max.impl), b.Prog.Bool()}
 		b.IfThen(failed, func() {

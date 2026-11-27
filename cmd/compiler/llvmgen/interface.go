@@ -459,7 +459,13 @@ func (b Builder) MakeInterface(tinter Type, x Expr) (ret Expr) {
 // MakeInterfaceEx constructs an interface with a heap or stack box. A stack
 // box requires the caller to prove that its address cannot outlive this call.
 func (b Builder) MakeInterfaceEx(tinter Type, x Expr, heap bool) Expr {
-	return b.makeInterface(tinter, x, true, heap)
+	return b.makeInterface(tinter, x, true, heap, !b.Prog.abi.HasPointers(x.Type.raw.Type))
+}
+
+// MakeInterfaceWithPlan constructs an interface honoring explicit heap/stack
+// placement and GC NoScan policy from ssaopt.
+func (b Builder) MakeInterfaceWithPlan(tinter Type, x Expr, heap, noScan bool) Expr {
+	return b.makeInterface(tinter, x, true, heap, noScan)
 }
 
 // MakeInterfaceDataOnly boxes an argument for a statically checked runtime
@@ -476,15 +482,16 @@ func (b Builder) MakeInterfaceDataOnlyEx(tinter Type, x Expr, heap bool) Expr {
 	if tinter.raw.Type.Underlying().(*types.Interface).NumMethods() != 0 {
 		panic("data-only interface must be empty")
 	}
-	return b.makeInterface(tinter, x, false, heap)
+	return b.makeInterface(tinter, x, false, heap, !b.Prog.abi.HasPointers(x.Type.raw.Type))
 }
 
-func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret Expr) {
+func (b Builder) makeInterface(tinter Type, x Expr, observable, heap, noScan bool) (ret Expr) {
 	rawIntf := tinter.raw.Type.Underlying().(*types.Interface)
 	dbgInstrf("MakeInterface %v, %v\n", rawIntf, x.impl)
 	if x.kind == vkFuncDecl {
 		typ := b.Prog.Closure(x.raw.Type.(*types.Signature))
 		x = checkExprTo(x, typ, b)
+		noScan = false
 	}
 	prog := b.Prog
 	typ := x.Type
@@ -497,7 +504,7 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret 
 		if box, ok := b.staticIfaceBox(typ, x); ok {
 			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
 		}
-		vptr := b.allocInterfaceBox(typ, heap)
+		vptr := b.allocInterfaceBox(typ, heap, noScan)
 		b.Store(vptr, x)
 		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
 	}
@@ -510,7 +517,7 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret 
 		if box, ok := b.staticIfaceBox(typ, x); ok {
 			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
 		}
-		vptr := b.allocInterfaceBox(typ, heap)
+		vptr := b.allocInterfaceBox(typ, heap, noScan)
 		b.Store(vptr, x)
 		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
 	}
@@ -551,11 +558,13 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret 
 	return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, data), tinter}
 }
 
-func (b Builder) allocInterfaceBox(typ Type, heap bool) Expr {
+func (b Builder) allocInterfaceBox(typ Type, heap, noScan bool) Expr {
 	if heap {
-		return b.AllocU(typ)
+		size := SizeOf(b.Prog, typ)
+		hasPointers := !noScan && b.Prog.abi.HasPointers(typ.raw.Type)
+		return Expr{b.allocTypedEx(typ, size, false, hasPointers).impl, b.Prog.Pointer(typ)}
 	}
-	return b.Alloc(typ, false)
+	return b.AllocWithPlan(typ, false, true, false, noScan)
 }
 
 func (b Builder) MakeInterfaceFromPtr(tinter Type, ptr Expr) (ret Expr) {
@@ -790,6 +799,56 @@ func (b Builder) ChangeInterface(typ Type, x Expr) (ret Expr) {
 	tabi := b.faceAbiType(x)
 	data := b.faceData(x.impl)
 	return Expr{b.unsafeInterface(rawIntf, nil, tabi, data), typ}
+}
+
+// ChangeInterfaceKnown lowers a ChangeInterface whose non-nil dynamic concrete
+// type is statically known, allowing a compile-time static itab without a
+// runtime NewItab or IfaceType call.
+func (b Builder) ChangeInterfaceKnown(typ Type, x Expr, concrete types.Type) (ret Expr) {
+	rawIntf := typ.raw.Type.Underlying().(*types.Interface)
+	concrete = b.Prog.patch(concrete)
+	tabi := b.abiType(concrete)
+	data := b.faceData(x.impl)
+	return Expr{b.unsafeInterface(rawIntf, concrete, tabi, data), typ}
+}
+
+// ValFromInterface extracts a concrete value of type typ from a non-nil
+// interface value x without a dynamic type check.
+func (b Builder) ValFromInterface(x Expr, typ Type) Expr {
+	return b.valFromData(typ, b.faceData(x.impl))
+}
+
+// AssertNilInterface panics with a nil-pointer dereference if interface x is nil.
+func (b Builder) AssertNilInterface(x Expr) {
+	if x.kind == vkIface {
+		b.AssertNilDeref(Expr{b.faceItab(x.impl), b.Prog.VoidPtrPtr()})
+		return
+	}
+	b.AssertNilDeref(b.faceAbiType(x))
+}
+
+// TypeAssertStaticSuccess lowers a TypeAssert statically proven to succeed for
+// non-nil concrete type concrete.
+func (b Builder) TypeAssertStaticSuccess(x Expr, assertedTyp Type, concrete types.Type, commaOk bool) Expr {
+	var val Expr
+	if _, isIntf := assertedTyp.raw.Type.Underlying().(*types.Interface); isIntf {
+		val = b.ChangeInterfaceKnown(assertedTyp, x, concrete)
+	} else {
+		val = b.ValFromInterface(x, assertedTyp)
+	}
+	if !commaOk {
+		return val
+	}
+	prog := b.Prog
+	t := prog.Struct(assertedTyp, prog.Bool())
+	return b.aggregateValue(t, val.impl, prog.BoolVal(true).impl)
+}
+
+// TypeAssertStaticFailOk lowers a comma-ok TypeAssert statically proven to fail.
+func (b Builder) TypeAssertStaticFailOk(assertedTyp Type) Expr {
+	prog := b.Prog
+	t := prog.Struct(assertedTyp, prog.Bool())
+	return b.aggregateValue(t, prog.Zero(assertedTyp).impl, prog.BoolVal(false).impl)
 }
 
 // -----------------------------------------------------------------------------

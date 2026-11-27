@@ -39,12 +39,13 @@ import (
 
 // Config configures the ssaopt analysis and planning pipeline.
 type Config struct {
-	TypeCtx             *types.Context
-	OptLevel            optlevel.Level
-	DisableBoundsChecks bool
-	GCRoots             bool
-	WholeProgram        bool
-	Verify              bool
+	TypeCtx               *types.Context
+	OptLevel              optlevel.Level
+	DisableBoundsChecks   bool
+	GCRoots               bool
+	CooperativeSafepoints bool
+	WholeProgram          bool
+	Verify                bool
 
 	Escape     *goescape.Result
 	RTA        *rta.Result
@@ -206,6 +207,10 @@ type FunctionPlan struct {
 	// Devirt maps interface *ssa.Call sites to devirtualized direct targets (M3).
 	Devirt map[*ssa.Call]DevirtTarget
 
+	// SafepointBackedges records CFG backedge terminators requiring cooperative
+	// safepoint polls (populated when Config.CooperativeSafepoints is true).
+	SafepointBackedges map[ssa.Instruction]struct{}
+
 	// InLoopBlock records whether block i participates in a CFG cycle (SCC).
 	InLoopBlock []bool
 }
@@ -227,6 +232,10 @@ func DefaultPipeline() Pipeline {
 		Passes: []Pass{
 			NilCheckPass{},
 			AllocPass{},
+			BoundsPass{},
+			IfacePass{},
+			DevirtPass{},
+			SafepointPass{},
 		},
 	}
 }

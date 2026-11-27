@@ -42,22 +42,25 @@ func (ctx *context) newOptPlan() *ssaopt.ProgramPlan {
 	}
 	var typeCtx *types.Context
 	var gcRoots bool
+	var coopSafepoints bool
 	var runtimePkg *types.Package
 	if ctx.prog != nil {
 		typeCtx = ctx.prog.TypeContext()
 		gcRoots = ctx.prog.GCRootsEnabled()
+		coopSafepoints = ctx.prog.CooperativeSafepointsEnabled()
 		runtimePkg = ctx.prog.RuntimePkg()
 	}
 	// Use a lazy ProgramPlan so cached dependency packages never incur planning
 	// work, while every lowered function gets a verified FunctionPlan on demand.
 	return ssaopt.NewProgramPlan(ssaopt.Config{
-		TypeCtx:             typeCtx,
-		OptLevel:            ctx.buildConf.OptLevel,
-		DisableBoundsChecks: ctx.buildConf.DisableBoundsChecks,
-		GCRoots:             gcRoots,
-		Escape:              ctx.frontendOptions.EscapeAnalysis,
-		Patches:             patchPkgs,
-		PatchTypes:          patchTypes,
-		RuntimePkg:          runtimePkg,
+		TypeCtx:               typeCtx,
+		OptLevel:              ctx.buildConf.OptLevel,
+		DisableBoundsChecks:   ctx.buildConf.DisableBoundsChecks,
+		GCRoots:               gcRoots,
+		CooperativeSafepoints: coopSafepoints,
+		Escape:                ctx.frontendOptions.EscapeAnalysis,
+		Patches:               patchPkgs,
+		PatchTypes:            patchTypes,
+		RuntimePkg:            runtimePkg,
 	}, ssaopt.DefaultPipeline())
 }

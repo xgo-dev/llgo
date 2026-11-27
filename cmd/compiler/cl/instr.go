@@ -2429,11 +2429,11 @@ type explicitDeferStack struct {
 }
 
 func (p *context) call(b llvmgen.Builder, act llvmgen.DoAction, call *ssa.CallCommon) (ret llvmgen.Expr) {
-	return p.callEx(b, act, call, nil)
+	return p.callExInstr(b, act, nil, call, nil)
 }
 
 func (p *context) callDeferStack(b llvmgen.Builder, act llvmgen.DoAction, call *ssa.CallCommon, stack ssa.Value, fn *ssa.Function) (ret llvmgen.Expr) {
-	return p.callEx(b, act, call, &explicitDeferStack{
+	return p.callExInstr(b, act, nil, call, &explicitDeferStack{
 		stack: p.compileValue(b, stack),
 		owner: p.deferStackOwner(fn),
 	})
@@ -2721,7 +2721,25 @@ func collectMethodNilDerefChecks(fn *ssa.Function, receiverChecks *ReceiverNilCh
 	return checks, receiverDerefChecks
 }
 
+func (p *context) canReuseCompiledValue(v ssa.Value) bool {
+	if v == nil {
+		return false
+	}
+	if _, isFn := v.(*ssa.Function); isFn {
+		return false
+	}
+	if iv, ok := v.(instrOrValue); ok {
+		expr, ok := p.bvals[iv]
+		return ok && !expr.IsNil()
+	}
+	return true
+}
+
 func (p *context) callEx(b llvmgen.Builder, act llvmgen.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llvmgen.Expr) {
+	return p.callExInstr(b, act, nil, call, ds)
+}
+
+func (p *context) callExInstr(b llvmgen.Builder, act llvmgen.DoAction, callInstr *ssa.Call, call *ssa.CallCommon, ds *explicitDeferStack) (ret llvmgen.Expr) {
 	if act == llvmgen.Call && ds == nil && !isRecoverTransparentWrapper(p.goFn) {
 		if builtin, ok := call.Value.(*ssa.Builtin); ok && builtin.Name() == "append" && len(call.Args) == 2 {
 			if _, ok := call.Args[0].Type().Underlying().(*types.Slice); ok {
@@ -2747,6 +2765,32 @@ func (p *context) callEx(b llvmgen.Builder, act llvmgen.DoAction, call *ssa.Call
 	if mthd := call.Method; mthd != nil {
 		p.recordReflectValueMethodInvoke(call, mthd)
 		reflectCheck := p.reflectTypeMethodCheck(call, mthd)
+		if act == llvmgen.Call && callInstr != nil && p.optPlan != nil &&
+			reflectCheck.Kind == 0 && !isRecoverTransparentWrapper(p.goFn) &&
+			!p.canTailRecoverAlias(call) && !llvmgen.HasNameValist(call.Signature()) {
+			if dt, ok := p.optPlan.Devirt[callInstr]; ok && dt.Target != nil {
+				p.importInlineBody(dt.Target)
+				if aFn, _, ftype := p.compileFunction(dt.Target); ftype == goFunc {
+					recvTyp := dt.Target.Signature.Recv().Type()
+					var recvExpr llvmgen.Expr
+					if dt.Receiver != nil && !dt.NeedNilCheck && p.canReuseCompiledValue(dt.Receiver) {
+						recvExpr = p.compileValueAs(b, dt.Receiver, recvTyp)
+					} else {
+						o := p.compileValue(b, cv)
+						if dt.NeedNilCheck {
+							p.recordPanicSite(b, call.Pos())
+							b.AssertNilInterface(o)
+						}
+						recvExpr = b.ValFromInterface(o, p.type_(recvTyp, llvmgen.GoDecl))
+					}
+					callArgs := make([]llvmgen.Expr, 0, 1+len(call.Args))
+					callArgs = append(callArgs, recvExpr)
+					callArgs = append(callArgs, p.compileValues(b, call.Args, fnNormal)...)
+					ret = p.emitDo(b, act, call, ds, p.callMayRecover(dt.Target), aFn.Expr, llvmgen.Builder.Call, callArgs...)
+					return
+				}
+			}
+		}
 		o := p.compileValue(b, cv)
 		var fn llvmgen.Expr
 		needsRecoverToken := act != llvmgen.Call && act != llvmgen.Go

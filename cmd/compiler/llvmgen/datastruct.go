@@ -156,6 +156,13 @@ func (b Builder) SliceCap(x Expr) Expr {
 //
 //	t2 = &t0[t1]
 func (b Builder) IndexAddr(x, idx Expr) Expr {
+	return b.IndexAddrEx(x, idx, !b.Prog.disableBoundsChecks)
+}
+
+// IndexAddrEx lowers an index address calculation with an explicit bounds-check
+// decision from ssaopt. Pointer-to-array nil dereference checks are always
+// preserved regardless of checkBounds.
+func (b Builder) IndexAddrEx(x, idx Expr, checkBounds bool) Expr {
 	dbgInstrf("IndexAddr %v, %v\n", x.impl, idx.impl)
 	prog := b.Prog
 	telem := prog.Index(x.Type)
@@ -164,14 +171,14 @@ func (b Builder) IndexAddr(x, idx Expr) Expr {
 	case *types.Slice:
 		ptr := b.SliceData(x)
 		max := b.SliceLen(x)
-		idx = b.checkIndex(idx, max)
+		idx = b.checkIndexEx(idx, max, checkBounds)
 		idx = b.physicalPointerIndex(idx)
 		indices := []llvm.Value{idx.impl}
 		return Expr{llvm.CreateInBoundsGEP(b.impl, prog.storageType(telem), ptr.impl, indices), pt}
 	case *types.Pointer:
 		ar := t.Elem().Underlying().(*types.Array)
 		max := prog.IntVal(uint64(ar.Len()), prog.Int())
-		idx = b.checkIndex(idx, max)
+		idx = b.checkIndexEx(idx, max, checkBounds)
 		idx = b.physicalPointerIndex(idx)
 		if !isKnownNonNilArrayBase(x.impl) {
 			b.AssertNilDeref(x)
@@ -259,6 +266,10 @@ func (b Builder) boundsArg(idx Expr) (Expr, bool) {
 // unsigned values). On 32-bit targets a 64-bit index is still compared as i64
 // and truncated only after that check.
 func (b Builder) checkIndex(idx Expr, max Expr) Expr {
+	return b.checkIndexEx(idx, max, !b.Prog.disableBoundsChecks)
+}
+
+func (b Builder) checkIndexEx(idx Expr, max Expr, checkBounds bool) Expr {
 	prog := b.Prog
 	// GEP indexes use the native word size. Keep a wider index intact until
 	// after its bounds check: truncating first can turn an out-of-range uint64
@@ -278,7 +289,7 @@ func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 		}
 		return idx
 	}
-	if prog.disableBoundsChecks {
+	if !checkBounds || prog.disableBoundsChecks {
 		return toNative(idx)
 	}
 	extended := prog.SizeOf(idx.Type) > prog.SizeOf(typ)
@@ -344,6 +355,12 @@ func (b Builder) checkIndex(idx Expr, max Expr) Expr {
 //
 //	t2 = t0[t1]
 func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr {
+	return b.IndexEx(x, idx, !b.Prog.disableBoundsChecks, takeAddr)
+}
+
+// IndexEx lowers an array/string index load with an explicit bounds-check
+// decision from ssaopt.
+func (b Builder) IndexEx(x, idx Expr, checkBounds bool, takeAddr func() (addr Expr, zero bool)) Expr {
 	dbgInstrf("Index %v, %v\n", x.impl, idx.impl)
 	prog := b.Prog
 	var telem Type
@@ -363,7 +380,7 @@ func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr
 		ptr, zero = takeAddr()
 		max = prog.IntVal(uint64(t.Len()), prog.Int())
 	}
-	idx = b.checkIndex(idx, max)
+	idx = b.checkIndexEx(idx, max, checkBounds)
 	idx = b.physicalPointerIndex(idx)
 	if zero {
 		return prog.Zero(telem)
@@ -393,8 +410,15 @@ func (b Builder) Index(x, idx Expr, takeAddr func() (addr Expr, zero bool)) Expr
 //
 //	t1 = slice t0[1:]
 func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
+	return b.SliceEx(x, low, high, max, !b.Prog.disableBoundsChecks)
+}
+
+// SliceEx lowers a slice expression with an explicit bounds-check decision from
+// ssaopt. Pointer-to-array nil dereference checks are always preserved.
+func (b Builder) SliceEx(x, low, high, max Expr, checkBounds bool) (ret Expr) {
 	dbgInstrf("Slice %v, %v, %v\n", x.impl, low.impl, high.impl)
 	prog := b.Prog
+	unchecked := !checkBounds || prog.disableBoundsChecks
 	// Preserve the original widths before FitIntSize truncates wide indices.
 	// Only signed indices that fit a native int use the smaller string entry.
 	nativeIndices := (low.IsNil() || prog.SizeOf(low.Type) <= prog.SizeOf(prog.Int())) &&
@@ -435,7 +459,7 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 			highArg, highSigned = b.boundsArg(high)
 		}
 		ret.Type = x.Type
-		if prog.disableBoundsChecks {
+		if unchecked {
 			ret.impl = b.stringSliceUnchecked(x, low, high).impl
 		} else if nativeIndices && lowSigned && highSigned {
 			ret.impl = b.InlineCall(b.Pkg.rtFunc("StringSlice"), x, low, high).impl
@@ -478,7 +502,7 @@ func (b Builder) Slice(x, low, high, max Expr) (ret Expr) {
 			base = x
 		}
 	}
-	if prog.disableBoundsChecks {
+	if unchecked {
 		upper := nCap
 		if !max.IsNil() {
 			upper = max
