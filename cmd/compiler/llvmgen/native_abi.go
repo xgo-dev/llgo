@@ -150,14 +150,14 @@ func (p Program) canCallGoEntry(t types.Type) bool {
 	if !ok || sig.Variadic() || HasNameValist(sig) || p.isStdcallType(t) && p.stdcallCallConv() != llvm.CCallConv {
 		return false
 	}
-	return p.toLLVMFunc(p.gocvt.cvtFunc(sig, nil)) == p.funcDeclType(sig, CDecl).ll
+	return p.toLLVMFunc(sig) == p.funcDeclType(sig, CDecl).ll
 }
 
 // closureToNative recovers the original C entry when a native funcval is
 // passed back as a callback. An ordinary Go callback must be environment-free.
 func (b Builder) closureToNative(dst Type, fn Expr) Expr {
-	nativeSig := dst.raw.Type.Underlying().(*types.Signature)
-	goSig := fn.raw.Type.Underlying().(*types.Struct).Field(0).Type().(*types.Signature)
+	nativeSig := types.Unalias(dst.raw.Type).Underlying().(*types.Signature)
+	goSig := types.Unalias(fn.raw.Type).Underlying().(*types.Signature)
 	prog := b.Prog
 	nativeType := prog.funcDeclType(nativeSig, CDecl).ll
 	sameABI := prog.toLLVMFunc(goSig) == nativeType
@@ -220,11 +220,10 @@ func (b Builder) nativeCallback(dst Type, fn Expr, cc CallConv, abi string) Expr
 // while preserving nil: a nil native pointer produces a
 // funcval with a nil code pointer.
 func (b Builder) nativeFuncval(dst Type, fn Expr, callConv llvm.CallConv, abi string) Expr {
-	closure, ok := types.Unalias(dst.raw.Type).Underlying().(*types.Struct)
-	if !ok || !IsClosure(closure) {
+	goSig, ok := types.Unalias(dst.raw.Type).Underlying().(*types.Signature)
+	if !ok || dst.kind != vkClosure {
 		panic(fmt.Errorf("native funcval target must be a Go function, got %s", dst.raw.Type))
 	}
-	goSig := closure.Field(0).Type().(*types.Signature)
 	nativeSig := types.Unalias(fn.raw.Type).Underlying().(*types.Signature)
 	// A Go variadic slice cannot forward an arbitrary C ellipsis tail. Keep
 	// those calls on the native function-pointer path, where the caller knows
@@ -269,7 +268,11 @@ func (b Builder) nativeFuncvalAdapter(goSig, nativeSig *types.Signature, callCon
 	} else {
 		wrapper.impl.SetLinkage(llvm.InternalLinkage)
 	}
-	native := Expr{wrapper.Env().impl, b.Prog.rawType(nativeSig)}
+	cc := CDecl
+	if callConv == llvm.X86StdcallCallConv {
+		cc = Stdcall
+	}
+	native := Expr{wrapper.Env().impl, b.Prog.Type(nativeSig, cc)}
 	wrapper.buildAdapterBody(native, callConv)
 	return wrapper
 }

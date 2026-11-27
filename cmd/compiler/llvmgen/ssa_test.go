@@ -432,7 +432,7 @@ func TestDevLTOGlobalDCEMethodCapabilityKeyMatchesInterfaceAndConcreteNames(t *t
 	}
 }
 
-func TestDevLTOGlobalDCEMethodCapabilityKeyNormalizesABIClosure(t *testing.T) {
+func TestDevLTOGlobalDCEMethodCapabilityKeySignatureMatching(t *testing.T) {
 	requireGoGlobalDCE(t)
 
 	pkg := types.NewPackage("testing", "testing")
@@ -446,10 +446,16 @@ func TestDevLTOGlobalDCEMethodCapabilityKeyNormalizesABIClosure(t *testing.T) {
 			types.NewVar(token.NoPos, nil, "", types.Universe.Lookup("error").Type()),
 		),
 		false)
-	closure := types.NewStruct([]*types.Var{
-		types.NewField(token.NoPos, nil, "$f", callback, false),
-		types.NewField(token.NoPos, nil, "$data", types.Typ[types.UnsafePointer], false),
-	}, nil)
+	namedCallback := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "a", types.Typ[types.String]),
+			types.NewVar(token.NoPos, nil, "b", types.Typ[types.String]),
+		),
+		types.NewTuple(
+			types.NewVar(token.NoPos, nil, "ok", types.Typ[types.Bool]),
+			types.NewVar(token.NoPos, nil, "err", types.Universe.Lookup("error").Type()),
+		),
+		false)
 	method := func(param types.Type) *types.Func {
 		return types.NewFunc(token.NoPos, pkg, "verify", types.NewSignatureType(nil, nil, nil,
 			types.NewTuple(
@@ -461,7 +467,7 @@ func TestDevLTOGlobalDCEMethodCapabilityKeyNormalizesABIClosure(t *testing.T) {
 	}
 
 	sourceKey := methodCapabilityKey(method(callback))
-	abiKey := methodCapabilityKey(method(closure))
+	abiKey := methodCapabilityKey(method(namedCallback))
 	if abiKey != sourceKey {
 		t.Fatalf("ABI closure capability key mismatch: got %q, want %q", abiKey, sourceKey)
 	}
@@ -692,7 +698,6 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 	requireGoGlobalDCE(t)
 
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.EnableGoGlobalDCE(true)
 	prog.EnableLTOPluginMarkers(true)
 	prog.SetRuntime(func() *types.Package {
@@ -802,7 +807,6 @@ func TestDevLTOGlobalDCEConcreteInterfaceEmitsStaticItabTemplate(t *testing.T) {
 
 func TestDeadcodeDropT2IUsesNewItab(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.EnableDeadcodeDrop(true)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
@@ -847,7 +851,6 @@ func TestDeadcodeDropT2IUsesNewItab(t *testing.T) {
 
 func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -905,7 +908,6 @@ func TestRuntimeStaticItabUsesVtableAndInitItabs(t *testing.T) {
 
 func TestStaticIfaceBoxFingerprintsDistinguishSameLengthStrings(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -977,7 +979,6 @@ func TestConstantFingerprintFloats(t *testing.T) {
 
 func TestStaticIfaceBoxReusesLLVMValue(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -1118,7 +1119,6 @@ func TestConstantFingerprintKinds(t *testing.T) {
 
 func TestStaticIfaceBoxReusesByName(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -1157,7 +1157,6 @@ func TestStaticIfaceBoxReusesByName(t *testing.T) {
 
 func TestStaticIfaceBoxSkipsZeroSizedTypes(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -1414,7 +1413,7 @@ func TestRecordTypeChildren(t *testing.T) {
 	defer prog.Dispose()
 	prog.TypeSizes(types.SizesFor("gc", runtime.GOARCH))
 	disabledPkg := prog.NewPackage("pkg", "pkg/disabled")
-	(&aBuilder{Prog: prog, Pkg: disabledPkg}).recordTypeChildren("pkg.disabled", types.Typ[types.Int])
+	(&aBuilder{Prog: prog, Pkg: disabledPkg}).recordTypeChildren("pkg.disabled", types.Typ[types.Int], false)
 	if disabledPkg.metaBuilder != nil {
 		t.Fatal("metadata builder should remain disabled")
 	}
@@ -1450,21 +1449,21 @@ func TestRecordTypeChildren(t *testing.T) {
 
 	pkg := prog.NewPackageEx("pkg", "pkg", true)
 	b := &aBuilder{Prog: prog, Pkg: pkg}
-	b.recordTypeChildren("pkg.basic", types.Typ[types.Int])
-	b.recordTypeChildren("pkg.pointer", types.NewPointer(types.Typ[types.Int]))
-	b.recordTypeChildren("pkg.channel", types.NewChan(types.SendRecv, types.Typ[types.String]))
-	b.recordTypeChildren("pkg.slice", types.NewSlice(types.Typ[types.Bool]))
-	b.recordTypeChildren("pkg.array", types.NewArray(arrayElem, 4))
-	b.recordTypeChildren("pkg.map", mapType)
-	b.recordTypeChildren("pkg.signature", sig)
-	b.recordTypeChildren("pkg.emptySignature", types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	b.recordTypeChildren("pkg.basic", types.Typ[types.Int], false)
+	b.recordTypeChildren("pkg.pointer", types.NewPointer(types.Typ[types.Int]), false)
+	b.recordTypeChildren("pkg.channel", types.NewChan(types.SendRecv, types.Typ[types.String]), false)
+	b.recordTypeChildren("pkg.slice", types.NewSlice(types.Typ[types.Bool]), false)
+	b.recordTypeChildren("pkg.array", types.NewArray(arrayElem, 4), false)
+	b.recordTypeChildren("pkg.map", mapType, false)
+	b.recordTypeChildren("pkg.signature", sig, true)
+	b.recordTypeChildren("pkg.emptySignature", types.NewSignatureType(nil, nil, nil, nil, nil, false), true)
 	b.recordTypeChildren("pkg.struct", types.NewStruct([]*types.Var{
 		types.NewVar(token.NoPos, pkgTypes, "N", types.Typ[types.Int]),
 		types.NewVar(token.NoPos, pkgTypes, "S", types.Typ[types.String]),
-	}, nil))
-	b.recordTypeChildren("pkg.named", namedType)
-	b.recordTypeChildren("pkg.namedFloat", types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "Number", nil), types.Typ[types.Float64], nil))
-	b.recordTypeChildren("pkg.interface", interfaceType)
+	}, nil), false)
+	b.recordTypeChildren("pkg.named", namedType, false)
+	b.recordTypeChildren("pkg.namedFloat", types.NewNamed(types.NewTypeName(token.NoPos, pkgTypes, "Number", nil), types.Typ[types.Float64], nil), false)
+	b.recordTypeChildren("pkg.interface", interfaceType, false)
 
 	pm, err := pkg.metaBuilder.Build()
 	if err != nil {
@@ -1984,7 +1983,7 @@ func TestClosureFuncPtrValue(t *testing.T) {
 	hb := holder.MakeBody(1)
 	closureT := prog.Closure(sig)
 	ptr := hb.AllocaT(closureT)
-	fnPtrType := prog.rawType(sig)
+	fnPtrType := prog.Type(sig, CDecl)
 	fnPtr := hb.ChangeType(fnPtrType, fn.Expr)
 	hb.Store(ptr, fnPtr)
 	hb.Return()
@@ -2226,8 +2225,9 @@ func TestMakeClosureWithCtx(t *testing.T) {
 	}
 }
 
-func TestCvtClosureDropsRecv(t *testing.T) {
+func TestClosureDropsRecv(t *testing.T) {
 	prog := NewProgram(nil)
+	defer prog.Dispose()
 	pkg := types.NewPackage("foo", "foo")
 	iface := types.NewInterfaceType(nil, nil)
 	namedIface := types.NewNamed(types.NewTypeName(0, pkg, "IFmt", nil), iface, nil)
@@ -2236,10 +2236,13 @@ func TestCvtClosureDropsRecv(t *testing.T) {
 	rets := types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int]))
 	sig := types.NewSignatureType(recv, nil, nil, params, rets, true)
 
-	st := prog.gocvt.cvtClosure(sig)
-	fnSig, ok := st.Field(0).Type().(*types.Signature)
+	got := prog.Closure(sig)
+	if got.kind != vkClosure {
+		t.Fatalf("closure kind = %v, want vkClosure", got.kind)
+	}
+	fnSig, ok := got.RawType().(*types.Signature)
 	if !ok {
-		t.Fatalf("closure field[0] not signature: %T", st.Field(0).Type())
+		t.Fatalf("closure RawType not signature: %T", got.RawType())
 	}
 	if fnSig.Recv() != nil {
 		t.Fatalf("closure signature should not keep recv: %v", fnSig.Recv())
@@ -2337,7 +2340,6 @@ attributes #0 = { null_pointer_is_valid "frame-pointer"="non-leaf" }
 
 func TestMakeInterfaceKinds(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -2388,7 +2390,6 @@ func TestMakeInterfaceKinds(t *testing.T) {
 
 func TestCheckExprAssignmentConversions(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -2427,7 +2428,6 @@ func TestCheckExprAssignmentConversions(t *testing.T) {
 
 func TestMakeInterfaceFromPtrKinds(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -2466,7 +2466,6 @@ func TestMakeInterfaceFromPtrKinds(t *testing.T) {
 
 func TestZeroSizedLoadEmitsNilDerefGuard(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -2493,7 +2492,6 @@ func TestZeroSizedLoadEmitsNilDerefGuard(t *testing.T) {
 
 func TestTypeAssertSingleElemArrayUsesInsertValue(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -2559,7 +2557,7 @@ func TestInterfaceHelpers(t *testing.T) {
 		types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), false)
 	method := types.NewFunc(0, nil, "M", sig)
 	closure := b.Imethod(fn.Param(0), method)
-	if got := closure.raw.Type.(*types.Struct).Field(0).Type().(*types.Signature).Params().Len(); got != 1 {
+	if got := closure.raw.Type.(*types.Signature).Params().Len(); got != 1 {
 		t.Fatalf("Imethod should drop interface param: got %d params", got)
 	}
 	_ = intfType
@@ -2643,20 +2641,19 @@ func TestIndexType(t *testing.T) {
 	indexType(types.Typ[types.Int])
 }
 
-func TestCvtType(t *testing.T) {
-	gt := newGoTypes()
+func TestSignatureLoweringPreservesRawType(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
 	params := types.NewTuple(types.NewParam(0, nil, "", NoArgsNoRet))
 	sig := types.NewSignatureType(nil, nil, nil, params, nil, false)
-	ret1 := gt.cvtFunc(sig, nil)
-	if ret1 == sig {
-		t.Fatal("cvtFunc failed")
+	goTy := prog.Type(sig, GoDecl)
+	if goTy.kind != vkClosure || goTy.RawType() != sig {
+		t.Fatalf("GoDecl signature = (%v, %v), want (vkClosure, original sig)", goTy.kind, goTy.RawType())
 	}
-	defer func() {
-		if r := recover(); r == nil {
-			t.Log("cvtType: no error?")
-		}
-	}()
-	gt.cvtType(nil)
+	cTy := prog.Type(sig, CDecl)
+	if cTy.kind != vkFuncPtr || cTy.RawType() != sig {
+		t.Fatalf("CDecl signature = (%v, %v), want (vkFuncPtr, original sig)", cTy.kind, cTy.RawType())
+	}
 }
 
 func TestUserdefExpr(t *testing.T) {
@@ -3641,7 +3638,6 @@ func TestWasmTargetSpec(t *testing.T) {
 
 func TestAbiTables(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -3700,7 +3696,6 @@ func TestAbiTables(t *testing.T) {
 
 func TestInitAbiTypesForSubset(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -3763,7 +3758,6 @@ func TestRegisterAbiTypesAcrossPrograms(t *testing.T) {
 	}
 	newProgram := func() Program {
 		prog := NewProgram(nil)
-		prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 		prog.SetRuntime(runtimePkg)
 		return prog
 	}
@@ -3927,7 +3921,6 @@ func TestInterfaceBasicTypeUsed(t *testing.T) {
 
 func TestStaticIfaceBoxRejectsLocalFunctions(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {
@@ -4005,7 +3998,6 @@ func TestHasStaticIfaceIdentityGuards(t *testing.T) {
 
 func TestStaticIfaceBoxRejectsAnonymousWritableBacking(t *testing.T) {
 	prog := NewProgram(nil)
-	prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 	prog.SetRuntime(func() *types.Package {
 		pkg, err := packages.SourceImporter().Import(PkgRuntime)
 		if err != nil {

@@ -26,27 +26,13 @@ func (b *Builder) MapFlags(t *types.Map) (flags int) {
 }
 
 func (b *Builder) realStr(t types.Type) string {
-	t = PublicType(t)
-	// The TFlag check must use the public type; Str also normalizes its input
-	// so callers that bypass realStr still get public reflected names.
-	if b.TFlag(t)&abi.TFlagExtraStar != 0 {
+	if b.TFlagEx(t, true)&abi.TFlagExtraStar != 0 {
 		return "*" + b.Str(t)
 	}
 	return b.Str(t)
 }
 
-// PublicType maps LLGo's internal closure representation back to the source
-// function type when emitting reflected type names and type references. It must
-// not be used for physical layout computations such as size, align, or offsets.
-func PublicType(t types.Type) types.Type {
-	if st, ok := types.Unalias(t).(*types.Struct); ok && IsClosure(st) {
-		return st.Field(0).Type()
-	}
-	return t
-}
-
 func (b *Builder) Str(t types.Type) string {
-	t = PublicType(t)
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		switch t.Kind() {
@@ -240,18 +226,25 @@ func (b *Builder) funcStr(t *types.Signature) string {
 	return string(repr)
 }
 
-func (b *Builder) TFlag(t types.Type) (flag abi.TFlag) {
+func (b *Builder) TFlag(t types.Type) abi.TFlag {
+	return b.TFlagEx(t, false)
+}
+
+func (b *Builder) TFlagEx(t types.Type, publicFunc bool) (flag abi.TFlag) {
+	if b.IsClosureType(t, publicFunc) {
+		flag = abi.TFlagClosure
+		if _, isNamed := types.Unalias(t).(*types.Named); isNamed {
+			flag |= abi.TFlagNamed
+		}
+		return flag
+	}
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		flag |= abi.TFlagNamed
 	case *types.Named:
-		return (b.TFlag(t.Underlying()) & ^abi.TFlagExtraStar) | abi.TFlagNamed
-	case *types.Struct:
-		if IsClosure(t) {
-			flag |= abi.TFlagClosure
-		}
+		return (b.TFlagEx(t.Underlying(), true) & ^abi.TFlagExtraStar) | abi.TFlagNamed
 	case *types.Pointer:
-		if b.TFlag(t.Elem())&abi.TFlagExtraStar == 0 {
+		if b.TFlagEx(t.Elem(), true)&abi.TFlagExtraStar == 0 {
 			flag |= abi.TFlagExtraStar
 		}
 	case *types.Signature:
@@ -271,6 +264,13 @@ func (b *Builder) IsRegularMemory(t types.Type) bool {
 }
 
 func (b *Builder) Kind(t types.Type) abi.Kind {
+	return b.KindEx(t, false)
+}
+
+func (b *Builder) KindEx(t types.Type, publicFunc bool) abi.Kind {
+	if b.IsClosureType(t, publicFunc) {
+		return abi.Struct
+	}
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		return BasicKind(t)
@@ -291,7 +291,7 @@ func (b *Builder) Kind(t types.Type) abi.Kind {
 	case *types.Chan:
 		return abi.Chan
 	case *types.Named:
-		return b.Kind(t.Underlying())
+		return b.KindEx(t.Underlying(), true)
 	}
 	panic("unsupported kind: " + t.String())
 }
@@ -328,6 +328,13 @@ func (b *Builder) HasPointers(t types.Type) bool {
 }
 
 func (b *Builder) PtrBytes(t types.Type) uintptr {
+	return b.PtrBytesEx(t, false)
+}
+
+func (b *Builder) PtrBytesEx(t types.Type, publicFunc bool) uintptr {
+	if b.IsClosureType(t, publicFunc) {
+		return 2 * b.PtrSize
+	}
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		switch t.Kind() {
@@ -373,61 +380,36 @@ func (b *Builder) PtrBytes(t types.Type) uintptr {
 	case *types.Chan:
 		return b.PtrSize
 	case *types.Named:
-		return b.PtrBytes(t.Underlying())
+		return b.PtrBytesEx(t.Underlying(), true)
 	}
 	panic("unsupported ptrbytes: " + t.String())
 }
 
 func (b *Builder) Size(t types.Type) uintptr {
-	switch t := types.Unalias(t).(type) {
-	case *types.Basic:
-		switch t.Kind() {
-		case types.Bool:
-			return 1
-		case types.Int8, types.Uint8:
-			return 1
-		case types.Int16, types.Uint16:
-			return 2
-		case types.Int32, types.Uint32:
-			return 4
-		case types.Int64, types.Uint64:
-			return 8
-		case types.Int, types.Uint, types.Uintptr, types.UnsafePointer:
-			return b.PtrSize
-		case types.Float32:
-			return 4
-		case types.Float64:
-			return 8
-		case types.Complex64:
-			return 8
-		case types.Complex128:
-			return 16
-		case types.String:
-			return 2 * b.PtrSize
-		}
-	case *types.Pointer:
-		return b.PtrSize
-	case *types.Slice:
-		return 3 * b.PtrSize
-	case *types.Signature:
-		return b.PtrSize
-	case *types.Interface:
+	return b.SizeEx(t, false)
+}
+
+func (b *Builder) SizeEx(t types.Type, publicFunc bool) uintptr {
+	if b.IsClosureType(t, publicFunc) {
 		return 2 * b.PtrSize
-	case *types.Struct:
-		return uintptr(b.Sizes.Sizeof(t))
-	case *types.Map:
-		return b.PtrSize
-	case *types.Array:
-		return uintptr(t.Len()) * b.Size(t.Elem())
-	case *types.Chan:
-		return b.PtrSize
-	case *types.Named:
-		return b.Size(t.Underlying())
 	}
-	panic("unsupported size: " + t.String())
+	if _, ok := types.Unalias(t).Underlying().(*types.Signature); ok {
+		return b.PtrSize
+	}
+	if b.Sizes != nil {
+		return uintptr(b.Sizes.Sizeof(t))
+	}
+	return uintptr(b.context().Sizeof(t))
 }
 
 func (b *Builder) RuntimeName(t types.Type) string {
+	return b.RuntimeNameEx(t, false)
+}
+
+func (b *Builder) RuntimeNameEx(t types.Type, publicFunc bool) string {
+	if b.IsClosureType(t, publicFunc) {
+		return "structtype"
+	}
 	switch t := types.Unalias(t).(type) {
 	case *types.Basic:
 		return "_type"
@@ -448,7 +430,7 @@ func (b *Builder) RuntimeName(t types.Type) string {
 	case *types.Chan:
 		return "chantype"
 	case *types.Named:
-		return b.RuntimeName(t.Underlying())
+		return b.RuntimeNameEx(t.Underlying(), true)
 	}
 	panic("unsupported runtime type: " + t.String())
 }

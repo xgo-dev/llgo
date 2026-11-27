@@ -27,6 +27,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/xgo-dev/llgo/directive"
 )
 
 // Object represents a named language entity (Func, Var, TypeName, Const,
@@ -122,11 +124,20 @@ func Id(pkg *Package, name string) string {
 }
 
 // Func represents a declared function, concrete method, or abstract
-// (interface) method (mirroring go/types.Func).
+// (interface) method (mirroring go/types.Func) with first-class LLGo
+// declaration metadata.
 type Func struct {
 	object
-	origin *Func
-	scope  *Scope
+	origin        *Func
+	scope         *Scope
+	linkName      string
+	exportName    string
+	wasmImport    *directive.WasmImport
+	wasmExport    string
+	hasClosureEnv bool
+	noInline      bool
+	noInterface   bool
+	noEscape      bool
 }
 
 // NewFunc constructs a function or method object (matching go/types.NewFunc).
@@ -147,6 +158,213 @@ func (f *Func) Origin() *Func {
 	return f
 }
 func (f *Func) Scope() *Scope { return f.scope }
+
+// LinkName returns the //go:linkname, //llgo:link, //export, or package C
+// symbol target attached to f (inheriting from Origin() for instantiations).
+func (f *Func) LinkName() string {
+	if f == nil {
+		return ""
+	}
+	if f.linkName != "" {
+		return f.linkName
+	}
+	if f.origin != nil && f.origin != f {
+		return f.origin.LinkName()
+	}
+	return ""
+}
+
+// SetLinkName sets the symbol link target for f.
+func (f *Func) SetLinkName(name string) {
+	if f != nil {
+		f.linkName = name
+	}
+}
+
+// LinkTarget classifies f.LinkName() into its LLGo link namespace and symbol.
+func (f *Func) LinkTarget() (directive.LinkNamespace, string) {
+	return directive.ParseLinkTarget(f.LinkName())
+}
+
+// ExportName returns the //export or package C exported symbol name for f.
+func (f *Func) ExportName() string {
+	if f == nil {
+		return ""
+	}
+	if f.exportName != "" {
+		return f.exportName
+	}
+	if f.origin != nil && f.origin != f {
+		return f.origin.ExportName()
+	}
+	return ""
+}
+
+// SetExportName sets the exported symbol name for f.
+func (f *Func) SetExportName(name string) {
+	if f != nil {
+		f.exportName = name
+	}
+}
+
+// WasmImport returns the //go:wasmimport binding for f, if any.
+func (f *Func) WasmImport() *directive.WasmImport {
+	if f == nil {
+		return nil
+	}
+	if f.wasmImport != nil {
+		cp := *f.wasmImport
+		return &cp
+	}
+	if f.origin != nil && f.origin != f {
+		return f.origin.WasmImport()
+	}
+	return nil
+}
+
+// SetWasmImport sets the //go:wasmimport binding for f.
+func (f *Func) SetWasmImport(wi *directive.WasmImport) {
+	if f == nil {
+		return
+	}
+	if wi == nil {
+		f.wasmImport = nil
+		return
+	}
+	cp := *wi
+	f.wasmImport = &cp
+}
+
+// WasmExport returns the //go:wasmexport or //llgo:export name for f, if any.
+func (f *Func) WasmExport() string {
+	if f == nil {
+		return ""
+	}
+	if f.wasmExport != "" {
+		return f.wasmExport
+	}
+	if f.origin != nil && f.origin != f {
+		return f.origin.WasmExport()
+	}
+	return ""
+}
+
+// SetWasmExport sets the //go:wasmexport or //llgo:export name for f.
+func (f *Func) SetWasmExport(name string) {
+	if f != nil {
+		f.wasmExport = name
+	}
+}
+
+// HasClosureEnv reports whether f carries a //llgo:env directive.
+func (f *Func) HasClosureEnv() bool {
+	if f == nil {
+		return false
+	}
+	if f.hasClosureEnv {
+		return true
+	}
+	if f.origin != nil && f.origin != f {
+		return f.origin.HasClosureEnv()
+	}
+	return false
+}
+
+// SetHasClosureEnv sets whether f carries a //llgo:env directive.
+func (f *Func) SetHasClosureEnv(v bool) {
+	if f != nil {
+		f.hasClosureEnv = v
+	}
+}
+
+// NoInline reports whether f carries a //go:noinline directive.
+func (f *Func) NoInline() bool {
+	if f == nil {
+		return false
+	}
+	if f.noInline {
+		return true
+	}
+	if f.origin != nil && f.origin != f {
+		return f.origin.NoInline()
+	}
+	return false
+}
+
+// SetNoInline sets whether f carries a //go:noinline directive.
+func (f *Func) SetNoInline(v bool) {
+	if f != nil {
+		f.noInline = v
+	}
+}
+
+// NoInterface reports whether f carries a //go:nointerface directive.
+func (f *Func) NoInterface() bool {
+	if f == nil {
+		return false
+	}
+	if f.noInterface {
+		return true
+	}
+	if f.origin != nil && f.origin != f {
+		return f.origin.NoInterface()
+	}
+	return false
+}
+
+// SetNoInterface sets whether f carries a //go:nointerface directive.
+func (f *Func) SetNoInterface(v bool) {
+	if f != nil {
+		f.noInterface = v
+	}
+}
+
+// NoEscape reports whether f carries a //go:noescape directive.
+func (f *Func) NoEscape() bool {
+	if f == nil {
+		return false
+	}
+	if f.noEscape {
+		return true
+	}
+	if f.origin != nil && f.origin != f {
+		return f.origin.NoEscape()
+	}
+	return false
+}
+
+// SetNoEscape sets whether f carries a //go:noescape directive.
+func (f *Func) SetNoEscape(v bool) {
+	if f != nil {
+		f.noEscape = v
+	}
+}
+
+// CallConv returns the effective calling convention for f, deriving from
+// LinkName namespace, WasmImport, or Signature.CallConv().
+func (f *Func) CallConv() CallConv {
+	if f == nil {
+		return Go
+	}
+	if link := f.LinkName(); link != "" {
+		ns, _ := directive.ParseLinkTarget(link)
+		switch ns {
+		case directive.LinkC:
+			return CDecl
+		case directive.LinkStdcall:
+			return Stdcall
+		case directive.LinkPy:
+			return Py
+		}
+	}
+	if f.WasmImport() != nil {
+		return Wasm
+	}
+	if sig := f.Signature(); sig != nil {
+		return sig.CallConv()
+	}
+	return Go
+}
 
 func (f *Func) FullName() string {
 	var b strings.Builder
@@ -204,13 +422,17 @@ func (kind VarKind) String() string {
 	}
 }
 
-// Var represents a variable, parameter, result, or struct field.
+// Var represents a variable, parameter, result, or struct field with
+// first-class LLGo declaration metadata.
 type Var struct {
 	object
-	origin   *Var
-	embedded bool
-	isField  bool
-	kind     VarKind
+	origin     *Var
+	embedded   bool
+	isField    bool
+	kind       VarKind
+	linkName   string
+	exportName string
+	locality   directive.Locality
 }
 
 // NewVar constructs a variable object (matching go/types.NewVar).
@@ -244,6 +466,51 @@ func (v *Var) Embedded() bool       { return v.embedded }
 func (v *Var) IsField() bool        { return v.isField }
 func (v *Var) Kind() VarKind        { return v.kind }
 func (v *Var) SetKind(kind VarKind) { v.kind = kind }
+
+// LinkName returns the //go:linkname, //llgo:link, or //export symbol target for v.
+func (v *Var) LinkName() string {
+	if v == nil {
+		return ""
+	}
+	return v.linkName
+}
+
+// SetLinkName sets the symbol link target for v.
+func (v *Var) SetLinkName(name string) {
+	if v != nil {
+		v.linkName = name
+	}
+}
+
+// ExportName returns the //export symbol name for v, if any.
+func (v *Var) ExportName() string {
+	if v == nil {
+		return ""
+	}
+	return v.exportName
+}
+
+// SetExportName sets the //export symbol name for v.
+func (v *Var) SetExportName(name string) {
+	if v != nil {
+		v.exportName = name
+	}
+}
+
+// Locality returns the //llgointernal:tls or //llgointernal:gls locality for v.
+func (v *Var) Locality() directive.Locality {
+	if v == nil {
+		return directive.LocalityNone
+	}
+	return v.locality
+}
+
+// SetLocality sets the storage locality for v.
+func (v *Var) SetLocality(loc directive.Locality) {
+	if v != nil {
+		v.locality = loc
+	}
+}
 func (v *Var) String() string {
 	kind := "var"
 	if v.isField {
@@ -576,7 +843,8 @@ func initUnsafe() *Package {
 	return pkg
 }
 
-// Package describes an LLGo-typed Go package (mirroring go/types.Package).
+// Package describes an LLGo-typed Go package (mirroring go/types.Package)
+// with first-class LLGo package-level metadata.
 type Package struct {
 	path         string
 	name         string
@@ -588,6 +856,12 @@ type Package struct {
 	goPkg        *gotypes.Package
 	synthGoNames map[string]bool
 	evalMu       sync.RWMutex
+
+	kindSet   bool
+	kind      directive.PackageKind
+	kindParam string
+	skipAll   bool
+	skips     map[string]bool
 }
 
 // NewPackage creates a new Package (matching go/types.NewPackage).
@@ -607,6 +881,116 @@ func (p *Package) SetImports(list []*Package) { p.imports = list }
 func (p *Package) GoVersion() string          { return p.goVersion }
 func (p *Package) String() string {
 	return fmt.Sprintf("package %s (%q)", p.name, p.path)
+}
+
+func (p *Package) resolveKind() (directive.PackageKind, string) {
+	if p == nil {
+		return directive.PkgNormal, ""
+	}
+	if p.kindSet {
+		return p.kind, p.kindParam
+	}
+	if p.scope != nil {
+		if v, ok := p.scope.Lookup("LLGoPackage").(*Const); ok {
+			if val := v.Val(); val != nil && val.Kind() == constant.String {
+				return directive.ParsePackageKind(constant.StringVal(val))
+			}
+			return directive.PkgLLGo, ""
+		}
+	}
+	switch p.path {
+	case "runtime/cgo", "unsafe":
+		return directive.PkgDeclOnly, ""
+	}
+	return directive.PkgNormal, ""
+}
+
+// Kind returns the LLGo package classification (derived from LLGoPackage,
+// built-in decl-only paths, or explicit SetKind).
+func (p *Package) Kind() directive.PackageKind {
+	k, _ := p.resolveKind()
+	return k
+}
+
+// KindParam returns the parameter associated with Kind() (e.g. Python module
+// name for PkgPyModule, or external link flags for PkgLinkExtern).
+func (p *Package) KindParam() string {
+	_, param := p.resolveKind()
+	return param
+}
+
+// SetKind explicitly sets the LLGo package classification and parameter.
+func (p *Package) SetKind(kind directive.PackageKind, param string) {
+	if p == nil {
+		return
+	}
+	p.kindSet = true
+	p.kind = kind
+	p.kindParam = param
+}
+
+// PyModule returns the Python module name when p is a PkgPyModule package.
+func (p *Package) PyModule() string {
+	k, param := p.resolveKind()
+	if k == directive.PkgPyModule {
+		return param
+	}
+	return ""
+}
+
+// SkipsInit reports whether p is excluded from Go package initialization.
+func (p *Package) SkipsInit() bool {
+	return p.Kind() >= directive.PkgNoInit
+}
+
+// IsCPackage reports whether p selects LLGo's package C export convention.
+func (p *Package) IsCPackage() bool {
+	return p != nil && p.name == "C"
+}
+
+// SkipAll reports whether p carries a //llgo:skipall directive.
+func (p *Package) SkipAll() bool {
+	return p != nil && p.skipAll
+}
+
+// SetSkipAll sets whether p carries a //llgo:skipall directive.
+func (p *Package) SetSkipAll(v bool) {
+	if p != nil {
+		p.skipAll = v
+	}
+}
+
+// Skipped reports whether symbol name is listed in a //llgo:skip directive on p.
+func (p *Package) Skipped(name string) bool {
+	return p != nil && p.skips != nil && p.skips[name]
+}
+
+// SkipNames returns all sorted symbol names listed in //llgo:skip directives on p.
+func (p *Package) SkipNames() []string {
+	if p == nil || len(p.skips) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(p.skips))
+	for name := range p.skips {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// AddSkip adds symbol names to p's //llgo:skip set.
+func (p *Package) AddSkip(names ...string) {
+	if p == nil || len(names) == 0 {
+		return
+	}
+	if p.skips == nil {
+		p.skips = make(map[string]bool, len(names))
+	}
+	for _, name := range names {
+		if name != "" {
+			p.skips[name] = true
+		}
+	}
 }
 
 // Selection describes a selector expression x.f in LLGo's type system.

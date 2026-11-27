@@ -4,6 +4,7 @@ import (
 	"github.com/xgo-dev/llgo/types"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -158,14 +159,28 @@ func TestInterface(t *testing.T) {
 func TestSignature(t *testing.T) {
 	b := newBuilder()
 	pkg := types.NewPackage("github.com/goplus/ssa/abi", "abi_test")
-	testType(t, b, types.NewSignature(nil, types.NewTuple(types.NewVar(0, pkg, "", types.Typ[types.Int])),
-		types.NewTuple(types.NewVar(0, pkg, "", types.NewPointer(types.Typ[types.Int]))), false),
-		reflect.TypeOf(func(int) *int { return nil }),
-	)
-	testType(t, b, types.NewSignature(nil, types.NewTuple(types.NewVar(0, pkg, "", types.NewSlice(types.NewPointer(types.Typ[types.Int])))),
-		types.NewTuple(types.NewVar(0, pkg, "", types.NewPointer(types.Typ[types.Int]))), false),
-		reflect.TypeOf(func([]*int) *int { return nil }),
-	)
+	sig1 := types.NewSignature(nil, types.NewTuple(types.NewVar(0, pkg, "", types.Typ[types.Int])),
+		types.NewTuple(types.NewVar(0, pkg, "", types.NewPointer(types.Typ[types.Int]))), false)
+	testPublicFuncType(t, b, sig1, reflect.TypeOf(func(int) *int { return nil }))
+	sig2 := types.NewSignature(nil, types.NewTuple(types.NewVar(0, pkg, "", types.NewSlice(types.NewPointer(types.Typ[types.Int])))),
+		types.NewTuple(types.NewVar(0, pkg, "", types.NewPointer(types.Typ[types.Int]))), false)
+	testPublicFuncType(t, b, sig2, reflect.TypeOf(func([]*int) *int { return nil }))
+}
+
+func testPublicFuncType(t *testing.T, b *abi.Builder, sig *types.Signature, rt reflect.Type) {
+	t.Helper()
+	if int(b.KindEx(sig, true)) != int(rt.Kind()) {
+		t.Fatalf("public func kind error: %v got %v, want %v", sig, b.KindEx(sig, true), rt.Kind())
+	}
+	if b.SizeEx(sig, true) != rt.Size() {
+		t.Fatalf("public func size error: %v got %v, want %v", sig, b.SizeEx(sig, true), rt.Size())
+	}
+	if b.Size(sig) != 2*rt.Size() || b.Kind(sig) != rabi.Struct || b.TFlag(sig)&rabi.TFlagClosure == 0 {
+		t.Fatalf("closure value metadata mismatch for %v: size=%d kind=%v tflag=%v", sig, b.Size(sig), b.Kind(sig), b.TFlag(sig))
+	}
+	if typeString(b, sig) != rt.String() {
+		t.Fatalf("str error: %v got %v, want %v", sig, typeString(b, sig), rt.String())
+	}
 }
 
 func TestClosurePublicFuncType(t *testing.T) {
@@ -175,20 +190,15 @@ func TestClosurePublicFuncType(t *testing.T) {
 		types.NewTuple(types.NewVar(0, pkg, "", types.Typ[types.Int])),
 		types.NewTuple(types.NewVar(0, pkg, "", types.Typ[types.Bool])),
 		false)
-	closure := types.NewStruct([]*types.Var{
-		types.NewField(0, nil, "$f", inner, false),
-		types.NewField(0, nil, "$data", types.Typ[types.UnsafePointer], false),
-	}, nil)
 	outer := types.NewSignature(nil,
-		types.NewTuple(types.NewVar(0, pkg, "", closure)),
+		types.NewTuple(types.NewVar(0, pkg, "", inner)),
 		nil,
 		false)
 	if got, want := typeString(b, outer), "func(func(int) bool)"; got != want {
 		t.Fatalf("closure parameter string = %q, want %q", got, want)
 	}
-	raw := types.NewSignature(nil, types.NewTuple(types.NewVar(0, pkg, "", inner)), nil, false)
-	if b.FuncName(outer) != b.FuncName(raw) {
-		t.Fatal("runtime function type identity depends on the physical closure representation")
+	if !strings.HasPrefix(b.ClosureName(outer), "_llgo_closure$") || !strings.HasPrefix(b.FuncName(outer), "_llgo_func$") {
+		t.Fatalf("unexpected names: closure=%q func=%q", b.ClosureName(outer), b.FuncName(outer))
 	}
 }
 

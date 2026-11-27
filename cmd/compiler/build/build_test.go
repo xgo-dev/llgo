@@ -5,6 +5,7 @@ import (
 	"debug/macho"
 	"encoding/json"
 	"fmt"
+	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	gobuild "go/build"
@@ -1259,20 +1260,26 @@ func TestWasmRuntimeAvoidsNativeHostDependencies(t *testing.T) {
 }
 
 func TestEffectiveWasmTypeSizes(t *testing.T) {
-	base := &types.StdSizes{WordSize: 16, MaxAlign: 16}
 	for _, test := range []struct {
 		name    string
 		profile crosscompile.WasmProfile
 		want    int64
 	}{
-		{"unresolved", crosscompile.WasmProfileNone, 16},
+		{"unresolved", crosscompile.WasmProfileNone, 4},
 		{"J32", crosscompile.WasmProfileJ32, 8},
 		{"J64", crosscompile.WasmProfileJ64, 8},
 		{"W32", crosscompile.WasmProfileW32, 8},
-		{"unknown profile", crosscompile.WasmProfile("unknown"), 16},
+		{"unknown profile", crosscompile.WasmProfile("unknown"), 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := effectiveTypeSizes(base, test.profile).Sizeof(types.Typ[types.Uintptr])
+			sizes := types.NewContextWithConfig(types.ContextConfig{
+				Spec: target.ResolveSpec(target.Spec{
+					GOOS:        "js",
+					GOARCH:      "wasm",
+					WasmProfile: string(test.profile),
+				}),
+			})
+			got := sizes.Sizeof(types.Typ[types.Uintptr])
 			if got != test.want {
 				t.Fatalf("uintptr size = %d, want %d", got, test.want)
 			}
@@ -1295,7 +1302,13 @@ func TestWasmNestedStructTypeSizes(t *testing.T) {
 		crosscompile.WasmProfileW32,
 	} {
 		t.Run(string(profile), func(t *testing.T) {
-			sizes := effectiveTypeSizes(nil, profile)
+			sizes := types.NewContextWithConfig(types.ContextConfig{
+				Spec: target.ResolveSpec(target.Spec{
+					GOOS:        "js",
+					GOARCH:      "wasm",
+					WasmProfile: string(profile),
+				}),
+			})
 			if got := sizes.Sizeof(common); got != 24 {
 				t.Errorf("nested struct size = %d, want 24 including tail padding", got)
 			}

@@ -248,7 +248,7 @@ func (p *context) cgoCgocall(b llvmgen.Builder, args []ssa.Value) (ret llvmgen.E
 	}
 
 	pfn := p.compileValue(b, args[0])
-	fnTy := p.fn.Type
+	fnTy := p.type_(p.fn.Type.RawType(), llvmgen.CDecl)
 	if isC2 {
 		if sig.Results().Len() == 0 {
 			panic("cgo C2func should have at least one result")
@@ -752,9 +752,12 @@ func (p *context) funcOf(fn *ssa.Function) (aFn llvmgen.Function, pyFn llvmgen.P
 				return nil, nil, ignoredFunc
 			}
 			sig := p.patchType(fn.Signature).(*types.Signature)
-			// Source env-bearing bodies are created by compileFuncDecl before
-			// lowering. Imported declarations cannot reconstruct //llgo:env.
-			aFn = pkg.NewFuncEx(name, sig, llvmgen.CallConv(ftype), false, p.needsLinkOnce(fn))
+			if fn.HasClosureEnv {
+				ctx := types.NewVar(token.NoPos, nil, "$env", types.Typ[types.UnsafePointer])
+				aFn = pkg.NewEnvFunc(name, sig, llvmgen.CallConv(ftype), ctx, p.needsLinkOnce(fn))
+			} else {
+				aFn = pkg.NewFuncEx(name, sig, llvmgen.CallConv(ftype), false, p.needsLinkOnce(fn))
+			}
 			noInlineDirective := hasNoInlineDirective(fn)
 			if disableInline || noInlineDirective {
 				aFn.Inline(llvmgen.NoInline)
@@ -2682,6 +2685,8 @@ func collectMethodNilDerefChecks(fn *ssa.Function, receiverChecks *ReceiverNilCh
 		}
 		if isPointerMethodWrapperCall(fn, call) {
 			markReceiver(call.Args[0], fn.Pos())
+		} else if call.RecvNilCheck != nil {
+			markReceiver(call.Args[0], call.RecvNilCheck.Pos)
 		} else if receiverChecks != nil {
 			if check, ok := receiverChecks.calls[call.Pos()]; ok {
 				markReceiver(call.Args[0], check.pos)
@@ -2701,9 +2706,13 @@ func collectMethodNilDerefChecks(fn *ssa.Function, receiverChecks *ReceiverNilCh
 				if bound, ok := instr.Fn.(*ssa.Function); ok {
 					mark(boundValueReceiverNilDerefArg(bound, instr.Bindings))
 				}
-				if receiverChecks != nil && len(instr.Bindings) != 0 {
-					if check, ok := receiverChecks.values[instr.Pos()]; ok {
-						markReceiver(instr.Bindings[0], check.pos)
+				if len(instr.Bindings) != 0 {
+					if instr.RecvNilCheck != nil {
+						markReceiver(instr.Bindings[0], instr.RecvNilCheck.Pos)
+					} else if receiverChecks != nil {
+						if check, ok := receiverChecks.values[instr.Pos()]; ok {
+							markReceiver(instr.Bindings[0], check.pos)
+						}
 					}
 				}
 			}

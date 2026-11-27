@@ -213,7 +213,7 @@ func (check *Checker) Files(files []*ast.File) error {
 	if check == nil || check.goChecker == nil {
 		return nil
 	}
-	check.ctx.registerCheckedGoPackage(check.pkg.path, check.goPkg)
+	check.ctx.registerCheckedGoPackage(check.pkg, check.goPkg)
 	checkFiles := files
 	var prep erasedAliasPrep
 	if goTypesErasesAliases() {
@@ -231,6 +231,7 @@ func (check *Checker) Files(files []*ast.File) error {
 	err := check.goChecker.Files(checkFiles)
 	prep.restoreGoInfo(check.goInfo)
 	check.ctx.populateFromGoPackage(check.pkg, check.goPkg, check.Info, check.goInfo, check.goVersion, files, prevChildren)
+	applyDeclarationDirectives(check.pkg, check.Info, files)
 	clearGoInfoBatchMaps(check.goInfo)
 	if check.pkg != nil {
 		if check.erasedAliases != nil && len(check.erasedAliases.synthNames) > 0 {

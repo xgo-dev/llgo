@@ -4,7 +4,6 @@ import (
 	llpkgs "github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/types"
 	"go/token"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -29,7 +28,6 @@ func TestChannelReceiveBufferLoads(t *testing.T) {
 				t.Run(mode, func(t *testing.T) {
 					prog := NewProgram(nil)
 					defer prog.Dispose()
-					prog.sizes = types.SizesFor("gc", runtime.GOARCH)
 					prog.SetRuntime(func() *types.Package { return rt })
 					pkg := prog.NewPackage("p", "example.com/receive")
 					params := types.NewTuple(types.NewVar(token.NoPos, nil, "ch", types.NewChan(types.SendRecv, elem)))

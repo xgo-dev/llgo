@@ -221,6 +221,22 @@ func ParseExport(doc *ast.CommentGroup) (string, token.Pos, bool) {
 	return "", token.NoPos, false
 }
 
+// ParseWasmExport extracts a //go:wasmexport <name> or //llgo:export <name>
+// directive from doc.
+func ParseWasmExport(doc *ast.CommentGroup) (string, token.Pos, bool) {
+	directives := ParseGroup(doc)
+	for i := len(directives) - 1; i >= 0; i-- {
+		d := directives[i]
+		if (d.Name == "go:wasmexport" || d.Name == "llgo:export") && d.Args != "" {
+			fields := strings.Fields(d.Args)
+			if len(fields) > 0 {
+				return fields[0], d.Pos, true
+			}
+		}
+	}
+	return "", token.NoPos, false
+}
+
 // HasClosureEnv reports whether doc contains a //llgo:env directive.
 func HasClosureEnv(doc *ast.CommentGroup) bool {
 	for _, d := range ParseGroup(doc) {
@@ -229,6 +245,95 @@ func HasClosureEnv(doc *ast.CommentGroup) bool {
 		}
 	}
 	return false
+}
+
+// HasNoInline reports whether doc contains a //go:noinline directive.
+func HasNoInline(doc *ast.CommentGroup) bool {
+	for _, d := range ParseGroup(doc) {
+		if d.Name == "go:noinline" && d.Args == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// HasNoInterface reports whether doc contains a //go:nointerface directive.
+func HasNoInterface(doc *ast.CommentGroup) bool {
+	if doc == nil {
+		return false
+	}
+	for n := len(doc.List) - 1; n >= 0; n-- {
+		d, ok := Parse(doc.List[n])
+		if !ok {
+			return false
+		}
+		if d.Name == "go:nointerface" && d.Args == "" {
+			return true
+		}
+		if !strings.HasPrefix(d.Name, "go:") && !strings.HasPrefix(d.Name, "llgo:") && d.Name != "export" {
+			return false
+		}
+	}
+	return false
+}
+
+// HasNoEscape reports whether doc contains a //go:noescape directive.
+func HasNoEscape(doc *ast.CommentGroup) bool {
+	for _, d := range ParseGroup(doc) {
+		if d.Name == "go:noescape" && d.Args == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// LinkNamespace classifies the target namespace of a //go:linkname or
+// //llgo:link target string.
+type LinkNamespace uint8
+
+const (
+	LinkGo LinkNamespace = iota
+	LinkC
+	LinkStdcall
+	LinkPy
+	LinkLLGo
+	LinkLLVM
+)
+
+func (n LinkNamespace) String() string {
+	switch n {
+	case LinkC:
+		return "C"
+	case LinkStdcall:
+		return "stdcall"
+	case LinkPy:
+		return "py"
+	case LinkLLGo:
+		return "llgo"
+	case LinkLLVM:
+		return "llvm"
+	default:
+		return "go"
+	}
+}
+
+// ParseLinkTarget splits a linkname target into its namespace and symbol name.
+// For LinkLLVM, the full "llvm.*" intrinsic name is preserved as symbol.
+func ParseLinkTarget(target string) (LinkNamespace, string) {
+	switch {
+	case strings.HasPrefix(target, "C."):
+		return LinkC, target[len("C."):]
+	case strings.HasPrefix(target, "stdcall."):
+		return LinkStdcall, target[len("stdcall."):]
+	case strings.HasPrefix(target, "py."):
+		return LinkPy, target[len("py."):]
+	case strings.HasPrefix(target, "llgo."):
+		return LinkLLGo, target[len("llgo."):]
+	case strings.HasPrefix(target, "llvm."):
+		return LinkLLVM, target
+	default:
+		return LinkGo, target
+	}
 }
 
 // SkipSpec describes //llgo:skip and //llgo:skipall directives on a package.

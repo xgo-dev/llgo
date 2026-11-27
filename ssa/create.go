@@ -79,11 +79,14 @@ func memberFromObject(pkg *Package, obj types.Object, syntax ast.Node, goversion
 
 	case *types.Var:
 		g := &Global{
-			Pkg:    pkg,
-			name:   name,
-			object: obj,
-			typ:    types.NewPointer(obj.Type()), // address
-			pos:    obj.Pos(),
+			Pkg:        pkg,
+			name:       name,
+			object:     obj,
+			typ:        types.NewPointer(obj.Type()), // address
+			pos:        obj.Pos(),
+			LinkName:   obj.LinkName(),
+			ExportName: obj.ExportName(),
+			Locality:   obj.Locality(),
 		}
 		pkg.objects[obj] = g
 		if name != "_" {
@@ -126,6 +129,14 @@ func createFunction(prog *Program, obj *types.Func, name string, syntax ast.Node
 		goversion:      goversion,
 		pos:            obj.Pos(),
 		Pkg:            nil, // may be set by caller
+		LinkName:       obj.LinkName(),
+		ExportName:     obj.ExportName(),
+		NoInline:       obj.NoInline(),
+		NoInterface:    obj.NoInterface(),
+		NoEscape:       obj.NoEscape(),
+		HasClosureEnv:  obj.HasClosureEnv(),
+		WasmImport:     obj.WasmImport(),
+		WasmExport:     obj.WasmExport(),
 		Prog:           prog,
 		recvtypeparams: sig.RecvTypeParams(),
 		typeparams:     sig.TypeParams(),
@@ -190,12 +201,23 @@ func (prog *Program) CreatePackage(pkg *types.Package, files []*ast.File, info *
 	if pkg == nil {
 		panic("nil pkg") // otherwise pkg.Scope below returns types.Universe!
 	}
+	var skips map[string]bool
+	if names := pkg.SkipNames(); len(names) > 0 {
+		skips = make(map[string]bool, len(names))
+		for _, n := range names {
+			skips[n] = true
+		}
+	}
 	p := &Package{
-		Prog:    prog,
-		Members: make(map[string]Member),
-		objects: make(map[types.Object]Member),
-		Pkg:     pkg,
-		syntax:  info != nil,
+		Prog:      prog,
+		Members:   make(map[string]Member),
+		objects:   make(map[types.Object]Member),
+		Pkg:       pkg,
+		Kind:      pkg.Kind(),
+		KindParam: pkg.KindParam(),
+		SkipAll:   pkg.SkipAll(),
+		Skips:     skips,
+		syntax:    info != nil,
 		// transient values (cleared after Package.Build)
 		info:        info,
 		files:       files,

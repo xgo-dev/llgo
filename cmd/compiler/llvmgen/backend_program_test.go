@@ -60,7 +60,7 @@ func TestNewBackendProgramSharesPreparedGoState(t *testing.T) {
 	if backend.packageSyntax != coordinator.packageSyntax || backend.localities != coordinator.localities || backend.typeCtx != coordinator.typeCtx {
 		t.Fatal("backend Program did not share prepared Go metadata")
 	}
-	if backend.gocvt.typs == nil || len(backend.gocvt.typs) != 0 || backend.named == nil || backend.abiSymbol == nil {
+	if backend.funcPtrs == nil || len(backend.funcPtrs) != 0 || backend.named == nil || backend.abiSymbol == nil {
 		t.Fatal("backend Program did not start with fresh lowering caches")
 	}
 	if link, ok := backend.Linkname("example.com/p.Entry"); !ok || link != "entry" {

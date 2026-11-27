@@ -13,7 +13,7 @@ func TestRecoverDeferClassificationFallbacks(t *testing.T) {
 	caller := pkg.NewFunc("caller", NoArgsNoRet, GoDecl)
 	b := caller.MakeBody(1)
 
-	fnPtr := b.ChangeType(prog.rawType(NoArgsNoRet), callee.Expr)
+	fnPtr := b.ChangeType(prog.Type(NoArgsNoRet, CDecl), callee.Expr)
 	closure := b.MakeClosure(callee.Expr, nil)
 	ifaceMethod := Expr{Type: &aType{kind: vkIfaceMethod}}
 	ordinary := prog.Val(1)

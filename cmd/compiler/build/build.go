@@ -828,11 +828,11 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	// Keep PC-line anchors for precise runtime locations. Darwin DWARF builds
 	// suppress only entry-address sites, which disturb LLDB lexical scopes.
 	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo))
-	sizes := func(sizes types.Sizes, _, _ string) types.Sizes {
-		sizes = effectiveTypeSizes(sizes, export.WasmProfile)
-		return prog.TypeSizes(sizes)
+	sizes := func(_ types.Sizes, _, _ string) types.Sizes {
+		return prog.TypeContext()
 	}
 	dedup := packages.NewDeduper()
+	dedup.SetTypeContext(prog.TypeContext())
 	var syntaxErr error
 	var syntaxErrMu sync.Mutex
 	recordSyntaxErr := func(err error) {
@@ -1117,7 +1117,8 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
 		callerSpan.done()
 	}
-	ctx.frontendOptions.ReceiverNilChecks = collectReceiverNilChecks(initial, altPkgs)
+	// Pointer-method receiver nil checks are now recorded directly on
+	// ssa.CallCommon.RecvNilCheck and ssa.MakeClosure.RecvNilCheck by llgo/ssa.
 	if features == nil {
 		if target.GOARCH == "wasm" {
 			groups = groupInitialBuilds(ctx, altPkgs)
@@ -1853,18 +1854,6 @@ func applyWasmGCLinkFlags(conf *Config, export *crosscompile.Export) {
 	}
 	if !slices.Contains(export.LDFLAGS, "-sMALLOC=none") {
 		export.LDFLAGS = append(export.LDFLAGS, "-sMALLOC=none")
-	}
-}
-
-func effectiveTypeSizes(sizes types.Sizes, profile crosscompile.WasmProfile) types.Sizes {
-	switch profile {
-	case crosscompile.WasmProfileJ32, crosscompile.WasmProfileJ64, crosscompile.WasmProfileW32:
-		// StdSizes omits struct tail padding. Its nested-field offsets then
-		// disagree with LLVM's physical layout, so reflected fields and unsafe
-		// constants can address padding instead of the following field.
-		return types.SizesFor("gc", "amd64")
-	default:
-		return sizes
 	}
 }
 
@@ -4251,14 +4240,10 @@ func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.
 			if debugBuild || verbose {
 				log.Println("==> BuildSSA", p.ID)
 			}
-			// Only strip alt packages here. Original packages in this graph
-			// are stripped in registerSSAPkgs, where the alt skip set is
-			// known. Stripping them now would drop InitOrder before that
-			// eligibility check.
+			// Large static [N]byte initializers are folded natively onto
+			// ssa.Global.StaticBytes during llgo/ssa Package.Build without
+			// mutating AST or TypesInfo.InitOrder.
 			isAlt := strings.HasPrefix(p.ID, altPkgPathPrefix)
-			if isAlt {
-				payloads = cl.MergeStaticByteArrays(payloads, cl.StripLargeStaticByteArrays(typs, p.Syntax, p.TypesInfo))
-			}
 			pkgSSA := prog.CreatePackage(typs, p.Syntax, p.TypesInfo, true)
 			entries = append(entries, ssaBuildEntry{id: p.ID, pkg: pkgSSA, syntax: p.Syntax})
 			if isAlt {
@@ -4346,17 +4331,9 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 				}
 			}
 			rewrites := collectRewriteVars(ctx, pkgPath)
-			var skipInit map[string]bool
 			if altPkg != nil {
-				skipInit = cl.SkipNamesRetainingInit(altPkg.Syntax)
+				ssaPkg.RetainInit = cl.SkipNamesRetainingInit(altPkg.Syntax)
 			}
-			payloads := cl.StripLargeStaticByteArraysExcept(p.Types, p.Syntax, p.TypesInfo, skipInit)
-			if altPkg != nil {
-				payloads = cl.MergeStaticByteArrays(payloads, cl.StripLargeStaticByteArrays(altPkg.Types, altPkg.Syntax, altPkg.TypesInfo))
-			}
-			// Alt-package visits may already have stripped shared Syntax/InitOrder
-			// and stored the payload on the context. Keep that map for restore.
-			ctx.staticByteArrays = cl.MergeStaticByteArrays(ctx.staticByteArrays, payloads)
 			aPkg := &aPackage{
 				Package:          p,
 				SSA:              ssaPkg,

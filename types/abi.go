@@ -38,6 +38,16 @@ func dataKindOf(t Type, lvl int, is32Bits bool) (DataKind, Type, int) {
 	if t == nil {
 		return DataInvalid, nil, lvl
 	}
+	if a, ok := t.(*Alias); ok && a.hasCallConv && a.callConv.IsNative() {
+		if _, isSig := a.Underlying().(*Signature); isSig {
+			return DataPointer, t, lvl
+		}
+	}
+	if n, ok := t.(*Named); ok && n.hasCallConv && n.callConv.IsNative() {
+		if _, isSig := n.Underlying().(*Signature); isSig {
+			return DataPointer, t, lvl
+		}
+	}
 	switch u := t.Underlying().(type) {
 	case *Basic:
 		switch {
@@ -56,8 +66,13 @@ func dataKindOf(t Type, lvl int, is32Bits bool) (DataKind, Type, int) {
 		case u.kind == UnsafePointer:
 			return DataPointer, t, lvl
 		}
-	case *Pointer, *Signature, *Map, *Chan:
+	case *Pointer, *Map, *Chan:
 		return DataPointer, t, lvl
+	case *Signature:
+		if u.callConv.IsNative() {
+			return DataPointer, t, lvl
+		}
+		return DataIndirect, t, lvl
 	case *Struct:
 		if len(u.fields) == 1 {
 			return dataKindOf(u.fields[0].typ, lvl+1, is32Bits)

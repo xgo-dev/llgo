@@ -826,7 +826,7 @@ func (d simdOperation) matches(sig *types.Signature, vector types.Type) bool {
 
 func simdVectorBits(typ types.Type) int64 {
 	if shape, ok := llvmgen.SIMDVectorShape(typ); ok {
-		return (&types.StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(shape) * 8
+		return types.SizesFor("gc", "amd64").Sizeof(shape) * 8
 	}
 	return 0
 }

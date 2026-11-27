@@ -189,7 +189,7 @@ func TestWasmStringNativeFuncvalAdapters(t *testing.T) {
 				body := owner.MakeBody(1)
 				value := native.Expr
 				if conversion == "pointer" {
-					value = Expr{native.impl, prog.rawType(sig)}
+					value = Expr{native.impl, prog.Type(sig, CDecl)}
 				}
 				var converted Expr
 				if conversion == "implicit" {
@@ -198,7 +198,7 @@ func TestWasmStringNativeFuncvalAdapters(t *testing.T) {
 					converted = body.ChangeType(dst, value)
 				}
 				if conversion == "declaration" {
-					nilFunc := body.ChangeType(dst, prog.Nil(prog.rawType(sig)))
+					nilFunc := body.ChangeType(dst, prog.Nil(prog.Type(sig, CDecl)))
 					if !body.Field(nilFunc, 0).impl.IsNull() || !body.Field(nilFunc, 1).impl.IsNull() {
 						t.Fatal("nil native function became non-nil")
 					}
@@ -227,14 +227,14 @@ func TestWasmStringAdapterDirections(t *testing.T) {
 		owner := pkg.NewFunc(pkg.Path()+".owner", NoArgsNoRet, GoDecl)
 		body := owner.MakeBody(1)
 		defer body.Dispose()
-		if got := body.ChangeType(prog.rawType(produces), goProducer.Expr); got.impl != goProducer.impl {
+		if got := body.ChangeType(prog.Type(produces, CDecl), goProducer.Expr); got.impl != goProducer.impl {
 			t.Fatal("Go callback returning a string acquired an unnecessary adapter")
 		}
 		converted := body.ChangeType(prog.Type(consumes, GoDecl), nativeConsumer.Expr)
 		if body.Field(converted, 0).impl != nativeConsumer.impl {
 			t.Fatal("native function consuming strings acquired an unnecessary funcval adapter")
 		}
-		if got := body.ChangeType(prog.rawType(consumes), nativeConsumer.Expr); got.impl != nativeConsumer.impl {
+		if got := body.ChangeType(prog.Type(consumes, CDecl), nativeConsumer.Expr); got.impl != nativeConsumer.impl {
 			t.Fatal("native-to-native conversion acquired an unnecessary adapter")
 		}
 		body.Return()

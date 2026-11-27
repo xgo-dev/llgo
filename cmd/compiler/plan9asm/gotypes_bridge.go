@@ -10,22 +10,24 @@ import (
 // llToGoBridge converts an llgo/types.Package graph into stdlib go/types for
 // the external github.com/xgo-dev/plan9asm boundary.
 type llToGoBridge struct {
-	pkgs    map[*types.Package]*gotypes.Package
-	types   map[types.Type]gotypes.Type
-	objs    map[types.Object]gotypes.Object
-	tparams map[*types.TypeParam]*gotypes.TypeParam
+	pkgs      map[*types.Package]*gotypes.Package
+	populated map[*types.Package]bool
+	types     map[types.Type]gotypes.Type
+	objs      map[types.Object]gotypes.Object
+	tparams   map[*types.TypeParam]*gotypes.TypeParam
 }
 
 func newLLToGoBridge() *llToGoBridge {
 	return &llToGoBridge{
-		pkgs:    make(map[*types.Package]*gotypes.Package),
-		types:   make(map[types.Type]gotypes.Type),
-		objs:    make(map[types.Object]gotypes.Object),
-		tparams: make(map[*types.TypeParam]*gotypes.TypeParam),
+		pkgs:      make(map[*types.Package]*gotypes.Package),
+		populated: make(map[*types.Package]bool),
+		types:     make(map[types.Type]gotypes.Type),
+		objs:      make(map[types.Object]gotypes.Object),
+		tparams:   make(map[*types.TypeParam]*gotypes.TypeParam),
 	}
 }
 
-func (b *llToGoBridge) pkg(p *types.Package) *gotypes.Package {
+func (b *llToGoBridge) pkgRef(p *types.Package) *gotypes.Package {
 	if p == nil {
 		return nil
 	}
@@ -37,6 +39,21 @@ func (b *llToGoBridge) pkg(p *types.Package) *gotypes.Package {
 	}
 	gp := gotypes.NewPackage(p.Path(), p.Name())
 	b.pkgs[p] = gp
+	return gp
+}
+
+func (b *llToGoBridge) pkg(p *types.Package) *gotypes.Package {
+	if p == nil {
+		return nil
+	}
+	if p == types.Unsafe {
+		return gotypes.Unsafe
+	}
+	gp := b.pkgRef(p)
+	if b.populated[p] {
+		return gp
+	}
+	b.populated[p] = true
 	if imps := p.Imports(); len(imps) > 0 {
 		gimps := make([]*gotypes.Package, len(imps))
 		for i, imp := range imps {
@@ -99,11 +116,11 @@ func (b *llToGoBridge) obj(o types.Object) gotypes.Object {
 				if goObj, ok := b.objs[v]; ok {
 					return goObj
 				}
-				tn := gotypes.NewTypeName(v.Pos(), b.pkg(v.Pkg()), v.Name(), ga)
+				tn := gotypes.NewTypeName(v.Pos(), b.pkgRef(v.Pkg()), v.Name(), ga)
 				b.objs[v] = tn
 				return tn
 			}
-			tn := gotypes.NewTypeName(v.Pos(), b.pkg(v.Pkg()), v.Name(), b.typ(v.Type()))
+			tn := gotypes.NewTypeName(v.Pos(), b.pkgRef(v.Pkg()), v.Name(), b.typ(v.Type()))
 			b.objs[v] = tn
 			return tn
 		}
@@ -113,25 +130,25 @@ func (b *llToGoBridge) obj(o types.Object) gotypes.Object {
 				return goObj
 			}
 		}
-		tn := gotypes.NewTypeName(v.Pos(), b.pkg(v.Pkg()), v.Name(), nil)
+		tn := gotypes.NewTypeName(v.Pos(), b.pkgRef(v.Pkg()), v.Name(), nil)
 		b.objs[v] = tn
 		return tn
 	case *types.Func:
 		sig, _ := b.typ(v.Type()).(*gotypes.Signature)
-		fn := gotypes.NewFunc(v.Pos(), b.pkg(v.Pkg()), v.Name(), sig)
+		fn := gotypes.NewFunc(v.Pos(), b.pkgRef(v.Pkg()), v.Name(), sig)
 		b.objs[v] = fn
 		return fn
 	case *types.Var:
 		var gv *gotypes.Var
 		if v.IsField() {
-			gv = gotypes.NewField(v.Pos(), b.pkg(v.Pkg()), v.Name(), b.typ(v.Type()), v.Embedded())
+			gv = gotypes.NewField(v.Pos(), b.pkgRef(v.Pkg()), v.Name(), b.typ(v.Type()), v.Embedded())
 		} else {
-			gv = gotypes.NewVar(v.Pos(), b.pkg(v.Pkg()), v.Name(), b.typ(v.Type()))
+			gv = gotypes.NewVar(v.Pos(), b.pkgRef(v.Pkg()), v.Name(), b.typ(v.Type()))
 		}
 		b.objs[v] = gv
 		return gv
 	case *types.Const:
-		gc := gotypes.NewConst(v.Pos(), b.pkg(v.Pkg()), v.Name(), b.typ(v.Type()), v.Val())
+		gc := gotypes.NewConst(v.Pos(), b.pkgRef(v.Pkg()), v.Name(), b.typ(v.Type()), v.Val())
 		b.objs[v] = gc
 		return gc
 	}
@@ -147,7 +164,7 @@ func (b *llToGoBridge) tparam(tp *types.TypeParam) *gotypes.TypeParam {
 	}
 	tn := gotypes.NewTypeName(token.NoPos, nil, "T", nil)
 	if tp.Obj() != nil {
-		tn = gotypes.NewTypeName(tp.Obj().Pos(), b.pkg(tp.Obj().Pkg()), tp.Obj().Name(), nil)
+		tn = gotypes.NewTypeName(tp.Obj().Pos(), b.pkgRef(tp.Obj().Pkg()), tp.Obj().Name(), nil)
 		b.objs[tp.Obj()] = tn
 	}
 	gtp := gotypes.NewTypeParam(tn, nil)
@@ -291,12 +308,12 @@ func (b *llToGoBridge) typ(t types.Type) gotypes.Type {
 		}
 		tn := gotypes.NewTypeName(token.NoPos, nil, "", nil)
 		if u.Obj() != nil {
-			tn = gotypes.NewTypeName(u.Obj().Pos(), b.pkg(u.Obj().Pkg()), u.Obj().Name(), nil)
+			tn = gotypes.NewTypeName(u.Obj().Pos(), b.pkgRef(u.Obj().Pkg()), u.Obj().Name(), nil)
 			b.objs[u.Obj()] = tn
 		}
 		gn := gotypes.NewNamed(tn, nil, nil)
 		b.types[u] = gn
-		if u.TypeParams().Len() > 0 {
+		if (u.Origin() == nil || u.Origin() == u) && u.TypeParams().Len() > 0 {
 			list := make([]*gotypes.TypeParam, u.TypeParams().Len())
 			for i := 0; i < u.TypeParams().Len(); i++ {
 				list[i] = b.tparam(u.TypeParams().At(i))
@@ -319,11 +336,11 @@ func (b *llToGoBridge) typ(t types.Type) gotypes.Type {
 		}
 		tn := gotypes.NewTypeName(token.NoPos, nil, "", nil)
 		if u.Obj() != nil {
-			tn = gotypes.NewTypeName(u.Obj().Pos(), b.pkg(u.Obj().Pkg()), u.Obj().Name(), nil)
+			tn = gotypes.NewTypeName(u.Obj().Pos(), b.pkgRef(u.Obj().Pkg()), u.Obj().Name(), nil)
 			b.objs[u.Obj()] = tn
 		}
 		ga := gotypes.NewAlias(tn, b.typ(u.Rhs()))
-		if u.TypeParams().Len() > 0 {
+		if (u.Origin() == nil || u.Origin() == u) && u.TypeParams().Len() > 0 {
 			list := make([]*gotypes.TypeParam, u.TypeParams().Len())
 			for i := 0; i < u.TypeParams().Len(); i++ {
 				list[i] = b.tparam(u.TypeParams().At(i))

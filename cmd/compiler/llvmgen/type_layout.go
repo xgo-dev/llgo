@@ -143,11 +143,6 @@ func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, 
 		return fields, nil
 	}
 
-	sizes := p.sizes
-	if sizes == nil {
-		sizes = &types.StdSizes{WordSize: int64(p.GoWordSize()), MaxAlign: int64(p.GoWordSize())}
-		p.sizes = sizes
-	}
 	offsets := make([]int64, len(fields))
 	alignments := make([]int64, len(fields))
 	goAlign := int64(1)

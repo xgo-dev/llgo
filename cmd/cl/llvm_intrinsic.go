@@ -41,6 +41,9 @@ func (p *context) resolveLLVMIntrinsic(fn *ssa.Function, name string) *llvmgen.L
 }
 
 func (p *context) llvmIntrinsicHasEnv(fn *ssa.Function) bool {
+	if fn != nil && fn.HasClosureEnv {
+		return true
+	}
 	if decl, ok := fn.Syntax().(*ast.FuncDecl); ok && fn.Pkg != nil {
 		name := declarationFuncName(llvmgen.PathOf(fn.Pkg.Pkg), decl, fn.Object(), fn.Signature.Recv())
 		return p.prog.HasClosureEnvDirective(p.goProg.Fset, name, decl.Pos())

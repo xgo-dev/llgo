@@ -201,7 +201,7 @@ func (b diBuilder) createType(name string, ty Type, pos token.Position) DIType {
 			typ = b.di.CreatePointerType(llvm.DIPointerType{
 				Name:        name,
 				SizeInBits:  b.prog.SizeOf(b.prog.rawType(t)) * 8,
-				AlignInBits: uint32(b.prog.sizes.Alignof(t) * 8),
+				AlignInBits: uint32(b.prog.typeCtx.Alignof(t) * 8),
 			})
 			return &aDIType{typ}
 		}
@@ -243,7 +243,7 @@ func (b diBuilder) createType(name string, ty Type, pos token.Position) DIType {
 				Type:        typ,
 				File:        b.file(pos.Filename).ll,
 				Line:        pos.Line,
-				AlignInBits: uint32(b.prog.sizes.Alignof(t) * 8),
+				AlignInBits: uint32(b.prog.typeCtx.Alignof(t) * 8),
 			})
 		}
 	case *types.Pointer:
@@ -260,6 +260,9 @@ func (b diBuilder) createType(name string, ty Type, pos token.Position) DIType {
 	case *types.Struct:
 		return b.createStructType(name, ty, pos)
 	case *types.Signature:
+		if ty.kind == vkClosure {
+			return b.createClosureType(name, ty, t, pos)
+		}
 		return b.createFuncPtrType(name, t, pos)
 	case *types.Array:
 		return b.createArrayType(ty, t.Len())
@@ -315,7 +318,7 @@ func (b diBuilder) createGlobalVariableExpression(scope DIScope, pos token.Posit
 				Line:        pos.Line,
 				Type:        b.diType(ty, pos).ll,
 				LocalToUnit: isLocalToUnit,
-				AlignInBits: uint32(b.prog.sizes.Alignof(ty.RawType()) * 8),
+				AlignInBits: uint32(b.prog.typeCtx.Alignof(ty.RawType()) * 8),
 			},
 		),
 	}
@@ -382,7 +385,7 @@ func (b diBuilder) createTypedefType(name string, ty Type, pos token.Position) D
 			File:        scope.ll,
 			Line:        pos.Line,
 			SizeInBits:  b.prog.SizeOf(ty) * 8,
-			AlignInBits: uint32(b.prog.sizes.Alignof(ty.RawType()) * 8),
+			AlignInBits: uint32(b.prog.typeCtx.Alignof(ty.RawType()) * 8),
 		},
 	)}
 	b.types[ty] = ret
@@ -390,9 +393,13 @@ func (b diBuilder) createTypedefType(name string, ty Type, pos token.Position) D
 	underlying := ty.RawType().(*types.Named).Underlying()
 	rawUnderlying := b.prog.rawType(underlying)
 	if signature, ok := underlying.(*types.Signature); ok {
-		// Keep the shared LLVM cache unchanged, but preserve the source
-		// signature for DWARF. Go type identity ignores __llgo_va_list's name.
-		rawUnderlying = b.prog.toType(signature)
+		if ty.kind == vkFuncPtr {
+			rawUnderlying = b.prog.funcPtrType(signature)
+		} else {
+			// Keep the shared LLVM cache unchanged, but preserve the source
+			// signature for DWARF. Go type identity ignores __llgo_va_list's name.
+			rawUnderlying = b.prog.toType(signature)
+		}
 	}
 	underlyingType := b.diType(rawUnderlying, pos)
 	typ := b.di.CreateTypedef(llvm.DITypedef{
@@ -400,7 +407,7 @@ func (b diBuilder) createTypedefType(name string, ty Type, pos token.Position) D
 		Type:        underlyingType.ll,
 		File:        scope.ll,
 		Line:        pos.Line,
-		AlignInBits: uint32(b.prog.sizes.Alignof(ty.RawType()) * 8),
+		AlignInBits: uint32(b.prog.typeCtx.Alignof(ty.RawType()) * 8),
 	})
 	ret.ll.ReplaceAllUsesWith(typ)
 	ret.ll = typ
@@ -421,7 +428,7 @@ func (b diBuilder) createArrayType(ty Type, l int64) DIType {
 	tyElem := b.prog.rawType(ty.RawType().(*types.Array).Elem())
 	return &aDIType{ll: b.di.CreateArrayType(llvm.DIArrayType{
 		SizeInBits:  b.prog.SizeOf(ty) * 8,
-		AlignInBits: uint32(b.prog.sizes.Alignof(ty.RawType()) * 8),
+		AlignInBits: uint32(b.prog.typeCtx.Alignof(ty.RawType()) * 8),
 		ElementType: b.diType(tyElem, token.Position{}).ll,
 		Subscripts: []llvm.DISubrange{{
 			Count: l,
@@ -466,7 +473,7 @@ func (b diBuilder) createMemberTypeEx(name string, tyStruct, tyField Type, idxFi
 		llvm.DIMemberType{
 			Name:         name,
 			SizeInBits:   b.prog.SizeOf(tyField) * 8,
-			AlignInBits:  uint32(b.prog.sizes.Alignof(tyField.RawType()) * 8),
+			AlignInBits:  uint32(b.prog.typeCtx.Alignof(tyField.RawType()) * 8),
 			OffsetInBits: b.prog.OffsetOf(tyStruct, idxField) * 8,
 			Type:         b.diType(tyField, pos).ll,
 			Flags:        flags,
@@ -480,7 +487,7 @@ func (b diBuilder) createPointerType(name string, ty Type, pos token.Position) D
 		Name:        name,
 		Pointee:     b.diType(ty, pos).ll,
 		SizeInBits:  b.prog.SizeOf(ptrType) * 8,
-		AlignInBits: uint32(b.prog.sizes.Alignof(ptrType.RawType())) * 8,
+		AlignInBits: uint32(b.prog.typeCtx.Alignof(ptrType.RawType())) * 8,
 	})}
 }
 
@@ -496,7 +503,7 @@ func (b diBuilder) createMapType(name string, ty Type, mapType *types.Map) DITyp
 		Name:        "*" + hashName,
 		Pointee:     hash.ll,
 		SizeInBits:  b.prog.SizeOf(ptr) * 8,
-		AlignInBits: uint32(b.prog.sizes.Alignof(ptr.RawType()) * 8),
+		AlignInBits: uint32(b.prog.typeCtx.Alignof(ptr.RawType()) * 8),
 	})
 	ret := &aDIType{ll: b.createRuntimeContainerTypedef(name, hashPtr, pos)}
 	// Map values may be recursive through their key or element type. Cache the
@@ -520,7 +527,7 @@ func (b diBuilder) createMapType(name string, ty Type, mapType *types.Map) DITyp
 
 func (b diBuilder) createMapBucketType(mapType *types.Map, key, elem Type,
 	pos token.Position) DIType {
-	bucketStorage := b.prog.rawType(abi.MapBucketType(mapType, b.prog.sizes))
+	bucketStorage := b.prog.rawType(abi.MapBucketType(mapType, b.prog.typeCtx))
 	bucketStruct := bucketStorage.RawType().Underlying().(*types.Struct)
 	name := fmt.Sprintf("bucket<%s,%s>", diTypeName(key.RawType()), diTypeName(elem.RawType()))
 	bucket := b.createSyntheticStructPlaceholder(name, bucketStorage, pos)
@@ -547,7 +554,7 @@ func (b diBuilder) createMapBucketType(mapType *types.Map, key, elem Type,
 			diType = overflow
 		}
 		fields[index] = b.createDIMemberType(bucket, fieldName,
-			b.prog.SizeOf(fieldType), b.prog.sizes.Alignof(field.Type()),
+			b.prog.SizeOf(fieldType), b.prog.typeCtx.Alignof(field.Type()),
 			b.prog.OffsetOf(bucketStorage, index), diType)
 	}
 	b.finishSyntheticStruct(bucket, name, bucketStorage, fields, pos)
@@ -564,7 +571,7 @@ func (b diBuilder) createChanType(name string, ty Type, chanType *types.Chan) DI
 		Name:        "*" + chanName,
 		Pointee:     channel.ll,
 		SizeInBits:  b.prog.SizeOf(ptr) * 8,
-		AlignInBits: uint32(b.prog.sizes.Alignof(ptr.RawType()) * 8),
+		AlignInBits: uint32(b.prog.typeCtx.Alignof(ptr.RawType()) * 8),
 	})
 	ret := &aDIType{ll: b.createRuntimeContainerTypedef(name, channelPtr, pos)}
 	b.types[ty] = ret
@@ -620,7 +627,7 @@ func (b diBuilder) createSyntheticStructPlaceholder(name string, ty Type,
 			File:        scope.ll,
 			Line:        pos.Line,
 			SizeInBits:  b.prog.SizeOf(ty) * 8,
-			AlignInBits: uint32(b.prog.sizes.Alignof(ty.RawType()) * 8),
+			AlignInBits: uint32(b.prog.typeCtx.Alignof(ty.RawType()) * 8),
 		},
 	)}
 }
@@ -633,7 +640,7 @@ func (b diBuilder) createRuntimeContainerTypedef(name string,
 		Type:        typeMeta,
 		File:        b.file(pos.Filename).ll,
 		Line:        pos.Line,
-		AlignInBits: uint32(b.prog.sizes.Alignof(ptr.RawType()) * 8),
+		AlignInBits: uint32(b.prog.typeCtx.Alignof(ptr.RawType()) * 8),
 	})
 }
 
@@ -645,7 +652,7 @@ func (b diBuilder) finishSyntheticStruct(placeholder DIType, name string, ty Typ
 		File:        scope.ll,
 		Line:        pos.Line,
 		SizeInBits:  b.prog.SizeOf(ty) * 8,
-		AlignInBits: uint32(b.prog.sizes.Alignof(ty.RawType()) * 8),
+		AlignInBits: uint32(b.prog.typeCtx.Alignof(ty.RawType()) * 8),
 		Elements:    fields,
 	})
 	placeholder.ll.ReplaceAllUsesWith(value)
@@ -664,7 +671,7 @@ func (b diBuilder) syntheticStructFields(owner DIType, ty Type,
 			diType = replacement
 		}
 		fields[index] = b.createDIMemberType(owner, field.Name(),
-			b.prog.SizeOf(fieldType), b.prog.sizes.Alignof(field.Type()),
+			b.prog.SizeOf(fieldType), b.prog.typeCtx.Alignof(field.Type()),
 			b.prog.OffsetOf(ty, index), diType)
 	}
 	return fields
@@ -676,7 +683,7 @@ func (b diBuilder) createDIPointerType(name string, pointee llvm.Metadata) llvm.
 		Name:        name,
 		Pointee:     pointee,
 		SizeInBits:  b.prog.SizeOf(ptr) * 8,
-		AlignInBits: uint32(b.prog.sizes.Alignof(ptr.RawType()) * 8),
+		AlignInBits: uint32(b.prog.typeCtx.Alignof(ptr.RawType()) * 8),
 	})
 }
 
@@ -712,7 +719,7 @@ func (b diBuilder) doCreateStructType(name string, ty Type, pos token.Position, 
 			File:        b.file(pos.Filename).ll,
 			Line:        pos.Line,
 			SizeInBits:  b.prog.SizeOf(ty) * 8,
-			AlignInBits: uint32(b.prog.sizes.Alignof(structType) * 8),
+			AlignInBits: uint32(b.prog.typeCtx.Alignof(structType) * 8),
 		},
 	)}
 	b.types[ty] = ret
@@ -726,13 +733,23 @@ func (b diBuilder) doCreateStructType(name string, ty Type, pos token.Position, 
 			File:        b.file(pos.Filename).ll,
 			Line:        pos.Line,
 			SizeInBits:  b.prog.SizeOf(ty) * 8,
-			AlignInBits: uint32(b.prog.sizes.Alignof(structType) * 8),
+			AlignInBits: uint32(b.prog.typeCtx.Alignof(structType) * 8),
 			Elements:    fields,
 		},
 	)
 	ret.ll.ReplaceAllUsesWith(st)
 	ret.ll = st
 	return
+}
+
+func (b diBuilder) createClosureType(name string, ty Type, sig *types.Signature, pos token.Position) DIType {
+	return b.doCreateStructType(name, ty, pos, func(ditStruct DIType) []llvm.Metadata {
+		fnPtr := b.prog.funcPtrType(sig)
+		return []llvm.Metadata{
+			b.createMemberTypeEx("$f", ty, fnPtr, 0, pos, 0),
+			b.createMemberTypeEx("$data", ty, b.prog.VoidPtr(), 1, pos, 0),
+		}
+	})
 }
 
 func (b diBuilder) createStructType(name string, ty Type, pos token.Position) (ret DIType) {
@@ -742,9 +759,9 @@ func (b diBuilder) createStructType(name string, ty Type, pos token.Position) (r
 		for i := 0; i < structType.NumFields(); i++ {
 			field := structType.Field(i)
 			tyField := b.prog.rawType(field.Type())
-			if signature, ok := field.Type().(*types.Signature); ok {
-				// A closure's $f must retain its own variadic convention even
-				// when a C callback with a Go-identical signature was cached first.
+			if signature, ok := field.Type().(*types.Signature); ok && tyField.kind == vkClosure {
+				// Preserve the source signature for DWARF when Go type identity
+				// ignores parameter names such as __llgo_va_list.
 				tyField = b.prog.toType(signature)
 			}
 			flags := 0
@@ -798,7 +815,7 @@ func (b diBuilder) createFuncPtrType(name string, sig *types.Signature, pos toke
 		Name:        name,
 		Pointee:     subroutine,
 		SizeInBits:  b.prog.SizeOf(ptr) * 8,
-		AlignInBits: uint32(b.prog.sizes.Alignof(ptr.RawType()) * 8),
+		AlignInBits: uint32(b.prog.typeCtx.Alignof(ptr.RawType()) * 8),
 	})}
 }
 

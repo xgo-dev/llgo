@@ -144,6 +144,37 @@ func TestParseSemanticHelpers(t *testing.T) {
 	if !skip.All || !reflect.DeepEqual(skip.Names, []string{"A", "B"}) {
 		t.Fatalf("ParseSkip = %+v", skip)
 	}
+
+	flagsDoc := commentGroup(
+		"//go:wasmexport hostMain",
+		"//go:noinline",
+		"//go:noescape",
+		"//go:nointerface",
+	)
+	if name, _, ok := ParseWasmExport(flagsDoc); !ok || name != "hostMain" {
+		t.Fatalf("ParseWasmExport = (%q, %v)", name, ok)
+	}
+	if !HasNoInline(flagsDoc) || !HasNoEscape(flagsDoc) || !HasNoInterface(flagsDoc) {
+		t.Fatalf("directive flags mismatch: noinline=%v noescape=%v nointerface=%v",
+			HasNoInline(flagsDoc), HasNoEscape(flagsDoc), HasNoInterface(flagsDoc))
+	}
+	for _, tc := range []struct {
+		target string
+		ns     LinkNamespace
+		sym    string
+	}{
+		{"C.printf", LinkC, "printf"},
+		{"stdcall.ExitProcess", LinkStdcall, "ExitProcess"},
+		{"py.print", LinkPy, "print"},
+		{"llgo.alloca", LinkLLGo, "alloca"},
+		{"llvm.ctpop.i32", LinkLLVM, "llvm.ctpop.i32"},
+		{"runtime.mallocgc", LinkGo, "runtime.mallocgc"},
+	} {
+		ns, sym := ParseLinkTarget(tc.target)
+		if ns != tc.ns || sym != tc.sym {
+			t.Errorf("ParseLinkTarget(%q) = (%v, %q), want (%v, %q)", tc.target, ns, sym, tc.ns, tc.sym)
+		}
+	}
 }
 
 func TestParsePackageKind(t *testing.T) {

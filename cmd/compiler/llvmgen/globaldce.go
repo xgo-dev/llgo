@@ -6,7 +6,6 @@ import (
 	"github.com/xgo-dev/llgo/types"
 	"strconv"
 
-	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -73,14 +72,6 @@ func methodCapabilityType(t types.Type) types.Type {
 	case *types.Slice:
 		return types.NewSlice(methodCapabilityType(t.Elem()))
 	case *types.Struct:
-		// Interface descriptors are built from ABI-patched types, where a Go
-		// function value is represented as {$f func(...); $data unsafe.Pointer}.
-		// Concrete method descriptors still carry the source-level function type.
-		// Normalize the compiler-only closure struct back to its code signature so
-		// both paths produce the same method capability key.
-		if abi.IsClosure(t) {
-			return methodCapabilityType(t.Field(0).Type())
-		}
 		fields := make([]*types.Var, t.NumFields())
 		tags := make([]string, t.NumFields())
 		for i := range fields {

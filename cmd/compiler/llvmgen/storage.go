@@ -126,6 +126,12 @@ func (p Program) withNativeStorage(t Type) Type {
 	view.ll = p.nativeStorageLLVMType(t.raw.Type, t.ll)
 	p.nativeStorage[t] = &view
 	p.nativeStorage[&view] = &view
+	if cc := p.nativeCallConvOf(t); isNativeCallConv(cc) {
+		if p.nativeCC == nil {
+			p.nativeCC = make(map[Type]CallConv)
+		}
+		p.nativeCC[&view] = cc
+	}
 	return &view
 }
 
@@ -139,7 +145,7 @@ func (p Program) nativeStorageLLVMType(raw types.Type, fallback llvm.Type) llvm.
 			return llvmIntType(p.ctx, p.PointerSize())
 		}
 	case *types.Array:
-		elem := p.rawType(t.Elem())
+		elem := p.nativeType(t.Elem(), CDecl)
 		return llvm.ArrayType(p.nativeStorageLLVMType(t.Elem(), elem.ll), int(t.Len()))
 	}
 	return fallback
@@ -229,13 +235,40 @@ func (b Builder) fitLLVMResult(value llvm.Value, logical Type) llvm.Value {
 
 func (p Program) withoutNativeStorage(t Type) Type {
 	if p.isNativeStorage(t) {
+		if t.kind == vkFuncPtr {
+			return p.funcPtrType(t.raw.Type)
+		}
+		if cc := p.nativeCallConvOf(t); isNativeCallConv(cc) {
+			return p.nativeType(t.raw.Type, cc)
+		}
 		return p.rawType(t.raw.Type)
 	}
 	return t
 }
 
 func (p Program) childStorageType(parent Type, child types.Type) Type {
-	t := p.rawType(child)
+	if parent.kind == vkPyFuncRef {
+		return p.funcPtrType(child)
+	}
+	nativeCC := p.nativeCallConvOf(parent)
+	switch parent.kind {
+	case vkStruct:
+		if p.hasLegacyNativeTypeLayout(parent.raw.Type) {
+			nativeCC = CDecl
+		} else if _, isNamed := types.Unalias(parent.raw.Type).(*types.Named); isNamed {
+			nativeCC = ccUnknown
+		}
+	case vkArray:
+		if p.hasLegacyNativeTypeLayout(parent.raw.Type) {
+			nativeCC = CDecl
+		}
+	}
+	var t Type
+	if isNativeCallConv(nativeCC) {
+		t = p.nativeType(child, nativeCC)
+	} else {
+		t = p.rawType(child)
+	}
 	if !p.usesWideGoStorage() {
 		return t
 	}

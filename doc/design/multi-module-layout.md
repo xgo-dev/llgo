@@ -11,20 +11,22 @@ skip whole-program frontend and LLVM re-materialization on cache hits.
 
 ```text
 github.com/xgo-dev/llgo              (root go.mod — strict Go baseline: go 1.20, zero external deps, zero replace)
-├── directive/                       Pure-Go //llgo:* and //go:* directive parsing & semantics
-├── target/                          Pure-Go target triple, arch, and config model
-├── types/                           1:1 go/types + LLGo semantic/physical layout, GC, ABI, SIMD  [API-guarded]
-│   └── typeutil/                    1:1 golang.org/x/tools/go/types/typeutil                     [API-guarded]
-├── ssa/                             1:1 golang.org/x/tools/go/ssa core types, methods & 37 instrs [API-guarded]
-├── callgraph/                       1:1 golang.org/x/tools/go/callgraph                          [API-guarded]
-│   └── rta/                         1:1 golang.org/x/tools/go/callgraph/rta                      [API-guarded]
-├── exportdata/                      1:1 golang.org/x/tools/go/gcexportdata (Read/Write/Bundle/Importer) [API-guarded]
+├── directive/                       Pure-Go //llgo:*, //go:*, //export, //llgointernal:* parsing & semantics
+├── target/                          Pure-Go target triple, arch, and ABI/layout spec model
+├── types/                           1:1 go/types + first-class LLGo directives, CallConv, layout, GC, ABI, SIMD [API-guarded]
+│   ├── objectpath/                  1:1 golang.org/x/tools/go/types/objectpath
+│   └── typeutil/                    1:1 golang.org/x/tools/go/types/typeutil                                    [API-guarded]
+├── ssa/                             1:1 golang.org/x/tools/go/ssa + LLGo CallKind, Intrinsic, RecvNilCheck, StaticBytes, NoScan [API-guarded]
+│   └── ssautil/                     1:1 golang.org/x/tools/go/ssa/ssautil
+├── callgraph/                       1:1 golang.org/x/tools/go/callgraph                                         [API-guarded]
+│   └── rta/                         1:1 golang.org/x/tools/go/callgraph/rta                                     [API-guarded]
+├── exportdata/                      1:1 golang.org/x/tools/go/gcexportdata (format v3 with LLGo metadata)       [API-guarded]
 └── runtime/go.mod                   (separate module, go 1.20)
 
 github.com/xgo-dev/llgo/cmd          (cmd/go.mod — latest Go toolchain, go 1.27.0)
 ├── llgo/                            CLI entrypoint (`llgo`)
 ├── internal/                        CLI subcommands & flag handling
-├── cl/                              Go frontend adapter (go/types + x/tools/go/ssa → llgo/ssa & LLVM)
+├── cl/                              Go frontend compiler (llgo/types + llgo/ssa → LLVM via llvmgen)
 ├── compiler/                        Compiler internals (build, llvmgen, pkgmeta, cabi, crosscompile, env, packages, ...)
 ├── xtool/                           LLVM/C toolchain bindings
 └── chore/                           Repository maintenance utilities
@@ -36,12 +38,37 @@ go.work                              Coordinates `.`, `./cmd`, `./runtime`, `./t
 
 | Upstream counterpart | `github.com/xgo-dev/llgo` package | Role |
 |---|---|---|
-| `go/types` | `llgo/types` | 1:1 non-deprecated `go/types` parity + LLGo ABI/layout/CallConv/SIMD extensions (`types/api_guard_test.go`) |
-| `x/tools/go/types/typeutil` | `llgo/types/typeutil` | 1:1 `Hasher`, `Map`, `MethodSetCache`, `Callee`, `StaticCallee`, `Dependencies`, `IntuitiveMethodSet` |
-| `x/tools/go/ssa` | `llgo/ssa` | 1:1 `Program`, `Package`, `Function`, `BasicBlock`, `Value`, `Instruction`, `CallInstruction`, `CallCommon`, `Member`, `Node`, and all 37 instructions |
-| `x/tools/go/callgraph` + `callgraph/rta` | `llgo/callgraph` + `llgo/callgraph/rta` | 1:1 `Graph`/`Node`/`Edge`/helpers and Rapid Type Analysis (`rta.Analyze`/`Result`) |
-| `x/tools/go/gcexportdata` | `llgo/exportdata` | 1:1 `Read`, `Write`, `ReadBundle`, `WriteBundle`, `NewImporter` (`types.ImporterFrom`) |
+| `go/types` | `llgo/types` | 1:1 non-deprecated `go/types` parity + first-class LLGo metadata (`Package`/`Func`/`Var` directives, `CallConv`, `Locality`, `WasmImport`/`WasmExport`, `NoInline`/`NoInterface`/`NoEscape`, `HasClosureEnv`, `Skip*`) & canonical `Context` layout/ABI/SIMD (`types/api_guard_test.go`) |
+| `x/tools/go/types/typeutil` + `objectpath` | `llgo/types/typeutil`, `llgo/types/objectpath` | 1:1 `Hasher`, `Map`, `MethodSetCache`, `Callee`, `StaticCallee`, `Dependencies`, `IntuitiveMethodSet`, `Encoder`/`Object` |
+| `x/tools/go/ssa` + `ssautil` | `llgo/ssa`, `llgo/ssa/ssautil` | 1:1 `Program`, `Package`, `Function`, `BasicBlock`, `Value`, `Instruction`, all 37 instructions + first-class LLGo `CallKind`, `Intrinsic`, `ReceiverNilCheck`, `Global.StaticBytes`, `Package.RetainInit`, `Alloc.NoScan` (`cmd/cl/xtools_parity_guard_test.go`) |
+| `x/tools/go/callgraph` + `callgraph/rta` | `llgo/callgraph`, `llgo/callgraph/rta` | 1:1 `Graph`/`Node`/`Edge`/helpers and Rapid Type Analysis (`rta.Analyze`/`Result`) |
+| `x/tools/go/gcexportdata` | `llgo/exportdata` | 1:1 `Read`, `Write`, `ReadBundle`, `WriteBundle`, `NewImporter` (`types.ImporterFrom`); format v3 round-trips all LLGo `Package`/`Func`/`Method`/`Var` metadata |
 | *(LLGo-specific)* | `llgo/directive`, `llgo/target` | Directive parsing & target/ABI spec model |
+
+## Single Canonical Type Context & Direct Lowering Contract
+
+Downstream compiler stages consume `llgo/types` and `llgo/ssa` directly without
+recomputing target sizes or cloning/patching semantic type graphs:
+
+1. **Single shared `*llgo/types.Context` (`Sizes` source of truth)**:
+   `llvmgen.NewProgram(target)` builds one target-configured `*types.Context`
+   (`prog.TypeContext()`), which is shared across `packages.Deduper`,
+   `types.Config.Context`/`Sizes`, `cmd/cl`, `cmd/compiler/llvmgen` (including
+   DWARF `di.go`), and `cmd/compiler/llvmgen/abi`. Ad-hoc `StdSizes` /
+   `effectiveTypeSizes` overrides are eliminated.
+2. **Zero semantic type cloning (`Expr.Type.RawType()` is always clean `llgo/types.Type`)**:
+   `cmd/compiler/llvmgen` no longer clones the `types.Type` graph (`gocvt`) or
+   synthesizes fake `struct { $f; $data }` types for Go closures. Go
+   `*types.Signature` (`CallConv == types.Go`) lowers directly to `vkClosure`
+   (`{ ptr, ptr }` or named LLVM struct for named function types), while native
+   `//llgo:cdecl`/`//llgo:stdcall` signatures lower to `vkFuncPtr` (`ptr`).
+   Runtime `*abi.Type` descriptors remain 100% binary compatible with
+   `runtime/abi` and `reflect` (`_llgo_closure$...`, `TFlagClosure`,
+   `Kind=Struct`, `$f`/`$data` fields).
+3. **Zero AST pre-walks/mutations in `cmd/compiler/build`**:
+   Receiver nil checks (`CallCommon.RecvNilCheck`, `MakeClosure.RecvNilCheck`)
+   and large static byte array folding (`Global.StaticBytes`, controlled by
+   `Package.RetainInit`) are computed natively during `llgo/ssa` construction.
 
 ### Module Invariants
 

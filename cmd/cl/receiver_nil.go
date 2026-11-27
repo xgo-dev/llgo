@@ -107,6 +107,14 @@ func (p *context) checkMethodCallReceiver(b llvmgen.Builder, call *ssa.CallCommo
 		p.checkAddressedMethodReceiver(b, call.Args[0], receiverNilCheck{pos: p.goFn.Pos()})
 		return
 	}
+	if call.RecvNilCheck != nil {
+		// Prefer the first-class receiver nil check recorded directly by llgo/ssa.
+		p.checkAddressedMethodReceiver(b, call.Args[0], receiverNilCheck{
+			pos:     call.RecvNilCheck.Pos,
+			address: call.RecvNilCheck.Address,
+		})
+		return
+	}
 	checks := p.options.ReceiverNilChecks
 	if checks == nil {
 		return
@@ -133,8 +141,18 @@ func isMethodReceiverWrapper(fn *ssa.Function) bool {
 }
 
 func (p *context) checkBoundMethodReceiver(b llvmgen.Builder, closure *ssa.MakeClosure) {
+	if len(closure.Bindings) == 0 {
+		return
+	}
+	if closure.RecvNilCheck != nil {
+		p.checkAddressedMethodReceiver(b, closure.Bindings[0], receiverNilCheck{
+			pos:     closure.RecvNilCheck.Pos,
+			address: closure.RecvNilCheck.Address,
+		})
+		return
+	}
 	checks := p.options.ReceiverNilChecks
-	if checks == nil || len(closure.Bindings) == 0 {
+	if checks == nil {
 		return
 	}
 	if check, ok := checks.values[closure.Pos()]; ok {

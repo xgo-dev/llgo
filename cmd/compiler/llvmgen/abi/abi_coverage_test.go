@@ -86,7 +86,9 @@ func TestDataKindOfCoverage(t *testing.T) {
 	ptrType := types.NewPointer(types.Typ[types.Int])
 	assertDataKind(ptrType, 0, false, Pointer, ptrType, 0)
 	sigType := types.NewSignature(nil, nil, nil, false)
-	assertDataKind(sigType, 0, false, Pointer, sigType, 0)
+	assertDataKind(sigType, 0, false, Indirect, sigType, 0)
+	cSigType := sigType.WithCallConv(types.CDecl)
+	assertDataKind(cSigType, 0, false, Pointer, cSigType, 0)
 	mapType := types.NewMap(types.Typ[types.String], types.Typ[types.Int])
 	assertDataKind(mapType, 0, false, Pointer, mapType, 0)
 	chanType := types.NewChan(types.SendRecv, types.Typ[types.Int])
@@ -238,26 +240,21 @@ func TestStructInterfaceClosureAndPathCoverage(t *testing.T) {
 	pkg := types.NewPackage("example.com/q", "q")
 	sig := types.NewSignature(nil, nil, nil, false)
 
-	closureStruct := types.NewStruct([]*types.Var{
-		types.NewField(token.NoPos, nil, "$f", sig, false),
-		types.NewField(token.NoPos, nil, "$data", types.Typ[types.UnsafePointer], false),
-	}, nil)
-	if got, pub := b.StructName(closureStruct); !strings.HasPrefix(got, "_llgo_closure$") || !pub {
-		t.Fatalf("StructName(closure)=(%q,%v), want _llgo_closure$*,true", got, pub)
+	if got, pub := b.TypeName(sig); !strings.HasPrefix(got, "_llgo_closure$") || !pub {
+		t.Fatalf("TypeName(go sig)=(%q,%v), want _llgo_closure$*,true", got, pub)
 	}
-	if !IsClosure(closureStruct) {
-		t.Fatalf("IsClosure false, want true")
+	if got, pub := b.TypeNameEx(sig, true); !strings.HasPrefix(got, "_llgo_func$") || !pub {
+		t.Fatalf("TypeNameEx(go sig, public)=(%q,%v), want _llgo_func$*,true", got, pub)
 	}
-	if !IsClosureFields([]*types.Var{
-		types.NewVar(token.NoPos, nil, "$f", sig),
-		types.NewVar(token.NoPos, nil, "$data", types.Typ[types.UnsafePointer]),
-	}) {
-		t.Fatalf("IsClosureFields false, want true")
+	if !b.IsClosureType(sig, false) || b.IsClosureType(sig, true) {
+		t.Fatalf("IsClosureType(go sig) unexpected")
 	}
-	if IsClosureFields([]*types.Var{
-		types.NewVar(token.NoPos, nil, "$f", sig),
-	}) {
-		t.Fatalf("IsClosureFields true, want false")
+	cSig := sig.WithCallConv(types.CDecl)
+	if b.IsClosureType(cSig, false) {
+		t.Fatalf("IsClosureType(cdecl sig) = true, want false")
+	}
+	if got, pub := b.TypeName(cSig); !strings.HasPrefix(got, "_llgo_func$") || !pub {
+		t.Fatalf("TypeName(cdecl sig)=(%q,%v), want _llgo_func$*,true", got, pub)
 	}
 
 	pubStruct := types.NewStruct([]*types.Var{

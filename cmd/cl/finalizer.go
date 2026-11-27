@@ -48,8 +48,7 @@ func (p *context) directFinalizer(call *ssa.CallCommon) (obj, fn *ssa.MakeInterf
 	}
 	// Native callback types and direct foreign functions do not necessarily
 	// use the two-word Go closure ABI expected by the finalizer dispatcher.
-	closure, goClosure := p.type_(fn.X.Type(), llvmgen.GoDecl).RawType().Underlying().(*types.Struct)
-	if !goClosure || !llvmgen.IsClosure(closure) {
+	if !p.prog.IsClosureType(p.patchType(fn.X.Type())) {
 		return
 	}
 	if function, direct := fn.X.(*ssa.Function); direct {

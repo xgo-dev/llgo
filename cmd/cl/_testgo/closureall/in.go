@@ -163,9 +163,10 @@ func makeWithFree(base int) Fn {
 // CHECK-NEXT: [[WITH_FREE_ENV_SLOT:%[0-9]+]] = getelementptr inbounds nuw { i64 }, ptr [[WITH_FREE_ENV_OUT]], i32 0, i32 0
 // CHECK-NEXT: store i64 [[BASE_VALUE]], ptr [[WITH_FREE_ENV_SLOT]]
 // CHECK-NEXT: [[WITH_FREE_FN:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.makeWithFree$1", ptr undef }, ptr [[WITH_FREE_ENV_OUT]], 1
-// CHECK-NEXT: [[WITH_FREE_OUT:%[0-9]+]] = alloca %main.Fn
-// CHECK-NEXT: store { ptr, ptr } [[WITH_FREE_FN]], ptr [[WITH_FREE_OUT]]
-// CHECK-NEXT: [[WITH_FREE_RET:%[0-9]+]] = load %main.Fn, ptr [[WITH_FREE_OUT]]
+// CHECK-NEXT: [[WITH_FREE_CODE:%[0-9]+]] = extractvalue { ptr, ptr } [[WITH_FREE_FN]], 0
+// CHECK-NEXT: [[WITH_FREE_0:%[0-9]+]] = insertvalue %main.Fn undef, ptr [[WITH_FREE_CODE]], 0
+// CHECK-NEXT: [[WITH_FREE_ENV:%[0-9]+]] = extractvalue { ptr, ptr } [[WITH_FREE_FN]], 1
+// CHECK-NEXT: [[WITH_FREE_RET:%[0-9]+]] = insertvalue %main.Fn [[WITH_FREE_0]], ptr [[WITH_FREE_ENV]], 1
 // CHECK: ret %main.Fn [[WITH_FREE_RET]]
 
 // ARM64-LABEL: define i64 @"main.makeWithFree$1"(ptr swiftself %0, i64 %1){{.*}} {

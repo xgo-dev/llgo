@@ -118,6 +118,9 @@ type Builder struct {
 	typeCtx *lltypes.Context
 	// NativeFuncAliasABI reports the storage ABI of an alias to an unnamed function.
 	NativeFuncAliasABI func(*types.Alias) string
+	// NativeFuncType reports whether t uses a 1-word native function pointer ABI
+	// rather than LLGo's 2-word Go closure representation.
+	NativeFuncType func(types.Type) bool
 }
 
 // New creates a new ABI type Builder.
@@ -157,8 +160,61 @@ func (b *Builder) context() *lltypes.Context {
 	return b.typeCtx
 }
 
+func (b *Builder) isNativeFunc(t types.Type) bool {
+	if b.NativeFuncType != nil && b.NativeFuncType(t) {
+		return true
+	}
+	if alias, ok := t.(*types.Alias); ok && b.NativeFuncAliasABI != nil && b.NativeFuncAliasABI(alias) != "" {
+		return true
+	}
+	switch u := t.(type) {
+	case *types.Alias:
+		if u.CallConv().IsNative() {
+			_, ok := types.Unalias(u).(*types.Signature)
+			return ok
+		}
+	case *types.Named:
+		if u.CallConv().IsNative() {
+			_, ok := u.Underlying().(*types.Signature)
+			return ok
+		}
+	case *types.Signature:
+		return u.CallConv().IsNative()
+	}
+	return false
+}
+
+// IsClosureType reports whether t is emitted as a two-word Go closure struct
+// runtime descriptor (_llgo_closure$... or a named TFlagClosure structtype).
+// When publicFunc is true, unnamed Go function types (and plain aliases to
+// them) use the one-word public abi.Func descriptor (_llgo_func$...), while
+// named Go function types keep their named closure descriptor.
+func (b *Builder) IsClosureType(t types.Type, publicFunc bool) bool {
+	if b.isNativeFunc(t) {
+		return false
+	}
+	switch u := types.Unalias(t).(type) {
+	case *types.Signature:
+		if publicFunc {
+			return false
+		}
+		return u.CallConv().IsClosure()
+	case *types.Named:
+		sig, ok := u.Underlying().(*types.Signature)
+		return ok && sig.CallConv().IsClosure()
+	}
+	return false
+}
+
 // TypeName returns the ABI type name for the specified type.
 func (b *Builder) TypeName(t types.Type) (ret string, pub bool) {
+	return b.TypeNameEx(t, false)
+}
+
+// TypeNameEx returns the ABI type name for t. When publicFunc is true, an
+// unnamed Go function type selects its public _llgo_func$... descriptor rather
+// than its _llgo_closure$... value descriptor.
+func (b *Builder) TypeNameEx(t types.Type, publicFunc bool) (ret string, pub bool) {
 	switch t := t.(type) {
 	case *types.Basic:
 		return BasicName(t), true
@@ -168,6 +224,9 @@ func (b *Builder) TypeName(t types.Type) (ret string, pub bool) {
 	case *types.Struct:
 		return b.StructName(t)
 	case *types.Signature:
+		if b.IsClosureType(t, publicFunc) {
+			return b.ClosureName(t), true
+		}
 		return b.FuncName(t), true
 	case *types.Slice:
 		ret, pub = b.TypeName(t.Elem())
@@ -202,13 +261,13 @@ func (b *Builder) TypeName(t types.Type) (ret string, pub bool) {
 		}
 		return fmt.Sprintf("%s %s", s, elem), pub
 	case *types.Alias:
-		name, pub := b.TypeName(types.Unalias(t))
 		if b.NativeFuncAliasABI != nil {
 			if cc := b.NativeFuncAliasABI(t); cc != "" {
+				name, pub := b.TypeNameEx(types.Unalias(t), true)
 				return name + "$" + cc, pub
 			}
 		}
-		return name, pub
+		return b.TypeNameEx(types.Unalias(t), publicFunc)
 	}
 	log.Panicf("todo: %T\n", t)
 	return
@@ -340,6 +399,17 @@ func (b *Builder) FuncName(t *types.Signature) string {
 	return "_llgo_func$" + hashStr
 }
 
+// ClosureName returns the ABI type name for the two-word closure descriptor
+// of a Go function signature.
+func (b *Builder) ClosureName(t *types.Signature) string {
+	h := sha256.New()
+	fmt.Fprintln(h, "struct", 2)
+	fmt.Fprintln(h, "$f", b.FuncName(t))
+	fmt.Fprintln(h, "$data", BasicName(types.Typ[types.UnsafePointer]))
+	hashStr := base64.RawURLEncoding.EncodeToString(h.Sum(b.buf[:0]))
+	return "_llgo_closure$" + hashStr
+}
+
 func (b *Builder) funcHash(t *types.Signature) []byte {
 	h := sha256.New()
 	params, results := t.Params(), t.Results()
@@ -353,7 +423,7 @@ func (b *Builder) tuple(h hash.Hash, t *types.Tuple) {
 	n := t.Len()
 	for i := 0; i < n; i++ {
 		v := t.At(i)
-		ft, _ := b.TypeName(PublicType(v.Type()))
+		ft, _ := b.TypeNameEx(v.Type(), true)
 		fmt.Fprintln(h, ft)
 	}
 }
@@ -388,34 +458,10 @@ func (b *Builder) interfaceHash(t *types.Interface) (ret []byte, pkg string) {
 func (b *Builder) StructName(t *types.Struct) (ret string, pub bool) {
 	hash, pkg := b.structHash(t)
 	hashStr := base64.RawURLEncoding.EncodeToString(hash)
-	if IsClosure(t) {
-		return "_llgo_closure$" + hashStr, true
-	}
 	if pkg != "" {
 		return pkg + ".struct$" + hashStr, false
 	}
 	return "_llgo_struct$" + hashStr, false
-}
-
-func IsClosure(raw *types.Struct) bool {
-	n := raw.NumFields()
-	if n == 2 {
-		f1, f2 := raw.Field(0), raw.Field(1)
-		if _, ok := f1.Type().(*types.Signature); ok && f1.Name() == "$f" {
-			return f2.Type() == types.Typ[types.UnsafePointer] && f2.Name() == "$data"
-		}
-	}
-	return false
-}
-
-func IsClosureFields(fields []*types.Var) bool {
-	if len(fields) == 2 {
-		f1, f2 := fields[0], fields[1]
-		if _, ok := f1.Type().(*types.Signature); ok && f1.Name() == "$f" {
-			return f2.Type() == types.Typ[types.UnsafePointer] && f2.Name() == "$data"
-		}
-	}
-	return false
 }
 
 func (b *Builder) structHash(t *types.Struct) (ret []byte, pkg string) {

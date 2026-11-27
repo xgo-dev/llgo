@@ -31,10 +31,9 @@ type wasmReflectBridgePair struct {
 // wasmReflectBridge returns package-local bridges shared by every function
 // type with the same Go and native call conversions and reflection frame layout.
 func (p Package) wasmReflectBridge(sig *types.Signature) wasmReflectBridgePair {
-	rawSig := p.Prog.gocvt.cvtFunc(sig, nil)
-	goType := p.Prog.toLLVMFunc(rawSig)
+	goType := p.Prog.toLLVMFunc(sig)
 	nativeType := p.Prog.toLLVMFuncBackground(sig, CDecl)
-	key, hasAttrs := p.Prog.wasmCallShape(rawSig, sig, goType, nativeType)
+	key, hasAttrs := p.Prog.wasmCallShape(sig, sig, goType, nativeType)
 	if bridges, ok := p.wasmReflectBridges[key]; ok {
 		return bridges
 	}
@@ -44,7 +43,7 @@ func (p Package) wasmReflectBridge(sig *types.Signature) wasmReflectBridgePair {
 	nativeCall := nativeType != goType || p.Prog.hasWasmABIPadding(nativeType.ReturnType()) || hasAttrs
 	id := compactWasmBridgeID(len(p.wasmReflectBridges))
 	bridges := wasmReflectBridgePair{
-		call: p.newWasmReflectCallBridge(rawSig, sig, nativeCall, "$c"+id),
+		call: p.newWasmReflectCallBridge(sig, sig, nativeCall, "$c"+id),
 		make: p.newWasmReflectMakeBridge(sig, "$m"+id),
 	}
 	p.wasmReflectBridges[key] = bridges
@@ -94,12 +93,18 @@ func (p Package) newWasmReflectCallBridge(goSig, nativeSig *types.Signature, nat
 	b := fn.MakeBody(blocks)
 	defer b.Dispose()
 	prog := p.Prog
-	loadArgs := func(sig *types.Signature) []Expr {
+	loadArgs := func(sig *types.Signature, native bool) []Expr {
 		args := make([]Expr, sig.Params().Len())
 		for i := range args {
 			// Reflect supplies addresses into Go storage, including for a C
 			// callee whose physical uintptr parameter has to be narrowed later.
-			typ := prog.rawType(sig.Params().At(i).Type())
+			paramType := sig.Params().At(i).Type()
+			var typ Type
+			if native {
+				typ = prog.nativeType(paramType, CDecl)
+			} else {
+				typ = prog.rawType(paramType)
+			}
 			args[i] = b.Load(b.Convert(prog.Pointer(typ), b.wasmReflectSlot(fn.Param(4), i)))
 		}
 		return args
@@ -118,10 +123,10 @@ func (p Package) newWasmReflectCallBridge(goSig, nativeSig *types.Signature, nat
 	if nativeCall {
 		b.If(fn.Param(3), fn.Block(3), fn.Block(4))
 		b.SetBlock(fn.Block(3))
-		invoke(prog.rawType(nativeSig), loadArgs(nativeSig))
+		invoke(prog.Type(nativeSig, CDecl), loadArgs(nativeSig, true))
 		b.SetBlock(fn.Block(4))
 	}
-	args := loadArgs(goSig)
+	args := loadArgs(goSig, false)
 	b.If(fn.Param(2), fn.Block(1), fn.Block(2))
 	b.SetBlock(fn.Block(1))
 	envSig := FuncAddCtx(types.NewParam(token.NoPos, nil, "env", ptr), goSig)

@@ -1111,15 +1111,9 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 	if t.kind == vkClosure {
 		switch x.kind {
 		case vkFuncDecl, vkFuncPtr:
-			ret.impl = checkExpr(x, t.raw.Type, b).impl
+			ret.impl = checkExprTo(x, t, b).impl
 		case vkClosure:
-			// TODO(xsw): change type should be a noop instruction
-			convType := func() Expr {
-				r := b.AllocaT(t)
-				b.Store(r, x)
-				return b.Load(r)
-			}
-			convNamedType := func() Expr {
+			if x.impl.Type() != t.ll {
 				agg := llvm.Undef(t.ll)
 				for i := range t.ll.StructElementTypes() {
 					field := b.impl.CreateExtractValue(x.impl, i, "")
@@ -1127,22 +1121,7 @@ func (b Builder) ChangeType(t Type, x Expr) (ret Expr) {
 				}
 				return Expr{agg, t}
 			}
-			switch t.RawType().(type) {
-			case *types.Named:
-				switch x.RawType().(type) {
-				case *types.Struct:
-					return convType()
-				case *types.Named:
-					if !types.Identical(x.RawType(), t.RawType()) {
-						return convNamedType()
-					}
-				}
-			case *types.Struct:
-				if _, ok := x.RawType().(*types.Named); ok {
-					return convType()
-				}
-			}
-			fallthrough
+			ret.impl = x.impl
 		default:
 			ret.impl = x.impl
 		}
@@ -1701,13 +1680,39 @@ func (b Builder) emitFunctionCall(fn Expr, args []Expr, cc llvm.CallConv) Expr {
 	dbgInstrCall("Call", fn, args)
 	sig, ll := b.Prog.callSignature(fn)
 	resultType := b.Prog.retType(sig)
-	params := llvmParams(0, args, sig.Params(), b)
+	if resultType.kind == vkClosure && ll.ReturnType().TypeKind() == llvm.PointerTypeKind {
+		resultType = b.Prog.funcPtrType(resultType.raw.Type)
+	}
 	physicalParams := ll.ParamTypes()
-	for i := range min(len(params), len(physicalParams)) {
-		params[i] = b.fitLLVMValue(params[i], args[i].Type, physicalParams[i])
+	hasEnv := false
+	if fn.kind == vkFuncDecl {
+		if entry := b.Pkg.FuncOf(fn.impl.Name()); entry != nil && entry.NeedsEnv() && len(physicalParams) == len(args)+1 {
+			hasEnv = true
+		}
+	}
+	paramOffset := 0
+	if hasEnv {
+		paramOffset = 1
+	}
+	params := llvmParamsForPhysical(0, args, sig.Params(), physicalParams, paramOffset, b)
+	if hasEnv {
+		for i := range params {
+			params[i] = b.fitLLVMValue(params[i], args[i].Type, physicalParams[i+1])
+		}
+		envParams := make([]llvm.Value, len(params)+1)
+		envParams[0] = b.Prog.Nil(b.Prog.VoidPtr()).impl
+		copy(envParams[1:], params)
+		params = envParams
+	} else {
+		for i := range min(len(params), len(physicalParams)) {
+			params[i] = b.fitLLVMValue(params[i], args[i].Type, physicalParams[i])
+		}
 	}
 	call := llvm.CreateCall(b.impl, ll, fn.impl, params)
 	call.SetInstructionCallConv(cc)
+	if hasEnv {
+		b.Prog.markClosureEnvCall(call, 0)
+	}
 	llvmattr.ApplyAllocatorCall(b.Prog.ctx, call, fn.impl, params, b.Prog.GCRootsEnabled())
 	b.setNativeIntegerCallAttrs(call, fn, sig, params)
 	return Expr{call, resultType}
@@ -2275,54 +2280,14 @@ func (b Builder) PrintEx(ln bool, args ...Expr) (ret Expr) {
 // -----------------------------------------------------------------------------
 
 func checkExpr(v Expr, t types.Type, b Builder) Expr {
-	if st, ok := t.Underlying().(*types.Struct); ok && IsClosure(st) {
-		tclosure := b.Prog.rawType(t)
-		if b.needsStdcallFuncval(v) {
-			return b.stdcallFuncval(tclosure, v)
-		}
-		if b.needsNativeFuncval(v) {
-			return b.nativeFuncval(tclosure, v, llvm.CCallConv, "c")
-		}
-		if v.kind == vkClosure {
-			return v
-		}
-		prog := b.Prog
-		fnType := prog.Field(tclosure, 0)
-		if v.Type != fnType {
-			// This is a Go code slot, rather than a native callback boundary.
-			// Native entries requiring adaptation were handled above.
-			if v.Type.kind == vkFuncDecl {
-				v = Expr{v.impl, fnType}
-			} else if v.Type.kind == vkFuncPtr {
-				v = b.ChangeType(fnType, v)
-			} else {
-				v = b.Convert(fnType, v)
-			}
-		}
-		data := prog.Nil(prog.VoidPtr())
-		return b.aggregateValue(tclosure, v.impl, data.impl)
+	if b.Prog.IsClosureType(t) {
+		return checkExprTo(v, b.Prog.Type(t, GoDecl), b)
 	}
-	if v.kind == vkClosure {
-		if _, ok := t.Underlying().(*types.Signature); ok {
-			// Assignment destinations are already lowered raw types. A raw
-			// signature is a native pointer, not a two-word Go function value.
-			if dst := b.Prog.rawType(t); dst.kind == vkFuncPtr {
-				return b.ChangeType(dst, v)
-			}
-		}
-	}
-	if v.kind == vkFuncDecl {
-		if _, ok := t.Underlying().(*types.Signature); ok {
-			// Raw signatures are native pointer destinations. Alias identity
-			// can otherwise bypass ChangeType via the Identical check below.
-			return b.ChangeType(b.Prog.rawType(t), v)
-		}
+	if b.Prog.isNativeFuncType(t) {
+		return checkExprTo(v, b.Prog.funcPtrType(t), b)
 	}
 	if types.Identical(v.raw.Type, t) || !types.AssignableTo(v.raw.Type, t) {
 		return v
-	}
-	if b.Prog.isStdcallType(t) {
-		return b.stdcallCallback(t, v)
 	}
 	dst := b.Prog.Type(t, GoDecl)
 	// Range and assignment lowering can produce a value whose source type is
@@ -2335,6 +2300,49 @@ func checkExpr(v Expr, t types.Type, b Builder) Expr {
 		return b.MakeInterface(dst, v)
 	}
 	return b.ChangeType(dst, v)
+}
+
+func checkExprTo(v Expr, dst Type, b Builder) Expr {
+	t := dst.raw.Type
+	if dst.kind == vkClosure {
+		if b.needsStdcallFuncval(v) {
+			return b.stdcallFuncval(dst, v)
+		}
+		if b.needsNativeFuncval(v) {
+			return b.nativeFuncval(dst, v, llvm.CCallConv, "c")
+		}
+		if v.kind == vkClosure {
+			if v.impl.Type() != dst.ll {
+				return b.ChangeType(dst, v)
+			}
+			return v
+		}
+		prog := b.Prog
+		fnType := prog.Field(dst, 0)
+		if v.Type != fnType {
+			// This is a Go code slot, rather than a native callback boundary.
+			// Native entries requiring adaptation were handled above.
+			if v.Type.kind == vkFuncDecl {
+				v = Expr{v.impl, fnType}
+			} else if v.Type.kind == vkFuncPtr {
+				v = b.ChangeType(fnType, v)
+			} else {
+				v = b.Convert(fnType, v)
+			}
+		}
+		data := prog.Nil(prog.VoidPtr())
+		return b.aggregateValue(dst, v.impl, data.impl)
+	}
+	if dst.kind == vkFuncPtr {
+		if v.kind == vkClosure || v.kind == vkFuncDecl {
+			return b.ChangeType(dst, v)
+		}
+		if b.Prog.isStdcallType(t) && !b.Prog.isStdcallType(v.raw.Type) {
+			return b.stdcallCallback(t, v)
+		}
+		return v
+	}
+	return checkExpr(v, t, b)
 }
 
 func needsNegativeCheck(x Expr) bool {
@@ -2357,13 +2365,26 @@ func llvmParamsEx(data Expr, vals []Expr, params *types.Tuple, b Builder) (ret [
 }
 
 func llvmParams(base int, vals []Expr, params *types.Tuple, b Builder) (ret []llvm.Value) {
+	return llvmParamsForPhysical(base, vals, params, nil, 0, b)
+}
+
+func llvmParamsForPhysical(base int, vals []Expr, params *types.Tuple, physical []llvm.Type, physicalOffset int, b Builder) (ret []llvm.Value) {
 	n := params.Len()
 	if n > 0 {
 		ret = make([]llvm.Value, len(vals)+base)
 		for idx, v := range vals {
 			i := base + idx
 			if i < n {
-				v = checkExpr(v, params.At(i).Type(), b)
+				paramType := params.At(i).Type()
+				pidx := idx + physicalOffset
+				if pidx < len(physical) && physical[pidx].TypeKind() == llvm.PointerTypeKind {
+					if _, isSig := types.Unalias(paramType).Underlying().(*types.Signature); isSig {
+						v = checkExprTo(v, b.Prog.funcPtrType(paramType), b)
+						ret[i] = v.impl
+						continue
+					}
+				}
+				v = checkExpr(v, paramType, b)
 			}
 			ret[i] = v.impl
 		}

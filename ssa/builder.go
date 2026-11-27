@@ -880,6 +880,12 @@ func (b *builder) expr0(fn *Function, e ast.Expr, tv types.TypeAndValue) Value {
 				Fn:       bound,
 				Bindings: []Value{v},
 			}
+			if wantAddr && !types.IsInterface(rt) && e.Pos().IsValid() && e.Sel.Pos().IsValid() {
+				c.RecvNilCheck = &ReceiverNilCheck{
+					Pos:     e.Pos(),
+					Address: selectionNeedsAddressCheck(sel),
+				}
+			}
 			c.setPos(e.Sel.Pos())
 			c.setType(bound.Signature)
 			return fn.emit(c)
@@ -1020,6 +1026,12 @@ func (b *builder) setCallFunc(fn *Function, e *ast.CallExpr, c *CallCommon) {
 				targs := fn.subtargs(selector.Sel)
 				c.Value = fn.Prog.objectMethod(obj, targs, b)
 				c.Args = append(c.Args, v)
+				if wantAddr && selector.Pos().IsValid() && selector.Sel.Pos().IsValid() && e.Lparen.IsValid() {
+					c.RecvNilCheck = &ReceiverNilCheck{
+						Pos:     selector.Pos(),
+						Address: selectionNeedsAddressCheck(sel),
+					}
+				}
 			}
 			return
 		}
@@ -3291,7 +3303,12 @@ func (b *builder) buildPackageInit(fn *Function) {
 			// 1:1 initialization: var x, y = a(), b()
 			var lval lvalue
 			if v := varinit.Lhs[0]; v.Name() != "_" {
-				lval = &address{addr: p.objects[v].(*Global), pos: v.Pos()}
+				g := p.objects[v].(*Global)
+				if data, ok := staticByteArrayInit(g, varinit.Rhs, p.RetainInit); ok {
+					g.StaticBytes = data
+					continue
+				}
+				lval = &address{addr: g, pos: v.Pos()}
 			} else {
 				lval = blank{}
 			}

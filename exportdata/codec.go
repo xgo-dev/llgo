@@ -33,7 +33,7 @@ import (
 
 const (
 	magicHeader   = "LLGOEX"
-	formatVersion = uint32(2)
+	formatVersion = uint32(3)
 )
 
 const (

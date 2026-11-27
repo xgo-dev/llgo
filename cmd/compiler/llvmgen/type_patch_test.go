@@ -199,7 +199,7 @@ func TestNamedStructLayoutEquivalent(t *testing.T) {
 		types.NewField(token.NoPos, nil, "A", types.Typ[types.Int], false),
 	}, nil)
 	n1 := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "T", nil), s1, nil)
-	llStruct, _ := prog.toLLVMStruct(s1)
+	llStruct := prog.toLLVMStruct(s1)
 	existing := &aType{
 		ll:  llStruct,
 		raw: rawType{Type: n1},
@@ -277,9 +277,6 @@ func f(m map[string]int) {
 			if typ.Underlying() != types.Typ[types.UnsafePointer] {
 				t.Fatalf("handle underlying type = %v, want unsafe.Pointer", typ.Underlying())
 			}
-			if raw, converted := prog.gocvt.cvtType(typ); converted || raw != typ {
-				t.Fatalf("cvtType = (%v, %v), want unchanged named handle", raw, converted)
-			}
 			got := prog.Type(typ, GoDecl)
 			if got.RawType() != typ {
 				t.Fatalf("raw type = %v, want %v", got.RawType(), typ)
@@ -294,19 +291,21 @@ func f(m map[string]int) {
 	}
 }
 
-func TestCvtStructPreservesTags(t *testing.T) {
+func TestStructLoweringPreservesTags(t *testing.T) {
+	prog := NewProgram(nil)
+	defer prog.Dispose()
 	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
 	st := types.NewStruct([]*types.Var{
 		types.NewField(token.NoPos, nil, "Fn", sig, false),
 	}, []string{`protobuf:"bytes,1,opt,name=fn" json:"fn,omitempty"`})
 
-	raw, cvt := newGoTypes().cvtType(st)
-	if !cvt {
-		t.Fatalf("cvtType did not convert function field")
+	gotTy := prog.Type(st, GoDecl)
+	if gotTy.RawType() != st {
+		t.Fatalf("struct lowering mutated RawType: got %v, want original %v", gotTy.RawType(), st)
 	}
-	got := raw.(*types.Struct).Tag(0)
+	got := gotTy.RawType().(*types.Struct).Tag(0)
 	want := `protobuf:"bytes,1,opt,name=fn" json:"fn,omitempty"`
 	if got != want {
-		t.Fatalf("converted struct tag = %q, want %q", got, want)
+		t.Fatalf("struct tag = %q, want %q", got, want)
 	}
 }

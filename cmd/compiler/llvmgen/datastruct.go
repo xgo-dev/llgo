@@ -682,7 +682,7 @@ func (p Program) MapStackStorage(t Type) (header, bucket Type) {
 	header = p.rtType("Map")
 	mt := t.RawType().Underlying().(*types.Map)
 	if p.AlignOf(p.rawType(mt.Key())) <= uint64(p.GoWordSize()) && p.AlignOf(p.rawType(mt.Elem())) <= uint64(p.GoWordSize()) {
-		bt := p.Type(abi.MapBucketType(mt, p.sizes), GoDecl)
+		bt := p.Type(abi.MapBucketType(mt, p.typeCtx), GoDecl)
 		if p.SizeOf(bt) <= llabi.MaxImplicitStackVarSize {
 			bucket = bt
 		}
@@ -754,8 +754,8 @@ func (b Builder) MapUpdate(m, k, v Expr) {
 	// This ensures function values are correctly wrapped as closures, similar to
 	// interface assignment (see MakeInterface).
 	if v.kind == vkFuncDecl {
-		typ := b.Prog.Type(v.raw.Type, GoDecl)
-		v = checkExpr(v, typ.raw.Type, b)
+		typ := b.Prog.Closure(v.raw.Type.(*types.Signature))
+		v = checkExprTo(v, typ, b)
 	}
 	dbgInstrf("MapUpdate %v[%v] = %v\n", m.impl, k.impl, v.impl)
 	typ := b.abiType(m.raw.Type)

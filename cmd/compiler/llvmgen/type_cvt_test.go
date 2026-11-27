@@ -17,15 +17,16 @@
 package llvmgen
 
 import (
-	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"runtime"
 	"testing"
+
+	"github.com/xgo-dev/llgo/types"
 )
 
-func TestNamedTypeConversionIsIndependentOfTraversalOrder(t *testing.T) {
+func TestNamedTypeLoweringPreservesIdentityAndOrderIndependence(t *testing.T) {
 	pkg := types.NewPackage("example.com/cycle", "cycle")
 	a := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "A", nil), types.Typ[types.Int], nil)
 	b := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "B", nil), types.Typ[types.Int], nil)
@@ -37,58 +38,34 @@ func TestNamedTypeConversionIsIndependentOfTraversalOrder(t *testing.T) {
 		types.NewField(token.NoPos, pkg, "F", types.NewSignatureType(nil, nil, nil, nil, nil, false), false),
 	}, nil))
 
-	convert := func(first, second *types.Named) (*types.Named, *types.Named) {
-		cvt := newGoTypes()
-		cvt.cvtNamed(first)
-		rawSecond, _ := cvt.cvtNamed(second)
-		rawFirst, _ := cvt.cvtNamed(first)
+	lower := func(first, second *types.Named) (Type, Type) {
+		prog := NewProgram(nil)
+		t.Cleanup(prog.Dispose)
+		tFirst := prog.Type(first, GoDecl)
+		tSecond := prog.Type(second, GoDecl)
 		if first == a {
-			return rawFirst, rawSecond
+			return tFirst, tSecond
 		}
-		return rawSecond, rawFirst
+		return tSecond, tFirst
 	}
-	aFromA, bFromA := convert(a, b)
-	aFromB, bFromB := convert(b, a)
+	aFromA, bFromA := lower(a, b)
+	aFromB, bFromB := lower(b, a)
 
-	for name, got := range map[string]*types.Named{
-		"A after A-first conversion": aFromA,
-		"B after A-first conversion": bFromA,
-		"A after B-first conversion": aFromB,
-		"B after B-first conversion": bFromB,
-	} {
-		original := a
-		if name[0] == 'B' {
-			original = b
-		}
-		if got == original {
-			t.Errorf("%s retained the unconverted recursive type", name)
-		}
+	if aFromA.RawType() != a || aFromB.RawType() != a {
+		t.Fatalf("lowering mutated recursive type A identity")
 	}
-	if got, want := types.TypeString(aFromA, nil), types.TypeString(aFromB, nil); got != want {
-		t.Errorf("A conversion depends on traversal order:\nA-first: %s\nB-first: %s", got, want)
+	if bFromA.RawType() != b || bFromB.RawType() != b {
+		t.Fatalf("lowering mutated recursive type B identity")
 	}
-	if got, want := types.TypeString(bFromA, nil), types.TypeString(bFromB, nil); got != want {
-		t.Errorf("B conversion depends on traversal order:\nA-first: %s\nB-first: %s", got, want)
+	if aFromA.ll.String() != aFromB.ll.String() {
+		t.Fatalf("A LLVM type depends on traversal order: %s vs %s", aFromA.ll.String(), aFromB.ll.String())
 	}
-	assertCycle := func(name string, rawA, rawB *types.Named) {
-		t.Helper()
-		aStruct := rawA.Underlying().(*types.Struct)
-		if got := aStruct.Field(0).Type().(*types.Pointer).Elem(); got != rawB {
-			t.Errorf("%s: converted A points to %v, want converted B", name, got)
-		}
-		bStruct := rawB.Underlying().(*types.Struct)
-		if got := bStruct.Field(0).Type().(*types.Pointer).Elem(); got != rawA {
-			t.Errorf("%s: converted B points to %v, want converted A", name, got)
-		}
-		if got, ok := bStruct.Field(1).Type().(*types.Struct); !ok || !IsClosure(got) {
-			t.Errorf("%s: converted B.F type = %v, want closure", name, got)
-		}
+	if bFromA.ll.String() != bFromB.ll.String() {
+		t.Fatalf("B LLVM type depends on traversal order: %s vs %s", bFromA.ll.String(), bFromB.ll.String())
 	}
-	assertCycle("A-first", aFromA, bFromA)
-	assertCycle("B-first", aFromB, bFromB)
 }
 
-func TestRecursiveGenericNamedTypeConversion(t *testing.T) {
+func TestRecursiveGenericNamedTypeLoweringPreservesIdentity(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "generic.go", `package generic
 type My[T any] struct {
@@ -110,71 +87,18 @@ type My[T any] struct {
 	}
 	original := instantiated.(*types.Named)
 
-	cvt := newGoTypes()
-	raw, changed := cvt.cvtNamed(original)
-	if !changed || raw == original {
-		t.Fatal("recursive generic type was not converted")
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	got := prog.Type(original, GoDecl)
+	if got.RawType() != original {
+		t.Fatalf("recursive generic RawType = %v, want original %v", got.RawType(), original)
 	}
-	underlying, ok := raw.Underlying().(*types.Struct)
-	if !ok {
-		t.Fatalf("converted generic underlying = %T, want *types.Struct", raw.Underlying())
+	st := original.Underlying().(*types.Struct)
+	if !prog.IsClosureType(st.Field(0).Type()) {
+		t.Fatalf("expected My[int].F to lower as closure, got %v", st.Field(0).Type())
 	}
-	if closure, ok := underlying.Field(0).Type().(*types.Struct); !ok || !IsClosure(closure) {
-		t.Fatalf("converted generic F = %v, want closure", underlying.Field(0).Type())
-	}
-	next := underlying.Field(1).Type().(*types.Pointer).Elem()
-	if next != raw {
-		t.Fatalf("converted generic Next points to %v, want converted instance %v", next, raw)
-	}
-}
-
-func TestTypeConversionRequirementShapes(t *testing.T) {
-	sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
-	sigParam := types.NewSignatureType(nil, nil, nil,
-		types.NewTuple(types.NewVar(token.NoPos, nil, "f", sig)), nil, false)
-	method := types.NewFunc(token.NoPos, nil, "M", sigParam)
-	methodInterface := types.NewInterfaceType([]*types.Func{method}, nil)
-	methodInterface.Complete()
-	embeddedInterface := types.NewInterfaceType(nil, []types.Type{methodInterface})
-	embeddedInterface.Complete()
-	typeParam := types.NewTypeParam(
-		types.NewTypeName(token.NoPos, nil, "T", nil), types.Universe.Lookup("any").Type())
-	alias := types.NewAlias(types.NewTypeName(token.NoPos, nil, "Alias", nil), sig)
-	union := types.NewUnion([]*types.Term{types.NewTerm(false, types.Typ[types.Int])})
-
-	tests := []struct {
-		name string
-		typ  types.Type
-		want bool
-	}{
-		{name: "basic", typ: types.Typ[types.Int]},
-		{name: "pointer", typ: types.NewPointer(sig), want: true},
-		{name: "interface method", typ: methodInterface, want: true},
-		{name: "embedded interface", typ: embeddedInterface, want: true},
-		{name: "slice", typ: types.NewSlice(sig), want: true},
-		{name: "map key", typ: types.NewMap(sig, types.Typ[types.Int]), want: true},
-		{name: "map value", typ: types.NewMap(types.Typ[types.Int], sig), want: true},
-		{name: "closure", typ: newGoTypes().cvtClosure(sig)},
-		{name: "struct", typ: types.NewStruct([]*types.Var{types.NewField(token.NoPos, nil, "F", sig, false)}, nil), want: true},
-		{name: "signature", typ: sig, want: true},
-		{name: "array", typ: types.NewArray(sig, 1), want: true},
-		{name: "channel", typ: types.NewChan(types.SendRecv, sig), want: true},
-		{name: "tuple", typ: types.NewTuple(types.NewVar(token.NoPos, nil, "F", sig)), want: true},
-		{name: "type parameter", typ: typeParam},
-		{name: "alias", typ: alias, want: true},
-		{name: "union", typ: union, want: true},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			cvt := newGoTypes()
-			query := make(conversionNeedQuery)
-			if got := cvt.needsTypeConversion(test.typ, query); got != test.want {
-				t.Fatalf("needsTypeConversion(%v) = %v, want %v", test.typ, got, test.want)
-			}
-			if _, got := newGoTypes().cvtType(test.typ); got != test.want {
-				t.Fatalf("cvtType(%v) changed = %v, want %v", test.typ, got, test.want)
-			}
-		})
+	if gotSize, wantSize := prog.SizeOf(got), uint64(3*prog.PointerSize()); gotSize != wantSize {
+		t.Fatalf("sizeof(My[int]) = %d, want %d", gotSize, wantSize)
 	}
 }
 
@@ -190,18 +114,26 @@ func TestCFunctionAliasKeepsNativeRepresentation(t *testing.T) {
 	prog.SetTypeCallConv("example.com/callback.Callback", CDecl)
 
 	for _, alias := range []*types.Alias{callback, outer} {
-		if got, changed := prog.gocvt.cvtType(alias); changed || got != alias {
-			t.Fatalf("C callback %s conversion = (%v, %v), want original alias", alias.Obj().Name(), got, changed)
+		if prog.IsClosureType(alias) {
+			t.Fatalf("C callback %s should not be treated as a Go closure", alias.Obj().Name())
 		}
-		if prog.gocvt.needsTypeConversion(alias, make(conversionNeedQuery)) {
-			t.Fatalf("C callback %s should not require closure conversion", alias.Obj().Name())
+		got := prog.Type(alias, GoDecl)
+		if got.RawType() != alias {
+			t.Fatalf("C callback %s RawType = %v, want original alias", alias.Obj().Name(), got.RawType())
 		}
-		if got := prog.Type(alias, GoDecl); got.kind != vkFuncPtr || prog.SizeOf(got) != uint64(prog.PointerSize()) {
+		if got.kind != vkFuncPtr || prog.SizeOf(got) != uint64(prog.PointerSize()) {
 			t.Fatalf("C callback %s representation = (%v, %d bytes), want pointer", alias.Obj().Name(), got.kind, prog.SizeOf(got))
 		}
 	}
 	for _, alias := range []*types.Alias{goCallback, goOuter} {
-		if got := prog.Type(alias, GoDecl); got.kind != vkClosure || prog.SizeOf(got) != uint64(2*prog.PointerSize()) {
+		if !prog.IsClosureType(alias) {
+			t.Fatalf("Go callback %s should be treated as a Go closure", alias.Obj().Name())
+		}
+		got := prog.Type(alias, GoDecl)
+		if !types.Identical(got.RawType(), alias) {
+			t.Fatalf("Go callback %s RawType = %v, want identical to %v", alias.Obj().Name(), got.RawType(), alias)
+		}
+		if got.kind != vkClosure || prog.SizeOf(got) != uint64(2*prog.PointerSize()) {
 			t.Fatalf("Go callback %s representation = (%v, %d bytes), want two-word closure", alias.Obj().Name(), got.kind, prog.SizeOf(got))
 		}
 	}
@@ -218,29 +150,7 @@ func TestCFunctionAliasKeepsNativeRepresentation(t *testing.T) {
 	}
 }
 
-func TestRecursiveNamedTypesWithoutConversionKeepTheirIdentity(t *testing.T) {
-	pkg := types.NewPackage("example.com/plaincycle", "plaincycle")
-	a := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "A", nil), types.Typ[types.Int], nil)
-	b := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "B", nil), types.Typ[types.Int], nil)
-	a.SetUnderlying(types.NewStruct([]*types.Var{
-		types.NewField(token.NoPos, pkg, "B", types.NewPointer(b), false),
-	}, nil))
-	b.SetUnderlying(types.NewStruct([]*types.Var{
-		types.NewField(token.NoPos, pkg, "A", types.NewPointer(a), false),
-	}, nil))
-
-	cvt := newGoTypes()
-	if got, changed := cvt.cvtNamed(a); changed || got != a {
-		t.Fatalf("plain recursive A conversion = (%v, %v), want original type", got, changed)
-	}
-	if got, changed := cvt.cvtNamed(b); changed || got != b {
-		t.Fatalf("plain recursive B conversion = (%v, %v), want original type", got, changed)
-	}
-}
-
-// Two edges to each previous node give exponentially many paths but only a
-// small number of distinct types. A conversion query must visit each once.
-func TestSharedNamedTypeConversionGraph(t *testing.T) {
+func TestSharedNamedTypeLoweringGraph(t *testing.T) {
 	pkg := types.NewPackage("example.com/sharedgraph", "sharedgraph")
 	var typ types.Type = types.Typ[types.Int]
 	for i := 0; i < 48; i++ {
@@ -250,8 +160,10 @@ func TestSharedNamedTypeConversionGraph(t *testing.T) {
 				types.NewField(token.NoPos, pkg, "Right", types.NewPointer(typ), false),
 			}, nil), nil)
 	}
-	cvt := newGoTypes()
-	if got, changed := cvt.cvtNamed(typ.(*types.Named)); changed || got != typ {
-		t.Fatalf("shared graph conversion = (%v, %v), want original type", got, changed)
+	prog := NewProgram(nil)
+	defer prog.Dispose()
+	got := prog.Type(typ, GoDecl)
+	if got.RawType() != typ {
+		t.Fatalf("shared graph RawType = %v, want original type", got.RawType())
 	}
 }

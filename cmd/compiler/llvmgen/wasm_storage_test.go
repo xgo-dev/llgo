@@ -88,7 +88,7 @@ func TestNativePointerOperationsReuseStorageViews(t *testing.T) {
 	body := pkg.NewFunc("example.com/p.call", NoArgsNoRet, GoDecl).MakeBody(1)
 	defer body.Dispose()
 	callback := body.Load(global.Expr)
-	goType, nativeType := prog.Type(sig, GoDecl), prog.rawType(sig)
+	goType, nativeType := prog.Type(sig, GoDecl), prog.Type(sig, CDecl)
 	closure := body.ChangeType(goType, entry.Expr)
 	value := prog.Zero(prog.rawType(arg.Type()))
 	useCallback := func() {

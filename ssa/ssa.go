@@ -63,14 +63,18 @@ type Program struct {
 // initializer) and "init#%d", the nth declared init function,
 // and unspecified other things too.
 type Package struct {
-	Prog    *Program                // the owning program
-	Pkg     *types.Package          // the corresponding go/types.Package
-	Members map[string]Member       // all package members keyed by name (incl. init and init#%d)
-	Kind    directive.PackageKind   // LLGo extension: package linkage kind
-	objects map[types.Object]Member // mapping of package objects to members (incl. methods). Contains *NamedConst, *Global, *Function (values but not types)
-	init    *Function               // Func("init"); the package's init function
-	debug   bool                    // include full debug info in this package
-	syntax  bool                    // package was loaded from syntax
+	Prog       *Program                // the owning program
+	Pkg        *types.Package          // the corresponding go/types.Package
+	Members    map[string]Member       // all package members keyed by name (incl. init and init#%d)
+	Kind       directive.PackageKind   // LLGo extension: package linkage kind
+	KindParam  string                  // LLGo extension: parameter for Kind (e.g. Python module or link flags)
+	SkipAll    bool                    // LLGo extension: //llgo:skipall
+	Skips      map[string]bool         // LLGo extension: //llgo:skip symbol names
+	RetainInit map[string]bool         // LLGo extension: globals whose init stores must not fold into StaticBytes
+	objects    map[types.Object]Member // mapping of package objects to members (incl. methods). Contains *NamedConst, *Global, *Function (values but not types)
+	init       *Function               // Func("init"); the package's init function
+	debug      bool                    // include full debug info in this package
+	syntax     bool                    // package was loaded from syntax
 
 	// The following fields are set transiently, then cleared
 	// after building.
@@ -353,13 +357,17 @@ type Function struct {
 	info      *types.Info // type annotations (if syntax != nil)
 	goversion string      // Go version of syntax (NB: init is special)
 
-	parent     *Function             // enclosing function if anon; nil if global
-	Pkg        *Package              // enclosing package; nil for shared funcs (wrappers and error.Error)
-	LinkName   string                // LLGo extension: symbol linkname
-	ExportName string                // LLGo extension: symbol export name
-	NoInline   bool                  // LLGo extension: //go:noinline
-	WasmImport *directive.WasmImport // LLGo extension: //go:wasmimport
-	Prog       *Program              // enclosing program
+	parent        *Function             // enclosing function if anon; nil if global
+	Pkg           *Package              // enclosing package; nil for shared funcs (wrappers and error.Error)
+	LinkName      string                // LLGo extension: symbol linkname
+	ExportName    string                // LLGo extension: symbol export name
+	NoInline      bool                  // LLGo extension: //go:noinline
+	NoInterface   bool                  // LLGo extension: //go:nointerface
+	NoEscape      bool                  // LLGo extension: //go:noescape
+	HasClosureEnv bool                  // LLGo extension: //llgo:env
+	WasmImport    *directive.WasmImport // LLGo extension: //go:wasmimport
+	WasmExport    string                // LLGo extension: //go:wasmexport or //llgo:export
+	Prog          *Program              // enclosing program
 
 	buildshared *task // wait for a shared function to be done building (may be nil if <=1 builder ever needs to wait)
 
@@ -503,9 +511,11 @@ type Global struct {
 	typ    types.Type
 	pos    token.Pos
 
-	Pkg      *Package
-	LinkName string             // LLGo extension: symbol linkname
-	Locality directive.Locality // LLGo extension: locality directive
+	Pkg         *Package
+	LinkName    string             // LLGo extension: symbol linkname
+	ExportName  string             // LLGo extension: symbol export name
+	Locality    directive.Locality // LLGo extension: locality directive
+	StaticBytes []byte             // LLGo extension: folded static byte-array initializer payload
 }
 
 // A Builtin represents a specific use of a built-in function, e.g. len.
@@ -815,8 +825,9 @@ type MakeInterface struct {
 //	t1 = make closure bound$(main.I).add [i]
 type MakeClosure struct {
 	register
-	Fn       Value   // always a *Function
-	Bindings []Value // values for each free variable in Fn.FreeVars
+	Fn           Value             // always a *Function
+	Bindings     []Value           // values for each free variable in Fn.FreeVars
+	RecvNilCheck *ReceiverNilCheck // LLGo extension: pointer-method receiver nil check
 }
 
 // The MakeMap instruction creates a new hash-table-based map object
@@ -1470,10 +1481,11 @@ type anInstruction struct {
 // For all calls to variadic functions (Signature().Variadic()),
 // the last element of Args is a slice.
 type CallCommon struct {
-	Value  Value       // receiver (invoke mode) or func value (call mode)
-	Method *types.Func // interface method (invoke mode)
-	Args   []Value     // actual parameters (in static method call, includes receiver)
-	pos    token.Pos   // position of CallExpr.Lparen, iff explicit in source
+	Value        Value             // receiver (invoke mode) or func value (call mode)
+	Method       *types.Func       // interface method (invoke mode)
+	Args         []Value           // actual parameters (in static method call, includes receiver)
+	RecvNilCheck *ReceiverNilCheck // LLGo extension: pointer-method receiver nil check
+	pos          token.Pos         // position of CallExpr.Lparen, iff explicit in source
 }
 
 // IsInvoke returns true if this call has "invoke" (not "call") mode.

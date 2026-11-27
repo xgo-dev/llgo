@@ -24,6 +24,7 @@ import (
 	"io"
 	"sort"
 
+	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/types"
 )
 
@@ -449,6 +450,10 @@ func (w *pkgWriter) encode() {
 	w.enc.writeStr(w.pkg.Name())
 	w.enc.writeStr(w.pkg.GoVersion())
 	w.enc.writeBool(w.pkg.Complete())
+	w.enc.writeByte(byte(w.pkg.Kind()))
+	w.enc.writeStr(w.pkg.KindParam())
+	w.enc.writeBool(w.pkg.SkipAll())
+	w.enc.writeStringSlice(w.pkg.SkipNames())
 
 	w.enc.writeUvarint(uint64(len(w.pkgs)))
 	for _, p := range w.pkgs {
@@ -525,6 +530,7 @@ func (w *pkgWriter) encode() {
 				w.enc.writeUvarint(w.internPkg(m.Pkg()))
 				w.enc.writeStr(m.Name())
 				w.writeType(m.Type())
+				w.writeFuncMeta(m)
 			}
 		})
 	}
@@ -555,10 +561,12 @@ func (w *pkgWriter) encode() {
 			w.enc.writeStr(o.Name())
 			w.enc.writeByte(byte(o.Kind()))
 			w.writeType(o.Type())
+			w.writeVarMeta(o)
 		case *types.Func:
 			w.enc.writeByte(objTagFunc)
 			w.enc.writeStr(o.Name())
 			w.writeType(o.Type())
+			w.writeFuncMeta(o)
 		case *types.TypeName:
 			w.enc.writeByte(objTagTypeName)
 			w.enc.writeStr(o.Name())
@@ -575,6 +583,93 @@ func (w *pkgWriter) writeSubBlob(fn func()) {
 	sub := w.enc.buf.Bytes()
 	w.enc.buf = origBuf
 	w.enc.writeBytes(sub)
+}
+
+const (
+	funcMetaLinkName byte = 1 << iota
+	funcMetaExportName
+	funcMetaWasmImport
+	funcMetaWasmExport
+	funcMetaClosureEnv
+	funcMetaNoInline
+	funcMetaNoInterface
+	funcMetaNoEscape
+)
+
+func (w *pkgWriter) writeFuncMeta(fn *types.Func) {
+	var flags byte
+	if fn != nil {
+		if fn.LinkName() != "" {
+			flags |= funcMetaLinkName
+		}
+		if fn.ExportName() != "" {
+			flags |= funcMetaExportName
+		}
+		if fn.WasmImport() != nil {
+			flags |= funcMetaWasmImport
+		}
+		if fn.WasmExport() != "" {
+			flags |= funcMetaWasmExport
+		}
+		if fn.HasClosureEnv() {
+			flags |= funcMetaClosureEnv
+		}
+		if fn.NoInline() {
+			flags |= funcMetaNoInline
+		}
+		if fn.NoInterface() {
+			flags |= funcMetaNoInterface
+		}
+		if fn.NoEscape() {
+			flags |= funcMetaNoEscape
+		}
+	}
+	w.enc.writeByte(flags)
+	if flags&funcMetaLinkName != 0 {
+		w.enc.writeStr(fn.LinkName())
+	}
+	if flags&funcMetaExportName != 0 {
+		w.enc.writeStr(fn.ExportName())
+	}
+	if flags&funcMetaWasmImport != 0 {
+		wi := fn.WasmImport()
+		w.enc.writeStr(wi.Module)
+		w.enc.writeStr(wi.Name)
+	}
+	if flags&funcMetaWasmExport != 0 {
+		w.enc.writeStr(fn.WasmExport())
+	}
+}
+
+const (
+	varMetaLinkName byte = 1 << iota
+	varMetaExportName
+	varMetaLocality
+)
+
+func (w *pkgWriter) writeVarMeta(v *types.Var) {
+	var flags byte
+	if v != nil {
+		if v.LinkName() != "" {
+			flags |= varMetaLinkName
+		}
+		if v.ExportName() != "" {
+			flags |= varMetaExportName
+		}
+		if v.Locality() != directive.LocalityNone {
+			flags |= varMetaLocality
+		}
+	}
+	w.enc.writeByte(flags)
+	if flags&varMetaLinkName != 0 {
+		w.enc.writeStr(v.LinkName())
+	}
+	if flags&varMetaExportName != 0 {
+		w.enc.writeStr(v.ExportName())
+	}
+	if flags&varMetaLocality != 0 {
+		w.enc.writeByte(byte(v.Locality()))
+	}
 }
 
 func (w *pkgWriter) writeVar(v *types.Var) {
@@ -796,11 +891,15 @@ type pkgReader struct {
 	imports map[string]*types.Package
 	bundle  *bundleState
 
-	path     string
-	name     string
-	complete bool
-	pkg      *types.Package
-	reused   bool
+	path      string
+	name      string
+	complete  bool
+	kind      directive.PackageKind
+	kindParam string
+	skipAll   bool
+	skipNames []string
+	pkg       *types.Package
+	reused    bool
 
 	pkgs    []*types.Package
 	tparams []*types.TypeParam
@@ -858,9 +957,29 @@ func (r *pkgReader) readHeader() error {
 	if err != nil {
 		return err
 	}
+	kind, err := r.dec.readByte()
+	if err != nil {
+		return err
+	}
+	kindParam, err := r.dec.readStr()
+	if err != nil {
+		return err
+	}
+	skipAll, err := r.dec.readBool()
+	if err != nil {
+		return err
+	}
+	skipNames, err := r.dec.readStringSlice()
+	if err != nil {
+		return err
+	}
 	r.path = path
 	r.name = name
 	r.complete = complete
+	r.kind = directive.PackageKind(kind)
+	r.kindParam = kindParam
+	r.skipAll = skipAll
+	r.skipNames = skipNames
 	return nil
 }
 
@@ -878,6 +997,15 @@ func (r *pkgReader) initPackage() {
 		}
 	}
 	r.pkg = types.NewPackage(r.path, r.name)
+	if r.kind != directive.PkgNormal || r.kindParam != "" {
+		r.pkg.SetKind(r.kind, r.kindParam)
+	}
+	if r.skipAll {
+		r.pkg.SetSkipAll(true)
+	}
+	if len(r.skipNames) > 0 {
+		r.pkg.AddSkip(r.skipNames...)
+	}
 	if r.imports != nil && r.path != "" {
 		r.imports[r.path] = r.pkg
 	}
@@ -1151,9 +1279,14 @@ func (r *pkgReader) decodeBody() error {
 			if err != nil {
 				return err
 			}
+			varMeta, err := r.readVarMeta()
+			if err != nil {
+				return err
+			}
 			if !r.reused {
 				v := types.NewVar(token.NoPos, pkg, oName, typ)
 				v.SetKind(types.VarKind(vk))
+				varMeta.apply(v)
 				pkg.Scope().Insert(v)
 			}
 		case objTagFunc:
@@ -1165,9 +1298,15 @@ func (r *pkgReader) decodeBody() error {
 			if err != nil {
 				return err
 			}
+			fnMeta, err := r.readFuncMeta()
+			if err != nil {
+				return err
+			}
 			if !r.reused {
 				sig, _ := typ.(*types.Signature)
-				pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, oName, sig))
+				fn := types.NewFunc(token.NoPos, pkg, oName, sig)
+				fnMeta.apply(fn)
+				pkg.Scope().Insert(fn)
 			}
 		case objTagTypeName:
 			oName, err := r.dec.readStr()
@@ -1226,6 +1365,134 @@ func (r *pkgReader) decodeTypeBlob(blob []byte) (types.Type, error) {
 	return t, err
 }
 
+type decodedFuncMeta struct {
+	linkName      string
+	exportName    string
+	wasmImport    *directive.WasmImport
+	wasmExport    string
+	hasClosureEnv bool
+	noInline      bool
+	noInterface   bool
+	noEscape      bool
+}
+
+func (m decodedFuncMeta) apply(fn *types.Func) {
+	if fn == nil {
+		return
+	}
+	if m.linkName != "" {
+		fn.SetLinkName(m.linkName)
+	}
+	if m.exportName != "" {
+		fn.SetExportName(m.exportName)
+	}
+	if m.wasmImport != nil {
+		fn.SetWasmImport(m.wasmImport)
+	}
+	if m.wasmExport != "" {
+		fn.SetWasmExport(m.wasmExport)
+	}
+	if m.hasClosureEnv {
+		fn.SetHasClosureEnv(true)
+	}
+	if m.noInline {
+		fn.SetNoInline(true)
+	}
+	if m.noInterface {
+		fn.SetNoInterface(true)
+	}
+	if m.noEscape {
+		fn.SetNoEscape(true)
+	}
+}
+
+func (r *pkgReader) readFuncMeta() (decodedFuncMeta, error) {
+	flags, err := r.dec.readByte()
+	if err != nil {
+		return decodedFuncMeta{}, err
+	}
+	m := decodedFuncMeta{
+		hasClosureEnv: flags&funcMetaClosureEnv != 0,
+		noInline:      flags&funcMetaNoInline != 0,
+		noInterface:   flags&funcMetaNoInterface != 0,
+		noEscape:      flags&funcMetaNoEscape != 0,
+	}
+	if flags&funcMetaLinkName != 0 {
+		if m.linkName, err = r.dec.readStr(); err != nil {
+			return decodedFuncMeta{}, err
+		}
+	}
+	if flags&funcMetaExportName != 0 {
+		if m.exportName, err = r.dec.readStr(); err != nil {
+			return decodedFuncMeta{}, err
+		}
+	}
+	if flags&funcMetaWasmImport != 0 {
+		mod, err := r.dec.readStr()
+		if err != nil {
+			return decodedFuncMeta{}, err
+		}
+		name, err := r.dec.readStr()
+		if err != nil {
+			return decodedFuncMeta{}, err
+		}
+		m.wasmImport = &directive.WasmImport{Module: mod, Name: name}
+	}
+	if flags&funcMetaWasmExport != 0 {
+		if m.wasmExport, err = r.dec.readStr(); err != nil {
+			return decodedFuncMeta{}, err
+		}
+	}
+	return m, nil
+}
+
+type decodedVarMeta struct {
+	linkName   string
+	exportName string
+	locality   directive.Locality
+}
+
+func (m decodedVarMeta) apply(v *types.Var) {
+	if v == nil {
+		return
+	}
+	if m.linkName != "" {
+		v.SetLinkName(m.linkName)
+	}
+	if m.exportName != "" {
+		v.SetExportName(m.exportName)
+	}
+	if m.locality != directive.LocalityNone {
+		v.SetLocality(m.locality)
+	}
+}
+
+func (r *pkgReader) readVarMeta() (decodedVarMeta, error) {
+	flags, err := r.dec.readByte()
+	if err != nil {
+		return decodedVarMeta{}, err
+	}
+	var m decodedVarMeta
+	if flags&varMetaLinkName != 0 {
+		if m.linkName, err = r.dec.readStr(); err != nil {
+			return decodedVarMeta{}, err
+		}
+	}
+	if flags&varMetaExportName != 0 {
+		if m.exportName, err = r.dec.readStr(); err != nil {
+			return decodedVarMeta{}, err
+		}
+	}
+	if flags&varMetaLocality != 0 {
+		loc, err := r.dec.readByte()
+		if err != nil {
+			return decodedVarMeta{}, err
+		}
+		m.locality = directive.Locality(loc)
+	}
+	return m, nil
+}
+
 func (r *pkgReader) resolveNamed(idx int) error {
 	if r.namedResolved[idx] {
 		return nil
@@ -1248,6 +1515,7 @@ func (r *pkgReader) resolveNamed(idx int) error {
 			pkg  *types.Package
 			name string
 			sig  *types.Signature
+			meta decodedFuncMeta
 		}
 		var methods []methodRec
 		for j := uint64(0); j < nm; j++ {
@@ -1263,9 +1531,13 @@ func (r *pkgReader) resolveNamed(idx int) error {
 			if err != nil {
 				return err
 			}
+			mMeta, err := r.readFuncMeta()
+			if err != nil {
+				return err
+			}
 			sig, _ := mTyp.(*types.Signature)
 			if !r.namedReused[idx] {
-				methods = append(methods, methodRec{pkg: r.pkgByID(mPkgID), name: mName, sig: sig})
+				methods = append(methods, methodRec{pkg: r.pkgByID(mPkgID), name: mName, sig: sig, meta: mMeta})
 			}
 		}
 		if r.namedReused[idx] {
@@ -1279,7 +1551,9 @@ func (r *pkgReader) resolveNamed(idx int) error {
 		}
 		r.nameds[idx].SetUnderlying(under)
 		for _, mr := range methods {
-			r.nameds[idx].AddMethod(types.NewFunc(token.NoPos, mr.pkg, mr.name, mr.sig))
+			fn := types.NewFunc(token.NoPos, mr.pkg, mr.name, mr.sig)
+			mr.meta.apply(fn)
+			r.nameds[idx].AddMethod(fn)
 		}
 		if r.bundle != nil {
 			r.bundle.filledNamed[r.nameds[idx]] = true

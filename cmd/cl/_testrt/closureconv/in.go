@@ -36,8 +36,10 @@ func add(a int, b int) int {
 // CHECK-NEXT: [[DEMO1_ENV:%.*]] = select i1 [[DEMO1_NIL]], ptr @"__llgo.directClosureNilEnv$", ptr [[DEMO1_CALL]]
 // CHECK-NEXT: [[DEMO1_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*Call).add$bound", ptr undef }, ptr [[DEMO1_ENV]], 1
 // CHECK: [[DEMO1_FN_FIELD:%.*]] = getelementptr inbounds nuw %main.Call, ptr [[DEMO1_CALL]], i32 0, i32 0
-// CHECK: store { ptr, ptr } [[DEMO1_BOUND]], ptr [[DEMO1_BOUND_SLOT:%.*]]
-// CHECK-NEXT: [[DEMO1_BOUND_VALUE:%.*]] = load %main.Func, ptr [[DEMO1_BOUND_SLOT]]
+// CHECK: [[DEMO1_BOUND_CODE:%.*]] = extractvalue { ptr, ptr } [[DEMO1_BOUND]], 0
+// CHECK-NEXT: [[DEMO1_BOUND_0:%.*]] = insertvalue %main.Func undef, ptr [[DEMO1_BOUND_CODE]], 0
+// CHECK-NEXT: [[DEMO1_BOUND_ENV:%.*]] = extractvalue { ptr, ptr } [[DEMO1_BOUND]], 1
+// CHECK-NEXT: [[DEMO1_BOUND_VALUE:%.*]] = insertvalue %main.Func [[DEMO1_BOUND_0]], ptr [[DEMO1_BOUND_ENV]], 1
 // CHECK-NEXT: store %main.Func [[DEMO1_BOUND_VALUE]], ptr [[DEMO1_FN_FIELD]]
 // CHECK: [[DEMO1_RET_FIELD:%.*]] = getelementptr inbounds nuw %main.Call, ptr [[DEMO1_CALL]], i32 0, i32 0
 // CHECK: [[DEMO1_RET:%.*]] = load %main.Func, ptr [[DEMO1_RET_FIELD]]
@@ -53,8 +55,10 @@ func demo1(n int) Func {
 // CHECK: [[DEMO2_NIL:%.*]] = icmp eq ptr [[DEMO2_CALL]], null
 // CHECK-NEXT: [[DEMO2_ENV:%.*]] = select i1 [[DEMO2_NIL]], ptr @"__llgo.directClosureNilEnv$", ptr [[DEMO2_CALL]]
 // CHECK-NEXT: [[DEMO2_BOUND:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*Call).add$bound", ptr undef }, ptr [[DEMO2_ENV]], 1
-// CHECK: store { ptr, ptr } [[DEMO2_BOUND]], ptr [[DEMO2_OUT:%.*]]
-// CHECK: [[DEMO2_RET:%.*]] = load %main.Func, ptr [[DEMO2_OUT]]
+// CHECK: [[DEMO2_CODE:%.*]] = extractvalue { ptr, ptr } [[DEMO2_BOUND]], 0
+// CHECK-NEXT: [[DEMO2_0:%.*]] = insertvalue %main.Func undef, ptr [[DEMO2_CODE]], 0
+// CHECK-NEXT: [[DEMO2_RET_ENV:%.*]] = extractvalue { ptr, ptr } [[DEMO2_BOUND]], 1
+// CHECK-NEXT: [[DEMO2_RET:%.*]] = insertvalue %main.Func [[DEMO2_0]], ptr [[DEMO2_RET_ENV]], 1
 // CHECK: ret %main.Func [[DEMO2_RET]]
 
 func demo2() Func {
@@ -87,8 +91,10 @@ func demo4() Func {
 // CHECK: [[DEMO5_ENV_SLOT:%.*]] = getelementptr inbounds nuw { i64 }, ptr [[DEMO5_ENV]], i32 0, i32 0
 // CHECK: store i64 [[DEMO5_COPY]], ptr [[DEMO5_ENV_SLOT]]
 // CHECK: [[DEMO5_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.demo5$1", ptr undef }, ptr [[DEMO5_ENV]], 1
-// CHECK: store { ptr, ptr } [[DEMO5_FN]], ptr [[DEMO5_OUT:%.*]]
-// CHECK: [[DEMO5_RET:%.*]] = load %main.Func, ptr [[DEMO5_OUT]]
+// CHECK: [[DEMO5_CODE:%.*]] = extractvalue { ptr, ptr } [[DEMO5_FN]], 0
+// CHECK-NEXT: [[DEMO5_0:%.*]] = insertvalue %main.Func undef, ptr [[DEMO5_CODE]], 0
+// CHECK-NEXT: [[DEMO5_RET_ENV:%.*]] = extractvalue { ptr, ptr } [[DEMO5_FN]], 1
+// CHECK-NEXT: [[DEMO5_RET:%.*]] = insertvalue %main.Func [[DEMO5_0]], ptr [[DEMO5_RET_ENV]], 1
 // CHECK: ret %main.Func [[DEMO5_RET]]
 
 // ARM64-LABEL: define i64 @"main.demo5$1"(ptr swiftself %0, i64 %1, i64 %2){{.*}} {
@@ -122,8 +128,10 @@ func demo5(n int) Func {
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[MAIN_R5]])
 // Conversion to the unnamed function type preserves the two function words.
 // CHECK: [[PLAIN_SOURCE:%.*]] = call %main.Func @main.demo5(i64 1)
-// CHECK: store %main.Func [[PLAIN_SOURCE]], ptr [[PLAIN_SLOT:%.*]]
-// CHECK: [[PLAIN_FN:%.*]] = load { ptr, ptr }, ptr [[PLAIN_SLOT]]
+// CHECK: [[PLAIN_CODE_VAL:%.*]] = extractvalue %main.Func [[PLAIN_SOURCE]], 0
+// CHECK-NEXT: [[PLAIN_0:%.*]] = insertvalue { ptr, ptr } undef, ptr [[PLAIN_CODE_VAL]], 0
+// CHECK-NEXT: [[PLAIN_ENV_VAL:%.*]] = extractvalue %main.Func [[PLAIN_SOURCE]], 1
+// CHECK-NEXT: [[PLAIN_FN:%.*]] = insertvalue { ptr, ptr } [[PLAIN_0]], ptr [[PLAIN_ENV_VAL]], 1
 // CHECK: [[PLAIN_ENV:%.*]] = extractvalue { ptr, ptr } [[PLAIN_FN]], 1
 // CHECK: [[PLAIN_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[PLAIN_FN]], 0
 // CHECK: [[PLAIN_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[PLAIN_CODE_RAW]])

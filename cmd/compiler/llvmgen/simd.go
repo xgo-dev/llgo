@@ -221,7 +221,7 @@ func simdLanes(typ types.Type) *types.Array {
 // restriction as a direct vector parameter or result.
 func containsWideSIMD(typ types.Type) bool {
 	if lanes, ok := SIMDVectorShape(typ); ok {
-		return (&types.StdSizes{WordSize: 8, MaxAlign: 8}).Sizeof(lanes) > 16
+		return types.SizesFor("gc", "amd64").Sizeof(lanes) > 16
 	}
 	switch typ := typ.Underlying().(type) {
 	case *types.Array:

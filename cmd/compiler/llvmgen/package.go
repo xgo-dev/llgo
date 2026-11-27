@@ -120,9 +120,8 @@ func Initialize(flags InitFlags) {
 type aProgram struct {
 	ctx      llvm.Context
 	funcPtrs map[types.Type]Type
+	closures map[*types.Signature]Type
 	typs     typeutil.Map // rawType -> Type
-	sizes    types.Sizes  // provided by Go compiler
-	gocvt    goTypes
 
 	patchType func(types.Type) types.Type
 
@@ -146,20 +145,23 @@ type aProgram struct {
 	hasStructLayouts bool
 	// Canonical types and their native slot-width views map to the same view.
 	nativeStorage map[Type]Type
+	nativeViews   map[nativeViewKey]Type
+	nativeCC      map[Type]CallConv
 	goWordSize    int
 	typeCtx       *types.Context
 	typeSizes     types.Sizes
 	// Resolve the physical C ABI once, outside declaration/call lowering.
 	nativeIntegerExt types.NativeIntExt
 
-	intType   llvm.Type
-	int1Type  llvm.Type
-	int8Type  llvm.Type
-	int16Type llvm.Type
-	int32Type llvm.Type
-	int64Type llvm.Type
-	voidType  llvm.Type
-	voidPtrTy llvm.Type
+	intType     llvm.Type
+	int1Type    llvm.Type
+	int8Type    llvm.Type
+	int16Type   llvm.Type
+	int32Type   llvm.Type
+	int64Type   llvm.Type
+	voidType    llvm.Type
+	voidPtrTy   llvm.Type
+	closureType llvm.Type
 	// Eight-byte in-memory Go pointer slot used when Core Wasm addresses are
 	// 32-bit. Pointer expressions themselves remain native wasm addresses.
 	widePtrStorageTy llvm.Type
@@ -266,18 +268,20 @@ type aProgram struct {
 }
 
 type AbiSymbol struct {
-	Name    string
-	PkgPath string
-	Raw     types.Type
-	Typ     Type
-	MSet    *types.MethodSet
+	Name       string
+	PkgPath    string
+	Raw        types.Type
+	PublicFunc bool
+	Typ        Type
+	MSet       *types.MethodSet
 }
 
 // AbiTypeInfo is the LLVM-free identity needed to declare one runtime type
 // descriptor in another Program.
 type AbiTypeInfo struct {
-	Name string
-	Raw  types.Type
+	Name       string
+	Raw        types.Type
+	PublicFunc bool
 }
 
 // A Program presents a program.
@@ -334,9 +338,13 @@ func newProgram(tgt *Target, sharedTypeCtx *types.Context) Program {
 	})
 	spec.PtrSize = ptrSize
 	spec.WordSize = goWordSize
+	if spec.WordSize > 0 && spec.MaxAlign > spec.WordSize {
+		spec.MaxAlign = spec.WordSize
+	}
 	prog := &aProgram{
 		ctx:      ctx,
 		funcPtrs: make(map[types.Type]Type),
+		closures: make(map[*types.Signature]Type),
 		target:   tgt, td: td, tm: tm,
 		ptrSize: ptrSize, goWordSize: goWordSize,
 		named: make(map[string]Type), fnnamed: make(map[string]int),
@@ -376,12 +384,18 @@ func newProgram(tgt *Target, sharedTypeCtx *types.Context) Program {
 			SIMDAlignments:   simdAlignments,
 		})
 	}
-	prog.gocvt = newGoTypes(prog.typeCtx)
 	prog.typeSizes = prog.typeCtx
 	prog.is32Bits = prog.GoWordSize() == 4
 	prog.abi.Init(uintptr(prog.GoWordSize()), (*goProgram)(prog))
 	prog.abi.NativeFuncAliasABI = prog.nativeFuncAliasABI
+	prog.abi.NativeFuncType = prog.isNativeFuncType
 	return prog
+}
+
+// TypeContext returns the canonical target-configured *types.Context shared by
+// this Program across type checking, layout, and ABI generation.
+func (p Program) TypeContext() *types.Context {
+	return p.typeCtx
 }
 
 // NewBackendProgram creates a Program with fresh LLVM-owned state and the same
@@ -395,7 +409,6 @@ func (p Program) NewBackendProgram() Program {
 		target = &targetCopy
 	}
 	backend := newProgram(target, p.typeCtx)
-	backend.sizes = p.sizes
 	backend.rt, backend.rtget = p.rt, p.rtget
 	backend.py, backend.pyget = p.py, p.pyget
 	backend.packageSyntax = p.packageSyntax
@@ -510,6 +523,9 @@ func (p Program) SetNoInterfaceMethod(fullName string) {
 func (p Program) isNoInterfaceMethod(fn *types.Func) bool {
 	if fn == nil {
 		return false
+	}
+	if fn.NoInterface() {
+		return true
 	}
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok || sig.Recv() == nil {
@@ -645,7 +661,6 @@ func (p Program) rtNamed(name string) *types.Named {
 						break
 					}
 				}
-				t, _ = p.gocvt.cvtNamed(t.(*types.Named))
 				return t.(*types.Named)
 			}
 		}
@@ -770,7 +785,17 @@ func (p Program) NewPackageEx(name, pkgPath string, metaCollect bool) Package {
 func (p Program) Struct(typs ...Type) Type {
 	els := make([]*types.Var, len(typs))
 	for i, t := range typs {
-		els[i] = types.NewParam(token.NoPos, nil, "_llgo_f"+strconv.Itoa(i), t.raw.Type)
+		fieldType := t.raw.Type
+		if (t.kind == vkFuncDecl || t.kind == vkFuncPtr) && p.IsClosureType(fieldType) {
+			if sig, ok := types.Unalias(fieldType).Underlying().(*types.Signature); ok {
+				cc := types.CDecl
+				if p.isStdcallType(fieldType) {
+					cc = types.Stdcall
+				}
+				fieldType = sig.WithCallConv(cc)
+			}
+		}
+		els[i] = types.NewParam(token.NoPos, nil, "_llgo_f"+strconv.Itoa(i), fieldType)
 	}
 	return p.rawType(types.NewStruct(els, nil))
 }

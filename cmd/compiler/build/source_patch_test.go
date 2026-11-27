@@ -1,6 +1,7 @@
 package build
 
 import (
+	"github.com/xgo-dev/llgo/target"
 	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/parser"
@@ -54,10 +55,18 @@ func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
 			}
 			// Use the same source-patch path as Build. Passing these overlays
 			// to cmd/go is invalid when a downloaded GOROOT is in GOMODCACHE.
+			typeCtx := types.NewContextWithConfig(types.ContextConfig{
+				Spec: target.ResolveSpec(target.Spec{
+					GOOS:        test.goos,
+					GOARCH:      "wasm",
+					WasmProfile: string(test.profile),
+				}),
+			})
 			dedup := packages.NewDeduper()
+			dedup.SetTypeContext(typeCtx)
 			dedup.SetLLGoFiles(llgoFiles)
-			pkgs, err := packages.LoadEx(dedup, func(sizes types.Sizes, _, _ string) types.Sizes {
-				return effectiveTypeSizes(sizes, test.profile)
+			pkgs, err := packages.LoadEx(dedup, func(_ types.Sizes, _, _ string) types.Sizes {
+				return typeCtx
 			}, &packages.Config{
 				Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
 				Env:        cfgEnv,

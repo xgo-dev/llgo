@@ -267,7 +267,7 @@ func ResolveSpec(in Spec) Spec {
 		if s.GOOS == "windows" {
 			s.HostAlign64 = 8
 		}
-	case "arm", "mips", "mipsle":
+	case "arm", "mips", "mipsle", "riscv32":
 		s.WordSize, s.PtrSize, s.MaxAlign, s.HostAlign64 = 4, 4, 4, 8
 		s.HostUsesNativeGo = true
 	case "wasm":

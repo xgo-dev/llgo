@@ -587,6 +587,7 @@ func staticByteArrayPatchStores(t *testing.T, origSrc, altSrc string, keepSkipIn
 	StripLargeStaticByteArraysExcept(pkg, []*ast.File{origFile}, info, except)
 	prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
 	ssaPkg := prog.CreatePackage(pkg, []*ast.File{origFile}, info, true)
+	ssaPkg.RetainInit = except
 	ssaPkg.Build()
 	return countInitStores(ssaPkg)
 }
@@ -646,6 +647,7 @@ func TestInitStaticByteArrayGlobalKeepsPatchSkipStores(t *testing.T) {
 	}
 	prog := ssa.NewProgram(fset, ssa.SanityCheckFunctions|ssa.InstantiateGenerics)
 	origSSA := prog.CreatePackage(origPkg, []*ast.File{origFile}, origInfo, true)
+	origSSA.RetainInit = except
 	altSSA := prog.CreatePackage(altPkg, []*ast.File{altFile}, altInfo, true)
 	origSSA.Build()
 	altSSA.Build()

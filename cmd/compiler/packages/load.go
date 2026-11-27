@@ -102,6 +102,14 @@ func NewDeduper() Deduper {
 	return &aDeduper{typeCtx: types.NewContext()}
 }
 
+// SetTypeContext installs a shared target-configured *types.Context so package
+// type checking, layout calculation, and downstream lowering share one context.
+func (p Deduper) SetTypeContext(ctx *types.Context) {
+	if p != nil && ctx != nil {
+		p.typeCtx = ctx
+	}
+}
+
 // SetImportTypes installs a validated dependency type-export reader. Syntax is
 // still parsed for compiler directives; a true result replaces type checking.
 func (p Deduper) SetImportTypes(fn func(*Package, *token.FileSet) bool) { p.importTypes = fn }

@@ -137,22 +137,11 @@ func (t Type) RawType() types.Type {
 	return t.raw.Type
 }
 
-// TypeSizes returns the sizes of the types.
-func (p Program) TypeSizes(sizes types.Sizes) types.Sizes {
-	p.sizes = sizes
-	if sizes != nil && p.typeCtx != nil {
-		p.syncTypeCtxSizes(sizes)
-	}
+// TypeSizes returns the target-configured types.Sizes backed by p's canonical
+// *types.Context. The sizes parameter is retained for caller compatibility;
+// physical and Go word/alignment rules are determined by p's Target spec.
+func (p Program) TypeSizes(_ types.Sizes) types.Sizes {
 	return (*goProgram)(p)
-}
-
-func (p Program) syncTypeCtxSizes(sizes types.Sizes) {
-	if sizes == nil || p.typeCtx == nil {
-		return
-	}
-	word := sizes.Sizeof(types.Typ[types.Int])
-	maxAlign := sizes.Alignof(types.Typ[types.Complex128])
-	p.typeCtx.SetSizes(word, maxAlign)
 }
 
 // TODO(xsw):
@@ -211,6 +200,11 @@ func (p Program) Slice(typ Type) Type {
 
 func (p Program) Pointer(typ Type) Type {
 	ret := p.rawType(types.NewPointer(typ.raw.Type))
+	if cc := p.nativeCallConvOf(typ); isNativeCallConv(cc) {
+		ret = p.nativeView(ret, cc)
+	} else if typ.kind == vkFuncPtr || typ.kind == vkFuncDecl {
+		ret = p.nativeView(ret, CDecl)
+	}
 	if p.isNativeStorage(typ) {
 		return p.withNativeStorage(ret)
 	}
@@ -258,6 +252,15 @@ func (p Program) Field(typ Type, i int) Type {
 			return p.VoidPtr()
 		}
 		panic("Field: interface index out of range")
+	case vkClosure, vkIfaceMethod:
+		if i == 0 {
+			sig := types.Unalias(typ.raw.Type).Underlying().(*types.Signature)
+			return p.funcPtrType(sig)
+		}
+		if i == 1 {
+			return p.VoidPtr()
+		}
+		panic("Field: closure index out of range")
 	}
 	var fld *types.Var
 	switch t := typ.raw.Type.Underlying().(type) {
@@ -291,18 +294,44 @@ func typeStringWithPkg(t types.Type) string {
 	})
 }
 
+func (p Program) funcPtrType(raw types.Type) Type {
+	if t := p.funcPtrs[raw]; t != nil {
+		return t
+	}
+	t := &aType{p.tyVoidPtr(), rawType{raw}, vkFuncPtr}
+	p.funcPtrs[raw] = t
+	return t
+}
+
+func (p Program) tyClosure() llvm.Type {
+	if p.closureType.IsNil() {
+		ptrTy := p.storageType(p.VoidPtr())
+		p.closureType = p.ctx.StructType([]llvm.Type{ptrTy, ptrTy}, false)
+	}
+	return p.closureType
+}
+
 func (p Program) rawType(raw types.Type) Type {
-	// An opaque code pointer carries its call prototype in raw. Go identity
-	// erases native aliases, including those in a higher-order signature.
-	if sig, ok := types.Unalias(raw).(*types.Signature); ok {
-		if alias, ok := raw.(*types.Alias); ok && p.nativeFuncAliasABI(alias) == "" {
+	if alias, ok := raw.(*types.Alias); ok {
+		if sig, isSig := types.Unalias(alias).(*types.Signature); isSig {
+			if p.isNativeFuncType(alias) {
+				return p.funcPtrType(alias)
+			}
 			raw = sig
 		}
-		if t := p.funcPtrs[raw]; t != nil {
+	}
+	if sig, ok := raw.(*types.Signature); ok {
+		if sig.CallConv().IsNative() {
+			return p.funcPtrType(sig)
+		}
+		// Key Go signatures by pointer identity rather than types.Identical:
+		// Go identity ignores native callback aliases in parameter/result types
+		// and ignores __llgo_va_list parameter names.
+		if t := p.closures[sig]; t != nil {
 			return t
 		}
-		t := &aType{p.tyVoidPtr(), rawType{raw}, vkFuncPtr}
-		p.funcPtrs[raw] = t
+		t := &aType{p.tyClosure(), rawType{sig}, vkClosure}
+		p.closures[sig] = t
 		return t
 	}
 	if v := p.typs.At(raw); v != nil {
@@ -441,12 +470,15 @@ func (p Program) toType(raw types.Type) Type {
 		}
 		return &aType{llvm.PointerType(p.rtMap(), 0), typ, vkMap}
 	case *types.Struct:
-		ll, kind := p.toLLVMStruct(t)
-		return &aType{ll, typ, kind}
+		ll := p.toLLVMStruct(t)
+		return &aType{ll, typ, vkStruct}
 	case *types.Named:
 		return p.toNamed(t)
-	case *types.Signature: // represents a C function pointer in raw type
-		return &aType{p.toLLVMFuncPtr(t), typ, vkFuncPtr}
+	case *types.Signature:
+		if t.CallConv().IsNative() {
+			return &aType{p.toLLVMFuncPtr(t), typ, vkFuncPtr}
+		}
+		return &aType{p.tyClosure(), typ, vkClosure}
 	case *types.Tuple:
 		return &aType{p.toLLVMTuple(t), typ, vkTuple}
 	case *types.Array:
@@ -473,20 +505,21 @@ func (p Program) toLLVMNamedStruct(name string, raw *types.Named, st *types.Stru
 	return typ
 }
 
-func (p Program) toLLVMStruct(raw *types.Struct) (ret llvm.Type, kind valueKind) {
-	fields, layout := p.toLLVMStructBody(raw, false)
-	ret = p.ctx.StructType(fields, false)
-	p.setStructLayout(raw, layout)
-	if IsClosure(raw) {
-		kind = vkClosure
-	} else {
-		kind = vkStruct
-	}
-	return
+func (p Program) toLLVMNamedClosure(name string, raw *types.Named) Type {
+	t := p.ctx.StructCreateNamed(name)
+	typ := &aType{t, rawType{raw}, vkClosure}
+	p.named[name] = typ
+	p.typs.Set(raw, typ)
+	ptrTy := p.storageType(p.VoidPtr())
+	t.StructSetBody([]llvm.Type{ptrTy, ptrTy}, false)
+	return typ
 }
 
-func IsClosure(raw *types.Struct) bool {
-	return abi.IsClosure(raw)
+func (p Program) toLLVMStruct(raw *types.Struct) llvm.Type {
+	fields, layout := p.toLLVMStructBody(raw, false)
+	ret := p.ctx.StructType(fields, false)
+	p.setStructLayout(raw, layout)
+	return ret
 }
 
 func (p Program) toLLVMFields(raw *types.Struct, native bool) (fields []llvm.Type) {
@@ -495,11 +528,10 @@ func (p Program) toLLVMFields(raw *types.Struct, native bool) (fields []llvm.Typ
 		fields = make([]llvm.Type, n)
 		for i := 0; i < n; i++ {
 			fieldRaw := p.patch(raw.Field(i).Type())
-			field := p.rawType(fieldRaw)
 			if native {
-				fields[i] = p.withNativeStorage(field).ll
+				fields[i] = p.Type(fieldRaw, CDecl).ll
 			} else {
-				fields[i] = p.storageType(field)
+				fields[i] = p.storageType(p.rawType(fieldRaw))
 			}
 		}
 	}
@@ -682,16 +714,18 @@ func (p Program) toNamed(raw *types.Named) Type {
 	}
 	switch t := raw.Underlying().(type) {
 	case *types.Struct:
-		kind := vkStruct
-		if IsClosure(t) {
-			kind = vkClosure
+		return p.toLLVMNamedStruct(name, raw, t, vkStruct)
+	case *types.Signature:
+		if p.isNativeFuncType(raw) {
+			return p.funcPtrType(raw)
 		}
-		return p.toLLVMNamedStruct(name, raw, t, kind)
+		return p.toLLVMNamedClosure(name, raw)
 	default:
-		typ := p.rawType(t)
 		if _, array := t.(*types.Array); array && p.hasLegacyNativeTypeLayout(raw) {
-			typ = p.withNativeStorage(typ)
+			typ := p.Type(t, CDecl)
+			return &aType{typ.ll, rawType{raw}, typ.kind}
 		}
+		typ := p.rawType(t)
 		return &aType{typ.ll, rawType{raw}, typ.kind}
 	}
 }

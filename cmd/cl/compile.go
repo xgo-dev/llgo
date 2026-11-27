@@ -130,9 +130,7 @@ func (p *context) isLargeNonPointerValue(t llvmgen.Type) bool {
 	}
 	// Very large values may be addressed far beyond the first guard page. Emit
 	// an explicit nil check instead of relying on the eventual load to fault.
-	ptrSize := int64(p.prog.GoWordSize())
-	sizes := &types.StdSizes{WordSize: ptrSize, MaxAlign: ptrSize}
-	return sizes.Sizeof(raw) > maxDirectDerefSize
+	return p.prog.TypeContext().Sizeof(raw) > maxDirectDerefSize
 }
 
 func (p *context) isZeroSizedValue(t llvmgen.Type) bool {
@@ -272,12 +270,19 @@ type context struct {
 }
 
 func (p *context) initStaticByteArrayGlobal(define bool, gbl *ssa.Global, g llvmgen.Global) bool {
-	if !define || len(p.staticByteArrays) == 0 || gbl.Pkg == nil || gbl.Pkg.Pkg == nil {
+	if !define || gbl == nil {
 		return false
 	}
-	data, ok := p.staticByteArrays[staticByteArrayDeclKey(gbl)]
-	if !ok {
-		return false
+	data := gbl.StaticBytes
+	if len(data) == 0 {
+		if len(p.staticByteArrays) == 0 || gbl.Pkg == nil || gbl.Pkg.Pkg == nil {
+			return false
+		}
+		var ok bool
+		data, ok = p.staticByteArrays[staticByteArrayDeclKey(gbl)]
+		if !ok {
+			return false
+		}
 	}
 	ptr, ok := types.Unalias(gbl.Type()).(*types.Pointer)
 	if !ok {
@@ -288,7 +293,7 @@ func (p *context) initStaticByteArrayGlobal(define bool, gbl *ssa.Global, g llvm
 		return false
 	}
 	// Length is the restore-time check. Byte contents are trusted because
-	// StripLargeStaticByteArrays only accepts INT/CHAR literals.
+	// llgo/ssa and StripLargeStaticByteArrays only accept INT/CHAR literals.
 	basic, ok := arr.Elem().Underlying().(*types.Basic)
 	if !ok || (basic.Kind() != types.Byte && basic.Kind() != types.Uint8) {
 		return false
@@ -802,12 +807,12 @@ func (p *context) compileFuncDecl(pkg llvmgen.Package, f *ssa.Function) (llvmgen
 	fn := pkg.FuncOf(name)
 	hasFreeVars := len(f.FreeVars) > 0
 	elideFreeVarEnv := p.canElideZeroSizedClosureEnv(f)
-	hasExplicitEnv := false
-	// ParsePkgSyntax is the sole //llgo:env extractor. Lowering only consumes
-	// its source-declaration cache; imported env entries use NewEnvFunc.
-	if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
-		fullName := declarationFuncName(llvmgen.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())
-		hasExplicitEnv = p.prog.HasClosureEnvDirective(p.goProg.Fset, fullName, decl.Pos())
+	hasExplicitEnv := f.HasClosureEnv
+	if !hasExplicitEnv {
+		if decl, ok := f.Syntax().(*ast.FuncDecl); ok {
+			fullName := declarationFuncName(llvmgen.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())
+			hasExplicitEnv = p.prog.HasClosureEnvDirective(p.goProg.Fset, fullName, decl.Pos())
+		}
 	}
 	directFreeVarEnv := !elideFreeVarEnv && !hasExplicitEnv && p.canUseDirectSinglePtrClosureEnv(f)
 	directFreeVarNullable := directFreeVarEnv && p.directClosureEnvNullable(f)
@@ -1068,6 +1073,9 @@ func funcInfoDisplayName(goName string) string {
 }
 
 func hasNoInlineDirective(f *ssa.Function) bool {
+	if f != nil && f.NoInline {
+		return true
+	}
 	return hasFuncDirective(f, "go:noinline")
 }
 
@@ -3930,9 +3938,17 @@ func isTypeParamObject(obj types.Object) bool {
 	return ok
 }
 
-func instantiate(orig types.Type, t *types.Named) (typ types.Type) {
-	typ, _ = llvmgen.Instantiate(orig, t)
-	return
+func instantiate(orig types.Type, t *types.Named) types.Type {
+	if tp := t.TypeArgs(); tp != nil {
+		targs := make([]types.Type, tp.Len())
+		for i := 0; i < tp.Len(); i++ {
+			targs[i] = tp.At(i)
+		}
+		if typ, err := types.Instantiate(nil, orig, targs, false); err == nil {
+			return typ
+		}
+	}
+	return orig
 }
 
 func (p *context) resolveLinkname(name string) string {

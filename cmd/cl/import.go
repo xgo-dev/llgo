@@ -99,12 +99,10 @@ func IsCPackage(name string) bool {
 
 // PkgKindOf returns the kind of a package.
 func PkgKindOf(pkg *types.Package) (int, string) {
-	scope := pkg.Scope()
-	kind, param := pkgKindByScope(scope)
-	if kind == PkgNormal {
-		kind = pkgKindByPath(pkg.Path())
+	if pkg == nil {
+		return PkgNormal, ""
 	}
-	return kind, param
+	return int(pkg.Kind()), pkg.KindParam()
 }
 
 // PkgSkipsInit reports whether packages of kind are excluded from Go package

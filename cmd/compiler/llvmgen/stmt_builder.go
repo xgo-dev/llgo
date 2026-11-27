@@ -195,8 +195,17 @@ func (b Builder) Return(results ...Expr) {
 		b.impl.CreateRetVoid()
 	case 1:
 		raw := b.Func.raw.Type.(*types.Signature).Results().At(0).Type()
-		ret := checkExpr(results[0], raw, b)
-		b.impl.CreateRet(b.fitLLVMValue(ret.impl, ret.Type, b.Func.ll.ReturnType()))
+		retTy := b.Func.ll.ReturnType()
+		var ret Expr
+		if retTy.TypeKind() == llvm.PointerTypeKind {
+			if _, isSig := types.Unalias(raw).Underlying().(*types.Signature); isSig {
+				ret = checkExprTo(results[0], b.Prog.funcPtrType(raw), b)
+			}
+		}
+		if ret.IsNil() {
+			ret = checkExpr(results[0], raw, b)
+		}
+		b.impl.CreateRet(b.fitLLVMValue(ret.impl, ret.Type, retTy))
 	default:
 		tret := b.Func.raw.Type.(*types.Signature).Results()
 		values := llvmParams(0, results, tret, b)
@@ -357,7 +366,6 @@ type Phi struct {
 
 // AddIncoming adds incoming values to a phi node.
 func (p Phi) AddIncoming(b Builder, preds []BasicBlock, f func(i int, blk BasicBlock) Expr) {
-	raw := p.raw.Type
 	vals := make([]llvm.Value, len(preds))
 	logicalBlock := b.blk
 	defer func() {
@@ -373,7 +381,7 @@ func (p Phi) AddIncoming(b Builder, preds []BasicBlock, f func(i int, blk BasicB
 		// move the predecessor's existing terminator to the new tail as well.
 		b.blk = blk
 		val := f(iblk, blk)
-		vals[iblk] = checkExpr(val, raw, b).impl
+		vals[iblk] = checkExprTo(val, p.Type, b).impl
 		if blk.last != oldTail && !terminator.IsNil() {
 			terminator.RemoveFromParentAsInstruction()
 			b.impl.SetInsertPointAtEnd(blk.last)

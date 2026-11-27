@@ -350,8 +350,8 @@ type CRich = Rich
 	)
 	otherSig := gotypes.NewSignatureType(nil, nil, nil, nil, nil, false)
 	goPkg.Scope().Insert(gotypes.NewTypeName(token.NoPos, goPkg, "AliasC", erasedSig))
-	ctx.registerCheckedGoPackage("example.com/demo", goPkg)
-	ctx.registerCheckedGoPackage("example.com/empty", nil)
+	ctx.registerCheckedGoPackage(NewPackage("example.com/demo", "demo"), goPkg)
+	ctx.registerCheckedGoPackage(NewPackage("example.com/empty", "empty"), nil)
 
 	ctx.mu.Lock()
 	gotType := ctx.fromGoLocked(erasedSig, Go, false)

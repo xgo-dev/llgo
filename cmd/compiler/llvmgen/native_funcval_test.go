@@ -69,7 +69,7 @@ func TestNativeIntegerFuncvalAdapters(t *testing.T) {
 					t.Fatalf("nil native pointer produced non-nil Go function: %s", converted.impl)
 				}
 				body.Return()
-				goSig := dst.raw.Type.Underlying().(*types.Struct).Field(0).Type().(*types.Signature)
+				goSig := dst.raw.Type.Underlying().(*types.Signature)
 				wrapper := pkg.FuncOf(pkg.Path() + ".__llgo_c_funcval$" + prog.abi.FuncName(goSig))
 				wantAdapter := test.attrs != nil && source != "Go-declaration"
 				if (wrapper != nil) != wantAdapter {

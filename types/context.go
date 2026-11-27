@@ -191,14 +191,31 @@ func (c *Context) HasNativeMetadata() bool {
 
 // SetTypeCallConv registers a type-level calling convention directive (such as
 // //llgo:cdecl or //llgo:stdcall) by qualified type name ("pkg.Name") and
-// invalidates cached go/types lowerings so subsequent queries reflect it.
+// invalidates cached layouts so subsequent queries reflect it.
 func (c *Context) SetTypeCallConv(typeKey string, cc CallConv) {
 	c.mu.Lock()
 	c.typeCallConvs[typeKey] = cc
 	if cc.IsNative() {
 		c.hasNativeMetadata.Store(true)
 	}
-	c.resetGoCachesLocked()
+	for _, n := range c.goNamed {
+		if typeNameKey(n.obj) == typeKey {
+			n.callConv = cc
+			n.hasCallConv = true
+			n.resolved = false
+		}
+	}
+	for _, a := range c.goAliases {
+		if typeNameKey(a.obj) == typeKey {
+			a.callConv = cc
+			a.hasCallConv = true
+			if sig, ok := a.rhs.(*Signature); ok {
+				a.rhs = sig.WithCallConv(cc)
+			}
+		}
+	}
+	c.goTypes = make(map[goTypeCacheKey]Type)
+	c.layouts = make(map[Type]*Layout)
 	c.mu.Unlock()
 }
 
@@ -300,30 +317,43 @@ func (c *Context) SetSizes(wordSize, maxAlign int64) {
 
 func (c *Context) resetGoCachesLocked() {
 	c.goTypes = make(map[goTypeCacheKey]Type)
-	c.goNamed = make(map[*gotypes.Named]*Named)
-	c.goAliases = make(map[gotypes.Type]*Alias)
-	c.incompleteNamed = nil
-	c.incompleteLLNamed = nil
+	for _, n := range c.goNamed {
+		if n.goNamed != nil {
+			if st, ok := n.goNamed.Underlying().(*gotypes.Struct); ok && st.NumFields() > 0 {
+				if c.hasNativeFieldsLocked([]*gotypes.Var{st.Field(0)}) {
+					n.resolved = false
+				}
+			}
+		}
+	}
 	c.layouts = make(map[Type]*Layout)
 }
 
 func (c *Context) checkIncompleteNamedLocked() {
+	changed := false
 	if len(c.incompleteNamed) > 0 {
+		remaining := c.incompleteNamed[:0]
 		for _, n := range c.incompleteNamed {
 			if n.resolved && n.goNamed != nil && n.goNamed.Underlying() != n.goUnderlying {
-				c.resetGoCachesLocked()
-				return
+				n.resolved = false
+				changed = true
+			} else {
+				remaining = append(remaining, n)
 			}
 		}
+		c.incompleteNamed = remaining
 	}
 	if len(c.incompleteLLNamed) > 0 {
 		for n, prev := range c.incompleteLLNamed {
 			if n.underlying != prev {
 				c.incompleteLLNamed = nil
-				c.layouts = make(map[Type]*Layout)
-				return
+				changed = true
+				break
 			}
 		}
+	}
+	if changed {
+		c.layouts = make(map[Type]*Layout)
 	}
 }
 
@@ -1243,7 +1273,7 @@ func (c *Context) fromGoFuncLocked(o *gotypes.Func) *Func {
 	if o.Parent() != nil {
 		f.parent = c.fromGoScopeLocked(o.Parent())
 	}
-	if o.Scope() != nil {
+	if _, ok := o.Type().(*gotypes.Signature); ok && o.Scope() != nil {
 		f.scope = c.fromGoScopeLocked(o.Scope())
 	}
 	if orig := o.Origin(); orig != nil && orig != o {
@@ -1702,13 +1732,29 @@ func (c *Context) populateInfoFromGoLocked(info *Info, goInfo *gotypes.Info, goV
 	}
 }
 
-func (c *Context) registerCheckedGoPackage(pkgPath string, goPkg *gotypes.Package) {
+func (c *Context) registerCheckedGoPackage(pkg *Package, goPkg *gotypes.Package) {
 	if c == nil || goPkg == nil {
 		return
 	}
 	c.mu.Lock()
+	// Bind goPkg -> pkg before go/types runs so that any Sizes/FromGo query
+	// triggered during type checking (e.g. unsafe.Sizeof/Offsetof constants)
+	// reuses the caller's *Package instead of creating an orphan duplicate.
+	if pkg != nil {
+		c.goPkgs[goPkg] = pkg
+		pkg.goPkg = goPkg
+		pkg.ctx = c
+		if gs := goPkg.Scope(); gs != nil && pkg.scope != nil {
+			pkg.scope.goScope = gs
+			c.goScopes[gs] = pkg.scope
+		}
+	}
 	if c.checkedGoPkgs == nil {
 		c.checkedGoPkgs = make(map[string]*gotypes.Package)
+	}
+	pkgPath := goPkg.Path()
+	if pkg != nil && pkg.path != "" {
+		pkgPath = pkg.path
 	}
 	c.checkedGoPkgs[pkgPath] = goPkg
 	c.mu.Unlock()
@@ -1765,6 +1811,30 @@ func (c *Context) prescanTypeDirectives(pkgPath string, files []*ast.File, isola
 							c.hasNativeMetadata.Store(true)
 						}
 						changed = true
+					}
+					if cc.IsNative() {
+						if st, ok := ts.Type.(*ast.StructType); ok && st.Fields != nil {
+							if c.nativeStructFields == nil {
+								c.nativeStructFields = make(map[token.Pos]bool)
+							}
+							for _, field := range st.Fields.List {
+								if len(field.Names) == 0 {
+									if pos := embeddedStructFieldPos(field.Type); pos.IsValid() {
+										c.nativeStructFields[pos] = true
+										c.hasNativeMetadata.Store(true)
+										changed = true
+									}
+									continue
+								}
+								for _, name := range field.Names {
+									if pos := name.Pos(); pos.IsValid() {
+										c.nativeStructFields[pos] = true
+										c.hasNativeMetadata.Store(true)
+										changed = true
+									}
+								}
+							}
+						}
 					}
 					if ts.Assign.IsValid() && isolatedAliases[ts.Name.Name] {
 						if c.typeAliasCallConvs == nil {

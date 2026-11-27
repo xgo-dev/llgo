@@ -113,9 +113,6 @@ func (hw *cheaderWriter) processDependentTypes(t types.Type, visiting map[string
 		// For named types, handle the underlying type dependencies
 		underlying := typ.Underlying()
 		if structType, ok := underlying.(*types.Struct); ok {
-			if llvmgen.IsClosure(structType) {
-				return fmt.Errorf("closure type %s can't export to C header", typ.Obj().Name())
-			}
 			// For named struct types, handle field dependencies directly
 			for i := 0; i < structType.NumFields(); i++ {
 				field := structType.Field(i)
@@ -220,9 +217,6 @@ retry:
 	case *types.Interface:
 		return "GoInterface"
 	case *types.Struct:
-		if llvmgen.IsClosure(typ) {
-			panic("closure type can't export to C header")
-		}
 		// For anonymous structs, generate a descriptive name
 		var fields []string
 		for i := 0; i < typ.NumFields(); i++ {

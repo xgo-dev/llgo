@@ -36,10 +36,13 @@ import (
 // of t. Frontend lifetime analysis must use the same representation as lowering,
 // including LLGo's two-word Go closures and one-word native callbacks.
 func (p Program) InterfaceIndirect(t Type) bool {
-	if !directIfaceType(t.raw.Type) {
+	if !p.directIfaceType(t.raw.Type, false) {
 		return true
 	}
-	kind, _, _ := abi.DataKindOf(t.raw.Type, 0, p.is32Bits)
+	kind, inner, _ := abi.DataKindOf(t.raw.Type, 0, p.is32Bits)
+	if kind == abi.Indirect && p.isNativeFuncType(inner) {
+		kind = abi.Pointer
+	}
 	return kind == abi.Indirect
 }
 
@@ -480,8 +483,8 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret 
 	rawIntf := tinter.raw.Type.Underlying().(*types.Interface)
 	dbgInstrf("MakeInterface %v, %v\n", rawIntf, x.impl)
 	if x.kind == vkFuncDecl {
-		typ := b.Prog.Type(x.raw.Type, GoDecl)
-		x = checkExpr(x, typ.raw.Type, b)
+		typ := b.Prog.Closure(x.raw.Type.(*types.Signature))
+		x = checkExprTo(x, typ, b)
 	}
 	prog := b.Prog
 	typ := x.Type
@@ -490,7 +493,7 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret 
 		b.recordUseIface(typ)
 		tabi = b.abiType(typ.raw.Type)
 	}
-	if !directIfaceType(typ.raw.Type) {
+	if !prog.directIfaceType(typ.raw.Type, false) {
 		if box, ok := b.staticIfaceBox(typ, x); ok {
 			return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, box), tinter}
 		}
@@ -498,7 +501,10 @@ func (b Builder) makeInterface(tinter Type, x Expr, observable, heap bool) (ret 
 		b.Store(vptr, x)
 		return Expr{b.unsafeInterface(rawIntf, typ.raw.Type, tabi, vptr.impl), tinter}
 	}
-	kind, _, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
+	kind, inner, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
+	if kind == abi.Indirect && prog.isNativeFuncType(inner) {
+		kind = abi.Pointer
+	}
 	switch kind {
 	case abi.Indirect:
 		if box, ok := b.staticIfaceBox(typ, x); ok {
@@ -598,18 +604,21 @@ func (b Builder) recordInterfaceInfo(t *types.Interface, typeName string) {
 	intfSym := mb.Sym(typeName)
 	for i := 0; i < t.NumMethods(); i++ {
 		f := t.Method(i)
-		ftypName, _ := prog.abi.TypeName(funcType(prog, f.Type()))
+		ftypName, _ := prog.abi.TypeNameEx(f.Type(), true)
 		mb.AddIfaceMethod(intfSym, abiMethodName(f), mb.Sym(ftypName))
 	}
 }
 
 func (b Builder) valFromData(typ Type, data llvm.Value) Expr {
 	prog := b.Prog
-	if !directIfaceType(typ.raw.Type) {
+	if !prog.directIfaceType(typ.raw.Type, false) {
 		stored := llvm.CreateLoad(b.impl, prog.storageType(typ), data)
 		return Expr{b.fromStorageValue(typ, stored), typ}
 	}
 	kind, real, lvl := abi.DataKindOf(typ.raw.Type, 0, prog.is32Bits)
+	if kind == abi.Indirect && prog.isNativeFuncType(real) {
+		kind = abi.Pointer
+	}
 	switch kind {
 	case abi.Indirect:
 		stored := llvm.CreateLoad(b.impl, prog.storageType(typ), data)

@@ -25,7 +25,10 @@ import (
 //
 // The builder should generally call one of the emit{New,Local,LocalVar} wrappers instead.
 func emitAlloc(f *Function, typ types.Type, pos token.Pos, comment string) *Alloc {
-	v := &Alloc{Comment: comment}
+	v := &Alloc{
+		Comment: comment,
+		NoScan:  typ != nil && !typ.HasPtrData(),
+	}
 	v.setType(types.NewPointer(typ))
 	v.setPos(pos)
 	f.emit(v)
