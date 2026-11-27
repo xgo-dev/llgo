@@ -8,6 +8,7 @@ import (
 	"github.com/xgo-dev/llgo/types"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
@@ -19,17 +20,23 @@ import (
 
 func (f *frontendCache) build(selected map[*ssa.Package]bool) {
 	var entries []ssaBuildEntry
+	var missing []string
 	for _, entry := range f.entries {
 		if !f.built[entry.pkg] && selected[entry.pkg] {
 			if f.ctx.dedup.IsExported(entry.id) {
 				if f.ctx.buildConf.Verbose {
 					fmt.Fprintf(os.Stderr, "FRONTEND SOURCE REQUIRED: %s (reason=%s)\n", entry.id, f.sourceReason[entry.id])
 				}
-				f.err = errFrontendSourceRequired
-				return
+				missing = append(missing, entry.id)
+				continue
 			}
 			entries = append(entries, entry)
 		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		f.err = &frontendSourceRequiredError{pkgIDs: missing}
+		return
 	}
 	buildSSAPkgs(f.ctx, entries)
 	for _, entry := range entries {
@@ -77,8 +84,10 @@ func (f *frontendCache) prepare() error {
 	defer span.done()
 	f.indexTypes()
 	selected := make(map[*ssa.Package]bool)
-	for _, pkg := range f.orderedPackages() {
-		record := f.load(pkg)
+	ordered := f.orderedPackages()
+	loaded := f.loadAll(ordered)
+	for i, pkg := range ordered {
+		record := loaded[i].record
 		if record != nil && pkg.Name != "main" && !f.ctx.packageCacheDisabled(pkg.ID) {
 			f.records[pkg.ID] = record
 		} else {
@@ -166,6 +175,9 @@ func (f *frontendCache) bindFunctions() {
 	if f.functions == nil {
 		f.functions = make(map[string]*ssa.Function)
 	}
+	if f.instances == nil {
+		f.instances = make(map[*ssa.Function]bool)
+	}
 	if f.ambiguous == nil {
 		f.ambiguous = make(map[string]bool)
 	}
@@ -180,6 +192,13 @@ func (f *frontendCache) bindFunctions() {
 			return
 		}
 		f.bound[fn] = true
+		if frontendCallerSynthetic(fn) {
+			return
+		}
+		if frontendInstance(fn) {
+			f.instances[fn] = true
+			return
+		}
 		id := f.functionID(fn)
 		if f.ambiguous[id] {
 			f.uncacheable[f.owners[f.functionPackage(fn)]] = true
@@ -260,6 +279,15 @@ func (f *frontendCache) importBodies() error {
 				visit(fn, 0, selected)
 			}
 		}
+		for fn := range f.instances {
+			if len(fn.Blocks) == 0 {
+				continue
+			}
+			owner := f.owners[f.functionPackage(fn)]
+			if owner != nil && (!owner.CacheHit || owner.Name == "main") {
+				visit(fn, 0, selected)
+			}
+		}
 		if len(selected) == 0 {
 			return nil
 		}
@@ -297,6 +325,10 @@ func (f *frontendCache) certify() error {
 		}
 		if err := f.ctx.collectFingerprint(pkg); err != nil {
 			f.markUncacheable(pkg)
+			if f.fingerprintErr == nil {
+				f.fingerprintErr = make(map[Package]bool)
+			}
+			f.fingerprintErr[pkg] = true
 			f.source(pkg, selected, "fingerprint-error")
 			continue
 		}
@@ -312,19 +344,21 @@ func (f *frontendCache) certify() error {
 		}
 		pkg.frontendOpaque, pkg.linkSnapshot = record, snapshot
 	}
-	f.build(selected)
-	if f.err != nil {
-		return f.err
-	}
-	if err := f.materialize(); err != nil {
-		return err
+	if len(selected) > 0 {
+		f.build(selected)
+		if f.err != nil {
+			return f.err
+		}
+		if err := f.materialize(); err != nil {
+			return err
+		}
 	}
 	// Inline preflight also needs archive state for the source-built packages.
 	// Skip packages that are decl-only/empty-link or fail speculative
 	// fingerprinting (e.g. unused cross-build runtime packages); real build
 	// errors are surfaced by prePackageBuild only if the package is needed.
 	for _, pkg := range f.orderedPackages() {
-		if f.uncacheable[pkg] {
+		if f.fingerprintErr[pkg] {
 			continue
 		}
 		task := newPackageBuildTask(pkg)
@@ -334,6 +368,10 @@ func (f *frontendCache) certify() error {
 		if pkg.Fingerprint == "" {
 			if err := f.ctx.collectFingerprint(pkg); err != nil {
 				f.markUncacheable(pkg)
+				if f.fingerprintErr == nil {
+					f.fingerprintErr = make(map[Package]bool)
+				}
+				f.fingerprintErr[pkg] = true
 				continue
 			}
 		}
@@ -365,6 +403,13 @@ func (f *frontendCache) certify() error {
 			if _, found := inventories[f.functionPackage(fn)][id]; !found || f.uncacheable[owner] {
 				f.source(owner, selected, "missing-inventory:"+id)
 			}
+		}
+		for fn := range f.instances {
+			owner := f.owners[f.functionPackage(fn)]
+			if owner == nil || owner.frontendOpaque == nil {
+				continue
+			}
+			f.source(owner, selected, "generic-instance:"+fn.String())
 		}
 		if len(selected) == 0 {
 			break
@@ -468,6 +513,84 @@ func (f *frontendCache) capture(result *goescape.Result) {
 			f.loader.capture(pkg, record, f.types)
 		}
 	}
+	if f.loader != nil && f.loader.inlineHintKey != "" {
+		f.loader.storeInlineHint(f.rootInlineSourcePackages())
+	}
+}
+
+// rootInlineSourcePackages identifies the small set of dependency packages
+// whose inlineable bodies are transitively called from the current invocation's
+// initial root packages. Persisting this hint lets subsequent -Os incremental
+// builds skip parsing unrelated dependencies via .llgotypes without retrying.
+func (f *frontendCache) rootInlineSourcePackages() []string {
+	bodyBudget, _, depth := cl.FrontendInlinePolicy()
+	costs := make(map[string]int)
+	for _, record := range f.records {
+		for _, fn := range record.Functions {
+			costs[fn.ID] = fn.Facts.InlineCost
+		}
+	}
+	roots := make(map[Package]bool, len(f.ctx.initial))
+	for _, initPkg := range f.ctx.initial {
+		if pkg := f.ctx.pkgs[initPkg]; pkg != nil {
+			roots[pkg] = true
+		}
+	}
+	targets := make(map[*ssa.Function]*ssa.Function)
+	active := make(map[*ssa.Function]bool)
+	needed := make(map[string]bool)
+	var visit func(*ssa.Function, int)
+	visit = func(fn *ssa.Function, level int) {
+		if fn == nil || active[fn] || level > depth {
+			return
+		}
+		active[fn] = true
+		defer delete(active, fn)
+		for _, block := range fn.Blocks {
+			for _, instr := range block.Instrs {
+				call, ok := instr.(ssa.CallInstruction)
+				if !ok {
+					continue
+				}
+				callee := call.Common().StaticCallee()
+				target, resolved := targets[callee]
+				if !resolved {
+					target = cl.ResolveInlineTarget(callee, f.ctx.patches)
+					targets[callee] = target
+				}
+				if target == nil {
+					continue
+				}
+				if cost, ok := costs[f.functionID(target)]; ok && cost <= bodyBudget {
+					if owner := f.owners[target.Pkg]; owner != nil && !roots[owner] && owner.Name != "main" {
+						needed[owner.ID] = true
+					}
+					visit(target, level+1)
+				}
+			}
+		}
+	}
+	for _, fn := range f.functions {
+		owner := f.owners[f.functionPackage(fn)]
+		if owner != nil && roots[owner] && len(fn.Blocks) > 0 {
+			visit(fn, 0)
+		}
+	}
+	for fn := range f.instances {
+		if len(fn.Blocks) == 0 {
+			continue
+		}
+		owner := f.owners[f.functionPackage(fn)]
+		if owner != nil && roots[owner] {
+			visit(fn, 0)
+		}
+	}
+	out := make([]string, 0, len(needed))
+	for id := range needed {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func derefFrontendType(typ types.Type) types.Type {
@@ -475,6 +598,19 @@ func derefFrontendType(typ types.Type) types.Type {
 		return types.Unalias(pointer.Elem())
 	}
 	return types.Unalias(typ)
+}
+
+// frontendCallerSynthetic reports whether fn is a per-use-site synthetic
+// wrapper ($bound method value or $thunk method expression) generated on demand
+// with a body by ssa.Builder. Multiple call sites legitimately create distinct
+// *ssa.Function instances with identical identities and never rely on opaque
+// package contracts.
+func frontendCallerSynthetic(fn *ssa.Function) bool {
+	if fn == nil || fn.Pkg != nil || fn.Parent() != nil {
+		return false
+	}
+	return strings.HasPrefix(fn.Synthetic, "bound method wrapper for ") ||
+		strings.HasPrefix(fn.Synthetic, "thunk for ")
 }
 
 // Instances and nested bodies can depend on caller-defined types outside the

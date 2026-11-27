@@ -11,7 +11,9 @@ import (
 	"github.com/xgo-dev/llgo/types"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"sync"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
@@ -48,29 +50,31 @@ type frontendEnvelope struct {
 }
 
 type frontendCache struct {
-	ctx          *context
-	keys         map[string]string
-	locals       map[string]string
-	records      map[string]*frontendExport
-	owners       map[*ssa.Package]Package
-	packages     map[string]*types.Package
-	ids          map[*types.Package]string
-	types        *frontcache.Types
-	entries      []ssaBuildEntry
-	built        map[*ssa.Package]bool
-	methods      []*ssa.Function
-	functions    map[string]*ssa.Function
-	bound        map[*ssa.Function]bool
-	fnIDs        map[*ssa.Function]string
-	imports      map[*ssa.Function]goescape.Summary
-	importKeys   map[*ssa.Function]string
-	ambiguous    map[string]bool
-	uncacheable  map[Package]bool
-	sourceReason map[string]string
-	loader       *frontendTypeLoader
-	err          error
-	programInput string
-	program      *frontendProgramExport
+	ctx            *context
+	keys           map[string]string
+	locals         map[string]string
+	records        map[string]*frontendExport
+	owners         map[*ssa.Package]Package
+	packages       map[string]*types.Package
+	ids            map[*types.Package]string
+	types          *frontcache.Types
+	entries        []ssaBuildEntry
+	built          map[*ssa.Package]bool
+	methods        []*ssa.Function
+	functions      map[string]*ssa.Function
+	instances      map[*ssa.Function]bool
+	bound          map[*ssa.Function]bool
+	fnIDs          map[*ssa.Function]string
+	imports        map[*ssa.Function]goescape.Summary
+	importKeys     map[*ssa.Function]string
+	ambiguous      map[string]bool
+	uncacheable    map[Package]bool
+	fingerprintErr map[Package]bool
+	sourceReason   map[string]string
+	loader         *frontendTypeLoader
+	err            error
+	programInput   string
+	program        *frontendProgramExport
 }
 
 func (c *context) newFrontendCache(entries []ssaBuildEntry, mode ssa.BuilderMode) *frontendCache {
@@ -164,12 +168,149 @@ func (f *frontendCache) path(key string) string {
 	return filepath.Join(f.ctx.ensureCacheManager().root, "frontend", key+".json")
 }
 
-func (f *frontendCache) load(pkg Package) *frontendExport {
-	key, err := f.inputKey(pkg)
-	if err != nil || key == "" {
+func (f *frontendCache) manifestTemplate() *manifestBuilder {
+	base := newManifestBuilder()
+	f.ctx.collectEnvInputs(base)
+	f.ctx.collectCommonInputs(base)
+	base.common.WasmReflectBridges, base.common.WasmFuncInfoEntries, base.common.WasmRuntimeFree = false, false, false
+	if len(base.common.BuildTags) > 1 {
+		base.common.BuildTags = append([]string(nil), base.common.BuildTags...)
+		sort.Strings(base.common.BuildTags)
+	}
+	return base
+}
+
+func (f *frontendCache) computeLocalFingerprint(base *manifestBuilder, current Package) (string, error) {
+	m := newManifestBuilder()
+	m.env = base.env
+	m.common = base.common
+	if err := f.ctx.collectPackageInputs(m, current); err != nil {
+		return "", err
+	}
+	m.pkg.DeadInits, m.pkg.FrontendInputs = nil, ""
+	return m.Fingerprint(), nil
+}
+
+// precomputeLocals populates f.locals for pkgs and all reachable effective
+// dependencies in parallel, warming non-thread-safe metadata caches once up front.
+func (f *frontendCache) precomputeLocals(pkgs []Package) {
+	seen := make(map[string]bool, len(pkgs))
+	var todo []Package
+	var collect func(Package)
+	collect = func(current Package) {
+		if current == nil || seen[current.ID] {
+			return
+		}
+		seen[current.ID] = true
+		if f.locals[current.ID] == "" {
+			todo = append(todo, current)
+		}
+		for _, dep := range effectiveDependencies(current) {
+			loaded := f.ctx.pkgByID[dep.ID]
+			if loaded == nil {
+				loaded = &aPackage{Package: dep}
+			}
+			collect(loaded)
+		}
+	}
+	for _, pkg := range pkgs {
+		collect(pkg)
+	}
+	if len(todo) == 0 {
+		return
+	}
+
+	// Warm shared caches serially before fanning out file digesting across workers.
+	_ = f.ctx.ensureCacheManager()
+	_ = f.ctx.getLLVMVersion()
+	base := f.manifestTemplate()
+	for _, pkg := range todo {
+		_, _ = pkgSFiles(f.ctx, pkg.Package)
+		if f.ctx.mode != ModeGen {
+			_, _ = llgoPkgFileInputs(f.ctx, pkg.Package)
+			if pkg.AltPkg != nil {
+				_, _ = llgoPkgFileInputs(f.ctx, pkg.AltPkg.Package)
+			}
+		}
+	}
+
+	results := make([]string, len(todo))
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(todo) {
+		workers = len(todo)
+	}
+	if workers <= 1 {
+		for i, pkg := range todo {
+			if fp, err := f.computeLocalFingerprint(base, pkg); err == nil {
+				results[i] = fp
+			}
+		}
+	} else {
+		jobs := make(chan int, len(todo))
+		for i := range todo {
+			jobs <- i
+		}
+		close(jobs)
+		var wg sync.WaitGroup
+		wg.Add(workers)
+		for w := 0; w < workers; w++ {
+			go func() {
+				defer wg.Done()
+				for i := range jobs {
+					if fp, err := f.computeLocalFingerprint(base, todo[i]); err == nil {
+						results[i] = fp
+					}
+				}
+			}()
+		}
+		wg.Wait()
+	}
+	for i, pkg := range todo {
+		if results[i] != "" {
+			f.locals[pkg.ID] = results[i]
+		}
+	}
+}
+
+func (f *frontendCache) computeInputKeyReadOnly(pkg Package) (string, bool) {
+	visited := make(map[string]bool)
+	var inputs []string
+	var visit func(Package) bool
+	visit = func(current Package) bool {
+		if visited[current.ID] {
+			return true
+		}
+		visited[current.ID] = true
+		local := f.locals[current.ID]
+		if local == "" {
+			return false
+		}
+		inputs = append(inputs, current.ID+":"+local)
+		for _, dep := range effectiveDependencies(current) {
+			inputs = append(inputs, current.ID+" -> "+dep.ID+"@"+moduleVersion(dep.Module))
+			loaded := f.ctx.pkgByID[dep.ID]
+			if loaded == nil {
+				loaded = &aPackage{Package: dep}
+			}
+			if !visit(loaded) {
+				return false
+			}
+		}
+		return true
+	}
+	if !visit(pkg) {
+		return "", false
+	}
+	sort.Strings(inputs)
+	data, _ := json.Marshal(inputs)
+	return frontendDigest(append([]byte(fmt.Sprintf("frontend:%d:%s\n", frontendExportVersion, pkg.ID)), data...)), true
+}
+
+func (f *frontendCache) loadByKey(cacheRoot, key string) *frontendExport {
+	if key == "" {
 		return nil
 	}
-	path := f.path(key)
+	path := filepath.Join(cacheRoot, "frontend", key+".json")
 	info, err := os.Stat(path)
 	if err != nil || info.Size() > goescape.MaxCacheBytes {
 		return nil
@@ -185,6 +326,68 @@ func (f *frontendCache) load(pkg Package) *frontendExport {
 		return nil
 	}
 	return &record
+}
+
+type frontendLoadResult struct {
+	key    string
+	record *frontendExport
+}
+
+func (f *frontendCache) loadAll(pkgs []Package) []frontendLoadResult {
+	f.precomputeLocals(pkgs)
+	cacheRoot := f.ctx.ensureCacheManager().root
+	results := make([]frontendLoadResult, len(pkgs))
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(pkgs) {
+		workers = len(pkgs)
+	}
+	runOne := func(i int) {
+		pkg := pkgs[i]
+		key, ok := f.computeInputKeyReadOnly(pkg)
+		if !ok || key == "" {
+			return
+		}
+		results[i].key = key
+		if pkg.Name != "main" && !f.ctx.packageCacheDisabled(pkg.ID) {
+			results[i].record = f.loadByKey(cacheRoot, key)
+		}
+	}
+	if workers <= 1 {
+		for i := range pkgs {
+			runOne(i)
+		}
+	} else {
+		jobs := make(chan int, len(pkgs))
+		for i := range pkgs {
+			jobs <- i
+		}
+		close(jobs)
+		var wg sync.WaitGroup
+		wg.Add(workers)
+		for w := 0; w < workers; w++ {
+			go func() {
+				defer wg.Done()
+				for i := range jobs {
+					runOne(i)
+				}
+			}()
+		}
+		wg.Wait()
+	}
+	for i, pkg := range pkgs {
+		if results[i].key != "" {
+			f.keys[pkg.ID] = results[i].key
+		}
+	}
+	return results
+}
+
+func (f *frontendCache) load(pkg Package) *frontendExport {
+	key, err := f.inputKey(pkg)
+	if err != nil || key == "" {
+		return nil
+	}
+	return f.loadByKey(f.ctx.ensureCacheManager().root, key)
 }
 
 func (f *frontendCache) store(pkg Package) error {

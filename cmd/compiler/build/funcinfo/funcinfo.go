@@ -259,12 +259,14 @@ func (p *stringPool) offset(s string) (uint32, error) {
 	if off, ok := p.offsets[s]; ok {
 		return off, nil
 	}
-	p.scratch = append(p.scratch[:0], s...)
-	p.scratch = append(p.scratch, 0)
-	if off := bytes.Index(p.data, p.scratch); off >= 0 {
-		uoff := uint32(off)
-		p.offsets[s] = uoff
-		return uoff, nil
+	if strings.IndexByte(s, 0) >= 0 {
+		p.scratch = append(p.scratch[:0], s...)
+		p.scratch = append(p.scratch, 0)
+		if off := bytes.Index(p.data, p.scratch); off >= 0 {
+			uoff := uint32(off)
+			p.offsets[s] = uoff
+			return uoff, nil
+		}
 	}
 	if uint64(len(p.data))+uint64(len(s))+1 > math.MaxUint32 {
 		return 0, fmt.Errorf("funcinfo string table exceeds 4 GiB")
@@ -273,7 +275,38 @@ func (p *stringPool) offset(s string) (uint32, error) {
 	p.data = append(p.data, s...)
 	p.data = append(p.data, 0)
 	p.offsets[s] = off
+	p.indexSuffixes(s, off)
 	return off, nil
+}
+
+// indexSuffixes records the earliest byte offset of every NUL-terminated suffix
+// introduced by appending s+"\x00" at off. Because an already-indexed suffix
+// implies all of its own tails were indexed earlier, each segment stops at the
+// first existing entry, preserving exact bytes.Index first-match semantics.
+func (p *stringPool) indexSuffixes(s string, off uint32) {
+	segStart := 0
+	for {
+		nul := strings.IndexByte(s[segStart:], 0)
+		segEnd := len(s)
+		if nul >= 0 {
+			segEnd = segStart + nul
+		}
+		seg := s[segStart:segEnd]
+		base := off + uint32(segStart)
+		for i := 0; i < len(seg); i++ {
+			sub := seg[i:]
+			if i > 0 || segStart > 0 || nul >= 0 {
+				if _, exists := p.offsets[sub]; exists {
+					break
+				}
+				p.offsets[sub] = base + uint32(i)
+			}
+		}
+		if nul < 0 {
+			return
+		}
+		segStart = segEnd + 1
+	}
 }
 
 func buildHash(records []Record) ([]uint16, error) {

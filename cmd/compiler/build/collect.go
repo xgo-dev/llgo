@@ -576,11 +576,6 @@ func (c *context) tryLoadFromCacheEx(pkg *aPackage, loadLinkSnap bool) bool {
 			pkg.linkSnapshot = snap
 		}
 	}
-	if pkg.exportMeta == nil {
-		if em, err := c.readExportMetaSidecar(paths.Export); err == nil && em != nil {
-			pkg.exportMeta = em
-		}
-	}
 	pkg.CacheHit = true
 
 	return true

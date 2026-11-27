@@ -357,3 +357,44 @@ func TestCacheInterfaceRepresentationAtEachSite(t *testing.T) {
 		t.Fatalf("stale assertion indirection: %+v / %+v", first, second)
 	}
 }
+
+func TestCacheExternalKeyFastPath(t *testing.T) {
+	fn := sourceFunction(t, `func ext(*int); func f(x int) { ext(&x) }`)
+	m := newMemoryCache()
+	extKey := "ext-v1"
+	extEscapes := false
+	cfg := Config{
+		Cache: &m.cache,
+		ExternalKey: func(f *ssa.Function) string {
+			if f.Name() == "ext" {
+				return extKey
+			}
+			return ""
+		},
+		External: func(f *ssa.Function) (Summary, bool) {
+			s := emptySummary(f)
+			if extEscapes {
+				s.Parameters[0].Heap = 1
+			}
+			return s, true
+		},
+	}
+	r1 := Analyze([]*ssa.Function{fn}, cfg)
+	if r1.Decision(sitesOf[*ssa.Alloc](fn)[0]).Heap {
+		t.Fatal("first run should keep x on stack")
+	}
+	// Same ExternalKey hits cache.
+	m.hits, m.misses = 0, 0
+	r2 := Analyze([]*ssa.Function{fn}, cfg)
+	if m.hits == 0 || r2.Decision(sitesOf[*ssa.Alloc](fn)[0]).Heap {
+		t.Fatalf("expected cache hit with same ExternalKey (hits=%d)", m.hits)
+	}
+	// Changing ExternalKey invalidates cached decision.
+	extKey = "ext-v2"
+	extEscapes = true
+	m.hits, m.misses = 0, 0
+	r3 := Analyze([]*ssa.Function{fn}, cfg)
+	if m.misses == 0 || !r3.Decision(sitesOf[*ssa.Alloc](fn)[0]).Heap {
+		t.Fatalf("expected cache miss on ExternalKey change (misses=%d)", m.misses)
+	}
+}

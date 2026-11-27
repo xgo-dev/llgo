@@ -312,6 +312,16 @@ func TestBuildStringTableSharing(t *testing.T) {
 	if !reflect.DeepEqual(offsets, wantOffsets) {
 		t.Fatalf("offsets = %v, want %v", offsets, wantOffsets)
 	}
+
+	// An embedded-NUL string matching a tail of an earlier embedded-NUL string
+	// must also reuse the existing byte offset via the exact bytes.Index fallback.
+	_, embOffsets, embData, err := buildStringTable([]string{"x\x00a\x00b", "a\x00b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(embData) != "\x00x\x00a\x00b\x00" || embOffsets[1] != 1 || embOffsets[2] != 3 {
+		t.Fatalf("embedded NUL suffix reuse: data=%q offsets=%v", embData, embOffsets)
+	}
 }
 
 func BenchmarkBuildStringTable(b *testing.B) {

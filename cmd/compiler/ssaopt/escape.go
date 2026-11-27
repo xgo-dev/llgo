@@ -80,20 +80,26 @@ func PrepareEscapeAnalysis(prog *ssa.Program, cfg EscapeConfig) *goescape.Result
 		return patchEscapeType(t, cfg.PatchTypes)
 	}
 
-	var roots []*ssa.Function
-	for fn := range ssautil.AllFunctions(prog) {
-		roots = append(roots, fn)
-	}
-	for _, pkg := range prog.AllPackages() {
-		roots = append(roots, collectPackageMethods(pkg)...)
-	}
-	roots = append(roots, cfg.ExtraRoots...)
-	for fn := range cfg.Imports {
-		roots = append(roots, fn)
-	}
-
 	inspectBody := func(fn *ssa.Function) bool {
 		return shouldInspectEscapeBody(fn, cfg)
+	}
+	var roots []*ssa.Function
+	for fn := range ssautil.AllFunctions(prog) {
+		if len(fn.Blocks) > 0 {
+			roots = append(roots, fn)
+		}
+	}
+	for _, pkg := range prog.AllPackages() {
+		for _, fn := range collectPackageMethods(pkg) {
+			if len(fn.Blocks) > 0 {
+				roots = append(roots, fn)
+			}
+		}
+	}
+	for _, fn := range cfg.ExtraRoots {
+		if fn != nil && len(fn.Blocks) > 0 {
+			roots = append(roots, fn)
+		}
 	}
 	external := func(fn *ssa.Function) (goescape.Summary, bool) {
 		if summary, ok := cfg.Imports[fn]; ok && goescape.ValidSummary(fn, summary) {

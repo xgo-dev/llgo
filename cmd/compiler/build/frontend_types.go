@@ -14,8 +14,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
-	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
@@ -24,6 +24,13 @@ import (
 )
 
 var errFrontendSourceRequired = errors.New("frontend cache requires source bodies")
+
+type frontendSourceRequiredError struct {
+	pkgIDs []string
+}
+
+func (e *frontendSourceRequiredError) Error() string { return errFrontendSourceRequired.Error() }
+func (e *frontendSourceRequiredError) Unwrap() error { return errFrontendSourceRequired }
 
 const frontendTypesFormatExportData = "exportdata"
 
@@ -35,16 +42,25 @@ type frontendTypeExport struct {
 	Package                  *frontcache.PackageExport `json:",omitempty"`
 }
 
+type frontendInlineHint struct {
+	Version  int
+	Packages []string
+}
+
 type frontendTypeLoader struct {
+	mu             sync.RWMutex
 	ctx            *context
+	cache          *cacheManager
 	namespace      string
+	inlineHintKey  string
+	forceSource    map[string]bool
 	keys           map[string]string
 	exports        map[string]*frontendTypeExport
 	selected       map[string]bool
 	exportDataHits map[string]bool
 }
 
-func newFrontendTypeLoader(ctx *context) *frontendTypeLoader {
+func newFrontendTypeLoader(ctx *context, patterns []string) *frontendTypeLoader {
 	if ctx.buildConf.frontendSourceOnly || !cacheEnabled() || !isEnvOn(llgoEscapeCache, true) || ctx.buildConf.ForceRebuild || ctx.buildConf.ModuleHook != nil || ctx.buildConf.Coverage != nil || ctx.mode == ModeGen || ctx.buildConf.BuildMode != BuildModeExe || ctx.buildConf.deadcodeDropEnabled() || ctx.buildConf.DependencyEscapeDiagnostics > 0 {
 		return nil
 	}
@@ -52,14 +68,85 @@ func newFrontendTypeLoader(ctx *context) *frontendTypeLoader {
 	ctx.collectEnvInputs(m)
 	ctx.collectCommonInputs(m)
 	m.common.WasmReflectBridges, m.common.WasmFuncInfoEntries, m.common.WasmRuntimeFree = false, false, false
-	return &frontendTypeLoader{
+	ns := m.Fingerprint() + "|lang=" + ctx.buildConf.GoVersion
+	cm := ctx.ensureCacheManager()
+	l := &frontendTypeLoader{
 		ctx:            ctx,
-		namespace:      m.Fingerprint() + "|lang=" + ctx.buildConf.GoVersion,
+		cache:          cm,
+		namespace:      ns,
 		keys:           make(map[string]string),
 		exports:        make(map[string]*frontendTypeExport),
 		selected:       make(map[string]bool),
 		exportDataHits: make(map[string]bool),
 	}
+	if len(ctx.buildConf.frontendSourcePkgs) > 0 {
+		l.forceSource = make(map[string]bool, len(ctx.buildConf.frontendSourcePkgs))
+		for id, forced := range ctx.buildConf.frontendSourcePkgs {
+			if forced {
+				l.forceSource[id] = true
+			}
+		}
+	}
+	inlineActive := !ctx.frontendOptions.DisableInlineBodyImports &&
+		!devIncrementalModeEnabled() &&
+		ctx.buildConf.OptLevel != optlevel.O0
+	if inlineActive {
+		dir := ""
+		if ctx.conf != nil {
+			dir = ctx.conf.Dir
+		}
+		if dir == "" {
+			dir, _ = os.Getwd()
+		} else if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+		sortedPatterns := append([]string(nil), patterns...)
+		sort.Strings(sortedPatterns)
+		hintInput := ns + "|dir=" + dir + "|patterns=" + strings.Join(sortedPatterns, ",")
+		l.inlineHintKey = frontendDigest([]byte(hintInput))
+		for _, id := range l.loadInlineHint() {
+			if l.forceSource == nil {
+				l.forceSource = make(map[string]bool)
+			}
+			l.forceSource[id] = true
+		}
+	}
+	return l
+}
+
+func (l *frontendTypeLoader) inlineHintPath() string {
+	return filepath.Join(l.cacheManager().root, "frontend", "inline-"+l.inlineHintKey+".json")
+}
+
+func (l *frontendTypeLoader) loadInlineHint() []string {
+	if l.inlineHintKey == "" {
+		return nil
+	}
+	data, err := os.ReadFile(l.inlineHintPath())
+	if err != nil {
+		return nil
+	}
+	var hint frontendInlineHint
+	if json.Unmarshal(data, &hint) != nil || hint.Version != frontendExportVersion {
+		return nil
+	}
+	return hint.Packages
+}
+
+func (l *frontendTypeLoader) storeInlineHint(pkgIDs []string) {
+	if l.inlineHintKey == "" {
+		return
+	}
+	sorted := append([]string(nil), pkgIDs...)
+	sort.Strings(sorted)
+	data, err := json.Marshal(frontendInlineHint{
+		Version:  frontendExportVersion,
+		Packages: sorted,
+	})
+	if err != nil {
+		return
+	}
+	_ = writeManifest(l.inlineHintPath(), string(data))
 }
 
 func (l *frontendTypeLoader) eligible(pkg *packages.Package) bool {
@@ -85,7 +172,10 @@ func (l *frontendTypeLoader) eligible(pkg *packages.Package) bool {
 // subsequently verifies full SHA-256 archive fingerprints before accepting any
 // opaque package.
 func (l *frontendTypeLoader) key(pkg *packages.Package, active map[string]bool) string {
-	if key, ok := l.keys[pkg.ID]; ok {
+	l.mu.RLock()
+	key, ok := l.keys[pkg.ID]
+	l.mu.RUnlock()
+	if ok {
 		return key
 	}
 	if active[pkg.ID] {
@@ -111,27 +201,36 @@ func (l *frontendTypeLoader) key(pkg *packages.Package, active map[string]bool) 
 		inputs = append(inputs, fmt.Sprintf("%s:st:%d:%d", filename, info.Size(), info.ModTime().UnixNano()))
 	}
 	for name, dep := range pkg.Imports {
-		key := l.key(dep, active)
-		if key == "" {
+		depKey := l.key(dep, active)
+		if depKey == "" {
 			return ""
 		}
-		inputs = append(inputs, name+":"+key)
+		inputs = append(inputs, name+":"+depKey)
 	}
 	sort.Strings(inputs)
 	data, _ := json.Marshal(inputs)
-	key := frontendDigest(data)
+	key = frontendDigest(data)
+	l.mu.Lock()
 	l.keys[pkg.ID] = key
+	l.mu.Unlock()
 	return key
 }
 
+func (l *frontendTypeLoader) cacheManager() *cacheManager {
+	if l.cache != nil {
+		return l.cache
+	}
+	return l.ctx.ensureCacheManager()
+}
+
 func (l *frontendTypeLoader) path(key string) string {
-	return filepath.Join(l.ctx.ensureCacheManager().root, "frontend", "types-"+key+".json")
+	return filepath.Join(l.cacheManager().root, "frontend", "types-"+key+".json")
 }
 
 func (l *frontendTypeLoader) load(pkg *packages.Package, fset *token.FileSet) bool {
 	// Source bodies of generic/inline candidates remain available on demand.
 	// Test variants and runtime patches keep their independently checked scopes.
-	if !l.eligible(pkg) {
+	if !l.eligible(pkg) || l.forceSource[pkg.ID] {
 		return false
 	}
 	for _, dep := range pkg.Imports {
@@ -159,15 +258,17 @@ func (l *frontendTypeLoader) load(pkg *packages.Package, fset *token.FileSet) bo
 	}
 	// Missing archives/companions need source. Their full input fingerprints are
 	// checked later, after whole-program layout/feature decisions are fixed.
-	paths := l.ctx.ensureCacheManager().PackagePaths(l.ctx.targetTriple(), pkg.PkgPath, record.Archive)
+	cm := l.cacheManager()
+	paths := cm.PackagePaths(l.ctx.targetTriple(), pkg.PkgPath, record.Archive)
 	if _, err := os.Stat(paths.Archive); err != nil {
 		return false
 	}
-	if _, err := os.Stat(filepath.Join(l.ctx.ensureCacheManager().root, "frontend", record.Frontend+".json")); err != nil {
+	if _, err := os.Stat(filepath.Join(cm.root, "frontend", record.Frontend+".json")); err != nil {
 		return false
 	}
 
 	var checked *types.Package
+	isExportDataHit := false
 	if record.TypesFormat == frontendTypesFormatExportData {
 		if record.PkgID != pkg.ID || record.PkgPath != pkg.PkgPath {
 			return false
@@ -182,9 +283,7 @@ func (l *frontendTypeLoader) load(pkg *packages.Package, fset *token.FileSet) bo
 		if err != nil || checked == nil || !checked.Complete() {
 			return false
 		}
-		if l.exportDataHits != nil {
-			l.exportDataHits[pkg.ID] = true
-		}
+		isExportDataHit = true
 	} else {
 		if record.Package == nil || record.Package.ID != pkg.ID || record.Package.Path != pkg.PkgPath {
 			return false
@@ -240,7 +339,12 @@ func (l *frontendTypeLoader) load(pkg *packages.Package, fset *token.FileSet) bo
 			}
 		}
 	}
+	l.mu.Lock()
+	if isExportDataHit && l.exportDataHits != nil {
+		l.exportDataHits[pkg.ID] = true
+	}
 	l.selected[pkg.ID] = true
+	l.mu.Unlock()
 	return true
 }
 
@@ -248,21 +352,10 @@ func (l *frontendTypeLoader) capture(pkg Package, record *frontendExport, index 
 	if pkg == nil || !l.eligible(pkg.Package) || pkg.AltPkg != nil || l.selected[pkg.ID] || pkg.Types == nil {
 		return
 	}
-	// Never discard bodies that can be used by the current cross-package inliner
-	// or generic instantiator. At -O0 or dev incremental mode, cross-package
-	// inline body imports are skipped so even packages with small helpers can
-	// take the AST-free exportdata path.
-	skipInlineFilter := l.ctx != nil && (l.ctx.frontendOptions.DisableInlineBodyImports ||
-		devIncrementalModeEnabled() ||
-		(l.ctx.buildConf != nil && l.ctx.buildConf.OptLevel == optlevel.O0))
-	if !skipInlineFilter {
-		budget, _, _ := cl.FrontendInlinePolicy()
-		for _, fn := range record.Functions {
-			if fn.Facts.InlineCost <= budget {
-				return
-			}
-		}
-	}
+	// Never discard bodies that can be used by the generic instantiator.
+	// Packages containing cross-package inline candidates are still exported via
+	// .llgotypes; only the small set actually needed by the current root's
+	// callers is parsed from source via inlineHint / targeted retry.
 	for _, name := range pkg.Types.Scope().Names() {
 		obj := pkg.Types.Scope().Lookup(name)
 		if v, ok := obj.(*types.Var); ok && v.Locality() != directive.LocalityNone {

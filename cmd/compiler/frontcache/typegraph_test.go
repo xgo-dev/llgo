@@ -452,3 +452,88 @@ func fixture(t *testing.T, source string, build bool) (*ssa.Program, *ssa.Packag
 	index.AddPackage(pkg, info)
 	return prog, sp, index
 }
+
+func TestTypesKeyComparableDistinctFromEmptyInterfaceAndExtendedTypes(t *testing.T) {
+	pkg := types.NewPackage("example/keys", "keys")
+	idx := NewTypes(map[*types.Package]string{pkg: pkg.Path()})
+
+	emptyIface := types.NewInterfaceType(nil, nil)
+	emptyIface.Complete()
+	compObj := types.Universe.Lookup("comparable")
+	if compObj == nil {
+		t.Fatal("missing predeclared comparable")
+	}
+	compUnderlying := compObj.Type().Underlying()
+
+	emptyKey := idx.Key(emptyIface)
+	compKey := idx.Key(compUnderlying)
+	if emptyKey == compKey {
+		t.Fatalf("comparable underlying key collided with empty interface{}: %q", emptyKey)
+	}
+	if !strings.Contains(compKey, "comparable;") {
+		t.Fatalf("comparable key %q missing comparable marker", compKey)
+	}
+	// Adding both must not poison empty interface{} in idx.values.
+	idx.Add(emptyIface)
+	idx.Add(compUnderlying)
+	if got, ok := idx.Lookup(emptyKey); !ok || !types.Identical(got, emptyIface) {
+		t.Fatalf("Lookup(empty interface{}) = (%v, %v), want %v", got, ok, emptyIface)
+	}
+	if got, ok := idx.Lookup(compKey); !ok || !types.Identical(got, compUnderlying) {
+		t.Fatalf("Lookup(comparable underlying) = (%v, %v), want %v", got, ok, compUnderlying)
+	}
+
+	// Cover LLGo-extended and composite type kinds in Types.Key.
+	goPtr := types.NewPointer(types.Typ[types.Int])
+	cPtr := types.NewPointerWithKind(types.Typ[types.Int], types.CPtr)
+	if idx.Key(goPtr) == idx.Key(cPtr) {
+		t.Fatalf("GoPtr and CPtr shared key %q", idx.Key(goPtr))
+	}
+
+	goSig := types.NewSignatureType(nil, nil, nil, types.NewTuple(types.NewVar(token.NoPos, pkg, "x", types.Typ[types.Int])), nil, false)
+	cdeclSig := goSig.WithCallConv(types.CDecl)
+	if idx.Key(goSig) == idx.Key(cdeclSig) {
+		t.Fatalf("Go and CDecl signatures shared key %q", idx.Key(goSig))
+	}
+
+	f := types.NewField(token.NoPos, pkg, "a", types.Typ[types.Int32], false)
+	goStruct := types.NewStruct([]*types.Var{f}, []string{`tag:"1"`})
+	nativeStruct := types.NewStruct([]*types.Var{f}, []string{`tag:"1"`})
+	nativeStruct.SetNativeLayout(true)
+	if idx.Key(goStruct) == idx.Key(nativeStruct) {
+		t.Fatalf("Go and NativeLayout structs shared key %q", idx.Key(goStruct))
+	}
+
+	simd := types.NewSIMDVec(types.Typ[types.Float32], 4, false)
+	simdMask := types.NewSIMDVec(types.Typ[types.Bool], 4, true)
+	if idx.Key(simd) == idx.Key(simdMask) || !strings.HasPrefix(idx.Key(simd), "simd:") {
+		t.Fatalf("unexpected SIMD keys: %q vs %q", idx.Key(simd), idx.Key(simdMask))
+	}
+
+	union := types.NewUnion([]*types.Term{types.NewTerm(true, types.Typ[types.Int]), types.NewTerm(false, types.Typ[types.String])})
+	if !strings.HasPrefix(idx.Key(union), "union:") {
+		t.Fatalf("unexpected union key: %q", idx.Key(union))
+	}
+	embedIface := types.NewInterfaceType(nil, []types.Type{union})
+	embedIface.Complete()
+	if !strings.Contains(idx.Key(embedIface), "embed:") {
+		t.Fatalf("unexpected embedded constraint key: %q", idx.Key(embedIface))
+	}
+
+	for _, typ := range []types.Type{
+		types.NewSlice(types.Typ[types.Byte]),
+		types.NewArray(types.Typ[types.Int], 4),
+		types.NewMap(types.Typ[types.String], types.Typ[types.Int]),
+		types.NewChan(types.SendOnly, types.Typ[types.Int]),
+		types.NewTuple(types.NewVar(token.NoPos, pkg, "v", types.Typ[types.Bool])),
+	} {
+		idx.Add(typ)
+		k := idx.Key(typ)
+		if _, ok := idx.Lookup(k); k == "" || !ok {
+			t.Fatalf("failed to index/lookup %v (key=%q)", typ, k)
+		}
+	}
+	if idx.Key(nil) != "" {
+		t.Fatalf("Key(nil) = %q, want empty", idx.Key(nil))
+	}
+}

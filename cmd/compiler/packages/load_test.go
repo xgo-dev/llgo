@@ -580,3 +580,23 @@ func TestLLGoFilesAddImportGraph(t *testing.T) {
 		t.Fatal("patch import duplicated an existing package identity")
 	}
 }
+
+func TestTypecheckDAGCycleAndEdgeImports(t *testing.T) {
+	a := &Package{ID: "cycle/a", PkgPath: "cycle/a", Name: "a", Imports: map[string]*Package{}}
+	b := &Package{ID: "cycle/b", PkgPath: "cycle/b", Name: "b", Imports: map[string]*Package{}}
+	a.Imports["cycle/b"] = b
+	a.Imports["self"] = a
+	a.Imports["dup"] = b
+	b.Imports["cycle/a"] = a
+
+	tc := &typecheckContext{
+		cfg:      &Config{Fset: token.NewFileSet()},
+		fset:     token.NewFileSet(),
+		origMode: NeedTypes,
+		typeCtx:  types.NewContext(),
+	}
+	tc.typecheckDAG([]*Package{a})
+	if a.Types == nil || b.Types == nil {
+		t.Fatalf("cyclic DAG fallback did not process both packages: a=%v b=%v", a.Types, b.Types)
+	}
+}

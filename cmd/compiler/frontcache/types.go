@@ -6,9 +6,9 @@
 package frontcache
 
 import (
-	"fmt"
 	"github.com/xgo-dev/llgo/types"
 	"go/token"
+	"strconv"
 	"strings"
 )
 
@@ -19,11 +19,17 @@ type Types struct {
 	packages map[*types.Package]string
 	keys     map[types.Type]string
 	values   map[string]types.Type
+	added    map[types.Type]bool
 	fset     *token.FileSet
 }
 
 func NewTypes(packages map[*types.Package]string, sets ...*token.FileSet) *Types {
-	t := &Types{packages: packages, keys: make(map[types.Type]string), values: make(map[string]types.Type)}
+	t := &Types{
+		packages: packages,
+		keys:     make(map[types.Type]string),
+		values:   make(map[string]types.Type),
+		added:    make(map[types.Type]bool),
+	}
 	if len(sets) != 0 {
 		t.fset = sets[0]
 	}
@@ -52,45 +58,77 @@ func (t *Types) Key(typ types.Type) string {
 		return key
 	}
 	var b strings.Builder
+	writeQuote := func(s string) {
+		b.WriteString(strconv.Quote(s))
+	}
 	list := func(tuple *types.Tuple) {
 		for i := 0; i < tuple.Len(); i++ {
-			fmt.Fprintf(&b, "%q;", t.Key(tuple.At(i).Type()))
+			writeQuote(t.Key(tuple.At(i).Type()))
+			b.WriteByte(';')
 		}
 	}
 	switch v := typ.(type) {
 	case *types.Basic:
-		fmt.Fprintf(&b, "basic:%d", v.Kind())
+		b.WriteString("basic:")
+		b.WriteString(strconv.Itoa(int(v.Kind())))
 	case *types.Named:
-		fmt.Fprintf(&b, "named:%q:%q[", t.qualifier(v.Obj().Pkg()), v.Obj().Name())
+		b.WriteString("named:")
+		writeQuote(t.qualifier(v.Obj().Pkg()))
+		b.WriteByte(':')
+		writeQuote(v.Obj().Name())
+		b.WriteByte('[')
 		for i := 0; i < v.TypeArgs().Len(); i++ {
-			fmt.Fprintf(&b, "%q;", t.Key(v.TypeArgs().At(i)))
+			writeQuote(t.Key(v.TypeArgs().At(i)))
+			b.WriteByte(';')
 		}
 		b.WriteByte(']')
 		if obj := v.Obj(); obj.Pkg() != nil && obj.Parent() != nil && obj.Parent() != obj.Pkg().Scope() {
-			fmt.Fprintf(&b, "local:%q", Position(t.fset, obj.Pos()))
+			b.WriteString("local:")
+			writeQuote(Position(t.fset, obj.Pos()))
 		}
 	case *types.Pointer:
 		if v.Kind() != types.GoPtr {
-			fmt.Fprintf(&b, "pointer:%d:%q", v.Kind(), t.Key(v.Elem()))
+			b.WriteString("pointer:")
+			b.WriteString(strconv.Itoa(int(v.Kind())))
+			b.WriteByte(':')
+			writeQuote(t.Key(v.Elem()))
 		} else {
-			fmt.Fprintf(&b, "pointer:%q", t.Key(v.Elem()))
+			b.WriteString("pointer:")
+			writeQuote(t.Key(v.Elem()))
 		}
 	case *types.Slice:
-		fmt.Fprintf(&b, "slice:%q", t.Key(v.Elem()))
+		b.WriteString("slice:")
+		writeQuote(t.Key(v.Elem()))
 	case *types.Array:
-		fmt.Fprintf(&b, "array:%d:%q", v.Len(), t.Key(v.Elem()))
+		b.WriteString("array:")
+		b.WriteString(strconv.FormatInt(v.Len(), 10))
+		b.WriteByte(':')
+		writeQuote(t.Key(v.Elem()))
 	case *types.Map:
-		fmt.Fprintf(&b, "map:%q:%q", t.Key(v.Key()), t.Key(v.Elem()))
+		b.WriteString("map:")
+		writeQuote(t.Key(v.Key()))
+		b.WriteByte(':')
+		writeQuote(t.Key(v.Elem()))
 	case *types.Chan:
-		fmt.Fprintf(&b, "chan:%d:%q", v.Dir(), t.Key(v.Elem()))
+		b.WriteString("chan:")
+		b.WriteString(strconv.Itoa(int(v.Dir())))
+		b.WriteByte(':')
+		writeQuote(t.Key(v.Elem()))
 	case *types.Signature:
 		if v.CallConv() != types.Go {
-			fmt.Fprintf(&b, "func:%d:%v[", v.CallConv(), v.Variadic())
+			b.WriteString("func:")
+			b.WriteString(strconv.Itoa(int(v.CallConv())))
+			b.WriteByte(':')
+			b.WriteString(strconv.FormatBool(v.Variadic()))
+			b.WriteByte('[')
 		} else {
-			fmt.Fprintf(&b, "func:%v[", v.Variadic())
+			b.WriteString("func:")
+			b.WriteString(strconv.FormatBool(v.Variadic()))
+			b.WriteByte('[')
 		}
 		for i := 0; i < v.TypeParams().Len(); i++ {
-			fmt.Fprintf(&b, "%q;", t.Key(v.TypeParams().At(i)))
+			writeQuote(t.Key(v.TypeParams().At(i)))
+			b.WriteByte(';')
 		}
 		b.WriteString("](")
 		list(v.Params())
@@ -112,10 +150,24 @@ func (t *Types) Key(typ types.Type) string {
 			if !f.Exported() {
 				owner = t.qualifier(f.Pkg())
 			}
-			fmt.Fprintf(&b, "%q:%q:%v:%q:%q;", owner, f.Name(), f.Embedded(), v.Tag(i), t.Key(f.Type()))
+			writeQuote(owner)
+			b.WriteByte(':')
+			writeQuote(f.Name())
+			b.WriteByte(':')
+			b.WriteString(strconv.FormatBool(f.Embedded()))
+			b.WriteByte(':')
+			writeQuote(v.Tag(i))
+			b.WriteByte(':')
+			writeQuote(t.Key(f.Type()))
+			b.WriteByte(';')
 		}
 	case *types.SIMDVec:
-		fmt.Fprintf(&b, "simd:%d:%d:%v", v.Elem().Kind(), v.Len(), v.IsMask())
+		b.WriteString("simd:")
+		b.WriteString(strconv.Itoa(int(v.Elem().Kind())))
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(v.Len()))
+		b.WriteByte(':')
+		b.WriteString(strconv.FormatBool(v.IsMask()))
 	case *types.Interface:
 		v.Complete()
 		b.WriteString("interface:")
@@ -125,24 +177,45 @@ func (t *Types) Key(typ types.Type) string {
 			if !m.Exported() {
 				owner = t.qualifier(m.Pkg())
 			}
-			fmt.Fprintf(&b, "%q:%q:%q;", owner, m.Name(), t.Key(m.Type()))
+			writeQuote(owner)
+			b.WriteByte(':')
+			writeQuote(m.Name())
+			b.WriteByte(':')
+			writeQuote(t.Key(m.Type()))
+			b.WriteByte(';')
 		}
 		// Non-basic interfaces cannot be runtime values. Retaining their
-		// terms also prevents unrelated constraints from sharing a key.
+		// terms and comparability also prevents unrelated constraints (such as
+		// predeclared comparable vs empty interface{}) from sharing a key.
 		if !v.IsMethodSet() {
+			if v.IsComparable() {
+				b.WriteString("comparable;")
+			}
 			for i := 0; i < v.NumEmbeddeds(); i++ {
-				fmt.Fprintf(&b, "embed:%q;", t.Key(v.EmbeddedType(i)))
+				b.WriteString("embed:")
+				writeQuote(t.Key(v.EmbeddedType(i)))
+				b.WriteByte(';')
 			}
 		}
 	case *types.Union:
 		b.WriteString("union:")
 		for i := 0; i < v.Len(); i++ {
-			fmt.Fprintf(&b, "%v:%q;", v.Term(i).Tilde(), t.Key(v.Term(i).Type()))
+			b.WriteString(strconv.FormatBool(v.Term(i).Tilde()))
+			b.WriteByte(':')
+			writeQuote(t.Key(v.Term(i).Type()))
+			b.WriteByte(';')
 		}
 	case *types.TypeParam:
 		// Parameters are not persisted as concrete runtime types. This
 		// identity is sufficient to bind their original declaration.
-		fmt.Fprintf(&b, "parameter:%q:%q:%d:%q", t.qualifier(v.Obj().Pkg()), v.Obj().Name(), v.Index(), Position(t.fset, v.Obj().Pos()))
+		b.WriteString("parameter:")
+		writeQuote(t.qualifier(v.Obj().Pkg()))
+		b.WriteByte(':')
+		writeQuote(v.Obj().Name())
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(v.Index()))
+		b.WriteByte(':')
+		writeQuote(Position(t.fset, v.Obj().Pos()))
 	default:
 		return ""
 	}
@@ -154,7 +227,10 @@ func (t *Types) Key(typ types.Type) string {
 // Add records all constituent types, including the receiver-free method-value
 // signatures and pointer types that SSA may synthesize from declarations.
 func (t *Types) Add(typ types.Type) {
-	t.add(typ, make(map[types.Type]bool))
+	if t.added == nil {
+		t.added = make(map[types.Type]bool)
+	}
+	t.add(typ, t.added)
 }
 
 func (t *Types) add(typ types.Type, seen map[types.Type]bool) {
@@ -177,8 +253,9 @@ func (t *Types) add(typ types.Type, seen map[types.Type]bool) {
 	case *types.Named:
 		add(v.Underlying())
 		pointer := types.NewPointer(v)
-		if _, ok := t.values[t.Key(pointer)]; !ok {
-			t.values[t.Key(pointer)] = pointer
+		ptrKey := t.Key(pointer)
+		if _, ok := t.values[ptrKey]; !ok {
+			t.values[ptrKey] = pointer
 		}
 		for i := 0; i < v.NumMethods(); i++ {
 			add(v.Method(i).Type())
@@ -219,7 +296,10 @@ func (t *Types) add(typ types.Type, seen map[types.Type]bool) {
 }
 
 func (t *Types) AddPackage(pkg *types.Package, info *types.Info) {
-	seen := make(map[types.Type]bool)
+	if t.added == nil {
+		t.added = make(map[types.Type]bool)
+	}
+	seen := t.added
 	if pkg != nil {
 		for _, name := range pkg.Scope().Names() {
 			t.add(pkg.Scope().Lookup(name).Type(), seen)
@@ -267,5 +347,5 @@ func Position(fset *token.FileSet, pos token.Pos) string {
 	if f == nil {
 		return ""
 	}
-	return fmt.Sprintf("%s:%d", f.Name(), f.Offset(pos))
+	return f.Name() + ":" + strconv.Itoa(f.Offset(pos))
 }

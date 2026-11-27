@@ -68,8 +68,19 @@ func (c *context) writeExportMetaSidecar(path string, pkg *aPackage) error {
 			if dep == nil {
 				continue
 			}
-			if depPkg := c.pkgByID[dep.ID]; depPkg != nil && depPkg.exportMeta != nil {
-				importedEsc[depPkg.PkgPath] = &depPkg.exportMeta.Escape
+			depPkg := c.pkgByID[dep.ID]
+			if depPkg == nil {
+				continue
+			}
+			em := depPkg.exportMeta
+			if em == nil && depPkg.CacheHit && depPkg.Fingerprint != "" {
+				depPaths := c.ensureCacheManager().PackagePaths(c.targetTriple(), depPkg.PkgPath, depPkg.Fingerprint)
+				if loaded, err := c.readExportMetaSidecar(depPaths.Export); err == nil {
+					em = loaded
+				}
+			}
+			if em != nil {
+				importedEsc[depPkg.PkgPath] = &em.Escape
 			}
 		}
 		meta = pkgmeta.BuildPackageMeta(pkg.SSA, nil, importedEsc, pkgmeta.DefaultBudget)

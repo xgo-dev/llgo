@@ -187,6 +187,7 @@ type Config struct {
 	CheckLinkArgs      bool // check linkargs valid
 	ForceEspClang      bool // force to use esp-clang
 	frontendSourceOnly bool
+	frontendSourcePkgs map[string]bool
 	ForceRebuild       bool // force rebuilding of packages that are already up-to-date
 	Tags               string
 	SizeReport         bool   // print size report after successful build
@@ -336,6 +337,12 @@ func (c *Config) clone() *Config {
 				copied[name] = value
 			}
 			cloned.GlobalRewrites[pkgPath] = copied
+		}
+	}
+	if c.frontendSourcePkgs != nil {
+		cloned.frontendSourcePkgs = make(map[string]bool, len(c.frontendSourcePkgs))
+		for id, v := range c.frontendSourcePkgs {
+			cloned.frontendSourcePkgs[id] = v
 		}
 	}
 	return &cloned
@@ -563,27 +570,49 @@ func Build(inv Invocation) ([]Package, error) {
 	}()
 	result, err := buildInvocation(inv, &plan)
 	if errors.Is(err, errFrontendSourceRequired) && (inv.Config == nil || !inv.Config.frontendSourceOnly) {
-		if plan.sourceOverlayFile != "" {
-			os.Remove(plan.sourceOverlayFile)
-			plan.sourceOverlayFile = ""
-		}
-		if inv.Config == nil {
-			inv.Config = NewDefaultConf(ModeBuild)
-		} else {
-			inv.Config = inv.Config.clone()
-		}
-		inv.Config.frontendSourceOnly = true
-		if filename := inv.Config.BuildTrace; filename != "" {
-			if !filepath.IsAbs(filename) {
-				base := inv.Dir
-				if base == "" {
-					base, _ = os.Getwd()
-				}
-				filename = filepath.Join(base, filename)
+		for attempt := 0; attempt < 3 && errors.Is(err, errFrontendSourceRequired); attempt++ {
+			if plan.sourceOverlayFile != "" {
+				os.Remove(plan.sourceOverlayFile)
+				plan.sourceOverlayFile = ""
 			}
-			_ = os.Remove(filename) // this invocation exclusively created the first-attempt trace
+			if inv.Config == nil {
+				inv.Config = NewDefaultConf(ModeBuild)
+			} else {
+				inv.Config = inv.Config.clone()
+			}
+			var reqErr *frontendSourceRequiredError
+			if attempt < 2 && errors.As(err, &reqErr) && len(reqErr.pkgIDs) > 0 {
+				if inv.Config.frontendSourcePkgs == nil {
+					inv.Config.frontendSourcePkgs = make(map[string]bool, len(reqErr.pkgIDs))
+				}
+				added := 0
+				for _, id := range reqErr.pkgIDs {
+					if !inv.Config.frontendSourcePkgs[id] {
+						inv.Config.frontendSourcePkgs[id] = true
+						added++
+					}
+				}
+				if added == 0 {
+					inv.Config.frontendSourceOnly = true
+				}
+			} else {
+				inv.Config.frontendSourceOnly = true
+			}
+			if filename := inv.Config.BuildTrace; filename != "" {
+				if !filepath.IsAbs(filename) {
+					base := inv.Dir
+					if base == "" {
+						base, _ = os.Getwd()
+					}
+					filename = filepath.Join(base, filename)
+				}
+				_ = os.Remove(filename) // this invocation exclusively created the first-attempt trace
+			}
+			result, err = buildInvocation(inv, &plan)
+			if inv.Config.frontendSourceOnly {
+				break
+			}
 		}
-		result, err = buildInvocation(inv, &plan)
 	}
 	if len(plan.invocations) == 0 {
 		return result, err
@@ -934,7 +963,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	// the toolchain used to build llgo.
 	addDefaultRuntimeGlobals(conf, sourcePatchGOROOT, sourcePatchGoVersion)
 
-	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourcePatchGoVersion, mode: conf.Mode})
+	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourcePatchGoVersion, mode: conf.Mode, frontendOptions: frontendOptions}, patterns)
 	if typeLoader != nil {
 		dedup.SetImportTypes(typeLoader.load)
 	}
@@ -1038,7 +1067,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	prog.SetDebugInfoOptimized(passOpt && conf.OptLevel != optlevel.O0)
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
 	patches := make(cl.Patches, len(altPkgPaths))
-	altEntries, altByteArrays := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
+	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 	prepareSpan := buildTrace.startCoordinator("prepare shared backend state", nil)
 	if err := preloadPatchedPackageSyntax(prog, patches, dedup, preloadOptions, sourcePatchGOROOT); err != nil {
 		prepareSpan.done()
@@ -1059,22 +1088,21 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
 		patches: patches, callerTracking: cl.NewCallerTracking(),
 		initial: initial, mode: mode,
-		fingerprinting:   make(map[string]bool),
-		pkgs:             map[*packages.Package]Package{},
-		pkgByID:          map[string]Package{},
-		cacheManager:     newCacheManager(),
-		patchFiles:       llgoFiles,
-		output:           output,
-		passOpt:          passOpt,
-		buildConf:        conf,
-		crossCompile:     export,
-		commands:         commands,
-		frontendOptions:  frontendOptions,
-		staticByteArrays: altByteArrays,
-		cTransformer:     cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
-		buildTrace:       buildTrace,
-		goVersion:        sourcePatchGoVersion,
-		defaultGODEBUG:   defaultGODEBUG,
+		fingerprinting:  make(map[string]bool),
+		pkgs:            map[*packages.Package]Package{},
+		pkgByID:         map[string]Package{},
+		cacheManager:    newCacheManager(),
+		patchFiles:      llgoFiles,
+		output:          output,
+		passOpt:         passOpt,
+		buildConf:       conf,
+		crossCompile:    export,
+		commands:        commands,
+		frontendOptions: frontendOptions,
+		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
+		buildTrace:      buildTrace,
+		goVersion:       sourcePatchGoVersion,
+		defaultGODEBUG:  defaultGODEBUG,
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
@@ -1948,7 +1976,6 @@ type context struct {
 	crossCompile      crosscompile.Export
 	commands          commandEnv
 	frontendOptions   cl.Options
-	staticByteArrays  map[string][]byte
 	wasmRuntimeFree   bool
 	wasmClosedProgram bool // true when native inputs cannot introduce untracked Go references
 	wasiSizeRoots     []string
@@ -1972,6 +1999,7 @@ type context struct {
 	sfilesFrozen      bool
 	llgoFilesCache    map[*packages.Package][]llgoFileInput
 	llgoFilesFrozen   bool
+	llgoFileHashMu    sync.RWMutex
 	llgoFileHashCache map[llgoFileHashKey]string
 	llgoFileErrCache  map[llgoFileHashKey]error
 
@@ -3677,7 +3705,6 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	// wrappers are generated in the uncached final-link module.
 	// package C retains its direct, unqualified definitions in its own module.
 	options.CExportWrappers = needsCExportWrappers(ctx, aPkg)
-	options.StaticByteArrays = aPkg.staticByteArrays
 	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
 		aPkg.SSA, syntax, embedMap, needMeta, options)
@@ -4251,9 +4278,8 @@ type ssaBuildEntry struct {
 	complexity int64
 }
 
-func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package, conf *Config, verbose bool) ([]ssaBuildEntry, map[string][]byte) {
+func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package, conf *Config, verbose bool) []ssaBuildEntry {
 	var entries []ssaBuildEntry
-	var payloads map[string][]byte
 	packages.Visit(alts, nil, func(p *packages.Package) {
 		if typs := p.Types; typs != nil && !p.IllTyped {
 			if debugBuild || verbose {
@@ -4280,7 +4306,7 @@ func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.
 			}
 		}
 	})
-	return entries, payloads
+	return entries
 }
 
 type aPackage struct {
@@ -4294,14 +4320,13 @@ type aPackage struct {
 	ssaInstructions int64
 	linkSnapshot    *packageLinkSnapshot
 
-	LinkArgs         []string
-	ObjFiles         []string               // file-backed archive members: .o or .ll
-	ObjBuffers       []packageArchiveBuffer // LLVM-produced in-memory archive members
-	ArchiveFile      string                 // archive file: .a (output of archiver, used for linking)
-	Meta             *meta.PackageMeta
-	rewriteVars      map[string]string
-	staticByteArrays map[string][]byte
-	tempObjFiles     []string // process-private C/C++/assembly objects consumed by ArchiveFile
+	LinkArgs     []string
+	ObjFiles     []string               // file-backed archive members: .o or .ll
+	ObjBuffers   []packageArchiveBuffer // LLVM-produced in-memory archive members
+	ArchiveFile  string                 // archive file: .a (output of archiver, used for linking)
+	Meta         *meta.PackageMeta
+	rewriteVars  map[string]string
+	tempObjFiles []string // process-private C/C++/assembly objects consumed by ArchiveFile
 
 	pcln *packagePCLN // source mappings read from ArchiveFile before linking
 
@@ -4354,16 +4379,15 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 				ssaPkg.RetainInit = cl.SkipNamesRetainingInit(altPkg.Syntax)
 			}
 			aPkg := &aPackage{
-				Package:          p,
-				SSA:              ssaPkg,
-				AltPkg:           altPkg,
-				LPkg:             nil,
-				NeedRt:           false,
-				NeedPyInit:       false,
-				LinkArgs:         nil,
-				ObjFiles:         nil,
-				rewriteVars:      rewrites,
-				staticByteArrays: ctx.staticByteArrays,
+				Package:     p,
+				SSA:         ssaPkg,
+				AltPkg:      altPkg,
+				LPkg:        nil,
+				NeedRt:      false,
+				NeedPyInit:  false,
+				LinkArgs:    nil,
+				ObjFiles:    nil,
+				rewriteVars: rewrites,
 			}
 			ctx.pkgs[p] = aPkg
 			ctx.pkgByID[p.ID] = aPkg

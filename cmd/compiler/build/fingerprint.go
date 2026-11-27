@@ -224,7 +224,10 @@ func (m *manifestBuilder) Build() string {
 	common := m.common
 	pkg := m.pkg
 
-	sort.Strings(common.BuildTags)
+	if len(common.BuildTags) > 1 && !sort.StringsAreSorted(common.BuildTags) {
+		common.BuildTags = append([]string(nil), common.BuildTags...)
+		sort.Strings(common.BuildTags)
+	}
 
 	data := manifestData{
 		Env:      &env,
@@ -732,9 +735,6 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 	if len(inputs) == 0 {
 		return nil, nil
 	}
-	if ctx.llgoFileHashCache == nil {
-		ctx.llgoFileHashCache = make(map[llgoFileHashKey]string)
-	}
 	digests := make([]llgoFileDigest, 0, len(inputs))
 	for _, input := range inputs {
 		compilerArgs := llgoFileCompilerArgs(ctx, input.compilerArgs, input.path)
@@ -750,9 +750,12 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 			compilerArgs: strings.Join(effectiveArgs, "\x00"),
 			envIdentity:  envID,
 		}
+		ctx.llgoFileHashMu.RLock()
 		preprocessedHash, ok := ctx.llgoFileHashCache[cacheKey]
+		cachedErr, failed := ctx.llgoFileErrCache[cacheKey]
+		ctx.llgoFileHashMu.RUnlock()
 		if !ok {
-			if cachedErr, failed := ctx.llgoFileErrCache[cacheKey]; failed {
+			if failed {
 				return nil, cachedErr
 			}
 			var depPath string
@@ -774,10 +777,12 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 					} else {
 						err = fmt.Errorf("preprocess file %q: %w", input.path, err)
 					}
+					ctx.llgoFileHashMu.Lock()
 					if ctx.llgoFileErrCache == nil {
 						ctx.llgoFileErrCache = make(map[llgoFileHashKey]error)
 					}
 					ctx.llgoFileErrCache[cacheKey] = err
+					ctx.llgoFileHashMu.Unlock()
 					return err
 				}
 				hash := sha256.New()
@@ -844,7 +849,12 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 					_ = os.Remove(tmpDep)
 				}
 			}
+			ctx.llgoFileHashMu.Lock()
+			if ctx.llgoFileHashCache == nil {
+				ctx.llgoFileHashCache = make(map[llgoFileHashKey]string)
+			}
 			ctx.llgoFileHashCache[cacheKey] = preprocessedHash
+			ctx.llgoFileHashMu.Unlock()
 		}
 		overlayHash := ""
 		if content, ok := overlay[input.path]; ok {

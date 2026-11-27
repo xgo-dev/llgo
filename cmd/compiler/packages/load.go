@@ -278,13 +278,96 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 			typeCtx:       typeCtx,
 		}
 
-		// Perform bottom-up typechecking in dependency post-order
-		Visit(initial, nil, func(pkg *Package) {
-			tc.typecheckPackage(pkg)
-		})
+		// Perform bottom-up typechecking in parallel topological dependency order.
+		tc.typecheckDAG(initial)
 	}
 
 	return initial, nil
+}
+
+// typecheckDAG runs tc.typecheckPackage in bottom-up dependency order using a
+// bounded worker pool. Every dependency finishes before any package importing
+// it starts, preserving exact go/types import contracts while overlapping file
+// parsing, exportdata decoding, and type checking across CPU cores.
+func (tc *typecheckContext) typecheckDAG(initial []*Package) {
+	var order []*Package
+	Visit(initial, nil, func(pkg *Package) {
+		order = append(order, pkg)
+	})
+	workers := runtime.GOMAXPROCS(0)
+	if len(order) <= 1 || workers <= 1 {
+		for _, pkg := range order {
+			tc.typecheckPackage(pkg)
+		}
+		return
+	}
+	if workers > len(order) {
+		workers = len(order)
+	}
+
+	remaining := make(map[*Package]int, len(order))
+	dependents := make(map[*Package][]*Package, len(order))
+	for _, pkg := range order {
+		if len(pkg.Imports) == 0 {
+			continue
+		}
+		seenDep := make(map[*Package]bool, len(pkg.Imports))
+		for _, dep := range pkg.Imports {
+			if dep == nil || dep == pkg || seenDep[dep] {
+				continue
+			}
+			seenDep[dep] = true
+			remaining[pkg]++
+			dependents[dep] = append(dependents[dep], pkg)
+		}
+	}
+
+	jobs := make(chan *Package, len(order))
+	done := make(chan *Package, len(order))
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for pkg := range jobs {
+				tc.typecheckPackage(pkg)
+				done <- pkg
+			}
+		}()
+	}
+
+	inFlight := 0
+	for _, pkg := range order {
+		if remaining[pkg] == 0 {
+			jobs <- pkg
+			inFlight++
+		}
+	}
+	processed := make(map[*Package]bool, len(order))
+	for inFlight > 0 {
+		pkg := <-done
+		inFlight--
+		processed[pkg] = true
+		for _, parent := range dependents[pkg] {
+			remaining[parent]--
+			if remaining[parent] == 0 {
+				jobs <- parent
+				inFlight++
+			}
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	// Invalid user code with an import cycle leaves nodes with remaining > 0.
+	// Process them serially in deterministic post-order to surface errors safely.
+	if len(processed) < len(order) {
+		for _, pkg := range order {
+			if !processed[pkg] {
+				tc.typecheckPackage(pkg)
+			}
+		}
+	}
 }
 
 func hasExplicitGCFlags(flags []string) bool {
