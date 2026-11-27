@@ -38,36 +38,39 @@ func TestAtomicValueConcurrentFirstStore(t *testing.T) {
 		}
 		close(start)
 		wg.Wait()
-		got, ok := v.Load().(int)
+		final := v.Load()
+		got, ok := final.(int)
 		if !ok || got < 1 || got > workers {
-			t.Fatalf("round %d: final Value.Load() = %#v, want int in [1,%d]", r, v.Load(), workers)
+			t.Fatalf("round %d: final Value.Load() = %#v, want int in [1,%d]", r, final, workers)
 		}
 	}
 }
 
 func TestContextCancelConcurrentAtomicValue(t *testing.T) {
+	const rounds = 150
 	const workers = 8
-	const iters = 250
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for w := 0; w < workers; w++ {
-		go func() {
-			defer wg.Done()
-			for i := 0; i < iters; i++ {
-				ctx, cancel := context.WithCancel(context.Background())
-				cancel()
+	for r := 0; r < rounds; r++ {
+		// Share a single cancelCtx across all workers so Done() and cancel()
+		// concurrently race on the first store to cancelCtx.done (atomic.Value).
+		ctx, cancel := context.WithCancel(context.Background())
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(workers)
+		for w := 0; w < workers; w++ {
+			doCancel := w%2 == 0
+			go func() {
+				defer wg.Done()
+				<-start
+				if doCancel {
+					cancel()
+				}
+				<-ctx.Done()
 				if ctx.Err() != context.Canceled {
 					t.Errorf("ctx.Err() = %v, want context.Canceled", ctx.Err())
-					return
 				}
-				select {
-				case <-ctx.Done():
-				default:
-					t.Errorf("ctx.Done() not closed after cancel")
-					return
-				}
-			}
-		}()
+			}()
+		}
+		close(start)
+		wg.Wait()
 	}
-	wg.Wait()
 }
