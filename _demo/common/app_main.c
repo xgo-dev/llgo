@@ -10,7 +10,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <unistd.h>
-
 #include "esp_heap_caps.h"
 
 /* Budget the Go heap may take from PSRAM (runtime: tinygogc/gc_segment_idf.go).
@@ -34,15 +33,55 @@ int32_t llgo_all_dma_max(void)
     return (int32_t)heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
 }
 #include <freertos/FreeRTOS.h>
-#include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
 extern int main(int argc, char **argv);
 
+/* The dedicated Go task (optional, llgo_syms.S LLGO_GO_TASK_STACK): app_main
+ * spawns "llgo-go" on the static stack the syms file declares below the GC
+ * window, so the fiber SP sits above the declared stack bottom and the
+ * RISC-V port's coprocessor save-area check (port.c) holds when Go owns the
+ * FPU across a WiFi preemption. The size must match the .space in
+ * llgo_syms.S (8192). Without the symbol (every firmware that runs Go
+ * directly on the IDF main task) the probe stays NULL and the run keeps the
+ * historical shape. */
+extern uint8_t _llgo_go_task_stack[] __attribute__((weak));
+static StaticTask_t s_go_task_tcb;
+static volatile int s_go_done;
+
+static void go_task_fn(void *arg)
+{
+    /* IDF v6.1 preview (esp32s31): a statically-created task starts with
+     * zeroed TLS, but picolibc resolves stdin/stdout/stderr through __thread
+     * pointers when CONFIG_LIBC_PICOLIBC_NEWLIB_COMPATIBILITY is on - so the
+     * first stdio call on this task faults reading FILE at offset 0x14
+     * (tls_stdout == NULL, measured). Re-point the TLS slots at the static
+     * FILE objects before Go runs. */
+    extern __thread FILE *tls_stdin, *tls_stdout, *tls_stderr;
+    tls_stdin = stdin;
+    tls_stdout = stdout;
+    tls_stderr = stderr;
+
+    (void)arg;
+    (void)main(0, NULL);
+    s_go_done = 1;
+    vTaskDelete(NULL);
+}
+
 void app_main(void)
 {
     printf("[c] app_main: starting llgo runtime\n");
-    (void)main(0, NULL);
+    if (_llgo_go_task_stack) {
+        const uint32_t depth = 8192 / sizeof(StackType_t);
+        xTaskCreateStaticPinnedToCore(go_task_fn, "llgo-go", depth, NULL,
+                                      1 /* prio: same as the IDF main task */,
+                                      (StackType_t *)_llgo_go_task_stack,
+                                      &s_go_task_tcb, 0);
+        while (!s_go_done)
+            vTaskDelay(pdMS_TO_TICKS(100));
+    } else {
+        (void)main(0, NULL);
+    }
 
     /* Both allocators' ledgers, from the C side: the budget above, the bytes
      * the collector reports having taken from SPIRAM (weak symbol, runtime:

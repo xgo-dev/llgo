@@ -97,6 +97,8 @@ _Static_assert(llgoFiberFrameArgOff == 52, "a0 argument slot must stay inside th
  * harmless and the results are ignored. */
 extern int _write(int fd, const void *buf, unsigned int len);
 extern int fflush(void *streams);
+extern void *stdout; /* the libc's global FILE* (the actual type is opaque
+                         here; this file stays freestanding) */
 extern void exit(int status) __attribute__((noreturn));
 
 extern void *llgoFiberGoStart(void *arg);
@@ -194,7 +196,10 @@ __attribute__((naked)) void llgoFiberSwap(unsigned int *fromSp, unsigned int *to
 void llgoFiberStackOverflow(void)
 {
     static const char msg[] = "fatal error: goroutine stack overflow\n";
-    fflush(0);
+    /* fflush(stdout), not fflush(0): flushing every stream walks the full
+     * FILE list and faults on these targets (measured on ESP-IDF, where the
+     * list carries per-task TLS streams). */
+    fflush(stdout);
     _write(2, msg, sizeof msg - 1);
     exit(2);
 }

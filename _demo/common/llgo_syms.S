@@ -37,12 +37,29 @@ _heapStart:
     .globl _heapEnd
 _heapEnd:
 
+#ifdef LLGO_GO_TASK_STACK
+    /* The dedicated Go task's FreeRTOS stack IS the bootstrap window: the
+     * swap guard checks the bootstrap SP against _stack_end (canary floor),
+     * so the window must be the stack the scheduler actually runs on.
+     * Declaring it below the GC window also satisfies the FreeRTOS RISC-V
+     * port's coprocessor save-area check (fiber SPs stay above the declared
+     * stack bottom - app_main.c). */
+    .balign 64
+    .globl _stack_end
+    .globl _llgo_go_task_stack
+_llgo_go_task_stack:
+_stack_end:
+    .space 8192
+    .globl _stack_top
+_stack_top:
+#else
     .balign 64
     .globl _stack_end                /* floor: canary word written here */
 _stack_end:
     .space 4096
     .globl _stack_top                /* ceiling of the bootstrap window */
 _stack_top:
+#endif
 
 /* llgoFixStreams: kept for link compatibility with firmware built against
  * the old contract, but a no-op since the clite mechanism fix. clite's

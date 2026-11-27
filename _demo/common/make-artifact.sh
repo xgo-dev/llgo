@@ -42,6 +42,9 @@
 #                                       explicit template:destination pairs, for
 #                                       templates whose file name differs
 #   GC_WIN_KB=64                        static GC window (default 64)
+#   GO_TASK_STACK=1                     spawn "llgo-go" on a dedicated stack
+#                                       below the GC window (FPU-safe; see
+#                                       app_main.c)
 #   LLGO_EXTRA_ARGS="..."               extra arguments for the llgo build
 #
 # post-sync.sh (optional, same directory): sourced after the glue sync, for a
@@ -151,8 +154,17 @@ mv "$MAIN/llgo_tmp.elf" "$MAIN/llgo_out.raw.o"
 # LLGO_GC_WINDOW_KB still overrides from the environment, as it always did;
 # otherwise the demo's artifact.conf value (or 64 KiB) applies.
 GC_WIN_KB="${LLGO_GC_WINDOW_KB:-${GC_WIN_KB:-64}}"
+# GO_TASK_STACK=1 (artifact.conf) assembles the dedicated Go-task stack
+# (_llgo_go_task_stack, below the GC window) and app_main then spawns
+# "llgo-go" on it - required when Go owns the FPU and higher-priority IDF
+# tasks (WiFi) can preempt it (the coprocessor save-area check in
+# freertos port.c).
+GO_TASK_DEFINE=""
+if [[ "${GO_TASK_STACK:-0}" == "1" ]]; then
+    GO_TASK_DEFINE="-DLLGO_GO_TASK_STACK=1"
+fi
 "$CLANG" --target=riscv32-esp-elf -march=rv32imc_zicsr \
-    -DLLGO_GC_WINDOW_BYTES=$((GC_WIN_KB * 1024)) \
+    -DLLGO_GC_WINDOW_BYTES=$((GC_WIN_KB * 1024)) $GO_TASK_DEFINE \
     -c "$COMMON/llgo_syms.S" -o "$DIR/llgo_syms.o"
 echo "GC window: ${GC_WIN_KB} KiB"
 "$LLD" -r -m elf32lriscv "$MAIN/llgo_out.raw.o" "$DIR/llgo_syms.o" -o "$MAIN/llgo_out.merged.o"
