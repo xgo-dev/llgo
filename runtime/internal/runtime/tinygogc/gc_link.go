@@ -67,8 +67,11 @@ const allocationAlignment = unsafe.Sizeof(uintptr(0))
 
 func gcMemoryLayout() (heapStart, heapEnd, globalsStart, globalsEnd, stackTop uintptr) {
 	// Reserve 2 KiB for libc internal allocation that cannot be wrapped.
+	// Keep a guard gap below the bootstrap stack: the linker places _heapEnd
+	// and _stack_end at the same address, so any off-by-one write at the top
+	// of the heap would land on the scheduler stack's floor word.
 	return uintptr(unsafe.Pointer(&_heapStart)) + 2048,
-		uintptr(unsafe.Pointer(&_heapEnd)),
+		uintptr(unsafe.Pointer(&_heapEnd)) - 64,
 		uintptr(unsafe.Pointer(&_globals_start)),
 		uintptr(unsafe.Pointer(&_globals_end)),
 		uintptr(unsafe.Pointer(&_stackStart))

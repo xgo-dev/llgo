@@ -97,7 +97,9 @@ _Static_assert(llgoFiberFrameArgOff == 52, "a0 argument slot must stay inside th
  * harmless and the results are ignored. */
 extern int _write(int fd, const void *buf, unsigned int len);
 extern int fflush(void *streams);
-extern void *stdout; /* the libc's global FILE* (the actual type is opaque
+/* Weak: SRAM-direct links carry no libc stdio globals at all, and the fatal
+ * path must stay linkable there. IDF firmware resolves it to the real FILE*. */
+extern void *stdout __attribute__((weak)); /* the libc's global FILE* (the actual type is opaque
                          here; this file stays freestanding) */
 extern void exit(int status) __attribute__((noreturn));
 
@@ -128,8 +130,14 @@ __attribute__((naked)) void llgoFiberSwap(unsigned int *fromSp, unsigned int *to
         // magic. A mismatch means a frame wrote at or below the floor since
         // the last switch, even if sp has since recovered.
         "lw t1, 0(t0)\n"
+        // A zero floor word means the canary was never planted (or the
+        // platform reused the word): skip the canary test and rely on the sp
+        // bound below, which catches a live overflow without owning a
+        // dedicated slot in the stack.
+        "beqz t1, 3f\n"
         "li t2, " llgoFiberStr(llgoFiberStackCanary) "\n"
         "bne t1, t2, 2f\n"
+        "3:\n"
         // SP bound: the 64-byte swap frame below must stay clear of the
         // canary word (see fiberGuardMargin): frame base = sp-64 must be
         // >= stackLo+4, i.e. sp >= stackLo+68.
@@ -193,13 +201,40 @@ __attribute__((naked)) void llgoFiberSwap(unsigned int *fromSp, unsigned int *to
  * full buffer on these targets (the emulated console is not a tty), so an
  * unbuffered _write without the flush would land the fatal line ahead of
  * already-printed program output. */
-void llgoFiberStackOverflow(void)
+void llgoFiberStackOverflow(unsigned int *from)
 {
     static const char msg[] = "fatal error: goroutine stack overflow\n";
+    long sp;
+    __asm__ volatile("mv %0, sp" : "=r"(sp));
+    /* from arrives in a0 from the swap's guard-fail branch: [0]=parked sp,
+     * [4]=stackLo. The floor word holds the canary unless something wrote
+     * over it - its actual value names the culprit. */
+    long stackLo = (long)from[1];
+    long floor = *(long *)stackLo;
+    char buf[220];
+    int n = 0;
+    const char hex[] = "0123456789abcdef";
+    buf[n++] = '['; buf[n++] = 'c'; buf[n++] = ']'; buf[n++] = ' ';
+    const char *labels[6] = {"from=", " w0=", " sp=", " lo=", " hi=", " can="};
+    long vals[6] = {(long)from, (long)from[0], sp, stackLo, (long)from[2], floor};
+    for (int k = 0; k < 6; k++) {
+        const char *l = labels[k];
+        while (*l)
+            buf[n++] = *l++;
+        long v = vals[k];
+        for (int i = 7; i >= 0; i--)
+            buf[n++] = hex[(v >> (i * 4)) & 0xf];
+        buf[n++] = ' ';
+    }
+    buf[n++] = '\n';
+    if (stdout)
+        fflush(stdout);
+    _write(2, buf, n);
     /* fflush(stdout), not fflush(0): flushing every stream walks the full
      * FILE list and faults on these targets (measured on ESP-IDF, where the
      * list carries per-task TLS streams). */
-    fflush(stdout);
+    if (stdout)
+        fflush(stdout);
     _write(2, msg, sizeof msg - 1);
     exit(2);
 }

@@ -26,6 +26,7 @@ import (
 
 // AllocU allocates uninitialized memory and returns a non-nil pointer or panics.
 // Zero-byte requests return the shared zerobase without allocating.
+
 func AllocU(size uintptr) unsafe.Pointer {
 	if size == 0 {
 		return unsafe.Pointer(&zerobase)

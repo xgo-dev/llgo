@@ -161,7 +161,7 @@ func fiberSwap(from, to *baremetalFiberContext)
 // line through the same channel.
 //
 //go:linkname fiberStackOverflow C.llgoFiberStackOverflow
-func fiberStackOverflow()
+func fiberStackOverflow(from *baremetalFiberContext)
 
 //go:linkname fiberGStartAddr C.llgoFiberGStartAddr
 func fiberGStartAddr() unsafe.Pointer
@@ -556,7 +556,7 @@ func checkBaremetalFiberBounds(fc *baremetalFiberContext, buffer unsafe.Pointer)
 	// The floor comparison first: a wrapped interior pointer would otherwise
 	// pass the margin subtraction below.
 	if buf < fc.stackLo || buf-fc.stackLo < fiberStackGuardMargin {
-		fiberStackOverflow()
+		fiberStackOverflow(fc)
 	}
 }
 
