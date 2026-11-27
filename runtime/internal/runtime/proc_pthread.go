@@ -127,8 +127,8 @@ func canRecycleM(mp *m, gp *g, ctx *runtimeContext) bool {
 	if ctx.platform.systemG {
 		return false
 	}
-	// Threads that initialized //llgointernal:tls or gls guards cannot safely
-	// reset those guards for a later goroutine.
+	// Threads that initialized thread-local or goroutine-local guards cannot
+	// safely reset those guards for a later goroutine.
 	if mp.touchedLocal {
 		return false
 	}
