@@ -13,16 +13,15 @@ import (
 	psync "github.com/xgo-dev/llgo/runtime/internal/sync"
 )
 
-// Minimal runtime netpoll backing for internal/poll.
+// Runtime netpoll backing for internal/poll.
 //
 // internal/poll assumes non-blocking I/O and a working runtime poller when
-// pollDesc.init succeeds. Our previous stubs returned "success" but never
-// actually blocked or unblocked, which caused tight spins and deadlocks (e.g.
-// listener Close waiting forever because Accept loops never observed "closing").
-//
-// Each blocked operation uses libc poll(2) with its own wake pipe. Close and
-// deadline changes signal every affected operation: a different descriptor or
-// a concurrent read/write waiter must not consume its notification.
+// pollDesc.init succeeds. Each poll descriptor owns its own mutex and caches
+// one reusable wake pipe for the common single-waiter path so repeated
+// pollWait calls avoid global lock contention and per-wait pipe/fcntl/close
+// syscalls. If a second waiter concurrently blocks on the same descriptor
+// (e.g. full-duplex Read + Write), it allocates a dedicated temporary wake
+// pipe so close/deadline wakes never steal another waiter's notification.
 
 // Must match the error codes in internal/poll/fd_poll_runtime.go.
 const (
@@ -55,22 +54,32 @@ type llgoPollDesc struct {
 	rd int64
 	wd int64
 
-	// Protected by pollDescMu, including writes and removal/closing of pipes.
+	// Per-descriptor mutex protecting closed, waiters, and the cached wake pipe.
+	mu psync.Mutex
+
+	hasWaiters  uint32
+	closed      bool
+	wakeR       c.Int
+	wakeW       c.Int
+	wakeInUse   bool
+	wakePending bool
+
 	waiters *pollWaiter
 }
 
 type pollWaiter struct {
-	next *pollWaiter
-	mode int
-	r, w c.Int
+	next   *pollWaiter
+	mode   int
+	r, w   c.Int
+	cached bool
 }
 
 var pollOnce psync.Once
-var pollDescMu psync.Mutex
+var pollRootMu psync.Mutex
 var pollDescRoots map[uintptr]*llgoPollDesc
 
 func pollInit() {
-	pollDescMu.Init(nil)
+	pollRootMu.Init(nil)
 	pollDescRoots = make(map[uintptr]*llgoPollDesc)
 }
 
@@ -79,9 +88,9 @@ func pollRootAdd(pd *llgoPollDesc) uintptr {
 		return 0
 	}
 	ctx := uintptr(unsafe.Pointer(pd))
-	pollDescMu.Lock()
+	pollRootMu.Lock()
 	pollDescRoots[ctx] = pd
-	pollDescMu.Unlock()
+	pollRootMu.Unlock()
 	return ctx
 }
 
@@ -89,46 +98,95 @@ func pollRootDel(ctx uintptr) {
 	if ctx == 0 {
 		return
 	}
-	pollDescMu.Lock()
+	pollRootMu.Lock()
 	delete(pollDescRoots, ctx)
-	pollDescMu.Unlock()
+	pollRootMu.Unlock()
 }
 
 // Register before inspecting the deadline or closing state. A state change
-// either precedes that inspection or finds this waiter under pollDescMu.
-func pollAddWaiter(pd *llgoPollDesc, mode int) *pollWaiter {
+// either precedes that inspection or finds this waiter under pd.mu.
+func pollAddWaiter(pd *llgoPollDesc, w *pollWaiter, mode int) bool {
+	pd.mu.Lock()
+	if !pd.wakeInUse {
+		if pd.wakeR < 0 && !pd.closed {
+			var fds [2]c.Int
+			if pollPipe(&fds) {
+				pd.wakeR = fds[0]
+				pd.wakeW = fds[1]
+			}
+		}
+		if pd.wakeR >= 0 {
+			if pd.wakePending {
+				pollDrainWakeFd(pd.wakeR)
+				pd.wakePending = false
+			}
+			pd.wakeInUse = true
+			*w = pollWaiter{next: pd.waiters, mode: mode, r: pd.wakeR, w: pd.wakeW, cached: true}
+			pd.waiters = w
+			latomic.StoreUint32(&pd.hasWaiters, 1)
+			pd.mu.Unlock()
+			return true
+		}
+		pd.mu.Unlock()
+		return false
+	}
+	pd.mu.Unlock()
+
 	var fds [2]c.Int
 	if !pollPipe(&fds) {
-		return nil
+		return false
 	}
-	w := &pollWaiter{mode: mode, r: fds[0], w: fds[1]}
-	pollDescMu.Lock()
+	*w = pollWaiter{mode: mode, r: fds[0], w: fds[1], cached: false}
+	pd.mu.Lock()
 	w.next = pd.waiters
 	pd.waiters = w
-	pollDescMu.Unlock()
-	return w
+	latomic.StoreUint32(&pd.hasWaiters, 1)
+	pd.mu.Unlock()
+	return true
 }
 
 func pollRemoveWaiter(pd *llgoPollDesc, w *pollWaiter) {
-	pollDescMu.Lock()
+	pd.mu.Lock()
 	for link := &pd.waiters; *link != nil; link = &(*link).next {
 		if *link == w {
 			*link = w.next
 			break
 		}
 	}
-	// A notifier cannot write after close, even if these descriptor numbers
-	// are immediately reused by a different thread.
-	cliteos.Close(w.r)
-	cliteos.Close(w.w)
-	pollDescMu.Unlock()
+	w.next = nil
+	if pd.waiters == nil {
+		latomic.StoreUint32(&pd.hasWaiters, 0)
+	}
+	if w.cached {
+		if pd.wakePending && pd.wakeR >= 0 {
+			pollDrainWakeFd(pd.wakeR)
+			pd.wakePending = false
+		}
+		pd.wakeInUse = false
+		if pd.closed && pd.wakeR >= 0 {
+			cliteos.Close(pd.wakeR)
+			cliteos.Close(pd.wakeW)
+			pd.wakeR = -1
+			pd.wakeW = -1
+		}
+	} else {
+		// Close under pd.mu so a concurrent pollWake cannot write to reused fds.
+		cliteos.Close(w.r)
+		cliteos.Close(w.w)
+	}
+	pd.mu.Unlock()
 }
 
-func pollWake(pd *llgoPollDesc, mode int) {
-	pollDescMu.Lock()
+func pollWakeLocked(pd *llgoPollDesc, mode int) {
 	for w := pd.waiters; w != nil; w = w.next {
 		if mode != 0 && mode != 'r'+'w' && mode != w.mode {
 			continue
+		}
+		if w.cached {
+			if pd.wakePending {
+				continue
+			}
+			pd.wakePending = true
 		}
 		// Only readability matters; repeated notifications may coalesce.
 		var b byte
@@ -140,13 +198,23 @@ func pollWake(pd *llgoPollDesc, mode int) {
 			}
 		}
 	}
-	pollDescMu.Unlock()
 }
 
-func pollDrainWake(w *pollWaiter) {
+func pollWake(pd *llgoPollDesc, mode int) {
+	if latomic.LoadUint32(&pd.hasWaiters) == 0 {
+		return
+	}
+	pd.mu.Lock()
+	if pd.waiters != nil {
+		pollWakeLocked(pd, mode)
+	}
+	pd.mu.Unlock()
+}
+
+func pollDrainWakeFd(r c.Int) {
 	var buf [64]byte
 	for {
-		n := cliteos.Read(w.r, unsafe.Pointer(&buf[0]), uintptr(len(buf)))
+		n := cliteos.Read(r, unsafe.Pointer(&buf[0]), uintptr(len(buf)))
 		if n < 0 && int(cliteos.Errno()) == int(csyscall.EINTR) {
 			continue
 		}
@@ -154,6 +222,17 @@ func pollDrainWake(w *pollWaiter) {
 			return
 		}
 	}
+}
+
+func pollDrainWake(pd *llgoPollDesc, w *pollWaiter) {
+	if w.cached {
+		pd.mu.Lock()
+		pollDrainWakeFd(w.r)
+		pd.wakePending = false
+		pd.mu.Unlock()
+		return
+	}
+	pollDrainWakeFd(w.r)
 }
 
 func pollDeadline(pd *llgoPollDesc, mode int) int64 {
@@ -206,7 +285,8 @@ func poll_runtime_pollOpen(fd uintptr) (uintptr, int) {
 		// reports ErrNoDeadline from os.File deadline methods.
 		return 0, int(csyscall.EPERM)
 	}
-	pd := &llgoPollDesc{fd: c.Int(fd)}
+	pd := &llgoPollDesc{fd: c.Int(fd), wakeR: -1, wakeW: -1}
+	pd.mu.Init(nil)
 	return pollRootAdd(pd), 0
 }
 
@@ -218,7 +298,18 @@ func poll_runtime_pollClose(ctx uintptr) {
 	}
 	pd := (*llgoPollDesc)(unsafe.Pointer(ctx))
 	latomic.StoreUint32(&pd.closing, 1)
-	pollWake(pd, 0)
+	pd.mu.Lock()
+	pd.closed = true
+	if pd.waiters != nil {
+		pollWakeLocked(pd, 0)
+	}
+	if !pd.wakeInUse && pd.wakeR >= 0 {
+		cliteos.Close(pd.wakeR)
+		cliteos.Close(pd.wakeW)
+		pd.wakeR = -1
+		pd.wakeW = -1
+	}
+	pd.mu.Unlock()
 	pollRootDel(ctx)
 }
 
@@ -232,10 +323,11 @@ func poll_runtime_pollWait(ctx uintptr, mode int) int {
 		return pollErrClosing
 	}
 	pollOnce.Do(pollInit)
-	w := pollAddWaiter(pd, mode)
+	var w pollWaiter
+	hasWake := pollAddWaiter(pd, &w, mode)
 	nfds := uintptr(1)
-	if w != nil {
-		defer pollRemoveWaiter(pd, w)
+	if hasWake {
+		defer pollRemoveWaiter(pd, &w)
 		nfds = 2
 	}
 
@@ -254,13 +346,13 @@ func poll_runtime_pollWait(ctx uintptr, mode int) int {
 		}
 		// Under fd pressure a wake pipe may be unavailable. Keep I/O working
 		// and periodically observe Close/deadline changes without that pipe.
-		if w == nil && (timeout < 0 || timeout > 1000) {
+		if !hasWake && (timeout < 0 || timeout > 1000) {
 			timeout = 1000
 		}
 
 		var fds [2]pollfd
 		fds[0] = pollfd{fd: pd.fd, events: ev}
-		if w != nil {
+		if hasWake {
 			fds[1] = pollfd{fd: w.r, events: pollIn}
 		}
 
@@ -280,8 +372,8 @@ func poll_runtime_pollWait(ctx uintptr, mode int) int {
 		}
 
 		// Wake pipe readable: drain and re-check state/deadline.
-		if w != nil && fds[1].revents != 0 {
-			pollDrainWake(w)
+		if hasWake && fds[1].revents != 0 {
+			pollDrainWake(pd, &w)
 			if latomic.LoadUint32(&pd.closing) != 0 {
 				return pollErrClosing
 			}
