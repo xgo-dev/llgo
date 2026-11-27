@@ -22,21 +22,55 @@ import (
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
-func formatSpecialFloat(v float64) (string, bool) {
+// snprintf writes at most 63 bytes plus its terminator. The legacy format
+// can insert up to two additional exponent digits in the same buffer.
+const floatFormatSize = 64
+
+type floatBuffer [floatFormatSize + 2]byte
+
+func formatFloat(buf *floatBuffer, v float64, imaginary bool) int {
 	switch {
 	case v != v:
-		return "NaN", true
-	case v+v == v && v != 0 && v > 0:
-		return "+Inf", true
-	case v+v == v && v != 0:
-		return "-Inf", true
-	default:
-		return "", false
+		if imaginary && !legacyFloatFormat {
+			return copy(buf[:], "+NaN")
+		}
+		return copy(buf[:], "NaN")
+	case v+v == v && v > 0:
+		return copy(buf[:], "+Inf")
+	case v+v == v && v < 0:
+		return copy(buf[:], "-Inf")
 	}
+	format := c.Str("%g")
+	if legacyFloatFormat {
+		format = c.Str("%+.6e")
+	} else if imaginary {
+		format = c.Str("%+g")
+	}
+	p := (*c.Char)(unsafe.Pointer(buf))
+	c.Snprintf(p, floatFormatSize, format, v)
+	n := int(c.Strlen(p))
+	if legacyFloatFormat {
+		return padLegacyExponent(buf, n)
+	}
+	return n
 }
 
-func formatFloatWithC(v float64, format *c.Char) string {
-	var buf [64]byte
-	c.Snprintf((*c.Char)(unsafe.Pointer(&buf[0])), uintptr(len(buf)), format, v)
-	return c.GoString((*c.Char)(unsafe.Pointer(&buf[0])))
+func padLegacyExponent(buf *floatBuffer, n int) int {
+	// The legacy Go format uses three exponent digits. Some C libraries use
+	// fewer, so move their digits to the right before inserting the zeroes.
+	for i := n - 1; i >= 0; i-- {
+		if buf[i] != 'e' && buf[i] != 'E' {
+			continue
+		}
+		exp := i + 2
+		digits := n - exp
+		if (digits == 1 || digits == 2) && (buf[i+1] == '+' || buf[i+1] == '-') {
+			pad := 3 - digits
+			copy(buf[exp+pad:], buf[exp:n])
+			copy(buf[exp:], "00"[:pad])
+			n += pad
+		}
+		break
+	}
+	return n
 }
