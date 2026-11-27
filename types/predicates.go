@@ -276,14 +276,16 @@ func LookupSelection(T Type, addressable bool, pkg *Package, name string) (Selec
 		return Selection{}, false
 	}
 	kind := FieldVal
-	if _, isFunc := obj.(*Func); isFunc {
+	typ := obj.Type()
+	if fn, isFunc := obj.(*Func); isFunc {
 		kind = MethodVal
+		typ = methodValType(T, fn)
 	}
 	return Selection{
 		kind:     kind,
 		recv:     T,
 		obj:      obj,
-		typ:      obj.Type(),
+		typ:      typ,
 		index:    index,
 		indirect: indirect,
 	}, true
@@ -458,6 +460,14 @@ func consolidateEmbedded(list []embeddedType) []embeddedType {
 	return out
 }
 
+func samePkg(a, b *Package) bool {
+	// package is nil for objects in universe scope
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.path == b.path
+}
+
 func matchObj(obj Object, pkg *Package, name string) bool {
 	if obj == nil || obj.Name() != name {
 		return false
@@ -465,11 +475,7 @@ func matchObj(obj Object, pkg *Package, name string) bool {
 	if token.IsExported(name) {
 		return true
 	}
-	opkg := obj.Pkg()
-	if opkg == pkg {
-		return true
-	}
-	return opkg != nil && pkg != nil && opkg.goPkg != nil && opkg.goPkg == pkg.goPkg
+	return samePkg(obj.Pkg(), pkg)
 }
 
 func hasPointerRecv(m *Func) bool {
@@ -827,21 +833,6 @@ func syntheticMethodSet(T Type) *MethodSet {
 		if _, isPtr := n.Underlying().(*Pointer); isPtr {
 			return &MethodSet{}
 		}
-	}
-	if iface, ok := T.Underlying().(*Interface); ok {
-		iface.resolve()
-		list := make([]*Selection, iface.NumMethods())
-		for i := 0; i < iface.NumMethods(); i++ {
-			m := iface.Method(i)
-			list[i] = &Selection{
-				kind:  MethodVal,
-				recv:  T,
-				obj:   m,
-				typ:   methodValType(T, m),
-				index: []int{i},
-			}
-		}
-		return &MethodSet{list: list}
 	}
 
 	typ, isPtr := derefType(T)

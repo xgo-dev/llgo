@@ -3075,6 +3075,156 @@ type NamedPtr *Outer
 	}
 }
 
+func TestLookupAndMethodSetParityWithGoTypes(t *testing.T) {
+	src := `package parity
+
+type S struct {
+	hidden int
+}
+func (S) priv() {}
+func (*S) ptrPriv() {}
+
+type I interface {
+	M()
+	priv()
+}
+
+type EmbedI struct {
+	I
+}
+
+var AnonI interface {
+	M()
+	priv()
+}
+
+func UseAnon[T interface{ M(); priv() }](x T) {}
+func UseNamed[U I](x U) {}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "parity.go", src, 0)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	const pkgPath = "example.com/parity"
+
+	var llConf types.Config
+	llPkg, err := llConf.Check(pkgPath, fset, []*ast.File{f}, nil)
+	if err != nil {
+		t.Fatalf("llgo/types Check: %v", err)
+	}
+	var goConf gotypes.Config
+	goPkg, err := goConf.Check(pkgPath, fset, []*ast.File{f}, nil)
+	if err != nil {
+		t.Fatalf("go/types Check: %v", err)
+	}
+
+	// Distinct Package instances with the same import path must match unexported
+	// fields and methods identically to go/types.
+	llSamePath := types.NewPackage(pkgPath, "othername")
+	goSamePath := gotypes.NewPackage(pkgPath, "othername")
+	llDiffPath := types.NewPackage("example.com/other", "parity")
+	goDiffPath := gotypes.NewPackage("example.com/other", "parity")
+
+	llS := llPkg.Scope().Lookup("S").Type()
+	goS := goPkg.Scope().Lookup("S").Type()
+	llI := llPkg.Scope().Lookup("I").Type()
+	goI := goPkg.Scope().Lookup("I").Type()
+	llAnonI := llPkg.Scope().Lookup("AnonI").Type()
+	goAnonI := goPkg.Scope().Lookup("AnonI").Type()
+	llEmbedI := llPkg.Scope().Lookup("EmbedI").Type()
+	goEmbedI := goPkg.Scope().Lookup("EmbedI").Type()
+	llTPAnon := llPkg.Scope().Lookup("UseAnon").(*types.Func).Signature().TypeParams().At(0)
+	goTPAnon := goPkg.Scope().Lookup("UseAnon").(*gotypes.Func).Type().(*gotypes.Signature).TypeParams().At(0)
+	llTPNamed := llPkg.Scope().Lookup("UseNamed").(*types.Func).Signature().TypeParams().At(0)
+	goTPNamed := goPkg.Scope().Lookup("UseNamed").(*gotypes.Func).Type().(*gotypes.Signature).TypeParams().At(0)
+
+	type pkgCase struct {
+		label string
+		llPkg *types.Package
+		goPkg *gotypes.Package
+	}
+	pkgCases := []pkgCase{
+		{"orig", llPkg, goPkg},
+		{"same-path", llSamePath, goSamePath},
+		{"diff-path", llDiffPath, goDiffPath},
+		{"nil", nil, nil},
+	}
+
+	type typeCase struct {
+		label string
+		llT   types.Type
+		goT   gotypes.Type
+		names []string
+	}
+	typeCases := []typeCase{
+		{"S", llS, goS, []string{"hidden", "priv", "ptrPriv"}},
+		{"*S", types.NewPointer(llS), gotypes.NewPointer(goS), []string{"hidden", "priv", "ptrPriv"}},
+		{"I", llI, goI, []string{"M", "priv"}},
+		{"*I", types.NewPointer(llI), gotypes.NewPointer(goI), []string{"M", "priv"}},
+		{"AnonI", llAnonI, goAnonI, []string{"M", "priv"}},
+		{"EmbedI", llEmbedI, goEmbedI, []string{"M", "priv"}},
+		{"*EmbedI", types.NewPointer(llEmbedI), gotypes.NewPointer(goEmbedI), []string{"M", "priv"}},
+		{"TPAnon", llTPAnon, goTPAnon, []string{"M", "priv"}},
+		{"*TPAnon", types.NewPointer(llTPAnon), gotypes.NewPointer(goTPAnon), []string{"M", "priv"}},
+		{"TPNamed", llTPNamed, goTPNamed, []string{"M", "priv"}},
+	}
+
+	for _, tc := range typeCases {
+		llMS := types.NewMethodSet(tc.llT)
+		goMS := gotypes.NewMethodSet(tc.goT)
+		if llMS.Len() != goMS.Len() {
+			t.Fatalf("%s: MethodSet.Len = %d, go/types = %d", tc.label, llMS.Len(), goMS.Len())
+		}
+		for i := 0; i < llMS.Len(); i++ {
+			ls, gs := llMS.At(i), goMS.At(i)
+			if ls.Obj().Id() != gs.Obj().Id() || ls.Indirect() != gs.Indirect() || !intsEqual(ls.Index(), gs.Index()) {
+				t.Fatalf("%s: MethodSet.At(%d) = (%s, idx=%v, ind=%v), go/types = (%s, idx=%v, ind=%v)",
+					tc.label, i, ls.Obj().Id(), ls.Index(), ls.Indirect(), gs.Obj().Id(), gs.Index(), gs.Indirect())
+			}
+		}
+
+		for _, pc := range pkgCases {
+			for _, name := range tc.names {
+				ls := llMS.Lookup(pc.llPkg, name)
+				gs := goMS.Lookup(pc.goPkg, name)
+				if (ls == nil) != (gs == nil) {
+					t.Fatalf("%s[%s].MethodSet.Lookup(%s) nil=%v, go/types nil=%v", tc.label, pc.label, name, ls == nil, gs == nil)
+				}
+				if ls != nil && (ls.Indirect() != gs.Indirect() || !intsEqual(ls.Index(), gs.Index())) {
+					t.Fatalf("%s[%s].MethodSet.Lookup(%s) = (idx=%v, ind=%v), go/types = (idx=%v, ind=%v)",
+						tc.label, pc.label, name, ls.Index(), ls.Indirect(), gs.Index(), gs.Indirect())
+				}
+
+				for _, addr := range []bool{false, true} {
+					lo, li, lind := types.LookupFieldOrMethod(tc.llT, addr, pc.llPkg, name)
+					goObj, gi, gind := gotypes.LookupFieldOrMethod(tc.goT, addr, pc.goPkg, name)
+					if (lo == nil) != (goObj == nil) || lind != gind || !intsEqual(li, gi) {
+						t.Fatalf("LookupFieldOrMethod(%s, addr=%v, %s, %s) = (nil=%v, idx=%v, ind=%v), go/types = (nil=%v, idx=%v, ind=%v)",
+							tc.label, addr, pc.label, name, lo == nil, li, lind, goObj == nil, gi, gind)
+					}
+					if lo != nil && lo.Id() != goObj.Id() {
+						t.Fatalf("LookupFieldOrMethod(%s, addr=%v, %s, %s) id = %s, go/types = %s",
+							tc.label, addr, pc.label, name, lo.Id(), goObj.Id())
+					}
+				}
+			}
+		}
+	}
+}
+
+func intsEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestConcurrentEvalAndCheckExprAfterPostCheckScopeInsert(t *testing.T) {
 	fset := token.NewFileSet()
 	checkedFile, err := parser.ParseFile(fset, "checked.go", "package checked\nconst Base = 10\n", 0)
