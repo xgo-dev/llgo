@@ -49,7 +49,11 @@ _heapEnd:
     .globl _llgo_go_task_stack
 _llgo_go_task_stack:
 _stack_end:
-    .space 8192
+    /* 64 KiB: the scheduler context runs the swap frames, the GC stack scan
+     * and every cooperative-yield path on this stack; the WiFi event stream
+     * measurably runs it 49 KB past an 8 KiB floor (canary smashed, parked
+     * SP deep inside the GC window - 2026-11-28). */
+    .space 65536
     .globl _stack_top
 _stack_top:
 #else

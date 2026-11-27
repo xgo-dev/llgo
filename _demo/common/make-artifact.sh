@@ -94,6 +94,48 @@ fi
 
 LLGO_BIN="${1:-${LLGO_BIN:-/tmp/llgo-idf}}"
 
+# PATCH_FREERTOS_COPROC_CHECK=1 relaxes the FreeRTOS RISC-V port's
+# coprocessor save-area check for firmwares that run the llgo scheduler on a
+# dedicated task (GO_TASK_STACK=1). The port saves a task's FPU context on
+# context switch and panics when that task's SP is below the save area it
+# allocated at task creation ("Stack overflow while saving coprocessor
+# context"). A fiber-based task legitimately runs with its SP in the
+# goroutine stacks (the GC window), far below that area - the check is
+# structurally unsatisfiable for us, and the C glue a Go task calls into
+# (esp_wifi_init and friends are compiled with the hard-float ABI) marks the
+# task FPU-dirty, so the save fires on the first WiFi preemption. The panic
+# branch is a belt-and-suspenders overflow detector for real tasks; fibers
+# keep their own swap guard, so skipping it is safe here.
+if [ "${PATCH_FREERTOS_COPROC_CHECK:-0}" = "1" ] && [ -n "${IDF_PATH:-}" ]; then
+    PORTC="$IDF_PATH/components/freertos/FreeRTOS-Kernel/portable/riscv/port.c"
+    if [ -f "$PORTC" ] && ! grep -q "LLGO_COPROC_CHECK_RELAXED" "$PORTC" 2>/dev/null; then
+        python3 - "$PORTC" <<'PYEOF'
+import sys
+p = sys.argv[1]
+t = open(p).read()
+old = '''        if (task_sp <= task->pxDummy6) {
+            /* In theory we need to call vApplicationStackOverflowHook to trigger the stack overflow callback,
+             * but in practice, since we are already in an exception handler, this won't work, so let's manually
+             * trigger an exception with the previous coprocessor owner's TCB */
+            g_panic_abort = true;
+            g_panic_abort_details = (char *) "ERROR: Stack overflow while saving coprocessor context!\\n";
+            xt_unhandled_exception(task_sp);
+        }'''
+new = '''        if (task_sp <= task->pxDummy6) {
+            /* LLGO_COPROC_CHECK_RELAXED: a fiber-based task (the llgo
+             * scheduler) legitimately runs with its SP in goroutine stacks,
+             * far below the save area allocated from its declared stack -
+             * its own swap guard protects the fiber stack, so the overflow
+             * panic would fire on every healthy WiFi preemption. */
+        }'''
+if old not in t:
+    sys.exit("port.c panic block not found - IDF layout changed?")
+open(p, 'w').write(t.replace(old, new, 1))
+print("patched: FreeRTOS coproc check relaxed (LLGO_COPROC_CHECK_RELAXED)")
+PYEOF
+    fi
+fi
+
 # Everything below is expressed against the demo root, so the script can be
 # invoked from anywhere (the historical contract was "run it from the demo
 # root"; that is now implied rather than required).
