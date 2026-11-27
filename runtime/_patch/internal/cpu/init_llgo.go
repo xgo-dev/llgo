@@ -8,6 +8,7 @@ import _ "unsafe"
 // hosted runtime uses the normal import graph: initialize this package before
 // any consumer can read its feature flags, including archsimd and user inits.
 func init() {
+	llgoPrepareCPU()
 	widths := llgoInitializeCPU(llgoCPUEnvironment())
 	// Publish once, after the official detector has applied GODEBUG. Bit zero
 	// distinguishes initialization from an initialized CPU with AVX2 disabled.

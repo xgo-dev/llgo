@@ -170,12 +170,16 @@ func TestCPUInitializationTargetHooks(t *testing.T) {
 			}
 			initialized := false
 			for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-				if strings.HasPrefix(fn.Name(), "internal/cpu.init") && strings.Contains(fn.String(), "internal/cpu.llgoInitializeCPU") {
-					initialized = strings.Contains(fn.String(), "CPUEnvironment")
+				if strings.HasPrefix(fn.Name(), "internal/cpu.init") {
+					_, afterPrepare, ok := strings.Cut(fn.String(), "internal/cpu.llgoPrepareCPU")
+					if ok && strings.Contains(afterPrepare, "CPUEnvironment") && strings.Contains(afterPrepare, "internal/cpu.llgoInitializeCPU") {
+						initialized = true
+						break
+					}
 				}
 			}
 			if !initialized {
-				t.Fatal("CPU initialization does not apply process overrides")
+				t.Fatal("CPU initialization must prepare the platform before applying process overrides")
 			}
 			var bridge string
 			switch target.os {
@@ -185,7 +189,7 @@ func TestCPUInitializationTargetHooks(t *testing.T) {
 				bridge = "internal/cpu.isProcessorFeaturePresent"
 			case "linux":
 				if target.arch == "arm64" {
-					if !strings.Contains(mod.NamedFunction("internal/cpu.llgoInitializeCPU").String(), "@getauxval") {
+					if !strings.Contains(mod.NamedFunction("internal/cpu.llgoPrepareCPU").String(), "@getauxval") {
 						t.Fatal("missing AT_HWCAP initialization")
 					}
 				}

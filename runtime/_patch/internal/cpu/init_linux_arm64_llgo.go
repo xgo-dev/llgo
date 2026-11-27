@@ -6,11 +6,9 @@ import _ "unsafe"
 
 // Linux supplies the effective user-space CPU capabilities in AT_HWCAP.
 // Populate the official variable before its platform detection reads it.
-func llgoInitializeCPU(env string) uint64 {
+func llgoPrepareCPU() {
 	const atHWCAP = 16
 	HWCap = uint(llgoGetauxval(atHWCAP))
-	Initialize(env)
-	return 0
 }
 
 //go:linkname llgoGetauxval C.getauxval
