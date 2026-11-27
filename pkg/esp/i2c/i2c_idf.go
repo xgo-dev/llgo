@@ -24,6 +24,9 @@ func receive(dev uintptr, data *uint8, length int32, timeoutMs int32) int32
 func transmitReceive(dev uintptr, write *uint8, writeLen int32,
 	read *uint8, readLen int32, timeoutMs int32) int32
 
+//go:linkname probe C.llgo_i2c_probe
+func probe(bus uintptr, addr uint32, timeoutMs int32) int32
+
 //go:linkname rmDevice C.llgo_i2c_rm_device
 func rmDevice(dev uintptr) int32
 

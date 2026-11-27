@@ -1,4 +1,4 @@
-// Package gpio drives ESP-IDF GPIO pins from llgo-compiled Go code.
+// Package gpio drives ESP GPIO pins from llgo-compiled Go code.
 //
 // It follows the pkg/esp package template (see the package wifi docs and
 // pkg/esp/README.md): wifi-style three-file Go split plus a thin C glue
@@ -6,6 +6,21 @@
 // is no mailbox here - every function maps to one glue call whose esp_err
 // result is wrapped as the family's shared error value (nil = ESP_OK, the
 // code stays inspectable on the error).
+//
+// # Backends
+//
+// Which driver sits behind the API is a build-tag decision, and the API is
+// identical on all three:
+//
+//   - llgo.idf (an ESP-IDF project): glue/gpio_glue.c, which calls the IDF
+//     gpio driver (gpio_idf.go).
+//   - llgo build -target esp32c3|esp32s31 with no IDF: the register-level
+//     baremetal backend (gpio_baremetal.go) writes the GPIO and I/O MUX
+//     registers directly, so a plain llgo binary drives pins with no IDF and
+//     no FreeRTOS in the link.
+//   - any other build (host, Wasm, a baremetal chip without a register
+//     table): the honest stub, which reports errUnsupported instead of
+//     touching hardware (gpio_stub.go).
 //
 // # Usage
 //

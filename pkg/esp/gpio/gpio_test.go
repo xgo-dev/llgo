@@ -1,4 +1,4 @@
-//go:build !llgo.idf
+//go:build !llgo.idf && (!llgo || !baremetal)
 
 // Host-build tests for the gpio surface. A host build has no glue, so
 // nothing here claims a pin exists: the tests pin what the pure-Go layer

@@ -784,6 +784,155 @@ received.
 ships in the esp_wifi component; the wifi glue brings NVS/netif/event-loop
 up before espnow.Init). `_demo/esp-idf-espnow` is the worked example.
 
+## Non-IDF baremetal backend (gpio + i2c)
+
+`pkg/esp/gpio` and `pkg/esp/i2c` have a second implementation with **no
+ESP-IDF and no FreeRTOS in the link**: the same public API, driven by register
+writes straight into the chip. A plain llgo binary gets them by dropping the
+`esp32s31-idf` target:
+
+```
+llgo build -target esp32s31 -obin -o app.bin .     # S31, SRAM image at 0x2000
+llgo build -target esp32c3  -obin -o app.bin .     # C3
+```
+
+The import paths and the API are the ones the IDF builds use - no new package,
+no build tag of your own to set:
+
+```go
+package main
+
+import (
+	"github.com/xgo-dev/llgo/pkg/esp/gpio"
+	"github.com/xgo-dev/llgo/pkg/esp/i2c"
+)
+
+func main() {
+	p := gpio.Pin(3)
+	_ = p.SetDirection(gpio.Output, gpio.PullNone)
+	_ = p.SetLevel(true)
+
+	bus, err := i2c.NewBus(8, 9) // SDA, SCL
+	if err != nil {
+		return
+	}
+	defer bus.Close()
+
+	found, err := bus.Scan(0x08, 0x77) // addresses that answered
+	if err != nil || len(found) == 0 {
+		return
+	}
+
+	dev, err := bus.Device(found[0], i2c.SpeedStandard)
+	if err != nil {
+		return
+	}
+	defer dev.Close()
+
+	var buf [1]byte
+	if err := dev.ReadReg(0x00, buf[:]); err != nil {
+		return
+	}
+	_ = buf[0]
+}
+```
+
+Which of the three backends is compiled in is decided by build tags, and the
+API is byte-identical across them:
+
+| build | gpio backend | i2c backend |
+|-------|--------------|-------------|
+| `llgo.idf` (an ESP-IDF project) | `gpio_idf.go` → `glue/gpio_glue.c` → IDF gpio driver | `i2c_idf.go` → `glue/i2c_glue.c` → IDF new I2C master driver |
+| `llgo build -target esp32c3\|esp32s31` (baremetal) | `gpio_baremetal.go` + `gpio_regs_<chip>.go`, registers directly | `i2c_baremetal.go` + `i2c_regs_<chip>.go`, controller command list directly |
+| anything else (host, Wasm, other baremetal chips) | `gpio_stub.go`: every call reports `errUnsupported` | `i2c_stub.go`: every call reports `errUnsupported` |
+
+Packages that are **still IDF-only** (no baremetal backend, `errUnsupported`
+under a baremetal target): `wifi`, `net`, `tls`, `ws` (needs a conn), `ble`,
+`bt`, `espnow`, `nvs`, `i2s`, `spi`, `adc`, `lcd`, `touch`, `temp`, `uart`,
+`opus`, `wakenet`, `lpcore`.
+
+### Where the register facts come from
+
+Every offset, base address and bit field in `gpio_regs_<chip>.go` and
+`i2c_regs_<chip>.go` is transcribed from the ESP-IDF SOC headers, and each
+constant carries the header file and line it came from
+(`components/soc/esp32c3/register/soc/gpio_reg.h`, `.../i2c_reg.h`,
+`.../io_mux_reg.h`, `.../reg_base.h`, `.../system_reg.h`,
+`.../hp_sys_clkrst_reg.h`, `include/soc/gpio_sig_map.h`,
+`include/soc/soc_caps.h`). The two chips are **not** interchangeable: the C3
+keeps the I2C divider inside the I2C block (`I2C_CLK_CONF`, 0x54) while the S31
+keeps it in `HP_SYS_CLKRST` and has no CLK_CONF register at all; the GPIO
+enable/input registers sit at different offsets; the GPIO matrix selector
+registers are 8-bit and 5-bit on the C3 versus 9-bit and 8-bit on the S31; and
+the C3 has one I2C master port where the S31 has two.
+
+### Why the byte access goes through C
+
+llgo has no `//go:volatile`, and a plain `*(*uint32)(unsafe.Pointer(addr))`
+reaches the backend as an ordinary load or store. LLVM then treats the accessor
+as `readonly`/`willreturn`, which makes it CSE-able: two reads of the same
+status register collapse into one, and a poll loop that reads it once never
+terminates. Measured on `-target esp32s31 -Oz` for a `//go:noinline` accessor
+pair, the two `mmioRead32(0x20583064)` calls in one function compiled to a
+**single** `lw` from the register.
+
+So the register window is read and written through
+`pkg/esp/internal/mmio/_wrap/mmio.c`, where `volatile` is expressible;
+`LLGoFiles` pulls that file into any link that imports the package, peripheral
+packages included (the mechanism is not runtime-only - verified by
+disassembling the linked image). Do not hand-roll MMIO in Go on llgo.
+
+### Downstream migration from hand-written MMIO
+
+If you wrote the register sequences yourself because there was no baremetal
+backend (the c3-power style project), the mapping is:
+
+- **GPIO**: replace the I/O MUX + `GPIO_OUT_W1TS/W1TC` + `GPIO_ENABLE` writes
+  with `gpio.Pin(n)` plus `SetDirection`/`SetLevel`/`GetLevel`/`Toggle`. The
+  input buffer stays on for `Output` pins, so a set→get round-trip reads the
+  driven level - the manual code usually had to enable it by hand.
+- **I2C**: replace the bit-banged or hand-rolled master with `i2c.NewBus` +
+  `Bus.Device` + `Write`/`Read`/`WriteReg`/`ReadReg`/`WriteRead`, and delete
+  the timing constants: `bus.Device(addr, i2c.SpeedStandard)` or
+  `i2c.SpeedFast` selects 100 kHz or 400 kHz and the backend computes the
+  SCL/setup/hold registers from the 40 MHz XTAL source the way the IDF HAL
+  does. `Bus.Scan` replaces the hand-rolled address sweep.
+- **Housekeeping the backend now owns**: the port clock gate and module reset
+  (SYSTEM block on the C3, `HP_SYS_CLKRST` on the S31), the GPIO matrix routing
+  for the two pins, open-drain pad mode, the 9-pulse bus clear before the first
+  transfer, and FIFO resets between transfers. Keeping any of it in your own
+  code would fight the backend.
+- **Still yours**: pin choice and pull-ups (external 2.2-4.7 kΩ for 400 kHz;
+  the backend enables the internal ones, which is enough for a bench wire and
+  not enough for a real bus), and any device-specific register map.
+- **Errors**: `errors.Is(err, i2c.ErrNotFound)` is a NACK (no device at that
+  address), `i2c.ErrTimeout` is a bus that did not finish, and
+  `esperr.Code(err)` gives the esp_err number for everything else. Note that
+  importing `errors` in a baremetal program pulls in reflect and libffi; match
+  on `esperr.Code` from driver code, or use `errors.Is` only in host tests.
+
+### Verification status
+
+`esp32s31`: register sequences executed under `esp-emu` (GPIO read-back, I2C
+master install, scan, register read; the model ACKs one address and NACKs the
+rest), **not** validated on hardware. `esp32c3`: compile-checked only -
+`esp-emu`'s C3 model implements neither peripheral MMIO nor a clock. Real bus
+timing, external pull-ups and device behaviour are hardware-only checks. Two
+changes an IDF downstream can observe:
+
+- **`Bus.Scan` needs the current glue.** `Scan` is implemented over a new
+  glue entry (`llgo_i2c_probe` in `glue/i2c_glue.c:87-94`), so a project that
+  copied the glue template before this change must re-copy
+  `glue/i2c_glue.c` - a stale copy fails at link time with an undefined
+  `llgo_i2c_probe`.
+- **Error text changed, codes and matching did not.** Raw esp_err values now
+  render as `"esp/i2c: transfer timeout (code 263)"` instead of
+  `"esp error 263"`. `esperr.Code(err)` and `errors.Is` behave exactly as
+  before; only string comparisons against the old rendering break.
+
+See
+`_demo/esp-baremetal-periph/` for the runnable probe and its golden output.
+
 ## Adding a new peripheral
 
 Template checklist (0.5–3 days per driver, dominated by emu/device
@@ -794,7 +943,10 @@ validation):
    C-side static) and whether the driver needs a mailbox (only for
    asynchronous event sources — ISR/event-queue drivers).
 2. `<xxx>_idf.go` — `//go:build llgo.idf` externs, `C.llgo_<xxx>_*` names.
-3. `<xxx>_stub.go` — `//go:build !llgo.idf`, `errUnsupported` returns.
+3. `<xxx>_stub.go` — `//go:build !llgo.idf && (!llgo || !baremetal)`,
+   `errUnsupported` returns. A baremetal backend (see the section above and
+   `gpio`/`i2c`) replaces this case on a chip with a register table, with a
+   second stub for the chips that have none.
 4. `<xxx>_glue.c` — template with the `ESP_PLATFORM` guard; macros and
    config structs C-side; mailbox only if the driver is an async event
    source.
@@ -816,13 +968,16 @@ PSRAM variant (2026-11):
 - **GPIO**: modeled. Output direction + set→get→toggle round-trip passes
   (`gpio.Pin(4)`).
 - **I2C**: modeled at the install/transfer level - master bus install on
-  GPIO 8/9 and a receive complete with `err = 0`. Two glue-level lessons
-  came out of the probe: the bus config's `clk_source` must be spelled
-  out (`I2C_CLK_SRC_DEFAULT`) because S31's only I2C sources are XTAL and
-  RC_FAST, so a zeroed union is an invalid source (`ESP_ERR_INVALID_ARG`),
-  and the emulator does not model ACK/NACK: a read from an absent address
-  succeeds with `0xFF` bytes instead of a driver error. Real transfers
-  against real devices must be validated on hardware.
+  GPIO 8/9 and a receive complete with `err = 0`. The bus config's
+  `clk_source` must be spelled out (`I2C_CLK_SRC_DEFAULT`) because S31's
+  only I2C sources are XTAL and RC_FAST, so a zeroed union is an invalid
+  source (`ESP_ERR_INVALID_ARG`). The ACK bit is modeled on this
+  release's S31 model: an absent address NACKs a probe, a write, a read
+  and a write-read alike, and the model answers as a byte-addressed
+  register file at 0x50 (`Write([0x00, 0x11])` then `WriteRead([0x00])`
+  returns 0x11, an erased cell reads 0xFF). Bus timing is not modeled at
+  all, so SCL frequency and setup/hold times still need a scope on
+  hardware.
 - **I2S**: modeled. TX channel alloc, std (Philips) init, enable and a
   1024-byte write all succeed.
 

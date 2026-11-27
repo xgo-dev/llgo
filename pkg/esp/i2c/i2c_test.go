@@ -1,4 +1,4 @@
-//go:build !llgo.idf
+//go:build !llgo.idf && (!llgo || !baremetal)
 
 // Host-build tests for the i2c surface. A host build has no glue, so
 // nothing here claims a bus exists: the tests pin what the pure-Go layer
@@ -109,5 +109,36 @@ func TestClosedSentinel(t *testing.T) {
 	}
 	if errors.Is(err, esperr.ErrTimeout) {
 		t.Fatal("the closed error matched ErrTimeout - sentinel isolation broken")
+	}
+}
+
+// TestStubProbeReportsUnsupported pins the honest-stub contract for the probe
+// primitive: with no driver in the link a scan reports errUnsupported on the
+// first address instead of reporting an empty (or full) bus.
+func TestStubProbeReportsUnsupported(t *testing.T) {
+	bus := &Bus{handle: 1} // white-box: a handle the stub backend cannot serve
+	found, err := bus.Scan(0x08, 0x77)
+	if !errors.Is(err, &esperr.Error{Code: errUnsupported}) {
+		t.Fatalf("Scan on a host build = %v, want errUnsupported from the stub", err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("Scan on a host build found %v, want nothing", found)
+	}
+}
+
+// TestScanGuards pins the two refusals a scan performs before it reaches a
+// backend: a nil bus and an inverted range, both reported as ErrInvalidArg
+// under the "i2c: scan" operation.
+func TestScanGuards(t *testing.T) {
+	_, err := (*Bus)(nil).Scan(0x08, 0x77)
+	if !errors.Is(err, ErrInvalidArg) {
+		t.Fatalf("Scan on a nil bus = %v, want ErrInvalidArg", err)
+	}
+	if got, want := err.Error(), "i2c: scan: esp/i2c: invalid argument (code 258)"; got != want {
+		t.Fatalf("nil-bus Scan error = %q, want %q", got, want)
+	}
+	_, err = (&Bus{handle: 1}).Scan(0x40, 0x20)
+	if !errors.Is(err, ErrInvalidArg) {
+		t.Fatalf("Scan with first > last = %v, want ErrInvalidArg", err)
 	}
 }

@@ -84,6 +84,14 @@ int32_t llgo_i2c_transmit_receive(uintptr_t dev, const uint8_t *write, int32_t w
                                        read, (size_t)read_len, timeout_ms);
 }
 
+/* i2c_master_probe answers the one question a bus scan asks: does any device
+ * ACK this 7-bit address? It takes the bus handle, not a device handle,
+ * because a scan probes addresses that were never bound. */
+int32_t llgo_i2c_probe(uintptr_t bus, uint32_t addr, int32_t timeout_ms)
+{
+    return i2c_master_probe((i2c_master_bus_handle_t)bus, (uint16_t)addr, timeout_ms);
+}
+
 int32_t llgo_i2c_rm_device(uintptr_t dev)
 {
     return i2c_master_bus_rm_device((i2c_master_dev_handle_t)dev);

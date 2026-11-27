@@ -1,12 +1,11 @@
-//go:build !llgo.idf
+//go:build !llgo.idf && !(llgo && baremetal && (esp32c3 || esp32s31))
 
-// Host build (go build / go vet / gopls): the C glue only exists in the
-// ESP-IDF link environment, so every binding returns errUnsupported. It lies
-// between the real esp_err ranges so it can never be mistaken for one.
+// Every build without a pin driver behind it: a hosted go build (go build,
+// go vet, gopls), a baremetal llgo target this package has no register table
+// for (Cortex-M, AVR, Xtensa, ...), and anything whose tags match neither
+// backend. Every binding returns errUnsupported instead of faking a pin.
 // Nothing here is meant to run on a host.
 package gpio
-
-const errUnsupported = 0x7F00
 
 func setDirection(pin int32, mode int32, pull int32) int32 {
 	_, _, _ = pin, mode, pull

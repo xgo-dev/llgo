@@ -1,0 +1,9 @@
+esp-baremetal-periph: gpio + hardware i2c, no esp-idf
+gpio loopback ok
+i2c scan found=1
+i2c scan addr=0x50
+i2c register read reg=0x00 val=0xff
+i2c bulk write len=41 ok
+i2c bulk read len=40 ok
+i2c bulk verify ok
+esp-baremetal-periph: done

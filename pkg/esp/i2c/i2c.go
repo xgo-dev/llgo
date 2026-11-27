@@ -1,11 +1,25 @@
-// Package i2c drives ESP-IDF's new I2C master driver (i2c_master.h) from
-// llgo-compiled Go code.
+// Package i2c drives an ESP I2C master bus from llgo-compiled Go code.
 //
 // It follows the pkg/esp package template (see the package wifi docs and
 // pkg/esp/README.md). Every driver call here is synchronous and blocking
 // with a driver-side timeout, so there is no mailbox: each method maps to
 // one glue call whose esp_err result is wrapped as the family's shared
 // error value (nil = ESP_OK, the code stays inspectable on the error).
+//
+// # Backends
+//
+// Which driver sits behind the API is a build-tag decision, and the API is
+// identical on all three:
+//
+//   - llgo.idf (an ESP-IDF project): glue/i2c_glue.c, which calls the IDF
+//     new I2C master driver (i2c_idf.go).
+//   - llgo build -target esp32c3|esp32s31 with no IDF: the register-level
+//     baremetal backend (i2c_baremetal.go) programs the controller's command
+//     list directly, so a plain llgo binary runs hardware I2C with no IDF and
+//     no FreeRTOS in the link.
+//   - any other build (host, Wasm, a baremetal chip without a register
+//     table): the honest stub, which reports errUnsupported instead of
+//     faking a transfer (i2c_stub.go).
 //
 // # Usage
 //
@@ -47,6 +61,31 @@ const errInvalidArg = 0x102
 // call sites wrap it with esperr.Wrap to name the operation that hit it.
 var ErrInvalidArg = newSentinel("esp/i2c: invalid argument", errInvalidArg)
 
+// Other esp_err codes the package reports as sentinels, so a caller can name
+// the condition instead of the number. Each keeps its ESP code on Error.Code,
+// which means errors.Is also matches the bare code-era literal.
+const (
+	errInvalidState = 0x103 // ESP_ERR_INVALID_STATE
+	errTimeout      = 0x107 // ESP_ERR_TIMEOUT
+	errNotFound     = 0x105 // ESP_ERR_NOT_FOUND
+)
+
+// ErrTimeout reports a transfer the driver abandoned because the bus did not
+// finish it in time - a slave holding SCL low, or an address nobody answers on
+// a bus with no pull-ups. It carries ESP_ERR_TIMEOUT (0x107); the transport
+// family's esperr.ErrTimeout carries the lwip ETIMEDOUT (116) instead, because
+// they are different layers' idioms for the same condition.
+var ErrTimeout = newSentinel("esp/i2c: transfer timeout", errTimeout)
+
+// ErrNotFound reports a NACK: the address byte reached the bus and no device
+// acknowledged it. That is the answer a scan records for an empty address, and
+// the code the ESP-IDF driver reports for the same condition
+// (ESP_ERR_NOT_FOUND, 0x105).
+var ErrNotFound = newSentinel("esp/i2c: address not acknowledged", errNotFound)
+
+// errBusy is the watchdog refusal: another transfer still owns the bus.
+var errBusy = newSentinel("esp/i2c: bus busy", errInvalidState)
+
 // newSentinel declares a semantic sentinel that keeps its historical
 // pipeline code on Error.Code as the annotation (esperr.New is text-only;
 // the number stays inspectable for the drivers' own copies of the same
@@ -57,13 +96,21 @@ func newSentinel(text string, code int32) *esperr.Error {
 	return e
 }
 
-// errOf turns one glue result into the error this package returns (nil for
-// ESP_OK): every code forwards as a bare esperr.Coded value - the driver's
-// esp_err is the diagnostic, and the esp_err naming table lives in the wifi
-// package.
+// errOf turns one backend result into the error this package returns (nil for
+// ESP_OK). The three conditions with a package sentinel map to it - so
+// errors.Is names them while the ESP code stays on Error.Code - and every
+// other code forwards as a bare esperr.Coded value: the driver's esp_err is
+// the diagnostic, and the esp_err naming table lives in the wifi package.
 func errOf(code int32) error {
-	if code == 0 {
+	switch code {
+	case 0:
 		return nil
+	case errTimeout:
+		return ErrTimeout
+	case errNotFound:
+		return ErrNotFound
+	case errInvalidState:
+		return errBusy
 	}
 	return esperr.Coded(code, "")
 }
@@ -85,9 +132,11 @@ type Device struct {
 
 // NewBus installs a master bus on the given pins. The bus itself carries no
 // clock speed: in the new I2C master driver the SCL frequency is a per-device
-// property, chosen when a Device is bound (see Bus.Device). The clock source
-// and glitch filter stay in the C glue, and the internal pull-ups are left
-// off: the IDF docs recommend external ones for real buses.
+// property, chosen when a Device is bound (see Bus.Device). Both backends
+// leave the internal pull-ups on (an idle I2C line must be high), which is
+// enough for a short bench wire; the IDF docs recommend external ones for a
+// real bus. The clock source and the SCL/SDA glitch filter stay at their
+// reset values.
 // On error the Bus is nil and the error carries the esp_err code.
 func NewBus(sda, scl Pin) (*Bus, error) {
 	var b Bus
@@ -115,7 +164,10 @@ func (b *Bus) Device(addr uint8, speedHz int32) (*Device, error) {
 
 // Write transmits data (i2c_master_transmit). Empty data is a no-op.
 // Calling it on a nil or zero-value Device reports ErrInvalidArg under the
-// "i2c: write" operation.
+// "i2c: write" operation. A payload larger than the controller's FIFO is
+// split into FIFO-sized command lists inside the transfer - the wire sees one
+// transaction with one START and one STOP - so there is no length limit at
+// this level (the baremetal backend chunks; the IDF driver does the same).
 func (d *Device) Write(data []byte) error {
 	if d == nil || d.handle == 0 {
 		return esperr.Wrap("i2c: write", ErrInvalidArg)
@@ -190,4 +242,66 @@ func (b *Bus) Close() error {
 	e := delBus(b.handle)
 	b.handle = 0
 	return errOf(e)
+}
+
+// WriteReg writes one 8-bit register value, the usual two-byte register write
+// (i2c_master_transmit with a two-byte payload).
+func (d *Device) WriteReg(reg, value uint8) error {
+	if d == nil || d.handle == 0 {
+		return esperr.Wrap("i2c: write register", ErrInvalidArg)
+	}
+	return errOf(transmit(d.handle, &[]uint8{reg, value}[0], 2, DefaultTimeoutMs))
+}
+
+// ReadReg reads len(buf) bytes starting at an 8-bit register address, the
+// usual write-register-then-repeated-start-read pattern
+// (i2c_master_transmit_receive). An empty buf is a no-op.
+func (d *Device) ReadReg(reg uint8, buf []byte) error {
+	if d == nil || d.handle == 0 {
+		return esperr.Wrap("i2c: read register", ErrInvalidArg)
+	}
+	if len(buf) == 0 {
+		return nil
+	}
+	return errOf(transmitReceive(d.handle, &reg, 1, &buf[0], int32(len(buf)), DefaultTimeoutMs))
+}
+
+// Scan probes every 7-bit address in [first, last] and returns the ones that
+// acknowledged, in ascending order. Addresses outside 0x08..0x77 are reserved
+// by the I2C specification and are skipped even when the range covers them.
+//
+// A probe is the address byte on its own: the bus reports exactly one thing,
+// the ACK bit, so a scan disturbs nothing. A refused address is a short
+// transaction - the NACK comes back as soon as the address byte has been
+// clocked out - so an empty range scans fast; only a bus stuck low (no
+// pull-ups, a slave holding SCL) walks into the transfer timeout.
+//
+// The call reports an error only when the bus itself is unusable (nil or
+// closed Bus, or a backend failure); an address that does not answer is not an
+// error, it is a gap in the result.
+func (b *Bus) Scan(first, last uint8) ([]uint8, error) {
+	if b == nil || b.handle == 0 {
+		return nil, esperr.Wrap("i2c: scan", ErrInvalidArg)
+	}
+	if first > last {
+		return nil, esperr.Wrap("i2c: scan", ErrInvalidArg)
+	}
+	var found []uint8
+	for addr := first; ; addr++ {
+		if addr >= 0x08 && addr <= 0x77 {
+			switch e := probe(b.handle, uint32(addr), DefaultTimeoutMs); e {
+			case 0:
+				found = append(found, addr)
+			case errNotFound, errInvalidState, errTimeout:
+				// Nobody answered, or the bus is stuck: either way this
+				// address is not a device.
+			default:
+				return found, errOf(e)
+			}
+		}
+		if addr == last {
+			break
+		}
+	}
+	return found, nil
 }
