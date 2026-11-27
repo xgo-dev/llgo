@@ -238,7 +238,7 @@ func (c *context) readLinkSnapshotSidecar(path string) (*packageLinkSnapshot, er
 			Graph:    &payload.Types,
 			Packages: pkgs,
 			Existing: existing,
-			Position: frontendPosition(c.progSSA.Fset),
+			Position: c.frontendPosition(c.progSSA.Fset),
 		}
 		for _, info := range payload.ABI {
 			typ, err := importer.Import(info.Type)

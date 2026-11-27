@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
@@ -70,29 +71,97 @@ func (f *frontendCache) exportLink(snapshot *packageLinkSnapshot) (*frontendLink
 	return result, nil
 }
 
+type frontendPosSnapshot struct {
+	fset  *token.FileSet
+	base  int
+	first map[string]*token.File
+	dups  map[string][]*token.File
+}
+
+type frontendPosCache struct {
+	mu   sync.RWMutex
+	snap *frontendPosSnapshot
+}
+
+func (c *frontendPosCache) snapshot(fset *token.FileSet) *frontendPosSnapshot {
+	if fset == nil {
+		return nil
+	}
+	base := fset.Base()
+	c.mu.RLock()
+	snap := c.snap
+	c.mu.RUnlock()
+	if snap != nil && snap.fset == fset && snap.base == base {
+		return snap
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.snap != nil && c.snap.fset == fset && c.snap.base == base {
+		return c.snap
+	}
+	first := make(map[string]*token.File)
+	var dups map[string][]*token.File
+	fset.Iterate(func(file *token.File) bool {
+		name := file.Name()
+		if _, exists := first[name]; !exists {
+			first[name] = file
+		} else {
+			if dups == nil {
+				dups = make(map[string][]*token.File)
+			}
+			dups[name] = append(dups[name], file)
+		}
+		return true
+	})
+	snap = &frontendPosSnapshot{fset: fset, base: base, first: first, dups: dups}
+	c.snap = snap
+	return snap
+}
+
+func (c *frontendPosCache) lookup(fset *token.FileSet, key string) token.Pos {
+	if fset == nil || key == "" {
+		return token.NoPos
+	}
+	colon := strings.LastIndexByte(key, ':')
+	if colon < 0 {
+		return token.NoPos
+	}
+	offset, err := strconv.Atoi(key[colon+1:])
+	if err != nil || offset < 0 {
+		return token.NoPos
+	}
+	snap := c.snapshot(fset)
+	if snap == nil {
+		return token.NoPos
+	}
+	name := key[:colon]
+	if file := snap.first[name]; file != nil {
+		if offset <= file.Size() {
+			return file.Pos(offset)
+		}
+		for _, dup := range snap.dups[name] {
+			if offset <= dup.Size() {
+				return dup.Pos(offset)
+			}
+		}
+	}
+	return token.NoPos
+}
+
+func (c *context) frontendPosition(fset *token.FileSet) func(string) token.Pos {
+	return func(key string) token.Pos {
+		return c.posCache.lookup(fset, key)
+	}
+}
+
 func (f *frontendCache) position(key string) token.Pos {
-	return frontendPosition(f.ctx.progSSA.Fset)(key)
+	return f.ctx.posCache.lookup(f.ctx.progSSA.Fset, key)
 }
 
 func frontendPosition(fset *token.FileSet) func(string) token.Pos {
+	var cache frontendPosCache
 	return func(key string) token.Pos {
-		colon := strings.LastIndexByte(key, ':')
-		if colon < 0 {
-			return token.NoPos
-		}
-		offset, err := strconv.Atoi(key[colon+1:])
-		if err != nil || offset < 0 {
-			return token.NoPos
-		}
-		var result token.Pos
-		fset.Iterate(func(file *token.File) bool {
-			if file.Name() == key[:colon] && offset <= file.Size() {
-				result = file.Pos(offset)
-				return false
-			}
-			return true
-		})
-		return result
+		return cache.lookup(fset, key)
 	}
 }
 

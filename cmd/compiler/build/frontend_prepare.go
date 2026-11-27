@@ -150,13 +150,39 @@ func (f *frontendCache) functionPackage(fn *ssa.Function) *ssa.Package {
 	return f.ctx.progSSA.Package(frontcache.Owner(fn))
 }
 
+func (f *frontendCache) functionID(fn *ssa.Function) string {
+	if id, ok := f.fnIDs[fn]; ok {
+		return id
+	}
+	id := frontcache.FunctionID(fn, f.types)
+	if f.fnIDs == nil {
+		f.fnIDs = make(map[*ssa.Function]string)
+	}
+	f.fnIDs[fn] = id
+	return id
+}
+
 func (f *frontendCache) bindFunctions() {
-	f.functions = make(map[string]*ssa.Function)
-	f.ambiguous = make(map[string]bool)
-	f.uncacheable = make(map[Package]bool)
+	if f.functions == nil {
+		f.functions = make(map[string]*ssa.Function)
+	}
+	if f.ambiguous == nil {
+		f.ambiguous = make(map[string]bool)
+	}
+	if f.uncacheable == nil {
+		f.uncacheable = make(map[Package]bool)
+	}
+	if f.bound == nil {
+		f.bound = make(map[*ssa.Function]bool)
+	}
 	add := func(fn *ssa.Function) {
-		id := frontcache.FunctionID(fn, f.types)
+		if fn == nil || f.bound[fn] {
+			return
+		}
+		f.bound[fn] = true
+		id := f.functionID(fn)
 		if f.ambiguous[id] {
+			f.uncacheable[f.owners[f.functionPackage(fn)]] = true
 			return
 		}
 		if previous := f.functions[id]; previous != nil && previous != fn {
@@ -167,7 +193,6 @@ func (f *frontendCache) bindFunctions() {
 			return
 		}
 		f.functions[id] = fn
-		return
 	}
 	for fn := range ssautil.AllFunctions(f.ctx.progSSA) {
 		add(fn)
@@ -218,7 +243,7 @@ func (f *frontendCache) importBodies() error {
 				if target == nil {
 					continue
 				}
-				if cost, ok := costs[frontcache.FunctionID(target, f.types)]; ok && cost <= bodyBudget {
+				if cost, ok := costs[f.functionID(target)]; ok && cost <= bodyBudget {
 					if owner := f.owners[target.Pkg]; owner != nil && !f.built[target.Pkg] {
 						f.source(owner, needed, "inline-body")
 					}
@@ -275,12 +300,13 @@ func (f *frontendCache) certify() error {
 			f.source(pkg, selected, "fingerprint-error")
 			continue
 		}
-		if record.Archive != pkg.Fingerprint || !f.ctx.tryLoadFromCache(pkg) {
+		if record.Archive != pkg.Fingerprint || !f.ctx.tryLoadFromCacheEx(pkg, false) {
 			f.source(pkg, selected, "archive-mismatch")
 			continue
 		}
 		snapshot, err := f.importLink(record.Link)
 		if err != nil {
+			f.ctx.loadLinkSnapshotSidecar(pkg)
 			f.source(pkg, selected, "import-link:"+err.Error())
 			continue
 		}
@@ -418,7 +444,7 @@ func (f *frontendCache) capture(result *goescape.Result) {
 			if owner != pkg || frontendInstance(fn) {
 				continue
 			}
-			item := frontendFunction{ID: frontcache.FunctionID(fn, f.types), Facts: f.ctx.callerTracking.ExportFrontendFacts(f.functionPackage(fn), fn), CacheKey: result.ComponentKey(fn)}
+			item := frontendFunction{ID: f.functionID(fn), Facts: f.ctx.callerTracking.ExportFrontendFacts(f.functionPackage(fn), fn), CacheKey: result.ComponentKey(fn)}
 			if summary, ok := result.Summary(fn); ok && goescape.ValidSummary(fn, summary) {
 				item.Escape = &summary
 			}

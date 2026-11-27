@@ -219,13 +219,20 @@ func F(x any) ([]byte, bool) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	fresh := types.NewPackage(pkg.Pkg.Path(), pkg.Pkg.Name())
-	importer := &TypeImporter{
-		Graph:    &decoded,
-		Packages: map[string]*types.Package{fresh.Path(): fresh},
-		Existing: NewTypes(map[*types.Package]string{fresh: fresh.Path()}, prog.Fset),
+	if len(decoded.Nodes[id].Methods) != 2 {
+		t.Fatalf("expected 2 interface methods, got %d", len(decoded.Nodes[id].Methods))
 	}
-	got, err := importer.Import(id)
+	sig0ID := decoded.Nodes[id].Methods[0].Type
+	sig1ID := decoded.Nodes[id].Methods[1].Type
+
+	// Order 1: import interface first, then its method signatures.
+	fresh1 := types.NewPackage(pkg.Pkg.Path(), pkg.Pkg.Name())
+	imp1 := &TypeImporter{
+		Graph:    &decoded,
+		Packages: map[string]*types.Package{fresh1.Path(): fresh1},
+		Existing: NewTypes(map[*types.Package]string{fresh1: fresh1.Path()}, prog.Fset),
+	}
+	got, err := imp1.Import(id)
 	if err != nil {
 		t.Fatalf("importing anonymous interface with explicit methods failed: %v", err)
 	}
@@ -235,6 +242,47 @@ func F(x any) ([]byte, bool) {
 	}
 	if recv := gotIface.ExplicitMethod(0).Type().(*types.Signature).Recv(); recv == nil || recv.Type() != gotIface {
 		t.Fatalf("imported explicit method lost self-receiver binding: %v", recv)
+	}
+	gotSig0, err := imp1.Import(sig0ID)
+	if err != nil {
+		t.Fatalf("importing method signature after interface failed: %v", err)
+	}
+	if gotSig0 != gotIface.ExplicitMethod(0).Type() {
+		t.Fatalf("interface-first order produced distinct signature pointers: %p vs %p", gotSig0, gotIface.ExplicitMethod(0).Type())
+	}
+
+	// Order 2: import method signature BEFORE the enclosing anonymous interface.
+	// Both entry orders must share the exact same *types.Signature object.
+	fresh2 := types.NewPackage(pkg.Pkg.Path(), pkg.Pkg.Name())
+	imp2 := &TypeImporter{
+		Graph:    &decoded,
+		Packages: map[string]*types.Package{fresh2.Path(): fresh2},
+		Existing: NewTypes(map[*types.Package]string{fresh2: fresh2.Path()}, prog.Fset),
+	}
+	gotSigFirst, err := imp2.Import(sig0ID)
+	if err != nil {
+		t.Fatalf("importing method signature before interface failed: %v", err)
+	}
+	gotIfaceSecond, err := imp2.Import(id)
+	if err != nil {
+		t.Fatalf("importing interface after method signature failed: %v", err)
+	}
+	iface2, ok := gotIfaceSecond.(*types.Interface)
+	if !ok || !types.Identical(iface2, anon) {
+		t.Fatalf("signature-first imported interface = %v, want %v", gotIfaceSecond, anon)
+	}
+	if gotSigFirst != iface2.ExplicitMethod(0).Type() {
+		t.Fatalf("signature-first order produced distinct signature pointers: %p vs %p", gotSigFirst, iface2.ExplicitMethod(0).Type())
+	}
+	if recv := gotSigFirst.(*types.Signature).Recv(); recv == nil || recv.Type() != iface2 {
+		t.Fatalf("signature-first receiver = %v, want %v", recv, iface2)
+	}
+	gotSig1, err := imp2.Import(sig1ID)
+	if err != nil {
+		t.Fatalf("importing sibling method signature failed: %v", err)
+	}
+	if gotSig1 != iface2.ExplicitMethod(1).Type() {
+		t.Fatalf("sibling method signature pointer mismatch: %p vs %p", gotSig1, iface2.ExplicitMethod(1).Type())
 	}
 }
 

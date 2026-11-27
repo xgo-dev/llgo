@@ -202,7 +202,7 @@ func (l *frontendTypeLoader) load(pkg *packages.Package, fset *token.FileSet) bo
 			index.AddPackage(dep, nil)
 		}
 		// Positions are mapped to the parsed source FileSet, including private types.
-		position := frontendPosition(fset)
+		position := l.ctx.frontendPosition(fset)
 		importer := &frontcache.TypeImporter{Packages: packagesByID, Existing: index, Position: position}
 		checked, err = frontcache.ImportPackage(record.Package, importer)
 		if err != nil {

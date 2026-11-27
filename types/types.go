@@ -1772,31 +1772,51 @@ func (tp *TypeParam) String() string {
 // LLGo-specific attributes such as CallConv, PtrKind, HostLayout, NativeLayout,
 // and SIMDVec shapes.
 func Identical(x, y Type) bool {
-	return identical(x, y, false)
+	return identical(x, y, false, nil)
 }
 
 // IdenticalIgnoreTags reports whether x and y are identical LLGo types if
 // struct field tags are ignored (mirroring go/types.IdenticalIgnoreTags).
 func IdenticalIgnoreTags(x, y Type) bool {
-	return identical(x, y, true)
+	return identical(x, y, true, nil)
 }
 
-func identical(x, y Type, ignoreTags bool) bool {
-	if x == y {
+type tparamScope struct {
+	x, y *TypeParamList
+	prev *tparamScope
+}
+
+func typeParamIndex(list *TypeParamList, tp *TypeParam) int {
+	if list == nil {
+		return -1
+	}
+	for i := 0; i < list.Len(); i++ {
+		cand := list.At(i)
+		if cand == tp || (cand.obj != nil && cand.obj == tp.obj && cand.index == tp.index) {
+			return i
+		}
+	}
+	return -1
+}
+
+func identical(x, y Type, ignoreTags bool, scope *tparamScope) bool {
+	if x == y && scope == nil {
 		return true
 	}
 	if x == nil || y == nil {
 		return false
 	}
-	if gx, gy := x.goTypeRef(), y.goTypeRef(); gx != nil && gy != nil && !hasLLGoSemanticExt(x) && !hasLLGoSemanticExt(y) {
-		if ignoreTags {
-			return gotypes.IdenticalIgnoreTags(gx, gy)
+	if scope == nil {
+		if gx, gy := x.goTypeRef(), y.goTypeRef(); gx != nil && gy != nil && !hasLLGoSemanticExt(x) && !hasLLGoSemanticExt(y) {
+			if ignoreTags {
+				return gotypes.IdenticalIgnoreTags(gx, gy)
+			}
+			return gotypes.Identical(gx, gy)
 		}
-		return gotypes.Identical(gx, gy)
 	}
 	x = Unalias(x)
 	y = Unalias(y)
-	if x == y {
+	if x == y && scope == nil {
 		return true
 	}
 	if x == nil || y == nil {
@@ -1808,26 +1828,26 @@ func identical(x, y Type, ignoreTags bool) bool {
 		return ok && x.kind == y.kind
 	case *Pointer:
 		y, ok := y.(*Pointer)
-		return ok && x.kind == y.kind && identical(x.elem, y.elem, ignoreTags)
+		return ok && x.kind == y.kind && identical(x.elem, y.elem, ignoreTags, scope)
 	case *Slice:
 		y, ok := y.(*Slice)
-		return ok && identical(x.elem, y.elem, ignoreTags)
+		return ok && identical(x.elem, y.elem, ignoreTags, scope)
 	case *Array:
 		y, ok := y.(*Array)
-		return ok && x.length == y.length && x.nativeStorage == y.nativeStorage && identical(x.elem, y.elem, ignoreTags)
+		return ok && x.length == y.length && x.nativeStorage == y.nativeStorage && identical(x.elem, y.elem, ignoreTags, scope)
 	case *Map:
 		y, ok := y.(*Map)
-		return ok && identical(x.key, y.key, ignoreTags) && identical(x.elem, y.elem, ignoreTags)
+		return ok && identical(x.key, y.key, ignoreTags, scope) && identical(x.elem, y.elem, ignoreTags, scope)
 	case *Chan:
 		y, ok := y.(*Chan)
-		return ok && x.dir == y.dir && identical(x.elem, y.elem, ignoreTags)
+		return ok && x.dir == y.dir && identical(x.elem, y.elem, ignoreTags, scope)
 	case *Tuple:
 		y, ok := y.(*Tuple)
 		if !ok || x.Len() != y.Len() {
 			return false
 		}
 		for i := 0; i < x.Len(); i++ {
-			if !identical(x.At(i).typ, y.At(i).typ, ignoreTags) {
+			if !identical(x.At(i).typ, y.At(i).typ, ignoreTags, scope) {
 				return false
 			}
 		}
@@ -1837,7 +1857,23 @@ func identical(x, y Type, ignoreTags bool) bool {
 		if !ok || x.callConv != y.callConv || x.variadic != y.variadic || x.typeParams.Len() != y.typeParams.Len() {
 			return false
 		}
-		return identical(x.params, y.params, ignoreTags) && identical(x.results, y.results, ignoreTags)
+		if n := x.typeParams.Len(); n > 0 {
+			scope = &tparamScope{x: x.typeParams, y: y.typeParams, prev: scope}
+			for i := 0; i < n; i++ {
+				xc := x.typeParams.At(i).Constraint()
+				yc := y.typeParams.At(i).Constraint()
+				if xc == nil || yc == nil {
+					if xc != yc {
+						return false
+					}
+					continue
+				}
+				if !identical(xc, yc, ignoreTags, scope) {
+					return false
+				}
+			}
+		}
+		return identical(x.params, y.params, ignoreTags, scope) && identical(x.results, y.results, ignoreTags, scope)
 	case *Struct:
 		y, ok := y.(*Struct)
 		if !ok || len(x.fields) != len(y.fields) ||
@@ -1847,7 +1883,7 @@ func identical(x, y Type, ignoreTags bool) bool {
 		}
 		for i, xf := range x.fields {
 			yf := y.fields[i]
-			if xf.name != yf.name || xf.embedded != yf.embedded || (!ignoreTags && x.Tag(i) != y.Tag(i)) || !identical(xf.typ, yf.typ, ignoreTags) {
+			if xf.name != yf.name || xf.embedded != yf.embedded || (!ignoreTags && x.Tag(i) != y.Tag(i)) || !identical(xf.typ, yf.typ, ignoreTags, scope) {
 				return false
 			}
 		}
@@ -1860,7 +1896,7 @@ func identical(x, y Type, ignoreTags bool) bool {
 		for i := 0; i < x.NumMethods(); i++ {
 			xm := x.Method(i)
 			ym := y.Method(i)
-			if xm.Id() != ym.Id() || !identical(xm.typ, ym.typ, ignoreTags) {
+			if xm.Id() != ym.Id() || !identical(xm.typ, ym.typ, ignoreTags, scope) {
 				return false
 			}
 		}
@@ -1869,7 +1905,7 @@ func identical(x, y Type, ignoreTags bool) bool {
 		}
 		if !x.IsMethodSet() {
 			for i := 0; i < x.NumEmbeddeds(); i++ {
-				if !identical(x.EmbeddedType(i), y.EmbeddedType(i), ignoreTags) {
+				if !identical(x.EmbeddedType(i), y.EmbeddedType(i), ignoreTags, scope) {
 					return false
 				}
 			}
@@ -1880,16 +1916,24 @@ func identical(x, y Type, ignoreTags bool) bool {
 		if !ok || len(x.terms) != len(y.terms) {
 			return false
 		}
-		for i, xt := range x.terms {
-			yt := y.terms[i]
-			if xt.tilde != yt.tilde || !identical(xt.typ, yt.typ, ignoreTags) {
+		used := make([]bool, len(y.terms))
+		for _, xt := range x.terms {
+			matched := false
+			for j, yt := range y.terms {
+				if !used[j] && xt.tilde == yt.tilde && identical(xt.typ, yt.typ, ignoreTags, scope) {
+					used[j] = true
+					matched = true
+					break
+				}
+			}
+			if !matched {
 				return false
 			}
 		}
 		return true
 	case *SIMDVec:
 		y, ok := y.(*SIMDVec)
-		return ok && x.length == y.length && x.isMask == y.isMask && identical(x.elem, y.elem, ignoreTags)
+		return ok && x.length == y.length && x.isMask == y.isMask && identical(x.elem, y.elem, ignoreTags, scope)
 	case *Named:
 		y, ok := y.(*Named)
 		if !ok {
@@ -1899,7 +1943,7 @@ func identical(x, y Type, ignoreTags bool) bool {
 		yArgs := y.TypeArgs()
 		if x.obj == y.obj && xArgs.Len() == yArgs.Len() {
 			for i := 0; i < xArgs.Len(); i++ {
-				if !identical(xArgs.At(i), yArgs.At(i), ignoreTags) {
+				if !identical(xArgs.At(i), yArgs.At(i), ignoreTags, scope) {
 					return false
 				}
 			}
@@ -1908,7 +1952,17 @@ func identical(x, y Type, ignoreTags bool) bool {
 		return false
 	case *TypeParam:
 		y, ok := y.(*TypeParam)
-		return ok && x.obj == y.obj && x.index == y.index
+		if !ok {
+			return false
+		}
+		for s := scope; s != nil; s = s.prev {
+			xi := typeParamIndex(s.x, x)
+			yi := typeParamIndex(s.y, y)
+			if xi >= 0 || yi >= 0 {
+				return xi == yi
+			}
+		}
+		return x.obj == y.obj && x.index == y.index
 	}
 	return false
 }

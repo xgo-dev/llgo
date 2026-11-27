@@ -60,6 +60,8 @@ type frontendCache struct {
 	built        map[*ssa.Package]bool
 	methods      []*ssa.Function
 	functions    map[string]*ssa.Function
+	bound        map[*ssa.Function]bool
+	fnIDs        map[*ssa.Function]string
 	imports      map[*ssa.Function]goescape.Summary
 	importKeys   map[*ssa.Function]string
 	ambiguous    map[string]bool

@@ -2,6 +2,7 @@ package build
 
 import (
 	"encoding/json"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,5 +121,35 @@ func TestFrontendExportsMethodsCallerRecoverAndGenericBodies(t *testing.T) {
 		if imports == 0 || !inlineBuilt {
 			t.Fatalf("type imports=%d inline source built=%v", imports, inlineBuilt)
 		}
+	}
+}
+
+func TestFrontendPosCacheRefreshAndDuplicates(t *testing.T) {
+	fset := token.NewFileSet()
+	f1 := fset.AddFile("a.go", -1, 10)
+	var cache frontendPosCache
+
+	if got := cache.lookup(fset, "a.go:5"); got != f1.Pos(5) {
+		t.Fatalf("a.go:5 = %v, want %v", got, f1.Pos(5))
+	}
+	if got := cache.lookup(fset, "a.go:15"); got != token.NoPos {
+		t.Fatalf("a.go:15 before dup = %v, want NoPos", got)
+	}
+	if got := cache.lookup(fset, ""); got != token.NoPos {
+		t.Fatalf("empty key = %v, want NoPos", got)
+	}
+
+	// Adding files advances fset.Base(); cache must refresh and preserve
+	// first-match duplicate filename fallback semantics.
+	f1Dup := fset.AddFile("a.go", -1, 20)
+	f2 := fset.AddFile("b.go", -1, 30)
+	if got := cache.lookup(fset, "a.go:5"); got != f1.Pos(5) {
+		t.Fatalf("a.go:5 after dup = %v, want first file %v", got, f1.Pos(5))
+	}
+	if got := cache.lookup(fset, "a.go:15"); got != f1Dup.Pos(15) {
+		t.Fatalf("a.go:15 after dup = %v, want duplicate file %v", got, f1Dup.Pos(15))
+	}
+	if got := cache.lookup(fset, "b.go:25"); got != f2.Pos(25) {
+		t.Fatalf("b.go:25 after refresh = %v, want %v", got, f2.Pos(25))
 	}
 }

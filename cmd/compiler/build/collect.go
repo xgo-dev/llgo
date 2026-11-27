@@ -505,7 +505,14 @@ func (c *context) ensureCacheManager() *cacheManager {
 // tryLoadFromCache attempts to load a package from cache.
 // Returns true if cache hit, false otherwise.
 func (c *context) tryLoadFromCache(pkg *aPackage) bool {
+	return c.tryLoadFromCacheEx(pkg, true)
+}
+
+func (c *context) tryLoadFromCacheEx(pkg *aPackage, loadLinkSnap bool) bool {
 	if pkg.CacheHit {
+		if loadLinkSnap && pkg.linkSnapshot == nil {
+			c.loadLinkSnapshotSidecar(pkg)
+		}
 		return true
 	}
 	if !cacheEnabled() {
@@ -564,7 +571,7 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	pkg.NeedRt = meta.NeedRt
 	pkg.NeedPyInit = meta.NeedPyInit
 	pkg.Meta = pkgMeta
-	if pkg.linkSnapshot == nil {
+	if loadLinkSnap && pkg.linkSnapshot == nil {
 		if snap, err := c.readLinkSnapshotSidecar(paths.LinkSnap); err == nil && snap != nil {
 			pkg.linkSnapshot = snap
 		}
@@ -577,6 +584,16 @@ func (c *context) tryLoadFromCache(pkg *aPackage) bool {
 	pkg.CacheHit = true
 
 	return true
+}
+
+func (c *context) loadLinkSnapshotSidecar(pkg *aPackage) {
+	if pkg == nil || pkg.linkSnapshot != nil || pkg.Fingerprint == "" {
+		return
+	}
+	paths := c.ensureCacheManager().PackagePaths(c.targetTriple(), pkg.PkgPath, pkg.Fingerprint)
+	if snap, err := c.readLinkSnapshotSidecar(paths.LinkSnap); err == nil && snap != nil {
+		pkg.linkSnapshot = snap
+	}
 }
 
 // parseManifestMetadata extracts metadata from manifest content.

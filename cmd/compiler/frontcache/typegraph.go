@@ -378,7 +378,11 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 		var recv *types.Var
 		if n.Receiver != nil {
 			obj := *n.Receiver
-			recv = types.NewVar(pos(obj), owner(obj), obj.Name, get(obj.Type))
+			recvType := get(obj.Type)
+			if existing := p.values[id]; existing != nil {
+				return existing, nil
+			}
+			recv = types.NewVar(pos(obj), owner(obj), obj.Name, recvType)
 		}
 		sig := types.NewSignatureType(recv, parameters(n.RecvParams), parameters(n.TypeParams), namedTuple(n.Params, n.Parameters), namedTuple(n.Results, n.Returns), n.Variadic)
 		if types.CallConv(n.CallConv) != types.Go {
@@ -437,7 +441,11 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 		result = iface.Complete()
 		for i, ref := range methodNodes {
 			if ref >= 0 {
-				p.values[ref] = methods[i].Type()
+				sig := methods[i].Type()
+				p.values[ref] = sig
+				if p.Existing != nil && p.Graph.Nodes[ref].Key != "" && !p.Existing.Bind(p.Graph.Nodes[ref].Key, sig) {
+					return nil, fmt.Errorf("conflicting frontend type identity %s", p.Graph.Nodes[ref].Key)
+				}
 			}
 		}
 	case "union":

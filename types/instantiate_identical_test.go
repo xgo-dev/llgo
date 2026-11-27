@@ -138,3 +138,142 @@ func (b Box[T]) Get() T { return b.V }
 		t.Fatalf("Box[struct{X int}].Get not identical to expected %v", wantGetInt)
 	}
 }
+
+func TestGenericSignatureIdentical(t *testing.T) {
+	pkg := types.NewPackage("example.com/gen", "gen")
+	tildeConstraint := func(k types.BasicKind) *types.Interface {
+		iface := types.NewInterfaceType(nil, []types.Type{
+			types.NewUnion([]*types.Term{types.NewTerm(true, types.Typ[k])}),
+		}).Complete()
+		iface.MarkImplicit()
+		return iface
+	}
+	anyType := types.Universe.Lookup("any").Type()
+	comparableType := types.Universe.Lookup("comparable").Type()
+
+	// 1. Different constraints, no params: func[T ~int]() vs func[S ~string]()
+	tpInt1 := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), tildeConstraint(types.Int))
+	tpStr1 := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "S", nil), tildeConstraint(types.String))
+	sigNoParamInt := types.NewSignatureType(nil, nil, []*types.TypeParam{tpInt1}, nil, nil, false)
+	sigNoParamStr := types.NewSignatureType(nil, nil, []*types.TypeParam{tpStr1}, nil, nil, false)
+	if types.Identical(sigNoParamInt, sigNoParamStr) {
+		t.Fatalf("func[T ~int]() and func[S ~string]() reported identical")
+	}
+
+	// 2. Alpha-equivalent type params with same constraint: func[T ~int](T) vs func[S ~int](S)
+	tpInt2 := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "S", nil), tildeConstraint(types.Int))
+	sigParamIntT := types.NewSignatureType(nil, nil, []*types.TypeParam{tpInt1},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "x", tpInt1)), nil, false)
+	sigParamIntS := types.NewSignatureType(nil, nil, []*types.TypeParam{tpInt2},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "y", tpInt2)), nil, false)
+	if !types.Identical(sigParamIntT, sigParamIntS) {
+		t.Fatalf("func[T ~int](T) and func[S ~int](S) reported not identical")
+	}
+	sigParamStrS := types.NewSignatureType(nil, nil, []*types.TypeParam{tpStr1},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "y", tpStr1)), nil, false)
+	if types.Identical(sigParamIntT, sigParamStrS) {
+		t.Fatalf("func[T ~int](T) and func[S ~string](S) reported identical")
+	}
+
+	// 3. Multi-param positional correspondence & swapped order
+	tpA := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), anyType)
+	tpB := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "U", nil), anyType)
+	tpX := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "A", nil), anyType)
+	tpY := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "B", nil), anyType)
+	sigTU := types.NewSignatureType(nil, nil, []*types.TypeParam{tpA, tpB},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", tpA), types.NewParam(token.NoPos, pkg, "", tpB)), nil, false)
+	sigAB := types.NewSignatureType(nil, nil, []*types.TypeParam{tpX, tpY},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", tpX), types.NewParam(token.NoPos, pkg, "", tpY)), nil, false)
+	sigBA := types.NewSignatureType(nil, nil, []*types.TypeParam{tpX, tpY},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", tpY), types.NewParam(token.NoPos, pkg, "", tpX)), nil, false)
+	if !types.Identical(sigTU, sigAB) {
+		t.Fatal("func[T, U any](T, U) and func[A, B any](A, B) reported not identical")
+	}
+	if types.Identical(sigTU, sigBA) {
+		t.Fatal("func[T, U any](T, U) and func[A, B any](B, A) reported identical")
+	}
+	// Reused TypeParam pointer at different positions must not short-circuit via x == y.
+	sigReuse1 := types.NewSignatureType(nil, nil, []*types.TypeParam{tpA, tpB},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", tpA)), nil, false)
+	sigReuse2 := types.NewSignatureType(nil, nil, []*types.TypeParam{tpB, tpA},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", tpA)), nil, false)
+	if types.Identical(sigReuse1, sigReuse2) {
+		t.Fatal("func[T, U any](T) and func[U, T any](T) reported identical")
+	}
+
+	// 4. Dependent constraints: func[T any, S ~[]T](S) T vs func[A any, B ~[]A](B) A
+	depT := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), anyType)
+	depS := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "S", nil),
+		types.NewInterfaceType(nil, []types.Type{types.NewUnion([]*types.Term{types.NewTerm(true, types.NewSlice(depT))})}).Complete())
+	depA := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "A", nil), anyType)
+	depB := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "B", nil),
+		types.NewInterfaceType(nil, []types.Type{types.NewUnion([]*types.Term{types.NewTerm(true, types.NewSlice(depA))})}).Complete())
+	sigDep1 := types.NewSignatureType(nil, nil, []*types.TypeParam{depT, depS},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", depS)),
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", depT)), false)
+	sigDep2 := types.NewSignatureType(nil, nil, []*types.TypeParam{depA, depB},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", depB)),
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", depA)), false)
+	if !types.Identical(sigDep1, sigDep2) {
+		t.Fatal("dependent-constraint generic signatures func[T any, S ~[]T](S) T and func[A any, B ~[]A](B) A reported not identical")
+	}
+
+	// 5. F-bounded constraint: func[T interface{ Less(T) bool }](T, T) bool
+	fT := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), nil)
+	fT.SetConstraint(types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkg, "Less", types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewParam(token.NoPos, pkg, "", fT)),
+			types.NewTuple(types.NewParam(token.NoPos, pkg, "", types.Typ[types.Bool])), false)),
+	}, nil).Complete())
+	fS := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "S", nil), nil)
+	fS.SetConstraint(types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkg, "Less", types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewParam(token.NoPos, pkg, "", fS)),
+			types.NewTuple(types.NewParam(token.NoPos, pkg, "", types.Typ[types.Bool])), false)),
+	}, nil).Complete())
+	sigFB1 := types.NewSignatureType(nil, nil, []*types.TypeParam{fT},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", fT), types.NewParam(token.NoPos, pkg, "", fT)),
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", types.Typ[types.Bool])), false)
+	sigFB2 := types.NewSignatureType(nil, nil, []*types.TypeParam{fS},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", fS), types.NewParam(token.NoPos, pkg, "", fS)),
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", types.Typ[types.Bool])), false)
+	if !types.Identical(sigFB1, sigFB2) {
+		t.Fatal("F-bounded generic signatures reported not identical")
+	}
+
+	// 6. Outer free type parameter vs bound type parameter, and comparable vs any
+	outerT := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "Outer", nil), anyType)
+	sigBound := types.NewSignatureType(nil, nil, []*types.TypeParam{tpA},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", tpA)), nil, false)
+	sigFree := types.NewSignatureType(nil, nil, []*types.TypeParam{tpX},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", outerT)), nil, false)
+	if types.Identical(sigBound, sigFree) {
+		t.Fatal("bound type parameter matched unrelated outer type parameter")
+	}
+	tpComp := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "C", nil), comparableType)
+	sigComp := types.NewSignatureType(nil, nil, []*types.TypeParam{tpComp},
+		types.NewTuple(types.NewParam(token.NoPos, pkg, "", tpComp)), nil, false)
+	if types.Identical(sigBound, sigComp) {
+		t.Fatal("func[T any](T) and func[C comparable](C) reported identical")
+	}
+
+	// 7. Checked go/types-backed generic signature vs synthetic generic signature
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "g.go", `package g
+func H[T ~int](x T) {}
+`, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkedPkg, err := (&types.Config{}).Check("example.com/g", fset, []*ast.File{file}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkedH := checkedPkg.Scope().Lookup("H").Type()
+	if !types.Identical(checkedH, sigParamIntS) {
+		t.Fatalf("checked %v and synthetic %v reported not identical", checkedH, sigParamIntS)
+	}
+	if types.Identical(checkedH, sigParamStrS) {
+		t.Fatalf("checked %v and synthetic %v reported identical", checkedH, sigParamStrS)
+	}
+}

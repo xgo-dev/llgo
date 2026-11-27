@@ -1959,6 +1959,7 @@ type context struct {
 
 	// Cache related fields
 	cacheManager *cacheManager
+	posCache     frontendPosCache
 	llvmVersion  string
 	// goVersion is the GOVERSION of the GOROOT whose standard library is being
 	// compiled. collectEnvInputs records it through sourceGoVersion; compiled
