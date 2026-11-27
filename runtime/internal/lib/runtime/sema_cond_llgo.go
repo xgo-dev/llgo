@@ -1,4 +1,4 @@
-//go:build darwin || (linux && baremetal && !llgo.singlecontext)
+//go:build linux && baremetal && !llgo.singlecontext
 
 package runtime
 

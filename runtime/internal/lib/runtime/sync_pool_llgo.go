@@ -10,28 +10,55 @@ import (
 )
 
 // Share one TLS key to avoid exhausting the process-wide pthread key limit.
-// Thread exit releases slot values; the key itself remains allocated.
-// Each thread retains the pools it has used and their locals until exit, as
-// the previous per-pool TLS slots did through their destructor closures.
-type poolLocalTable = wordmap.Map[unsafe.Pointer, unsafe.Pointer]
+// The first poolFastSlotLimit sync.Pools receive sequential slot IDs so
+// per-thread Get/Put lookups index a flat slice in O(1) without hashing; any
+// pools beyond that cap fall back to a sparse per-thread wordmap so programs
+// creating many ephemeral sync.Pool instances stay bounded in memory.
+const poolFastSlotLimit = 1024
+
+type poolLocalEntry struct {
+	victim unsafe.Pointer
+	local  unsafe.Pointer
+}
+
+type poolLocalTable struct {
+	fast     []poolLocalEntry
+	overflow wordmap.Map[unsafe.Pointer, unsafe.Pointer]
+}
+
+type poolSlotMeta struct {
+	id     uintptr
+	victim unsafe.Pointer
+}
 
 var poolLocalOnce psync.Once
 var poolLocals tls.Handle[*poolLocalTable]
+var poolNextID atomic.Uintptr
 
 //go:linkname syncRuntimePoolLocalAlloc sync.runtime_poolLocalAlloc
 func syncRuntimePoolLocalAlloc(victim *unsafe.Pointer) unsafe.Pointer {
 	poolLocalOnce.Do(func() {
 		poolLocals = tls.AllocReusable[*poolLocalTable](func(locals **poolLocalTable) {
-			if *locals != nil {
-				(*locals).Range(func(victimField, local unsafe.Pointer) {
+			if tbl := *locals; tbl != nil {
+				for i := range tbl.fast {
+					e := &tbl.fast[i]
+					if e.local != nil && e.victim != nil {
+						atomic.StorePointer((*unsafe.Pointer)(e.victim), e.local)
+					}
+				}
+				tbl.overflow.Range(func(victimField, local unsafe.Pointer) {
 					atomic.StorePointer((*unsafe.Pointer)(victimField), local)
 				})
 			}
 		})
 	})
-	// The victim field identifies the pool and keeps its owner alive until
-	// this thread's locals have been published by the TLS destructor.
-	return unsafe.Pointer(victim)
+	id := uintptr(poolFastSlotLimit)
+	if poolNextID.Load() < poolFastSlotLimit {
+		id = poolNextID.Add(1) - 1
+	}
+	// Retain the victim pointer inside the handle so the pool's victim field
+	// stays reachable until thread TLS destructors publish cached locals.
+	return unsafe.Pointer(&poolSlotMeta{id: id, victim: unsafe.Pointer(victim)})
 }
 
 //go:linkname syncRuntimePoolLocalGet sync.runtime_poolLocalGet
@@ -40,15 +67,43 @@ func syncRuntimePoolLocalGet(handle unsafe.Pointer) unsafe.Pointer {
 	if locals == nil {
 		return nil
 	}
-	return locals.Get(handle)
+	meta := (*poolSlotMeta)(handle)
+	if meta.id < poolFastSlotLimit {
+		if meta.id >= uintptr(len(locals.fast)) {
+			return nil
+		}
+		return locals.fast[meta.id].local
+	}
+	return locals.overflow.Get(meta.victim)
 }
 
 //go:linkname syncRuntimePoolLocalSet sync.runtime_poolLocalSet
 func syncRuntimePoolLocalSet(handle, local unsafe.Pointer) {
+	meta := (*poolSlotMeta)(handle)
 	locals := poolLocals.Get()
 	if locals == nil {
-		locals = new(poolLocalTable)
+		locals = &poolLocalTable{}
 		poolLocals.Set(locals)
 	}
-	locals.Set(handle, local)
+	if meta.id < poolFastSlotLimit {
+		id := int(meta.id)
+		if id >= len(locals.fast) {
+			newCap := id + 1
+			if newCap < 8 {
+				newCap = 8
+			}
+			if cap(locals.fast)*2 > newCap {
+				newCap = cap(locals.fast) * 2
+			}
+			if newCap > poolFastSlotLimit {
+				newCap = poolFastSlotLimit
+			}
+			grown := make([]poolLocalEntry, id+1, newCap)
+			copy(grown, locals.fast)
+			locals.fast = grown
+		}
+		locals.fast[id] = poolLocalEntry{victim: meta.victim, local: local}
+		return
+	}
+	locals.overflow.Set(meta.victim, local)
 }

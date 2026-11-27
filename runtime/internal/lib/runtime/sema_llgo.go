@@ -67,10 +67,33 @@ func poll_runtime_Semrelease(addr *uint32) {
 	semaRelease(addr)
 }
 
+var semaSpinCPUs uint32
+
+func semaCanSpinMultiCPU() bool {
+	n := latomic.LoadUint32(&semaSpinCPUs)
+	if n == 0 {
+		c := rt.CPUCount()
+		if c < 1 {
+			c = 1
+		}
+		latomic.StoreUint32(&semaSpinCPUs, uint32(c))
+		n = uint32(c)
+	}
+	return n > 1
+}
+
 // runtime_canSpin/runtime_doSpin/runtime_nanotime are used by internal/sync.
-func runtime_canSpin(_ int) bool { return false }
-func runtime_doSpin()            {}
-func runtime_nanotime() int64    { return runtimeNano() }
+// Match Go's bounded 4-round short spin for non-starving mutexes on multi-core
+// hosts so short critical sections avoid kernel sleep/wake round-trips.
+func runtime_canSpin(i int) bool {
+	return i < 4 && semaCanSpinMultiCPU()
+}
+
+func runtime_doSpin() {
+	rt.Procyield(10)
+}
+
+func runtime_nanotime() int64 { return runtimeNano() }
 
 // sync_runtime_canSpin/sync_runtime_doSpin/sync_runtime_nanotime are used by
 // older stdlib sync implementations.
