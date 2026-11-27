@@ -299,6 +299,21 @@ int32_t llgo_wifi_disconnect(void)
 }
 
 /* Station IP in network byte order, 0 = nothing acquired yet. */
+/* Station MAC in the driver's byte order (aa:bb:cc:dd:ee:ff when printed
+ * left to right). Returns 0 on success, an esp_err_t otherwise. The MAC is
+ * the device identity the xiaozhi OTA endpoint keys a board on, so a program
+ * that has no other id reads it here after esp_wifi_start. */
+int llgo_wifi_get_mac(uint8_t *out)
+{
+    if (out == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_mode != WIFI_MODE_STA && s_mode != WIFI_MODE_APSTA) {
+        return ESP_ERR_WIFI_MODE;
+    }
+    return (int)esp_wifi_get_mac(WIFI_IF_STA, out);
+}
+
 uint32_t llgo_wifi_get_ip(void)
 {
     esp_netif_ip_info_t info;

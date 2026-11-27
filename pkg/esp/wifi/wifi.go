@@ -938,6 +938,17 @@ func Disconnect() error {
 
 // GetIP returns the station IP in network byte order (0 = nothing
 // acquired yet), reading esp_netif directly.
+// GetMAC reports the station interface MAC address, the device identity the
+// xiaozhi OTA endpoint keys a board on. It needs the station interface to
+// exist: call it after SetMode (STA or APSTA) and esp_wifi_start.
+func GetMAC() ([6]uint8, error) {
+	var mac [6]uint8
+	if err := errOf(getMAC(&mac[0])); err != nil {
+		return mac, esperr.Wrap("wifi: get mac", err)
+	}
+	return mac, nil
+}
+
 func GetIP() uint32 { return getIP() }
 
 // DefaultSTA returns the credentials compiled into the firmware via

@@ -415,6 +415,15 @@ func AcceptKey(clientKey []byte) string {
 // owns it (and the handshake deadline is cleared again, so the caller's
 // SetDeadline decides the session's pacing).
 func HandshakeURL(c Conn, host, path string, timeoutMs int32) (*WSConn, error) {
+	return HandshakeURLHeaders(c, host, path, "", timeoutMs)
+}
+
+// HandshakeURLHeaders is HandshakeURL with extra raw request header lines
+// (each already terminated by CRLF) inserted before the blank line. The
+// xiaozhi cloud service authenticates the socket with the token its OTA
+// endpoint issued, carried as "Authorization: Bearer <token>"; a local peer
+// passes "" and gets exactly HandshakeURL's request.
+func HandshakeURLHeaders(c Conn, host, path, extra string, timeoutMs int32) (*WSConn, error) {
 	if c == nil {
 		return nil, ErrClosed
 	}
@@ -443,7 +452,7 @@ func HandshakeURL(c Conn, host, path string, timeoutMs int32) (*WSConn, error) {
 		"Upgrade: websocket\r\n" +
 		"Connection: Upgrade\r\n" +
 		"Sec-WebSocket-Key: " + Base64StdEncode(key[:]) + "\r\n" +
-		"Sec-WebSocket-Version: 13\r\n\r\n"
+		"Sec-WebSocket-Version: 13\r\n" + extra + "\r\n"
 	rb := []byte(req)
 	total := 0
 	for total < len(rb) {

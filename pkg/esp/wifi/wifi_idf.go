@@ -110,3 +110,6 @@ func vTaskDelay(ticks uint32)
 //
 //go:linkname gosched github.com/xgo-dev/llgo/runtime/internal/runtime.Gosched
 func gosched()
+
+//go:linkname getMAC C.llgo_wifi_get_mac
+func getMAC(out *uint8) int32

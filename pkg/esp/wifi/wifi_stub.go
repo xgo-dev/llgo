@@ -94,3 +94,5 @@ func vTaskDelay(ticks uint32) { _ = ticks }
 // gosched is a no-op on the host: the stub build never runs the subscriber
 // poller, and the host scheduler has no fibers to hand off to.
 func gosched() {}
+
+func getMAC(out *uint8) int32 { return errUnsupported }
