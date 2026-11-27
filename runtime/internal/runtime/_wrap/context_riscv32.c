@@ -3,20 +3,51 @@
  * llgoFiberSwap saves the calling context's ra and all twelve RV32I
  * callee-saved integer registers (s0-s11 = x8,x9,x18-x27; the ilp32 soft-float
  * ABI affects only the f registers, so every s register is live here) in a
- * 64-byte frame below its entry stack pointer, publishes that frame address in
+ * 112-byte frame below its entry stack pointer, publishes that frame address in
  * from->sp, then loads to->sp and its saved frame. Resuming a context is a
  * plain ret into the restored ra, so no atomic instructions are involved and
  * the switch runs on plain RV32IMC load/store code.
+ *
+ * Floating-point callee state travels in the same frame. The frame reserves
+ * twelve slots for the RV32F callee-saved f registers (fs0-fs11 = f8,f9,
+ * f18-f27) plus one for fcsr, but only targets whose -march carries the F
+ * extension (#if __riscv_flen) emit the fsw/flw/frcsr/fscsr instructions that
+ * fill them: harts without an FPU (ESP32-C3, rv32imc) trap on any f
+ * instruction, and their soft-float Go code never touches the register file.
+ * The frame size is target-independent so the Go-side constants below stay a
+ * single set; no-F targets simply leave those slots zeroed.
+ *
+ * Why only fs0-fs11 + fcsr, not the caller-saved fa/ft registers: every yield
+ * reaches this swap through an ordinary external call (gopark, Gosched, exit
+ * paths in proc_fiber_baremetal.go all call fiberSwap, a foreign naked C
+ * function the compiler cannot inline), so a yield point is an ABI call
+ * boundary exactly like any other function call. At a call boundary the
+ * psABI gives caller-saved f registers (fa0-fa7, ft0-ft11) no cross-call
+ * lifetime, and llgo-generated callers must already tolerate that - the
+ * integer caller-saved registers ride the same rule and have never been
+ * saved here, across the whole baremetal test matrix. The callee-saved f set
+ * and fcsr, by contrast, stay live across calls from the compiler's point of
+ * view, so the swap itself must carry them between fibers: skipping fs would
+ * silently corrupt whatever values the yielding function keeps in fs
+ * registers across the yield (exactly what _testrt/fpuyield exercises).
+ * fcsr is saved in full through frcsr/fscsr because it packs fflags and frm
+ * into one CSR; field-wise csrs/csrc sequences would clobber the other field.
  *
  * The frame layout must stay in sync with the fiberFrame constants in
  * proc_fiber_baremetal.go, which writes a new fiber's initial frame. The
  * frame size preserves the psABI 16-byte stack alignment; a0 is saved as the
  * first-entry argument slot even though ordinary switches do not carry a0
- * across. The initial frame only fills ra and a0; the s0-s11 slots stay at
- * their allocator-zeroed contents. That is safe because the entry stub never
- * returns through this frame: the restored s0-s11 are meaningless scratch
- * values that the stub's own code overwrites, and the first save of the
- * fiber's registers happens on a later, fully-written swap frame.
+ * across. The initial frame only fills ra and a0; the s0-s11, fs0-fs11 and
+ * fcsr slots stay at their allocator-zeroed contents. That is safe because
+ * the entry stub never returns through this frame: the restored s0-s11 are
+ * meaningless scratch values that the stub's own code overwrites, and the
+ * first save of the fiber's registers happens on a later, fully-written swap
+ * frame. Restoring zeroed f state on an F target is equally benign: every
+ * fcsr write here is a plain CSR write (no trap on any legal value) and the
+ * zeroed fs registers only feed the stub, which never reads them before
+ * overwriting (the device file's FPU-enable constructor has mstatus.FS out
+ * of Off long before any swap runs, so the flw/fscsr cannot trap there
+ * either).
  *
  * Two scheduler contracts this code relies on:
  *   - Interrupt handlers must not touch scheduler state (run queues, G
@@ -41,7 +72,7 @@
  * fields of its baremetalFiberContext. The Go side stores those bounds per
  * fiber (and the bootstrap scheduler bounds in the system context) and marks
  * the floor word of every stack with fiberStackCanary (proc_fiber_baremetal.go).
- * Before pushing its own 64-byte frame, llgoFiberSwap checks the outgoing
+ * Before pushing its own 112-byte frame, llgoFiberSwap checks the outgoing
  * context: the canary word at from->stackLo (offset 0 of the stack) must be
  * intact and the live sp must leave room for the swap frame above stackLo.
  * This mirrors TinyGo, whose task.Pause validates a stack canary at exactly
@@ -67,28 +98,33 @@
 #define llgoFiberStackCanary 0x5afec0de
 
 /* Fiber swap-frame geometry, mirrored by the Go constants in
- * proc_fiber_baremetal.go (fiberFrameSize 64, fiberFrameRAOff 0,
+ * proc_fiber_baremetal.go (fiberFrameSize 112, fiberFrameRAOff 0,
  * fiberFrameArgOff 52) and pinned by the compile-time assertions in
  * fiber_guard_layout.go. The raw offsets in the asm below must stay equal to
  * these macros; the static asserts fail the C build on any drift. */
-#define llgoFiberFrameSize 64
+#define llgoFiberFrameSize 112
 #define llgoFiberFrameRAOff 0
 #define llgoFiberFrameArgOff 52
+#define llgoFiberFrameFSOff 56
+#define llgoFiberFrameFCSROff 104
 
 /* fiberGuardMargin: the live sp must leave this much room above stackLo.
- * 64 bytes hold the swap frame, 4 bytes hold the canary word: requiring
- * sp >= stackLo+68 means the frame base (sp-64) lands at or above
+ * 112 bytes hold the swap frame, 4 bytes hold the canary word: requiring
+ * sp >= stackLo+116 means the frame base (sp-112) lands at or above
  * stackLo+4, so no swap-frame slot can clobber the canary, and the saved
  * from->sp stays strictly above stackLo, keeping the parked stack inside
  * the collector's ctx.stackLo < ctx.sp scan window. Do not shave this to
- * 64: sp == stackLo+64 parks the frame base exactly on the floor, where
+ * 112: sp == stackLo+112 parks the frame base exactly on the floor, where
  * the ra slot silently overwrites the canary. */
 #define llgoFiberGuardMargin (llgoFiberFrameSize + 4)
 
-_Static_assert(llgoFiberGuardMargin == 68, "swap guard margin must stay 64-byte frame + 4-byte canary");
-_Static_assert(llgoFiberFrameSize == 64, "swap frame must stay 64 bytes");
+_Static_assert(llgoFiberGuardMargin == 116, "swap guard margin must stay 112-byte frame + 4-byte canary");
+_Static_assert(llgoFiberFrameSize == 112, "swap frame must stay 112 bytes");
 _Static_assert(llgoFiberFrameRAOff == 0, "ra slot must stay at the swap frame base");
 _Static_assert(llgoFiberFrameArgOff == 52, "a0 argument slot must stay inside the swap frame");
+_Static_assert(llgoFiberFrameFSOff == llgoFiberFrameArgOff + 4, "fs slots must start right after a0");
+_Static_assert(llgoFiberFrameFSOff + 12 * 4 == llgoFiberFrameFCSROff, "fs slots must run contiguously to the fcsr slot");
+_Static_assert(llgoFiberFrameFCSROff + 4 <= llgoFiberFrameSize, "fcsr slot must stay inside the swap frame");
 
 /* The device file (targets/device/esp) provides _write and the linked libc
  * archive provides exit and stdio; they are declared directly so this wrapper
@@ -143,13 +179,13 @@ __attribute__((naked)) void llgoFiberSwap(unsigned int *fromSp, unsigned int *to
         "li t2, " llgoFiberStr(llgoFiberStackCanary) "\n"
         "bne t1, t2, 2f\n"
         "3:\n"
-        // SP bound: the 64-byte swap frame below must stay clear of the
-        // canary word (see fiberGuardMargin): frame base = sp-64 must be
-        // >= stackLo+4, i.e. sp >= stackLo+68.
+        // SP bound: the 112-byte swap frame below must stay clear of the
+        // canary word (see fiberGuardMargin): frame base = sp-112 must be
+        // >= stackLo+4, i.e. sp >= stackLo+116.
         "addi t0, t0, " llgoFiberStr(llgoFiberGuardMargin) "\n"
         "bltu sp, t0, 2f\n"
         "1:\n"
-        "addi sp, sp, -64\n"
+        "addi sp, sp, -112\n"
         "sw ra, 0(sp)\n"
         "sw s0, 4(sp)\n"
         "sw s1, 8(sp)\n"
@@ -164,6 +200,22 @@ __attribute__((naked)) void llgoFiberSwap(unsigned int *fromSp, unsigned int *to
         "sw s10, 44(sp)\n"
         "sw s11, 48(sp)\n"
         "sw a0, 52(sp)\n"
+#if defined(__riscv_flen) && __riscv_flen >= 32
+        "fsw fs0, 56(sp)\n"
+        "fsw fs1, 60(sp)\n"
+        "fsw fs2, 64(sp)\n"
+        "fsw fs3, 68(sp)\n"
+        "fsw fs4, 72(sp)\n"
+        "fsw fs5, 76(sp)\n"
+        "fsw fs6, 80(sp)\n"
+        "fsw fs7, 84(sp)\n"
+        "fsw fs8, 88(sp)\n"
+        "fsw fs9, 92(sp)\n"
+        "fsw fs10, 96(sp)\n"
+        "fsw fs11, 100(sp)\n"
+        "frcsr t0\n"
+        "sw t0, 104(sp)\n"
+#endif
         "sw sp, 0(a0)\n"
         "lw sp, 0(a1)\n"
         "lw ra, 0(sp)\n"
@@ -180,7 +232,23 @@ __attribute__((naked)) void llgoFiberSwap(unsigned int *fromSp, unsigned int *to
         "lw s10, 44(sp)\n"
         "lw s11, 48(sp)\n"
         "lw a0, 52(sp)\n"
-        "addi sp, sp, 64\n"
+#if defined(__riscv_flen) && __riscv_flen >= 32
+        "lw t0, 104(sp)\n"
+        "fscsr t0\n"
+        "flw fs0, 56(sp)\n"
+        "flw fs1, 60(sp)\n"
+        "flw fs2, 64(sp)\n"
+        "flw fs3, 68(sp)\n"
+        "flw fs4, 72(sp)\n"
+        "flw fs5, 76(sp)\n"
+        "flw fs6, 80(sp)\n"
+        "flw fs7, 84(sp)\n"
+        "flw fs8, 88(sp)\n"
+        "flw fs9, 92(sp)\n"
+        "flw fs10, 96(sp)\n"
+        "flw fs11, 100(sp)\n"
+#endif
+        "addi sp, sp, 112\n"
         "ret\n"
         // Overflow: the outgoing fiber's stack is gone, so run the handler on
         // the target context's saved stack. The G -> scheduler swaps - the

@@ -28,25 +28,27 @@ var (
 	_ [unsafe.Offsetof(baremetalFiberContext{}.stackHi) - 8]struct{}
 	_ [8 - unsafe.Offsetof(baremetalFiberContext{}.stackHi)]struct{}
 
-	// Swap-frame geometry shared with llgoFiberSwap: 64-byte frame, ra at
-	// the base, the a0 argument slot inside the frame.
-	_ [64 - fiberFrameSize]struct{}
-	_ [fiberFrameSize - 64]struct{}
+	// Swap-frame geometry shared with llgoFiberSwap: 112-byte frame, ra at
+	// the base, the a0 argument slot inside the frame, twelve f-register
+	// slots plus one fcsr slot at the top (context_riscv32.c fills them on
+	// F-extension targets).
+	_ [112 - fiberFrameSize]struct{}
+	_ [fiberFrameSize - 112]struct{}
 	_ [0 - fiberFrameRAOff]struct{}
 	_ [52 - fiberFrameArgOff]struct{}
 	_ [fiberFrameArgOff - 52]struct{}
 
 	// The canary must never be zero (zero is the allocator's fill), and the
-	// minimum stack size must always cover the guard margin (68) plus the
-	// initial swap frame (64) plus the worst-case 16-byte alignment
-	// round-down (15): 147.
+	// minimum stack size must always cover the guard margin (116) plus the
+	// initial swap frame (112) plus the worst-case 16-byte alignment
+	// round-down (15): 243.
 	_ [1 / fiberStackCanary]struct{}
-	_ [fiberMinStackSize - 147]struct{}
+	_ [fiberMinStackSize - 243]struct{}
 
-	// The Go-side make-slice guard must mirror llgoFiberGuardMargin (68 =
-	// 64-byte swap frame + 4-byte canary word) in _wrap/context_riscv32.c.
-	_ [68 - fiberStackGuardMargin]struct{}
-	_ [fiberStackGuardMargin - 68]struct{}
+	// The Go-side make-slice guard must mirror llgoFiberGuardMargin (116 =
+	// 112-byte swap frame + 4-byte canary word) in _wrap/context_riscv32.c.
+	_ [116 - fiberStackGuardMargin]struct{}
+	_ [fiberStackGuardMargin - 116]struct{}
 
 	// The compiler's fixed-stack budget (stack size minus abi.FiberStackOverhead)
 	// must leave at least the guard margin plus the initial swap frame above

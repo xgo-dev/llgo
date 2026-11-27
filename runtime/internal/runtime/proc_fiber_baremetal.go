@@ -56,10 +56,17 @@ type baremetalFiberContext struct {
 
 // Fiber swap-frame layout shared with _wrap/context_riscv32.c. The frame
 // keeps ra plus all twelve RV32I callee-saved integer registers (s0-s11 =
-// x8,x9,x18-x27; the ilp32 soft-float ABI affects only the f registers) with
-// the psABI's 16-byte stack alignment.
+// x8,x9,x18-x27), the a0 argument slot, and the RV32F callee-saved float
+// state (fs0-fs11 = f8,f9,f18-f27 plus fcsr): the target json of hard-float
+// builds (esp32s31-f) compiles _wrap/context_riscv32.c with an F-extension
+// march whose __riscv_flen turns on the fsw/flw/frcsr/fscsr fill; soft-float
+// targets compile the same layout without touching the f register file. The
+// callee-saved f set is the only live-across-call FP state: every yield is
+// the fiberSwap call boundary (see the frame comment in context_riscv32.c),
+// so caller-saved fa/ft registers need no slots. The frame stays at the
+// psABI's 16-byte stack alignment.
 const (
-	fiberFrameSize   = 64
+	fiberFrameSize   = 112
 	fiberFrameRAOff  = 0
 	fiberFrameArgOff = 52
 )
@@ -86,24 +93,24 @@ const (
 const fiberStackCanary = uintptr(0x5afec0de)
 
 // fiberStackGuardMargin mirrors llgoFiberGuardMargin in
-// _wrap/context_riscv32.c: the swap frame (64) plus the canary word (4) that
-// every future swap-out needs between the floor and the live sp. The
+// _wrap/context_riscv32.c: the swap frame (112) plus the canary word (4)
+// that every future swap-out needs between the floor and the live sp. The
 // make-slice guard below uses the same bound so a backing array that would
 // reach the floor fatals before it can smash the canary.
 const fiberStackGuardMargin = fiberFrameSize + 4
 
 // fiberMinStackSize floors explicit stack sizes so the swap guard's math
-// always holds. The guard margin (68: 64-byte swap frame + 4-byte canary
+// always holds. The guard margin (116: 112-byte swap frame + 4-byte canary
 // word, see llgoFiberGuardMargin in _wrap/context_riscv32.c) plus the
-// initial swap frame (64) must fit above the floor even after the 16-byte
-// alignment round-down of the top shaves up to 15 bytes: 68+64+15 = 147 is
-// the bare correctness minimum. The floor keeps 61 bytes of entry-stub
+// initial swap frame (112) must fit above the floor even after the 16-byte
+// alignment round-down of the top shaves up to 15 bytes: 116+112+15 = 243 is
+// the bare correctness minimum. The floor keeps 13 bytes of entry-stub
 // working room beyond that, so a fresh fiber can at least enter its entry
 // stub before any further use is judged on its merits. A stack this small
 // still fatals at its first real yield - every usable goroutine stack comes
 // from the target's default-stack-size floor (2048); this only guards
 // against tiny explicit -goroutine-stack-size values.
-const fiberMinStackSize = 208
+const fiberMinStackSize = 256
 
 // TODO: the swap-point guard above is checkpoint-granular like TinyGo's
 // task.Pause canary; catching overflow at every function entry instead would
