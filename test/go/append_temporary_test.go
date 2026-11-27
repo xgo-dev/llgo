@@ -41,42 +41,42 @@ func appendFourBytes(dst appendBytes, src []byte) appendBytes {
 	return append(dst, src[1:5]...)
 }
 
+func assertAppendOverlap[T any](t *testing.T, name string, capacity int, src, got []T, wantLen int, check func(i int, g T)) {
+	t.Helper()
+	if len(got) != wantLen {
+		t.Fatalf("%s capacity %d: len=%d, want %d", name, capacity, len(got), wantLen)
+	}
+	for i, g := range got {
+		check(i, g)
+	}
+	if (capacity == 8) != (&got[0] == &src[0]) {
+		t.Fatalf("%s capacity %d: unexpected destination alias", name, capacity)
+	}
+}
+
+func assertAppendOverlapEqual[T comparable](t *testing.T, name string, capacity int, src, got, want []T) {
+	t.Helper()
+	assertAppendOverlap(t, name, capacity, src, got, len(want), func(i int, g T) {
+		if g != want[i] {
+			t.Fatalf("%s capacity %d: got %v, want %v", name, capacity, got, want)
+		}
+	})
+}
+
 func TestAppendOverlapAndGrowth(t *testing.T) {
 	for _, capacity := range []int{2, 8} {
 		b := []byte{0, 1, 2, 3, 4, 5, 6, 7}
-		got := appendFourBytes(b[:2:capacity], b)
-		if want := []byte{0, 1, 1, 2, 3, 4}; !bytes.Equal(got, want) {
-			t.Fatalf("bytes capacity %d: got %v, want %v", capacity, got, want)
-		}
-		if (capacity == 8) != (&got[0] == &b[0]) {
-			t.Fatalf("bytes capacity %d: unexpected destination alias", capacity)
-		}
+		assertAppendOverlapEqual(t, "bytes", capacity, b, []byte(appendFourBytes(b[:2:capacity], b)), []byte{0, 1, 1, 2, 3, 4})
 
 		nums := []int{10, 20, 30, 40, 50, 60, 70, 80}
-		gotNums := append(nums[:2:capacity], nums[1:5]...)
-		wantNums := []int{10, 20, 20, 30, 40, 50}
-		if len(gotNums) != len(wantNums) {
-			t.Fatalf("ints capacity %d: len=%d, want %d", capacity, len(gotNums), len(wantNums))
-		}
-		for i, w := range wantNums {
-			if gotNums[i] != w {
-				t.Fatalf("ints capacity %d: got %v, want %v", capacity, gotNums, wantNums)
-			}
-		}
-		if (capacity == 8) != (&gotNums[0] == &nums[0]) {
-			t.Fatalf("ints capacity %d: unexpected destination alias", capacity)
-		}
+		assertAppendOverlapEqual(t, "ints", capacity, nums, append(nums[:2:capacity], nums[1:5]...), []int{10, 20, 20, 30, 40, 50})
 
 		strs := []string{"a", "b", "c", "d", "e", "f", "g", "h"}
 		gotStrs := append(strs[:2:capacity], strs[1:5]...)
 		runtime.GC()
-		wantStrs := []string{"a", "b", "b", "c", "d", "e"}
-		for i, w := range wantStrs {
-			if gotStrs[i] != w {
-				t.Fatalf("strings capacity %d: got %v, want %v", capacity, gotStrs, wantStrs)
-			}
-		}
+		assertAppendOverlapEqual(t, "strings", capacity, strs, gotStrs, []string{"a", "b", "b", "c", "d", "e"})
 
+		// 24-byte struct with a leading pointer and 7 bytes of tail padding.
 		padded := make([]appendPaddedItem, 8)
 		for i := range padded {
 			v := new(int)
@@ -86,18 +86,12 @@ func TestAppendOverlapAndGrowth(t *testing.T) {
 		gotPadded := append(padded[:2:capacity], padded[1:5]...)
 		runtime.GC()
 		wantIdx := []int{0, 1, 1, 2, 3, 4}
-		if len(gotPadded) != len(wantIdx) {
-			t.Fatalf("padded capacity %d: len=%d, want %d", capacity, len(gotPadded), len(wantIdx))
-		}
-		for i, idx := range wantIdx {
-			g := gotPadded[i]
+		assertAppendOverlap(t, "padded", capacity, padded, gotPadded, len(wantIdx), func(i int, g appendPaddedItem) {
+			idx := wantIdx[i]
 			if g.p == nil || *g.p != 100+idx || g.tag != uint64(idx*7+1) || g.flag != uint8(idx+1) {
 				t.Fatalf("padded capacity %d idx %d: got %+v, want p=%d tag=%d flag=%d", capacity, i, g, 100+idx, idx*7+1, idx+1)
 			}
-		}
-		if (capacity == 8) != (&gotPadded[0] == &padded[0]) {
-			t.Fatalf("padded capacity %d: unexpected destination alias", capacity)
-		}
+		})
 	}
 
 	if got := append([]byte(nil), ""...); got != nil {

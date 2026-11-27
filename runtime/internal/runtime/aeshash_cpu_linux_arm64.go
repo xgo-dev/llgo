@@ -1,4 +1,4 @@
-//go:build llgo && (linux || android) && arm64 && !baremetal
+//go:build llgo && linux && arm64 && !baremetal
 
 package runtime
 

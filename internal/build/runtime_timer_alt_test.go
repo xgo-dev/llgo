@@ -39,8 +39,10 @@ func TestNativeTimerSchedulerParkedDeadline(t *testing.T) {
 var timerProbeHead *timerState
 
 //go:linkname timerSchedulerProbe timerprobe.wait
-func timerSchedulerProbe() (wakeAt, headWhen int64, released, indefinite bool) {
+func timerSchedulerProbe() (wakeAt, headWhen int64, released, indefinite bool, waitState, heapLen int) {
 	timerSchedulerMu.Lock()
+	waitState = int(timerSchedulerWait)
+	heapLen = len(timerSchedulerHeap)
 	switch timerSchedulerWait {
 	case timerWaitUntil:
 		wakeAt = timerSchedulerWakeAt
@@ -68,11 +70,11 @@ import (
 )
 
 //go:linkname timerWait timerprobe.wait
-func timerWait() (wakeAt, headWhen int64, released, indefinite bool)
+func timerWait() (wakeAt, headWhen int64, released, indefinite bool, waitState, heapLen int)
 
 func waitForParkedHead() (int64, int64) {
 	for {
-		if wakeAt, headWhen, _, _ := timerWait(); headWhen != 0 {
+		if wakeAt, headWhen, _, _, _, _ := timerWait(); headWhen != 0 {
 			return wakeAt, headWhen
 		}
 		runtime.Gosched()
@@ -80,9 +82,18 @@ func waitForParkedHead() (int64, int64) {
 }
 
 func waitForIndefiniteWait() {
+	deadline := time.Now().Add(5 * time.Second)
+	var lastWaitState, lastHeapLen int
 	for {
-		if _, _, _, indefinite := timerWait(); indefinite {
+		_, _, _, indefinite, waitState, heapLen := timerWait()
+		if indefinite {
 			return
+		}
+		lastWaitState = waitState
+		lastHeapLen = heapLen
+		if !time.Now().Before(deadline) {
+			println("waitForIndefiniteWait timed out: timerSchedulerWait=", lastWaitState, "heapLen=", lastHeapLen)
+			panic("scheduler did not enter timerWaitIndefinitely")
 		}
 		runtime.Gosched()
 	}
@@ -96,13 +107,13 @@ func main() {
 	}
 
 	later := time.NewTimer(36*time.Hour)
-	if got, _, _, _ := timerWait(); got != wakeAt {
+	if got, _, _, _, _, _ := timerWait(); got != wakeAt {
 		panic("a deadline after the capped wake time interrupted the wait")
 	}
 	if !head.Stop() || !later.Stop() {
 		panic("long timers fired early")
 	}
-	if got, deadline, released, _ := timerWait(); got != wakeAt || deadline != 0 || !released {
+	if got, deadline, released, _, _, _ := timerWait(); got != wakeAt || deadline != 0 || !released {
 		panic("stopping the timers changed the parked deadline or retained references")
 	}
 
@@ -115,7 +126,7 @@ func main() {
 		panic("reset did not find the parked timer")
 	}
 	<-firing.C
-	if _, _, released, _ := timerWait(); !released {
+	if _, _, released, _, _, _ := timerWait(); !released {
 		panic("fired one-shot timer retained references")
 	}
 

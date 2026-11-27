@@ -62,37 +62,39 @@ type smallScalarPadded struct {
 
 func testReflectMapOfSmallScalar[K comparable](t *testing.T, keys []K) {
 	t.Helper()
-	mapTyp := reflect.MapOf(reflect.TypeFor[K](), reflect.TypeFor[int]())
-	rv := reflect.MakeMap(mapTyp)
-	for i, k := range keys {
-		rv.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(i+10))
-	}
-	staticMap, ok := rv.Interface().(map[K]int)
-	if !ok {
-		t.Fatalf("reflect.MakeMap(%v) did not convert to static map", mapTyp)
-	}
-	if len(staticMap) != len(keys) {
-		t.Fatalf("static map len = %d, want %d", len(staticMap), len(keys))
-	}
-	for i, k := range keys {
-		if got, ok := staticMap[k]; !ok || got != i+10 {
-			t.Fatalf("static lookup staticMap[%+v] = (%d, %v), want (%d, true)", k, got, ok, i+10)
+	t.Run(reflect.TypeFor[K]().String(), func(t *testing.T) {
+		mapTyp := reflect.MapOf(reflect.TypeFor[K](), reflect.TypeFor[int]())
+		rv := reflect.MakeMap(mapTyp)
+		for i, k := range keys {
+			rv.SetMapIndex(reflect.ValueOf(k), reflect.ValueOf(i+10))
 		}
-		staticMap[k] = i + 100
-		gotVal := rv.MapIndex(reflect.ValueOf(k))
-		if !gotVal.IsValid() || int(gotVal.Int()) != i+100 {
-			t.Fatalf("reflect lookup MapIndex(%+v) = %v, want %d", k, gotVal, i+100)
+		staticMap, ok := rv.Interface().(map[K]int)
+		if !ok {
+			t.Fatalf("reflect.MakeMap(%v) did not convert to static map", mapTyp)
 		}
-	}
-	for _, k := range keys {
-		delete(staticMap, k)
-		if rv.MapIndex(reflect.ValueOf(k)).IsValid() {
-			t.Fatalf("reflect MapIndex(%+v) still valid after static delete", k)
+		if len(staticMap) != len(keys) {
+			t.Fatalf("static map len = %d, want %d", len(staticMap), len(keys))
 		}
-	}
-	if rv.Len() != 0 {
-		t.Fatalf("reflect map len = %d after deletes, want 0", rv.Len())
-	}
+		for i, k := range keys {
+			if got, ok := staticMap[k]; !ok || got != i+10 {
+				t.Fatalf("static lookup staticMap[%+v] = (%d, %v), want (%d, true)", k, got, ok, i+10)
+			}
+			staticMap[k] = i + 100
+			gotVal := rv.MapIndex(reflect.ValueOf(k))
+			if !gotVal.IsValid() || int(gotVal.Int()) != i+100 {
+				t.Fatalf("reflect lookup MapIndex(%+v) = %v, want %d", k, gotVal, i+100)
+			}
+		}
+		for _, k := range keys {
+			delete(staticMap, k)
+			if rv.MapIndex(reflect.ValueOf(k)).IsValid() {
+				t.Fatalf("reflect MapIndex(%+v) still valid after static delete", k)
+			}
+		}
+		if rv.Len() != 0 {
+			t.Fatalf("reflect map len = %d after deletes, want 0", rv.Len())
+		}
+	})
 }
 
 func TestReflectMapOfSmallScalarStructKeys(t *testing.T) {

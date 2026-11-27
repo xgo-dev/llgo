@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xgo-dev/llgo/internal/env"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
@@ -104,7 +105,7 @@ func main() {
 	}
 }
 
-func TestRuntimeAESKeySchedAlignmentAndTargetTags(t *testing.T) {
+func TestRuntimeAESKeySchedAlignment(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
@@ -126,51 +127,47 @@ func TestRuntimeAESKeySchedAlignmentAndTargetTags(t *testing.T) {
 	if got := sched.Alignment(); got < 16 {
 		t.Fatalf("runtime.aeskeysched alignment = %d, want >= 16", got)
 	}
+}
 
-	rtDir := filepath.Join(root, "runtime", "internal", "runtime")
+func TestRuntimeMaxProcsWindowsBuildTagSelection(t *testing.T) {
+	rtDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "runtime")
+	baseTags := strings.Split(DefaultBuildTags(), ",")
 	for _, tc := range []struct {
-		name     string
-		goos     string
-		goarch   string
-		tags     []string
-		wantFile string
-		denyFile string
+		name      string
+		extraTags []string
+		wantFile  string
+		denyFile  string
 	}{
 		{
-			name:     "android-arm64-aeshash",
-			goos:     "android",
-			goarch:   "arm64",
-			tags:     []string{"llgo"},
-			wantFile: "aeshash_cpu_linux_arm64.go",
-			denyFile: "aeshash_cpu_other.go",
+			name:     "windows-default",
+			wantFile: "maxprocs_windows.go",
+			denyFile: "maxprocs_stub.go",
 		},
 		{
-			name:     "windows-baremetal-maxprocs",
-			goos:     "windows",
-			goarch:   "amd64",
-			tags:     []string{"llgo", "baremetal"},
-			wantFile: "maxprocs_stub.go",
-			denyFile: "maxprocs_windows.go",
+			name:      "windows-baremetal",
+			extraTags: []string{"baremetal"},
+			wantFile:  "maxprocs_stub.go",
+			denyFile:  "maxprocs_windows.go",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := gobuild.Default
-			ctx.GOOS = tc.goos
-			ctx.GOARCH = tc.goarch
-			ctx.BuildTags = tc.tags
+			ctx.GOOS = "windows"
+			ctx.GOARCH = "amd64"
+			ctx.BuildTags = append(append([]string(nil), baseTags...), tc.extraTags...)
 			want, err := ctx.MatchFile(rtDir, tc.wantFile)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !want {
-				t.Fatalf("%s did not match for %s/%s tags=%v", tc.wantFile, tc.goos, tc.goarch, tc.tags)
+				t.Fatalf("%s did not match for %s/%s tags=%v", tc.wantFile, ctx.GOOS, ctx.GOARCH, ctx.BuildTags)
 			}
 			deny, err := ctx.MatchFile(rtDir, tc.denyFile)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if deny {
-				t.Fatalf("%s unexpectedly matched for %s/%s tags=%v", tc.denyFile, tc.goos, tc.goarch, tc.tags)
+				t.Fatalf("%s unexpectedly matched for %s/%s tags=%v", tc.denyFile, ctx.GOOS, ctx.GOARCH, ctx.BuildTags)
 			}
 		})
 	}

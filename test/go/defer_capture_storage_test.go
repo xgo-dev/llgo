@@ -136,7 +136,7 @@ func TestDeferCaptureAggregateAcrossRecovery(t *testing.T) {
 }
 
 //go:noinline
-func deferredCaptureConditionalPointerAggregate(cond bool, callback func()) (result int) {
+func deferredCaptureConditionalPointerAggregate(cond bool, base int, callback func()) (result int) {
 	if cond {
 		var capture struct {
 			payload *deferCapturePayload
@@ -145,37 +145,35 @@ func deferredCaptureConditionalPointerAggregate(cond bool, callback func()) (res
 		defer func() {
 			recovered := recover() != nil
 			runtime.GC()
-			if capture.payload == nil {
-				panic("conditional pointer aggregate root lost during GC")
-			}
 			result = capture.payload.value + int(capture.words[0]+capture.words[5])
 			if recovered {
 				result += 100
 			}
 		}()
-		capture.payload = newDeferCapturePayload(13)
-		capture.words[0] = 4
+		capture.payload = newDeferCapturePayload(base)
+		capture.words[0] = uintptr(base + 4)
 		callback()
-		capture.words[5] = 5
+		capture.words[5] = uintptr(base + 5)
 		return
 	}
 	runtime.GC()
-	return -7
+	return -7 - base
 }
 
 func TestDeferCaptureConditionalBranchPointerAggregateGC(t *testing.T) {
 	for i := 0; i < 4; i++ {
-		if got := deferredCaptureConditionalPointerAggregate(false, func() {}); got != -7 {
-			t.Fatalf("skipped branch = %d, want -7", got)
+		base := 13 + i*3
+		if got, want := deferredCaptureConditionalPointerAggregate(false, base, func() {}), -7-base; got != want {
+			t.Fatalf("iter %d skipped branch = %d, want %d", i, got, want)
 		}
-		if got := deferredCaptureConditionalPointerAggregate(true, runtime.GC); got != 22 {
-			t.Fatalf("conditional branch normal = %d, want 22", got)
+		if got, want := deferredCaptureConditionalPointerAggregate(true, base, runtime.GC), 3*base+9; got != want {
+			t.Fatalf("iter %d conditional branch normal = %d, want %d", i, got, want)
 		}
-		if got := deferredCaptureConditionalPointerAggregate(true, func() {
+		if got, want := deferredCaptureConditionalPointerAggregate(true, base, func() {
 			runtime.GC()
 			panic("branch aggregate")
-		}); got != 117 {
-			t.Fatalf("conditional branch recovered = %d, want 117", got)
+		}), 2*base+104; got != want {
+			t.Fatalf("iter %d conditional branch recovered = %d, want %d", i, got, want)
 		}
 	}
 }

@@ -1,4 +1,4 @@
-//go:build !llgo || baremetal || (!amd64 && !386 && !(arm64 && ((darwin && !ios) || linux || android || windows)))
+//go:build !llgo || baremetal || (!amd64 && !386 && !(arm64 && ((darwin && !ios) || linux || windows)))
 
 package runtime
 
