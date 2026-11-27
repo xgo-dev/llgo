@@ -1,0 +1,516 @@
+/*
+ * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package llvmgen
+
+import (
+	"fmt"
+	"go/token"
+
+	"github.com/xgo-dev/llgo/types"
+)
+
+// -----------------------------------------------------------------------------
+
+type goTypes struct {
+	// typs and cvtneed are owned by the single lowering goroutine for one
+	// Program. typeCtx is prepared before backend lowering and shared
+	// across Programs with independent LLVM contexts.
+	typs    map[types.Type]types.Type
+	cvtneed map[*types.Named]conversionRequirement
+	typeCtx *types.Context
+}
+
+func newGoTypes(ctx ...*types.Context) goTypes {
+	var typeCtx *types.Context
+	if len(ctx) != 0 {
+		typeCtx = ctx[0]
+	}
+	return goTypes{
+		typs:    make(map[types.Type]types.Type),
+		cvtneed: make(map[*types.Named]conversionRequirement),
+		typeCtx: typeCtx,
+	}
+}
+
+type conversionRequirement uint8
+
+const (
+	conversionUnknown conversionRequirement = iota
+	conversionNotNeeded
+	conversionNeeded
+)
+
+type CallConv int
+
+const (
+	ccUnknown CallConv = iota
+	GoDecl
+	CDecl
+	PyDecl
+	Stdcall
+)
+
+// Type convert a Go/C type into raw type.
+// C type = raw type
+// Go type: convert to raw type (because of closure)
+func (p Program) Type(typ types.Type, cc CallConv) Type {
+	if cc == Stdcall {
+		p.validateStdcallType(typ)
+	}
+	if cc == GoDecl {
+		typ, _ = p.gocvt.cvtType(typ)
+	}
+	ret := p.rawType(typ)
+	if isNativeCallConv(cc) {
+		return p.withNativeStorage(ret)
+	}
+	return ret
+}
+
+// FuncDecl converts a Go/C function declaration into raw type.
+func (p Program) FuncDecl(sig *types.Signature, cc CallConv) Type {
+	decl := p.funcDeclType(sig, cc)
+	if isNativeCallConv(cc) {
+		return p.withNativeStorage(&decl)
+	}
+	return &decl
+}
+
+// Prototype-only queries do not need a registered native storage view.
+func (p Program) funcDeclType(sig *types.Signature, cc CallConv) aType {
+	if cc == Stdcall {
+		p.validateStdcallSignature(sig)
+	}
+	recv := sig.Recv()
+	if cc == GoDecl {
+		sig = p.gocvt.cvtFunc(sig, recv)
+	} else if recv != nil { // even in C, we need to add ctx for method
+		sig = FuncAddCtx(recv, sig)
+	}
+	return aType{p.toLLVMFuncBackground(sig, cc), rawType{sig}, vkFuncDecl}
+}
+
+// Closure creates a closture type for a function.
+func (p Program) Closure(sig *types.Signature) Type {
+	closure := p.gocvt.cvtClosure(sig)
+	return p.rawType(closure)
+}
+
+func (p goTypes) cvtType(typ types.Type) (raw types.Type, cvt bool) {
+	switch t := typ.(type) {
+	case *types.Basic:
+	case *types.Pointer:
+		if elem, cvt := p.cvtType(t.Elem()); cvt {
+			return types.NewPointer(elem), true
+		}
+	case *types.Interface:
+		return p.cvtInterface(t)
+	case *types.Slice:
+		if elem, cvt := p.cvtType(t.Elem()); cvt {
+			return types.NewSlice(elem), true
+		}
+	case *types.Map:
+		key, cvt1 := p.cvtType(t.Key())
+		elem, cvt2 := p.cvtType(t.Elem())
+		if cvt1 || cvt2 {
+			return types.NewMap(key, elem), true
+		}
+	case *types.Struct:
+		if IsClosure(t) {
+			return typ, false
+		}
+		return p.cvtStruct(t)
+	case *types.Named:
+		if !p.shouldConvertNamed(t) {
+			break
+		}
+		return p.cvtNamed(t)
+	case *types.Signature:
+		return p.cvtClosure(t), true
+	case *types.Array:
+		if elem, cvt := p.cvtType(t.Elem()); cvt {
+			return types.NewArray(elem, t.Len()), true
+		}
+	case *types.Chan:
+		if elem, cvt := p.cvtType(t.Elem()); cvt {
+			return types.NewChan(t.Dir(), elem), true
+		}
+	case *types.Tuple:
+		return p.cvtTuple(t)
+	case *types.TypeParam:
+		return typ.Underlying(), false
+	case *types.Alias:
+		if !p.shouldConvertAlias(t) {
+			return t, false
+		}
+		if raw, changed := p.cvtType(t.Rhs()); changed {
+			return raw, true
+		}
+		return t, false
+	case *types.Union:
+		return p.cvtUnion(t)
+	default:
+		panic(fmt.Sprintf("cvtType: unexpected type - %T", typ))
+	}
+	return typ, false
+}
+
+func namedLinkname(t *types.Named) string {
+	return typeNameLinkname(t.Obj())
+}
+
+func typeNameLinkname(obj *types.TypeName) string {
+	if obj.Pkg() != nil {
+		return obj.Pkg().Path() + "." + obj.Name()
+	}
+	return obj.Name()
+}
+
+func (p goTypes) shouldConvertAlias(t *types.Alias) bool {
+	if p.typeCtx == nil || !p.typeCtx.HasNativeMetadata() {
+		return true
+	}
+	cc, ok := p.typeCtx.TypeCallConv(typeNameLinkname(t.Obj()))
+	return !ok || !cc.IsNative()
+}
+
+func (p goTypes) shouldConvertNamed(t *types.Named) bool {
+	if p.typeCtx == nil || !p.typeCtx.HasNativeMetadata() {
+		return true
+	}
+	cc, ok := p.typeCtx.TypeCallConv(namedLinkname(t))
+	return !ok || !cc.IsNative()
+}
+
+func (p goTypes) cvtNamed(t *types.Named) (raw *types.Named, cvt bool) {
+	if v, ok := p.typs[t]; ok {
+		raw = v.(*types.Named)
+		cvt = t != raw
+		return
+	}
+	// Decide whether the complete recursive type graph needs conversion before
+	// installing the recursion placeholder. Previously the placeholder was the
+	// original type. For mutually recursive named types, that made the result
+	// depend on which member of the cycle happened to be converted first: a
+	// closure reachable through a later member could leave an earlier member
+	// permanently cached in its unconverted form.
+	if !p.namedNeedsTypeConversion(t) {
+		p.typs[t] = t
+		return t, false
+	}
+	n := t.NumMethods()
+	methods := make([]*types.Func, n)
+	for i := 0; i < n; i++ {
+		m := t.Method(i) // don't need to convert method signature
+		methods[i] = m
+	}
+	origin := types.NewNamed(t.Obj(), types.Typ[types.Int], methods)
+	if tp := t.TypeParams(); tp != nil {
+		list := make([]*types.TypeParam, tp.Len())
+		for i := 0; i < tp.Len(); i++ {
+			param := tp.At(i)
+			list[i] = types.NewTypeParam(param.Obj(), param.Constraint())
+		}
+		origin.SetTypeParams(list)
+	}
+	named := origin
+	if typ, ok := Instantiate(origin, t); ok {
+		named = typ.(*types.Named)
+	}
+	// Publish the converted placeholder before descending so every back-edge in
+	// the cycle observes the same conversion decision.
+	p.typs[t] = named
+	tund, _ := p.cvtType(t.Underlying())
+	// Generic instances derive their underlying type lazily from the origin.
+	// Fill the origin before any caller observes named.Underlying(), so a
+	// recursive My[T] back-edge resolves to the converted My[args] instance.
+	origin.SetUnderlying(tund)
+	return named, true
+}
+
+type conversionNeedQuery map[*types.Named]bool
+
+func (p goTypes) namedNeedsTypeConversion(t *types.Named) bool {
+	if requirement := p.cvtneed[t]; requirement != conversionUnknown {
+		return requirement == conversionNeeded
+	}
+	query := make(conversionNeedQuery)
+	needed := p.needsTypeConversion(t, query)
+	if !needed {
+		// A complete negative query proves that every named type it reached is
+		// also conversion-free. Negative results observed only on a cycle
+		// back-edge are never stored here.
+		for named := range query {
+			p.cvtneed[named] = conversionNotNeeded
+		}
+	}
+	return needed
+}
+
+// needsTypeConversion reports whether cvtType changes any part of typ. The
+// visited set deliberately belongs to one query: a repeated edge alone is not
+// a conversion, but another member of that graph may still require one. Keep
+// completed nodes visited as well, so shared subgraphs are not re-traversed.
+// Keep its traversal and conversion predicates in lock-step with cvtType.
+func (p goTypes) needsTypeConversion(typ types.Type, query conversionNeedQuery) bool {
+	switch t := typ.(type) {
+	case *types.Basic:
+		return false
+	case *types.Pointer:
+		return p.needsTypeConversion(t.Elem(), query)
+	case *types.Interface:
+		for i := 0; i < t.NumExplicitMethods(); i++ {
+			sig := t.ExplicitMethod(i).Type().(*types.Signature)
+			if p.needsTypeConversion(sig.Params(), query) || p.needsTypeConversion(sig.Results(), query) {
+				return true
+			}
+		}
+		for i := 0; i < t.NumEmbeddeds(); i++ {
+			if p.needsTypeConversion(t.EmbeddedType(i), query) {
+				return true
+			}
+		}
+		return false
+	case *types.Slice:
+		return p.needsTypeConversion(t.Elem(), query)
+	case *types.Map:
+		return p.needsTypeConversion(t.Key(), query) || p.needsTypeConversion(t.Elem(), query)
+	case *types.Struct:
+		if IsClosure(t) {
+			return false
+		}
+		for i := 0; i < t.NumFields(); i++ {
+			if p.needsTypeConversion(t.Field(i).Type(), query) {
+				return true
+			}
+		}
+		return false
+	case *types.Named:
+		if !p.shouldConvertNamed(t) {
+			return false
+		}
+		if requirement := p.cvtneed[t]; requirement != conversionUnknown {
+			return requirement == conversionNeeded
+		}
+		if query[t] {
+			return false
+		}
+		query[t] = true
+		ret := p.needsTypeConversion(t.Underlying(), query)
+		if ret {
+			p.cvtneed[t] = conversionNeeded
+		}
+		return ret
+	case *types.Signature:
+		return true
+	case *types.Array:
+		return p.needsTypeConversion(t.Elem(), query)
+	case *types.Chan:
+		return p.needsTypeConversion(t.Elem(), query)
+	case *types.Tuple:
+		for i := 0; i < t.Len(); i++ {
+			if p.needsTypeConversion(t.At(i).Type(), query) {
+				return true
+			}
+		}
+		return false
+	case *types.TypeParam:
+		return false
+	case *types.Alias:
+		if !p.shouldConvertAlias(t) {
+			return false
+		}
+		return p.needsTypeConversion(t.Rhs(), query)
+	case *types.Union:
+		// cvtUnion currently always creates a raw union.
+		return true
+	default:
+		panic(fmt.Sprintf("needsTypeConversion: unexpected type - %T", typ))
+	}
+}
+
+func Instantiate(orig types.Type, t *types.Named) (types.Type, bool) {
+	if tp := t.TypeArgs(); tp != nil {
+		targs := make([]types.Type, tp.Len())
+		for i := 0; i < tp.Len(); i++ {
+			targs[i] = tp.At(i)
+		}
+		// Use validate=false because the newly created type parameters may not
+		// match the original constraint references. The original type was already
+		// validated by the Go type checker, so we can skip validation here.
+		if typ, err := types.Instantiate(nil, orig, targs, false); err == nil {
+			return typ, true
+		}
+	}
+	return orig, false
+}
+
+func (p goTypes) cvtClosure(sig *types.Signature) *types.Struct {
+	if sig.Recv() != nil {
+		sig = types.NewSignatureType(nil, nil, nil, sig.Params(), sig.Results(), sig.Variadic())
+	}
+	raw := p.cvtFunc(sig, nil)
+	flds := []*types.Var{
+		types.NewField(token.NoPos, nil, "$f", raw, false),
+		types.NewField(token.NoPos, nil, "$data", types.Typ[types.UnsafePointer], false),
+	}
+	return types.NewStruct(flds, nil)
+}
+
+func (p goTypes) cvtFunc(sig *types.Signature, recv *types.Var) (raw *types.Signature) {
+	if recv != nil {
+		sig = FuncAddCtx(recv, sig)
+	}
+	params, cvt1 := p.cvtTuple(sig.Params())
+	results, cvt2 := p.cvtTuple(sig.Results())
+	if cvt1 || cvt2 {
+		return types.NewSignatureType(nil, nil, nil, params, results, sig.Variadic())
+	}
+	return sig
+}
+
+func (p goTypes) cvtTuple(t *types.Tuple) (*types.Tuple, bool) {
+	n := t.Len()
+	vars := make([]*types.Var, n)
+	needcvt := false
+	for i := 0; i < n; i++ {
+		v := t.At(i)
+		if t, cvt := p.cvtType(v.Type()); cvt {
+			v = types.NewParam(v.Pos(), v.Pkg(), v.Name(), t)
+			needcvt = true
+		}
+		vars[i] = v
+	}
+	if needcvt {
+		return types.NewTuple(vars...), true
+	}
+	return t, false
+}
+
+func (p goTypes) cvtExplicitMethods(typ *types.Interface) ([]*types.Func, bool) {
+	n := typ.NumExplicitMethods()
+	methods := make([]*types.Func, n)
+	needcvt := false
+	for i := 0; i < n; i++ {
+		m := typ.ExplicitMethod(i)
+		sig := m.Type().(*types.Signature)
+		if raw := p.cvtFunc(sig, nil); sig != raw {
+			m = types.NewFunc(m.Pos(), m.Pkg(), m.Name(), raw)
+			needcvt = true
+		}
+		methods[i] = m
+	}
+	return methods, needcvt
+}
+
+func (p goTypes) cvtEmbeddedTypes(typ *types.Interface) ([]types.Type, bool) {
+	n := typ.NumEmbeddeds()
+	embeddeds := make([]types.Type, n)
+	needcvt := false
+	for i := 0; i < n; i++ {
+		t := typ.EmbeddedType(i)
+		if raw, cvt := p.cvtType(t); cvt {
+			t = raw
+			needcvt = true
+		}
+		embeddeds[i] = t
+	}
+	return embeddeds, needcvt
+}
+
+func (p goTypes) cvtInterface(typ *types.Interface) (raw *types.Interface, cvt bool) {
+	if v, ok := p.typs[typ]; ok {
+		raw = v.(*types.Interface)
+		cvt = typ != raw
+		return
+	}
+	defer func() {
+		p.typs[typ] = raw
+	}()
+	methods, cvt1 := p.cvtExplicitMethods(typ)
+	embeddeds, cvt2 := p.cvtEmbeddedTypes(typ)
+	if cvt1 || cvt2 {
+		return types.NewInterfaceType(methods, embeddeds), true
+	}
+	return typ, false
+}
+
+func (p goTypes) cvtStruct(typ *types.Struct) (raw *types.Struct, cvt bool) {
+	if v, ok := p.typs[typ]; ok {
+		raw = v.(*types.Struct)
+		cvt = typ != raw
+		return
+	}
+	defer func() {
+		p.typs[typ] = raw
+	}()
+	n := typ.NumFields()
+	flds := make([]*types.Var, n)
+	tags := make([]string, n)
+	needcvt := false
+	for i := 0; i < n; i++ {
+		f := typ.Field(i)
+		if t, cvt := p.cvtType(f.Type()); cvt {
+			f = types.NewField(f.Pos(), f.Pkg(), f.Name(), t, f.Anonymous())
+			needcvt = true
+		}
+		flds[i] = f
+		tags[i] = typ.Tag(i)
+	}
+	if needcvt {
+		return types.NewStruct(flds, tags), true
+	}
+	return typ, false
+}
+
+func (p goTypes) cvtUnion(typ *types.Union) (raw *types.Union, cvt bool) {
+	if v, ok := p.typs[typ]; ok {
+		raw = v.(*types.Union)
+		cvt = typ != raw
+		return
+	}
+	defer func() {
+		p.typs[typ] = raw
+	}()
+	n := typ.Len()
+	terms := make([]*types.Term, n)
+	for i := 0; i < n; i++ {
+		f := typ.Term(i)
+		if t, cvt := p.cvtType(f.Type()); cvt {
+			f = types.NewTerm(f.Tilde(), t)
+		}
+		terms[i] = f
+	}
+	return types.NewUnion(terms), true
+}
+
+// -----------------------------------------------------------------------------
+
+// FuncAddCtx adds a ctx to a function signature.
+func FuncAddCtx(ctx *types.Var, sig *types.Signature) *types.Signature {
+	tParams := sig.Params()
+	nParams := tParams.Len()
+	params := make([]*types.Var, nParams+1)
+	params[0] = ctx
+	for i := 0; i < nParams; i++ {
+		params[i+1] = tParams.At(i)
+	}
+	return types.NewSignatureType(
+		nil, nil, nil, types.NewTuple(params...), sig.Results(), sig.Variadic())
+}
+
+// -----------------------------------------------------------------------------

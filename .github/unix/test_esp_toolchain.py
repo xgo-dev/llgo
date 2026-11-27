@@ -25,7 +25,7 @@ class ESPStagingTests(unittest.TestCase):
         self.output = self.root / 'runtime staging'
         self.license = self.root / 'LLVM license.txt'
         self.license.write_text('Complete LLVM license')
-        self.pins = json.loads((esp.ROOT / 'internal/crosscompile/espressif.json').read_text())
+        self.pins = json.loads((esp.ROOT / 'cmd/compiler/crosscompile/espressif.json').read_text())
         for platform, target in esp.PLATFORMS.items():
             self.fixture(target)
 

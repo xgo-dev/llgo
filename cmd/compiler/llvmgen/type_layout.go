@@ -1,0 +1,250 @@
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package llvmgen
+
+import (
+	"fmt"
+	"github.com/xgo-dev/llgo/types"
+
+	"github.com/xgo-dev/llvm"
+)
+
+type structLayout struct {
+	wrapped []bool
+}
+
+func toLLCallConv(cc CallConv) (types.CallConv, bool) {
+	switch cc {
+	case GoDecl:
+		return types.Go, false
+	case CDecl:
+		return types.CDecl, true
+	case PyDecl:
+		return types.Py, true
+	case Stdcall:
+		return types.Stdcall, true
+	default:
+		return types.Go, false
+	}
+}
+
+func fromLLCallConv(cc types.CallConv) CallConv {
+	switch cc {
+	case types.CDecl:
+		return CDecl
+	case types.Py:
+		return PyDecl
+	case types.Stdcall:
+		return Stdcall
+	case types.Go:
+		return GoDecl
+	default:
+		return ccUnknown
+	}
+}
+
+// nativeFuncAliasABI distinguishes one-word function aliases from the public
+// Go signature, which can also be used as the code field of a Go closure.
+func (p Program) nativeFuncAliasABI(alias *types.Alias) string {
+	if _, ok := types.Unalias(alias).(*types.Signature); !ok {
+		return ""
+	}
+	switch p.nativeTypeDirective(alias) {
+	case CDecl:
+		return "cdecl"
+	case Stdcall:
+		return "stdcall"
+	}
+	return ""
+}
+
+// hasNativeTypeDirective preserves declarations on aliases before unaliasing.
+func (p Program) hasNativeTypeDirective(t types.Type) bool {
+	return p.nativeTypeDirective(t) != ccUnknown
+}
+
+func (p Program) nativeTypeDirective(t types.Type) CallConv {
+	if !p.typeCtx.HasNativeMetadata() {
+		return ccUnknown
+	}
+	if cc, ok := p.typeCtx.NativeTypeCallConv(t); ok {
+		return fromLLCallConv(cc)
+	}
+	return ccUnknown
+}
+
+func (p Program) hasNativeStructLayout(raw *types.Named) bool {
+	return raw.HasHostLayout() || p.hasLegacyNativeTypeLayout(raw)
+}
+
+// Legacy C type directives also select native storage views for surrounding
+// pointers. HostLayout only describes the struct itself; a Go pointer or slice
+// referring to it retains its ordinary representation.
+func (p Program) hasLegacyNativeTypeLayout(raw types.Type) bool {
+	if !p.typeCtx.HasNativeMetadata() {
+		return false
+	}
+	switch t := types.Unalias(raw).(type) {
+	case *types.Named:
+		cc, ok := p.typeCtx.TypeCallConv(namedLinkname(t))
+		return ok && cc.IsNative()
+	case *types.Array:
+		return p.hasLegacyNativeTypeLayout(t.Elem())
+	}
+	return false
+}
+
+func (p Program) setStructLayout(typ types.Type, layout *structLayout) {
+	if layout != nil {
+		p.structLayouts.Set(typ, *layout)
+		p.hasStructLayouts = true
+	}
+}
+
+func (p Program) structLayout(typ Type) (structLayout, bool) {
+	if !p.hasStructLayouts {
+		return structLayout{}, false
+	}
+	layout := p.structLayouts.At(typ.raw.Type)
+	if layout == nil {
+		return structLayout{}, false
+	}
+	return layout.(structLayout), true
+}
+
+// toLLVMStructBody preserves the native target layout for legacy C types.
+// HostLayout selects field alignment without narrowing ordinary Go storage or
+// removing zero-sized tail protection. When the desired layout differs from
+// LLVM's natural layout, wrap only affected fields and preserve Go field indices.
+func (p Program) toLLVMStructBody(raw *types.Struct, native bool) ([]llvm.Type, *structLayout) {
+	host := raw.HasHostLayout()
+	fields := p.toLLVMFields(raw, native)
+	goarch := p.target.effectiveGOARCH()
+	if native || len(fields) == 0 {
+		return fields, nil
+	}
+	// Only presence is needed here. Computing the source layout would query
+	// sizes before the standalone SSA API's fallback below is initialized.
+	if !host && goarch != "386" && !(goarch == "wasm" && p.target.WasmProfile != "") && !raw.ContainsSIMDStorage() && !(raw.ContainsHostLayout() && !p.typeCtx.HostUsesNativeGoLayout()) {
+		return fields, nil
+	}
+
+	sizes := p.sizes
+	if sizes == nil {
+		sizes = &types.StdSizes{WordSize: int64(p.GoWordSize()), MaxAlign: int64(p.GoWordSize())}
+		p.sizes = sizes
+	}
+	offsets := make([]int64, len(fields))
+	alignments := make([]int64, len(fields))
+	goAlign := int64(1)
+	goSize := int64(0)
+	for i, field := range fields {
+		fieldAlign := (*goProgram)(p).Alignof(raw.Field(i).Type())
+		if host {
+			fieldAlign = p.typeCtx.HostFieldLayout(raw.Field(i).Type()).Align
+		} else if p.hasNativeTypeLayout(raw.Field(i).Type()) {
+			fieldAlign = int64(p.td.ABITypeAlignment(field))
+		}
+		alignments[i] = fieldAlign
+		if fieldAlign > goAlign {
+			goAlign = fieldAlign
+		}
+		goSize = align(goSize, fieldAlign)
+		offsets[i] = goSize
+		fieldSize := int64(p.td.TypeAllocSize(field))
+		if i == len(fields)-1 && goSize > 0 && fieldSize == 0 {
+			// Match cmd/compile: a final zero-sized field must have an
+			// address inside the enclosing non-zero-sized object.
+			fieldSize = 1
+		}
+		goSize += fieldSize
+	}
+	goSize = align(goSize, goAlign)
+
+	nativeType := p.ctx.StructType(fields, false)
+	if int64(p.td.TypeAllocSize(nativeType)) == goSize &&
+		int64(p.td.ABITypeAlignment(nativeType)) == goAlign {
+		equal := true
+		for i, offset := range offsets {
+			if int64(p.td.ElementOffset(nativeType, i)) != offset {
+				equal = false
+				break
+			}
+		}
+		if equal {
+			return fields, nil
+		}
+	}
+
+	wrapped := make([]bool, len(fields))
+	body := make([]llvm.Type, 0, len(fields)+1)
+	for i, field := range fields {
+		end := goSize
+		if i+1 < len(offsets) {
+			end = offsets[i+1]
+		}
+		fieldSize := int64(p.td.TypeAllocSize(field))
+		padding := end - offsets[i] - fieldSize
+		fieldAlign := int64(p.td.ABITypeAlignment(field))
+		goFieldAlign := alignments[i]
+		if padding < 0 {
+			panic(fmt.Sprintf("Go field layout is smaller than its LLVM representation: %s field %d", raw, i))
+		}
+		if padding != 0 || fieldAlign > goFieldAlign {
+			parts := []llvm.Type{field}
+			if padding != 0 {
+				parts = append(parts, llvm.ArrayType(p.tyInt8(), int(padding)))
+			}
+			field = p.ctx.StructType(parts, true)
+			wrapped[i] = true
+		}
+		body = append(body, field)
+	}
+
+	probe := p.ctx.StructType(body, false)
+	if int64(p.td.ABITypeAlignment(probe)) < goAlign {
+		// Integers carry ordinary alignment; vector carriers are needed for
+		// over-aligned SIMD storage, since i128 need not be 16-byte aligned.
+		alignType := p.ctx.IntType(int(goAlign * 8))
+		if goAlign > int64(p.GoWordSize()) {
+			alignType = llvm.VectorType(p.tyInt8(), int(goAlign))
+		}
+		body = append(body, llvm.ArrayType(alignType, 0))
+		probe = p.ctx.StructType(body, false)
+	}
+	if int64(p.td.TypeAllocSize(probe)) != goSize {
+		panic(fmt.Sprintf("invalid Go LLVM struct size: got %d, want %d for %s", p.td.TypeAllocSize(probe), goSize, raw))
+	}
+	for i, offset := range offsets {
+		if got := int64(p.td.ElementOffset(probe, i)); got != offset {
+			panic(fmt.Sprintf("invalid Go LLVM field offset: got %d, want %d for %s field %d", got, offset, raw, i))
+		}
+	}
+	return body, &structLayout{wrapped: wrapped}
+}
+
+func (p Program) hasNativeTypeLayout(raw types.Type) bool {
+	switch t := types.Unalias(raw).(type) {
+	case *types.Named:
+		return p.hasNativeStructLayout(t)
+	case *types.Struct:
+		return t.HasHostLayout()
+	case *types.Array:
+		return p.hasNativeTypeLayout(t.Elem())
+	}
+	return false
+}

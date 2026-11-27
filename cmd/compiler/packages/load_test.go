@@ -1,0 +1,582 @@
+package packages
+
+import (
+	"errors"
+	"github.com/xgo-dev/llgo/types"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+func TestTypedRewriteBeforeImporters(t *testing.T) {
+	dir := t.TempDir()
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/rewrite\ngo 1.24\n")
+	if err := os.Mkdir(filepath.Join(dir, "dep"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLoadTestFile(t, filepath.Join(dir, "dep", "dep.go"), "package dep\nvar Value = 1\n")
+	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nimport \"example.com/rewrite/dep\"\nvar Value = dep.Value\n")
+	dedup := NewDeduper()
+	var original *types.Package
+	var preloads int
+	dedup.SetPreload(func(pkg *Package) {
+		if pkg.Name == "dep" {
+			preloads++
+		}
+	})
+	dedup.SetRewrite(func(pkg *Package) (bool, error) {
+		if pkg.Name != "dep" {
+			return false, nil
+		}
+		original = pkg.Types
+		if pkg.TypesInfo == nil || pkg.Types.Scope().Lookup("Value") == nil {
+			t.Fatal("rewrite ran before initial check")
+		}
+		value := pkg.Syntax[0].Decls[0].(*ast.GenDecl).Specs[0].(*ast.ValueSpec).Values[0].(*ast.BasicLit)
+		value.Kind, value.Value = token.STRING, `"rewritten"`
+		return true, nil
+	})
+	pkgs, err := LoadEx(dedup, nil, loadTestConfig(dir), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := pkgs[0]
+	if pkg.IllTyped {
+		t.Fatal(pkg.Errors)
+	}
+	if got := pkg.Types.Scope().Lookup("Value").Type(); got != types.Typ[types.String] {
+		t.Fatalf("importer used stale type: %v", got)
+	}
+	dep := pkg.Imports["example.com/rewrite/dep"]
+	if dep.Types == original || preloads != 2 {
+		t.Fatalf("recheck package=%p original=%p preloads=%d", dep.Types, original, preloads)
+	}
+	if dep.ExportFile != "" {
+		t.Fatal("typed rewrite unnecessarily requested gc export data")
+	}
+}
+
+func TestTypedRewriteKeepsInitialErrors(t *testing.T) {
+	dir := t.TempDir()
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/invalid\ngo 1.24\n")
+	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nvar X int = \"bad\"\n")
+	dedup := NewDeduper()
+	dedup.SetRewrite(func(*Package) (bool, error) { t.Fatal("rewrite must not repair invalid input"); return false, nil })
+	pkgs, err := LoadEx(dedup, nil, loadTestConfig(dir), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pkgs[0].IllTyped || !packageErrorsContain(pkgs[0], "cannot use") {
+		t.Fatalf("initial diagnostic lost: %v", pkgs[0].Errors)
+	}
+}
+
+func TestTypedRewriteErrorDoesNotCachePartialSyntax(t *testing.T) {
+	dir := t.TempDir()
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/rewriteerror\ngo 1.24\n")
+	if err := os.Mkdir(filepath.Join(dir, "dep"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeLoadTestFile(t, filepath.Join(dir, "dep", "dep.go"), "package dep\nvar Value = 1\n")
+	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nimport \"example.com/rewriteerror/dep\"\nvar Value = dep.Value\n")
+	dedup := NewDeduper()
+	dedup.SetRewrite(func(pkg *Package) (bool, error) {
+		if pkg.Name == "dep" {
+			value := pkg.Syntax[0].Decls[0].(*ast.GenDecl).Specs[0].(*ast.ValueSpec).Values[0].(*ast.BasicLit)
+			value.Kind, value.Value = token.STRING, `"partially rewritten"`
+			return false, errors.New("rewrite failed after mutation")
+		}
+		return false, nil
+	})
+	pkgs, err := LoadEx(dedup, nil, loadTestConfig(dir), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep := pkgs[0].Imports["example.com/rewriteerror/dep"]
+	if !pkgs[0].IllTyped || !dep.IllTyped || !packageErrorsContain(dep, "rewrite failed after mutation") {
+		t.Fatalf("rewrite error did not propagate: root=%v dep=%v", pkgs[0].Errors, dep.Errors)
+	}
+	if dedup.Check(dep.ID) != nil || dedup.Check(pkgs[0].ID) != nil {
+		t.Fatal("cached a package containing partially rewritten syntax")
+	}
+	dedup.SetRewrite(nil)
+	pkgs, err = LoadEx(dedup, nil, loadTestConfig(dir), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pkgs[0].IllTyped || pkgs[0].Types.Scope().Lookup("Value").Type() != types.Typ[types.Int] {
+		t.Fatalf("reload retained partial syntax: %v", pkgs[0].Errors)
+	}
+}
+
+func TestLoadExWithGoVersion(t *testing.T) {
+	dir := t.TempDir()
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/loadversion\ngo 1.24\n")
+	writeLoadTestFile(t, filepath.Join(dir, "load.go"), `package loadversion
+
+func identity[T any](value T) T { return value }
+`)
+
+	oldVersion, err := LoadExWithGoVersion(nil, nil, loadTestConfig(dir), "go1.17", ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(oldVersion) != 1 {
+		t.Fatalf("LoadExWithGoVersion returned %d packages, want 1", len(oldVersion))
+	}
+	if !oldVersion[0].IllTyped || !packageErrorsContain(oldVersion[0], "requires go1.18 or later") {
+		t.Fatalf("go1.17 load did not reject generics: %+v", oldVersion[0].Errors)
+	}
+
+	currentVersion, err := LoadEx(nil, nil, loadTestConfig(dir), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(currentVersion) != 1 {
+		t.Fatalf("LoadEx returned %d packages, want 1", len(currentVersion))
+	}
+	pkg := currentVersion[0]
+	if pkg.IllTyped || len(pkg.Errors) != 0 {
+		t.Fatalf("module-version load failed: %+v", pkg.Errors)
+	}
+	if len(pkg.Syntax) != 1 || pkg.TypesInfo == nil {
+		t.Fatalf("load did not return syntax and type information: %+v", pkg)
+	}
+	if got := pkg.TypesInfo.FileVersions[pkg.Syntax[0]]; got != "go1.24" {
+		t.Fatalf("file language version = %q, want go1.24", got)
+	}
+}
+
+func TestDeduperKeepsTestPackageIdentities(t *testing.T) {
+	dir := t.TempDir()
+	baseFile := filepath.Join(dir, "helper.go")
+	testFile := filepath.Join(dir, "helper_test.go")
+	patchFile := filepath.Join(dir, "patch.go")
+	writeLoadTestFile(t, baseFile, "package helper\nconst Value = Patched\n")
+	writeLoadTestFile(t, testFile, "package helper\nconst TestOnly = 2\n")
+	writeLoadTestFile(t, patchFile, "package helper\nconst Patched = 1\n")
+	const path = "example.com/helper"
+	const testID = path + " [" + path + ".test]"
+	for _, order := range [][]string{{path, testID}, {testID, path}} {
+		t.Run(order[0], func(t *testing.T) {
+			dedup := NewDeduper()
+			dedup.SetLLGoFiles(map[string][]string{path: {patchFile}})
+			tc := &typecheckContext{dedup: dedup, cfg: loadTestConfig(dir), fset: token.NewFileSet(), origMode: NeedTypes | NeedTypesInfo}
+			makePackage := func(id string) *Package {
+				pkg := &Package{ID: id, PkgPath: path, Name: "helper", CompiledGoFiles: []string{baseFile}}
+				if id == testID {
+					pkg.CompiledGoFiles = append(pkg.CompiledGoFiles, testFile)
+				}
+				return pkg
+			}
+			loaded := make(map[string]*Package)
+			for _, id := range order {
+				pkg := makePackage(id)
+				tc.typecheckPackage(pkg)
+				if pkg.IllTyped {
+					t.Fatalf("typecheck %s: %v", id, pkg.Errors)
+				}
+				loaded[id] = pkg
+			}
+			for _, id := range order {
+				pkg := makePackage(id)
+				tc.typecheckPackage(pkg)
+				if pkg.Types != loaded[id].Types || pkg.TypesInfo != loaded[id].TypesInfo {
+					t.Errorf("%s did not reuse its own package identity", id)
+				}
+				if got := pkg.Types.Scope().Lookup("TestOnly") != nil; got != (id == testID) {
+					t.Errorf("%s test-only declaration = %v, want %v", id, got, id == testID)
+				}
+			}
+			if loaded[path].Types == loaded[testID].Types {
+				t.Fatal("ordinary and test-augmented packages share a type identity")
+			}
+		})
+	}
+}
+
+func TestNormalizeEmbedDriverDiagnostics(t *testing.T) {
+	tests := []struct {
+		name      string
+		source    string
+		errorLine int
+		goVersion string
+		want      string
+	}{
+		{
+			name: "local var",
+			source: `package p
+func f() {
+	//go:embed x.txt // ERROR
+	var x string
+}`,
+			errorLine: 3,
+			goVersion: "go1.24",
+			want:      "go:embed cannot apply to var inside func",
+		},
+		{
+			name: "old language version",
+			source: `package p
+//go:embed x.txt // ERROR
+var x string`,
+			errorLine: 2,
+			goVersion: "go1.15",
+			want:      "go:embed requires go1.16 or later (-lang was set to go1.15; check go.mod)",
+		},
+		{
+			name: "current language version remains driver error",
+			source: `package p
+//go:embed x.txt // ERROR
+var x string`,
+			errorLine: 2,
+			goVersion: "go1.24",
+			want:      embedPatternDriverDiagnostic,
+		},
+		{
+			name: "wrong source line remains driver error",
+			source: `package p
+func f() {
+	//go:embed x.txt // ERROR
+	var x string
+}`,
+			errorLine: 4,
+			goVersion: "go1.24",
+			want:      embedPatternDriverDiagnostic,
+		},
+		{
+			name: "non-var directive remains driver error",
+			source: `package p
+//go:embed x.txt // ERROR
+const x = ""`,
+			errorLine: 2,
+			goVersion: "go1.15",
+			want:      embedPatternDriverDiagnostic,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			const filename = "/tmp/embedcase.go"
+			file, err := parser.ParseFile(fset, filename, tt.source, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			errs := []Error{
+				{Pos: filename + ":" + strconv.Itoa(tt.errorLine) + ":20", Msg: embedPatternDriverDiagnostic},
+				{Pos: filename + ":1:1", Msg: "unrelated driver diagnostic"},
+			}
+			normalizeEmbedDriverDiagnostics(errs, fset, []*ast.File{file}, tt.goVersion)
+			if errs[0].Msg != tt.want {
+				t.Fatalf("normalized embed error = %q, want %q", errs[0].Msg, tt.want)
+			}
+			if errs[1].Msg != "unrelated driver diagnostic" {
+				t.Fatalf("unrelated error changed to %q", errs[1].Msg)
+			}
+		})
+	}
+}
+
+func TestEmbedDiagnosticHelperBoundaries(t *testing.T) {
+	t.Run("directive comments", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			comment *ast.Comment
+			want    bool
+		}{
+			{name: "nil"},
+			{name: "block comment", comment: &ast.Comment{Text: "/*go:embed x*/"}},
+			{name: "exact directive", comment: &ast.Comment{Text: "//go:embed"}, want: true},
+			{name: "different comment", comment: &ast.Comment{Text: "// not a directive"}},
+			{name: "lookalike directive", comment: &ast.Comment{Text: "//go:embedx"}},
+			{name: "directive argument", comment: &ast.Comment{Text: "//go:embed x"}, want: true},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				if got := isEmbedDirectiveComment(tt.comment); got != tt.want {
+					t.Fatalf("isEmbedDirectiveComment() = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("nil syntax context", func(t *testing.T) {
+		if got := embedDirectiveContextAt(nil, &ast.File{}, "case.go:1:1"); got != embedDirectiveUnknown {
+			t.Fatalf("nil fileset context = %v, want unknown", got)
+		}
+		if got := embedDirectiveContextAt(token.NewFileSet(), nil, "case.go:1:1"); got != embedDirectiveUnknown {
+			t.Fatalf("nil file context = %v, want unknown", got)
+		}
+	})
+
+	t.Run("diagnostic positions", func(t *testing.T) {
+		commentPos := token.Position{Filename: filepath.Join("tmp", "case.go"), Line: 12}
+		tests := []struct {
+			name     string
+			errorPos string
+			comment  token.Position
+			want     bool
+		}{
+			{name: "empty error position", comment: commentPos},
+			{name: "empty comment position", errorPos: "case.go:12:3"},
+			{name: "missing separator", errorPos: "case.go", comment: commentPos},
+			{name: "invalid line", errorPos: "case.go:line", comment: commentPos},
+			{name: "wrong line", errorPos: "case.go:11:3", comment: commentPos},
+			{name: "relative suffix", errorPos: "case.go:12:3", comment: commentPos, want: true},
+			{name: "different file", errorPos: "other.go:12:3", comment: commentPos},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				if got := sameDiagnosticLine(tt.errorPos, tt.comment); got != tt.want {
+					t.Fatalf("sameDiagnosticLine(%q, %+v) = %v, want %v", tt.errorPos, tt.comment, got, tt.want)
+				}
+			})
+		}
+	})
+
+	t.Run("position parsing", func(t *testing.T) {
+		tests := []struct {
+			position string
+			wantFile string
+			wantLine int
+			wantOK   bool
+		}{
+			{position: "case.go"},
+			{position: "case.go:line"},
+			{position: "case.go:12", wantFile: "case.go", wantLine: 12, wantOK: true},
+			{position: "case.go:12:3", wantFile: "case.go", wantLine: 12, wantOK: true},
+		}
+		for _, tt := range tests {
+			file, line, ok := diagnosticFileLine(tt.position)
+			if file != tt.wantFile || line != tt.wantLine || ok != tt.wantOK {
+				t.Fatalf("diagnosticFileLine(%q) = (%q, %d, %v), want (%q, %d, %v)", tt.position, file, line, ok, tt.wantFile, tt.wantLine, tt.wantOK)
+			}
+		}
+	})
+
+	t.Run("declaration comments", func(t *testing.T) {
+		directive := &ast.Comment{Text: "//go:embed x"}
+		other := &ast.Comment{Text: "// other"}
+		matching := &ast.GenDecl{Specs: []ast.Spec{
+			&ast.ValueSpec{},
+			&ast.ValueSpec{Doc: &ast.CommentGroup{List: []*ast.Comment{nil, other, directive}}},
+		}}
+		if !genDeclHasDocComment(matching, directive) {
+			t.Fatal("value-spec directive was not found")
+		}
+		missing := &ast.GenDecl{Specs: []ast.Spec{
+			&ast.ValueSpec{Doc: &ast.CommentGroup{List: []*ast.Comment{other}}},
+		}}
+		if genDeclHasDocComment(missing, directive) {
+			t.Fatal("unrelated value-spec comment matched directive")
+		}
+	})
+}
+
+func TestLoadExNormalizesFrontendDiagnostics(t *testing.T) {
+	t.Run("compiler syntax errors are authoritative", func(t *testing.T) {
+		dir := t.TempDir()
+		writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/syntaxerror\ngo 1.24\n")
+		writeLoadTestFile(t, filepath.Join(dir, "load.go"), `package syntaxerror
+func f() {
+	if missing {}
+	else {}
+}
+`)
+		cfg := loadTestConfig(dir)
+		cfg.BuildFlags = []string{"-gcflags=all=-e"}
+		cfg.ParseFile = func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
+			return parser.ParseFile(fset, filename, src, parser.AllErrors|parser.ParseComments)
+		}
+		pkgs, err := LoadExWithGoVersion(nil, nil, cfg, "go1.24", ".")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pkgs) != 1 {
+			t.Fatalf("load returned %d packages, want 1", len(pkgs))
+		}
+		pkg := pkgs[0]
+		assertPackageError(t, pkg, "syntax error:")
+		for _, secondary := range []string{"expected statement", "found 'EOF'", "undefined: missing"} {
+			assertPackageErrorAbsent(t, pkg, secondary)
+		}
+	})
+
+	t.Run("embed local var", func(t *testing.T) {
+		dir := t.TempDir()
+		writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/embedlocal\ngo 1.24\n")
+		writeLoadTestFile(t, filepath.Join(dir, "x.txt"), "x")
+		writeLoadTestFile(t, filepath.Join(dir, "load.go"), `package embedlocal
+import _ "embed"
+func f() {
+	//go:embed x.txt // ERROR
+	var x string
+	_ = x
+}`)
+		pkg := loadOnePackage(t, dir, "go1.24")
+		assertPackageError(t, pkg, "go:embed cannot apply to var inside func")
+		assertPackageErrorAbsent(t, pkg, embedPatternDriverDiagnostic)
+	})
+
+	t.Run("embed language version", func(t *testing.T) {
+		dir := t.TempDir()
+		writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/embedversion\ngo 1.24\n")
+		writeLoadTestFile(t, filepath.Join(dir, "x.txt"), "x")
+		writeLoadTestFile(t, filepath.Join(dir, "load.go"), `package embedversion
+import _ "embed"
+//go:embed x.txt // ERROR
+var x string`)
+		pkg := loadOnePackage(t, dir, "go1.15")
+		assertPackageError(t, pkg, "go:embed requires go1.16 or later")
+		assertPackageErrorAbsent(t, pkg, embedPatternDriverDiagnostic)
+	})
+
+	t.Run("absolute import", func(t *testing.T) {
+		dir := t.TempDir()
+		writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/absoluteimport\ngo 1.24\n")
+		writeLoadTestFile(t, filepath.Join(dir, "load.go"), "package absoluteimport\nimport _ \"/foo\"\n")
+		pkg := loadOnePackage(t, dir, "go1.24")
+		assertPackageError(t, pkg, "import path cannot be absolute path")
+		assertPackageErrorAbsent(t, pkg, "no metadata for /foo")
+	})
+
+}
+
+func loadOnePackage(t *testing.T, dir, goVersion string) *Package {
+	t.Helper()
+	pkgs, err := LoadExWithGoVersion(nil, nil, loadTestConfig(dir), goVersion, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 {
+		t.Fatalf("load returned %d packages, want 1", len(pkgs))
+	}
+	return pkgs[0]
+}
+
+func assertPackageError(t *testing.T, pkg *Package, text string) {
+	t.Helper()
+	if !packageErrorsContain(pkg, text) {
+		t.Fatalf("package errors do not contain %q: %+v", text, pkg.Errors)
+	}
+}
+
+func assertPackageErrorAbsent(t *testing.T, pkg *Package, text string) {
+	t.Helper()
+	if packageErrorsContain(pkg, text) {
+		t.Fatalf("package errors unexpectedly contain %q: %+v", text, pkg.Errors)
+	}
+}
+
+func loadTestConfig(dir string) *Config {
+	return &Config{
+		Dir: dir,
+		Mode: NeedName | NeedFiles | NeedCompiledGoFiles | NeedSyntax |
+			NeedTypes | NeedTypesInfo | NeedTypesSizes | NeedModule,
+	}
+}
+
+func packageErrorsContain(pkg *Package, text string) bool {
+	for _, err := range pkg.Errors {
+		if strings.Contains(err.Msg, text) {
+			return true
+		}
+	}
+	return false
+}
+
+func writeLoadTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParserSourceOverlayAndMissingFiles(t *testing.T) {
+	dir := t.TempDir()
+	virtual := filepath.Join(dir, "virtual.go")
+	cfg := loadTestConfig(dir)
+	tc := &typecheckContext{cfg: cfg}
+	fset := token.NewFileSet()
+	if _, err := tc.parseFile(virtual, fset); !os.IsNotExist(err) {
+		t.Fatalf("missing file did not retain disk error: %v", err)
+	}
+	tc.sourceOverlay = map[string][]byte{virtual: []byte("package virtual\nconst Value=42\n")}
+	cfg.ParseFile = func(fset *token.FileSet, name string, src []byte) (*ast.File, error) {
+		return parser.ParseFile(fset, name, src, parser.ParseComments)
+	}
+	file, err := tc.parseFile(virtual, fset)
+	if err != nil || file.Name.Name != "virtual" {
+		t.Fatalf("virtual source: %#v %v", file, err)
+	}
+	cfg.Overlay = map[string][]byte{virtual: []byte("package instrumented\nconst Value=43\n")}
+	file, err = tc.parseFile(virtual, fset)
+	if err != nil || file.Name.Name != "instrumented" {
+		t.Fatalf("driver overlay lost precedence: %#v %v", file, err)
+	}
+	tc.sourceOverlay = nil
+	cfg.Overlay = nil
+	if _, err := tc.parseFile(virtual, fset); !os.IsNotExist(err) {
+		t.Fatalf("source hook changed missing-file diagnostic: %v", err)
+	}
+}
+
+func TestLLGoFilesIgnoreCImport(t *testing.T) {
+	dir := t.TempDir()
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/patchcgo\ngo 1.24\n")
+	pkg := &Package{ID: "example.com/patchcgo", PkgPath: "example.com/patchcgo"}
+	patch := filepath.Join(dir, "patch.go")
+	if err := loadLLGoFileImports([]*Package{pkg}, loadTestConfig(dir),
+		map[string][]string{pkg.PkgPath: {patch}},
+		map[string][]byte{patch: []byte("package patchcgo\nimport \"C\"\n")}); err != nil {
+		t.Fatalf("attempted to load metadata for cgo's pseudo-package: %v", err)
+	}
+	if pkg.Imports["C"] != nil {
+		t.Fatal("C was added as a Go metadata dependency")
+	}
+}
+
+func TestLLGoFilesAddImportGraph(t *testing.T) {
+	dir := t.TempDir()
+	const module = "example.com/patchimports"
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module "+module+"\ngo 1.24\n")
+	for _, name := range []string{"base", "extra", "leaf"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nimport (\""+module+"/base\"; \""+module+"/leaf\")\nvar V = base.V + leaf.V\n")
+	writeLoadTestFile(t, filepath.Join(dir, "base", "base.go"), "package base\nvar V = 1\n")
+	writeLoadTestFile(t, filepath.Join(dir, "extra", "extra.go"), "package extra\nvar V = 1\n")
+	writeLoadTestFile(t, filepath.Join(dir, "leaf", "leaf.go"), "package leaf\nconst V = 42\n")
+	// Keep patches outside the module so the ordinary metadata driver cannot
+	// see either of the newly introduced edges. The second is transitive.
+	patchDir := t.TempDir()
+	basePatch := filepath.Join(patchDir, "base.go")
+	extraPatch := filepath.Join(patchDir, "extra.go")
+	writeLoadTestFile(t, basePatch, "package base\nimport \""+module+"/extra\"\nvar Patched = extra.V\n")
+	writeLoadTestFile(t, extraPatch, "package extra\nimport \""+module+"/leaf\"\nvar Patched = leaf.V\n")
+	dedup := NewDeduper()
+	dedup.SetLLGoFiles(map[string][]string{
+		module + "/base": {basePatch}, module + "/extra": {extraPatch},
+	})
+	pkgs, err := LoadEx(dedup, nil, loadTestConfig(dir), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 || pkgs[0].IllTyped {
+		t.Fatalf("patched import graph did not typecheck: %v", pkgs)
+	}
+	base := pkgs[0].Imports[module+"/base"]
+	extra := base.Imports[module+"/extra"]
+	if extra == nil || extra.Imports[module+"/leaf"] == nil || extra.IllTyped {
+		t.Fatalf("transitive patch imports missing: %v", base.Imports)
+	}
+	if extra.Imports[module+"/leaf"] != pkgs[0].Imports[module+"/leaf"] {
+		t.Fatal("patch import duplicated an existing package identity")
+	}
+}

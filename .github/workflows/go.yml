@@ -85,6 +85,28 @@ jobs:
           go-version: 1.21.13
           cache: 'false'
 
+      - name: Verify pure-Go 1.20 root module compatibility
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/setup-go
+        env:
+          GOTOOLCHAIN: local
+        with:
+          go-version: 1.20.14
+          cache: 'false'
+
+      - name: Test pure-Go root module with Go 1.20
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GOCACHE: ${{ runner.temp }}/go120-build-cache
+          GOWORK: off
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          go version
+          go vet ./...
+          go test -count=1 ./...
+
       - name: Set up Go
         uses: ./.github/actions/setup-go
 
@@ -113,7 +135,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go build -v ./...
+          GOWORK=off CGO_ENABLED=0 go vet ./...
+          GOWORK=off CGO_ENABLED=0 go test -count=1 ./...
+          if [[ "$RUNNER_OS" != Windows ]]; then
+            GOWORK=off go test -race -count=1 ./...
+          fi
+          go build -v ./... ./cmd/...
 
       - name: Validate Windows host-only integration
         if: runner.os == 'Windows'
@@ -123,7 +150,7 @@ jobs:
 
           # Keep the concurrency stress from the former dedicated workflow;
           # one ordinary package run does not prove mutual exclusion.
-          go test -count=20 -timeout=10m -run 'Lock' ./internal/crosscompile
+          go test -count=20 -timeout=10m -run 'Lock' ./cmd/compiler/crosscompile
 
           # These tests recover runtime faults before the protected-memory
           # checks that exposed corruption on some hosted amd64 runners. Stress
@@ -215,20 +242,20 @@ jobs:
             # MSYS2 xargs can split this list into multiple invocations that
             # overwrite the same timing and coverage files. Let the native
             # Python subprocess receive every package in one invocation.
-            go list ./... \
+            go list ./... ./cmd/... ./test/... \
               | grep -v '^github.com/xgo-dev/llgo/test/go$' \
-              | grep -v '^github.com/xgo-dev/llgo/cl$' \
-              | grep -v '^github.com/xgo-dev/llgo/internal/build$' \
+              | grep -v '^github.com/xgo-dev/llgo/cmd/cl$' \
+              | grep -v '^github.com/xgo-dev/llgo/cmd/compiler/build$' \
               | "${main_go_test[@]}" -timeout 45m -coverprofile="coverage-main.txt" -covermode=set \
-                  -coverpkg=./... -bench '^BenchmarkGo126' -benchtime=1x
+                  -coverpkg=./...,./cmd/... -bench '^BenchmarkGo126' -benchtime=1x
           }
 
           run_compiler_suites() {
-            # cl owns the compiler fixtures and measures calls into ssa.
+            # cmd/cl owns the compiler fixtures and measures calls into cmd/compiler/llvmgen.
             python .github/scripts/run_go_tests.py compiler "${go_test[@]}" -timeout 45m \
-              -coverpkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/ssa \
+              -coverpkg=github.com/xgo-dev/llgo/cmd/cl,github.com/xgo-dev/llgo/cmd/compiler/llvmgen \
               -coverprofile="coverage-compiler.txt" -covermode=set \
-              -bench '^BenchmarkGo126' -benchtime=1x ./cl
+              -bench '^BenchmarkGo126' -benchtime=1x ./cmd/cl
             python .github/scripts/run_go_tests.py language "${go_test[@]}" -timeout 45m ./test/go
           }
 
@@ -302,7 +329,7 @@ jobs:
       - name: Test with embedded emulator env
         env:
           LLGO_EMBED_TESTS: "1"
-        run: python .github/scripts/run_go_tests.py embedded go test -json -timeout 60m ./cl -run '^TestRunEmbedEmulator$'
+        run: python .github/scripts/run_go_tests.py embedded go test -json -timeout 60m ./cmd/cl -run '^TestRunEmbedEmulator$'
 
       - name: Check std symbol coverage
         shell: bash
@@ -398,10 +425,10 @@ jobs:
           LLGO_BUILD_CACHE: "off"
         run: |
           set -euo pipefail
-          go test -tags=dev -count=1 ./internal/lto ./cmd/internal/flags
+          go test -tags=dev -count=1 ./cmd/compiler/lto ./cmd/internal/flags
           go test -tags=dev -count=1 -timeout=30m \
             -run 'LTOPlugin' \
-            ./cl
+            ./cmd/cl
 
   dev-lto-globaldce:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -455,28 +482,28 @@ jobs:
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverprofile=coverage-dev-globaldce-unit.txt \
             -run '^TestDevLTOGlobalDCE' \
-            ./ssa ./internal/build ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
+            ./cmd/compiler/llvmgen ./cmd/compiler/build ./cmd/compiler/crosscompile ./cmd/internal/flags ./cmd/compiler/cabi
           go tool cover -func=coverage-dev-globaldce-unit.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \
-            -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
+            -coverpkg=github.com/xgo-dev/llgo/cmd/compiler/llvmgen,github.com/xgo-dev/llgo/cmd/compiler/build,github.com/xgo-dev/llgo/cmd/compiler/crosscompile \
             -coverprofile=coverage-dev-lto-globaldce-cl.txt \
             -run '^TestRunAndTestFromTestlto/globaldce_' \
-            ./cl
+            ./cmd/cl
           go tool cover -func=coverage-dev-lto-globaldce-cl.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \
-            -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
+            -coverpkg=github.com/xgo-dev/llgo/cmd/compiler/llvmgen,github.com/xgo-dev/llgo/cmd/compiler/build,github.com/xgo-dev/llgo/cmd/compiler/crosscompile \
             -coverprofile=coverage-dev-lto-globaldce-symbols.txt \
             -run '^TestBuildAndCheckSymbolsFromTestlto/globaldce_' \
-            ./cl
+            ./cmd/cl
           go tool cover -func=coverage-dev-lto-globaldce-symbols.txt
 
           go test -tags=dev -timeout 30m -covermode=atomic \
-            -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
+            -coverpkg=github.com/xgo-dev/llgo/cmd/compiler/llvmgen,github.com/xgo-dev/llgo/cmd/compiler/build,github.com/xgo-dev/llgo/cmd/compiler/crosscompile \
             -coverprofile=coverage-dev-lto-plugin-cl.txt \
             -run 'LTOPlugin' \
-            ./cl
+            ./cmd/cl
           go tool cover -func=coverage-dev-lto-plugin-cl.txt
 
           LLGO_DEMO_LLGORUN_FLAGS="-lto=full -globaldce" \
@@ -497,7 +524,7 @@ jobs:
       # Tests deletion of unreachable Go methods.
       # See https://github.com/xgo-dev/llgo/issues/1853.
       - name: Run Go method drop tests
-        run: go test -tags=dev -timeout 30m -run '^TestBuildAndCheckSymbolsFromTestdrop$' ./cl
+        run: go test -tags=dev -timeout 30m -run '^TestBuildAndCheckSymbolsFromTestdrop$' ./cmd/cl
 
       - name: Run Go deadcode-drop demos
         run: |

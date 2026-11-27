@@ -6,7 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 llgo_cmd="${LLGO:-llgo}"
 node_cmd="${NODE:-node}"
 wasmer_cmd="${WASMER:-wasmer}"
-fixture="${repo_root}/internal/build/testdata/wasm-profile"
+fixture="${repo_root}/cmd/compiler/build/testdata/wasm-profile"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-wasm-target-profiles.XXXXXX")"
 trap 'rm -rf "${work_dir}"' EXIT
 

@@ -13,18 +13,19 @@ env:
 
 before:
   hooks:
-    - go mod download
+    - go -C cmd mod download
     - bash .github/unix/stage-toolchains.sh
 
 builds:
   - id: llgo-darwin-amd64
-    main: ./cmd/llgo
+    dir: cmd
+    main: ./llgo
     binary: bin/llgo
     flags:
       - -tags=darwin,amd64,byollvm
     ldflags:
-      - -X github.com/xgo-dev/llgo/internal/env.buildVersion=v{{.Version}}
-      - -X github.com/xgo-dev/llgo/internal/env.buildTime={{.Date}}
+      - -X github.com/xgo-dev/llgo/cmd/compiler/env.buildVersion=v{{.Version}}
+      - -X github.com/xgo-dev/llgo/cmd/compiler/env.buildTime={{.Date}}
     env:
       - CC=o64-clang
       - CXX=o64-clang++
@@ -34,13 +35,14 @@ builds:
       - darwin_amd64
     mod_timestamp: "{{.CommitTimestamp}}"
   - id: llgo-darwin-arm64
-    main: ./cmd/llgo
+    dir: cmd
+    main: ./llgo
     binary: bin/llgo
     flags:
       - -tags=darwin,arm64,byollvm
     ldflags:
-      - -X github.com/xgo-dev/llgo/internal/env.buildVersion=v{{.Version}}
-      - -X github.com/xgo-dev/llgo/internal/env.buildTime={{.Date}}
+      - -X github.com/xgo-dev/llgo/cmd/compiler/env.buildVersion=v{{.Version}}
+      - -X github.com/xgo-dev/llgo/cmd/compiler/env.buildTime={{.Date}}
     env:
       - CC=oa64-clang
       - CXX=oa64-clang++
@@ -51,14 +53,15 @@ builds:
     mod_timestamp: "{{.CommitTimestamp}}"
   - &linux-amd64
     id: llgo-linux-amd64
-    main: ./cmd/llgo
+    dir: cmd
+    main: ./llgo
     binary: bin/llgo
     flags:
       - -tags=linux,amd64,byollvm
     ldflags:
-      - -X github.com/xgo-dev/llgo/internal/env.buildVersion=v{{.Version}}
-      - -X github.com/xgo-dev/llgo/internal/env.buildTime={{.Date}}
-      - -X github.com/xgo-dev/llgo/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-22
+      - -X github.com/xgo-dev/llgo/cmd/compiler/env.buildVersion=v{{.Version}}
+      - -X github.com/xgo-dev/llgo/cmd/compiler/env.buildTime={{.Date}}
+      - -X github.com/xgo-dev/llgo/cmd/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-22
       - "-extldflags=-Wl,-rpath,$ORIGIN/../crosscompile/clang/lib"
     env:
       # Use the packaged host Clang with the Debian 12 sysroot and GCC 12 headers.
@@ -73,14 +76,15 @@ builds:
     mod_timestamp: "{{.CommitTimestamp}}"
   - &linux-arm64
     id: llgo-linux-arm64
-    main: ./cmd/llgo
+    dir: cmd
+    main: ./llgo
     binary: bin/llgo
     flags:
       - -tags=linux,arm64,byollvm
     ldflags:
-      - -X github.com/xgo-dev/llgo/internal/env.buildVersion=v{{.Version}}
-      - -X github.com/xgo-dev/llgo/internal/env.buildTime={{.Date}}
-      - -X github.com/xgo-dev/llgo/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-22
+      - -X github.com/xgo-dev/llgo/cmd/compiler/env.buildVersion=v{{.Version}}
+      - -X github.com/xgo-dev/llgo/cmd/compiler/env.buildTime={{.Date}}
+      - -X github.com/xgo-dev/llgo/cmd/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-22
       - "-extldflags=-Wl,-rpath,$ORIGIN/../crosscompile/clang/lib"
     env:
       # The amd64 Clang driver is multi-target; libraries and headers stay arm64.

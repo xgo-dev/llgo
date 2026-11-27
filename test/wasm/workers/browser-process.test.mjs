@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import test from "node:test";
-import { spawnBrowser } from "../../../internal/build/testdata/wasm-workers/browser-process.mjs";
+import { spawnBrowser } from "../../../cmd/compiler/build/testdata/wasm-workers/browser-process.mjs";
 
 test("cleanup stops descendants after the browser launcher exits", {
   skip: process.platform === "win32",

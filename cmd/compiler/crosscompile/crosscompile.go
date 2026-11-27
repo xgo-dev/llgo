@@ -1,0 +1,1328 @@
+package crosscompile
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
+
+	"github.com/xgo-dev/llgo/cmd/compiler/crosscompile/compile"
+	"github.com/xgo-dev/llgo/cmd/compiler/env"
+	"github.com/xgo-dev/llgo/cmd/compiler/flash"
+	"github.com/xgo-dev/llgo/cmd/compiler/lto"
+	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
+	envllvm "github.com/xgo-dev/llgo/cmd/xtool/env/llvm"
+	"github.com/xgo-dev/llgo/target"
+)
+
+type Export struct {
+	CC      string // C compiler executable
+	CCArgs  []string
+	CXX     string // C++ compiler executable
+	CXXArgs []string
+	CCFLAGS []string
+	CFLAGS  []string
+	LDFLAGS []string
+	// CompilerIdentity values are stable version strings used to keep cached
+	// packages separate when an explicit native toolchain changes.
+	CCIdentity  string
+	CXXIdentity string
+	// Toolchain records the ABI and flag dialect selected for native-format
+	// outputs. It is independent of the host shell and remains empty for named
+	// embedded/WebAssembly targets that drive their linker directly.
+	Toolchain NativeToolchain
+	// WasmProfile is the selected memory/host ABI pair. WasmProvider identifies
+	// the concrete host implementation without creating another source profile.
+	// Both values participate in package-cache identity.
+	WasmProfile  WasmProfile
+	WasmProvider WasmProvider
+
+	// Additional fields from target configuration
+	BuildTags      []string
+	GOOS           string
+	GOARCH         string
+	Libc           string
+	Linker         string // Link command: compiler driver or target-specific raw linker
+	LinkerArgs     []string
+	LinkerIdentity string
+	ExtraFiles     []string // Extra files to compile and link (e.g., .s, .c files)
+	ClangRoot      string   // Root directory of custom clang installation
+	ClangBinPath   string   // Path to clang binary directory
+
+	LLVMTarget   string   // LLVM Target
+	TargetABI    string   // RISC-V Target ABI (e.g., "lp64", "lp64d")
+	BinaryFormat string   // Binary format (e.g., "elf", "esp", "uf2")
+	FormatDetail string   // For uf2, it's uf2FamilyID
+	Emulator     string   // Emulator command template (e.g., "qemu-system-arm -M {} -kernel {}")
+	GDB          []string // GDB command candidates in preference order
+	DebugInfo    DebugInfoPolicy
+	WasmPostLink WasmPostLink
+	WasmRuntime  WasmRuntime
+	// WASIInitialMemory is a target default applied at final link only when
+	// explicit linker arguments do not already select an initial memory/heap.
+	WASIInitialMemory uint64
+
+	// Flashing/Debugging configuration
+	Device flash.Device // Device configuration for flashing/debugging
+}
+
+// WasmRuntime describes entry behavior implemented by the selected runtime.
+type WasmRuntime struct {
+	// RunMainTask asks the host-provided entry point to invoke LLGo's logical
+	// Go main task. Emscripten's PROXY_TO_PTHREAD owns main in worker mode.
+	RunMainTask bool
+}
+
+// NativeToolchain describes the externally visible ABI and the tools used to
+// produce a native object. Keep these choices explicit: in particular, a
+// Windows host does not imply either the MSVC or MinGW ABI.
+type NativeToolchain struct {
+	ABI            PlatformABI
+	ObjectFormat   ObjectFormat
+	Driver         DriverFlavor
+	Linker         LinkerFlavor
+	TargetTriple   string
+	CRT            CRTFlavor
+	CXXRuntime     CXXRuntimeFlavor
+	SDKVersion     string
+	CRTVersion     string
+	ToolsetVersion string
+}
+
+// WasmProfile is a hosted memory ABI and host ABI pair. C interoperability is
+// a capability of the profile rather than a separate profile family.
+type WasmProfile string
+
+const (
+	// WASIThreadedEmulator runs shared-memory modules with standard Wasm EH
+	// and SIMD. Wasmer chooses an available backend; the pinned Windows CLI
+	// uses V8 and supported Unix builds prefer Cranelift for these modules.
+	// wasi-libc manages its own heap inside the module memory.
+	// The runner resolves the working-directory preopen to an absolute path
+	// before execution and also grants Go's default /tmp directory.
+	WASIThreadedEmulator     = `wasmer run --enable-exceptions --enable-simd --stack-size=1048576 --volume=. --volume=/tmp "{}"`
+	defaultWASIStackFlag     = "stack-size=10485760"
+	defaultWASIMaxMemoryFlag = "-Wl,--max-memory=536870912"
+
+	WasmProfileNone WasmProfile = ""
+	WasmProfileJ32  WasmProfile = "j32"
+	WasmProfileJ64  WasmProfile = "j64"
+	WasmProfileW32  WasmProfile = "w32"
+
+	WasmProviderNone       WasmProvider = ""
+	WasmProviderGoJS       WasmProvider = "gojs"
+	WasmProviderEmscripten WasmProvider = "emscripten"
+	WasmProviderWASI       WasmProvider = "wasi"
+
+	emscriptenBrowserEnvironment = "-sENVIRONMENT=web,worker"
+	emscriptenNamedEnvironment   = "-sENVIRONMENT=web,worker,node"
+	emscriptenAllowTableGrowth   = "-sALLOW_TABLE_GROWTH=1"
+	// libffi calls the target through the JS import ffi_call_js. If that
+	// import is not listed, Asyncify cannot unwind a sleeping Go function
+	// invoked through libffi. Go reflection uses static typed entries by default.
+	emscriptenAsyncifyImports = "-sASYNCIFY_IMPORTS=llgo_wasm_host_wait_async,ffi_call_js"
+	// Caller-location updates also cannot suspend: allocations only enqueue
+	// finalizers, and runtime code has no automatic scheduling safepoints.
+	// Excluding them avoids an Asyncify branch at every recorded call site,
+	// which can exhaust V8's optimizer zone on large generated functions.
+	// TinyGC allocation also stays on its caller: allocator waits only
+	// acknowledge STW and finalizers are queued for a separate G. Keep their
+	// callback runner instrumented, since user finalizers may suspend.
+	emscriptenAsyncifyRemove = `-sASYNCIFY_REMOVE=["*PushCallerLocationFrameWasm*","*RecordCallerLocationWasm*","*RecordPanicLocationWasm*","*PushCallerLocationFrameID*","*RecordCallerLocationID*","*RecordPanicLocationID*","*tinygogc*Alloc*"]`
+	wasm32LibffiRelDir       = "runtime/internal/clite/ffi/wasm32"
+	wasm64LibffiRelDir       = "runtime/internal/clite/ffi/wasm64"
+)
+
+func (profile WasmProfile) valid() bool {
+	switch profile {
+	case WasmProfileNone, WasmProfileJ32, WasmProfileJ64, WasmProfileW32:
+		return true
+	default:
+		return false
+	}
+}
+
+// WasmProvider selects imports, host glue, and packaging for a profile.
+type WasmProvider string
+
+func (provider WasmProvider) valid() bool {
+	switch provider {
+	case WasmProviderNone, WasmProviderGoJS, WasmProviderEmscripten, WasmProviderWASI:
+		return true
+	default:
+		return false
+	}
+}
+
+func validWasmSelection(profile WasmProfile, provider WasmProvider) bool {
+	if !profile.valid() || !provider.valid() {
+		return false
+	}
+	switch profile {
+	case WasmProfileNone:
+		return provider == WasmProviderNone
+	case WasmProfileJ32:
+		return provider == WasmProviderGoJS || provider == WasmProviderEmscripten
+	case WasmProfileJ64:
+		return provider == WasmProviderEmscripten
+	case WasmProfileW32:
+		return provider == WasmProviderWASI
+	default:
+		return false
+	}
+}
+
+type PlatformABI string
+
+const (
+	PlatformABIUnknown PlatformABI = ""
+	PlatformABIGNU     PlatformABI = "gnu"
+	PlatformABIDarwin  PlatformABI = "darwin"
+	PlatformABIMsvc    PlatformABI = "msvc"
+)
+
+type ObjectFormat string
+
+const (
+	ObjectFormatUnknown ObjectFormat = ""
+	ObjectFormatELF     ObjectFormat = "elf"
+	ObjectFormatMachO   ObjectFormat = "macho"
+	ObjectFormatCOFF    ObjectFormat = "coff"
+)
+
+type DriverFlavor string
+
+const (
+	DriverFlavorUnknown  DriverFlavor = ""
+	DriverFlavorClangGNU DriverFlavor = "clang"
+)
+
+type LinkerFlavor string
+
+const (
+	LinkerFlavorUnknown  LinkerFlavor = ""
+	LinkerFlavorELFLLD   LinkerFlavor = "ld.lld"
+	LinkerFlavorMachO    LinkerFlavor = "ld64.lld"
+	LinkerFlavorCOFFLLD  LinkerFlavor = "lld-link"
+	LinkerFlavorMinGWLLD LinkerFlavor = "mingw-lld"
+)
+
+type CRTFlavor string
+
+const (
+	CRTFlavorUnknown CRTFlavor = ""
+	CRTFlavorUCRT    CRTFlavor = "ucrt"
+)
+
+type CXXRuntimeFlavor string
+
+const (
+	CXXRuntimeUnknown CXXRuntimeFlavor = ""
+	CXXRuntimeMSVC    CXXRuntimeFlavor = "msvc"
+)
+
+// WasmPostLink describes transformations required after the core module is
+// linked. Build orchestration owns tool discovery and atomic output handling.
+type WasmPostLink struct {
+	Asyncify bool
+}
+
+// DebugInfoCapability describes whether the selected linker and its linked
+// output format can retain DWARF. Deployment formats such as bin, hex, and uf2
+// are derived later and do not affect this capability.
+type DebugInfoCapability uint8
+
+const (
+	DebugInfoRetainable DebugInfoCapability = iota
+	DebugInfoUnavailable
+)
+
+// DebugInfoPolicy describes how a selected linker handles debug information.
+// Build orchestration consumes this typed capability instead of inferring it
+// from a target name or linker executable.
+type DebugInfoPolicy struct {
+	Capability        DebugInfoCapability
+	OmitLinkFlags     []string
+	PreserveLinkFlags []string
+	// PreserveDriverFlags applies only to compiler-driver invocation paths.
+	// Direct embedded linkers retain DWARF without these compiler options.
+	PreserveDriverFlags []string
+}
+
+func nativeToolchain(goos string) NativeToolchain {
+	switch goos {
+	case "darwin":
+		return NativeToolchain{
+			ABI:          PlatformABIDarwin,
+			ObjectFormat: ObjectFormatMachO,
+			Driver:       DriverFlavorClangGNU,
+			Linker:       LinkerFlavorMachO,
+		}
+	case "linux":
+		return NativeToolchain{
+			ABI:          PlatformABIGNU,
+			ObjectFormat: ObjectFormatELF,
+			Driver:       DriverFlavorClangGNU,
+			Linker:       LinkerFlavorELFLLD,
+		}
+	case "windows":
+		return NativeToolchain{
+			ABI:          PlatformABIMsvc,
+			ObjectFormat: ObjectFormatCOFF,
+			Driver:       DriverFlavorClangGNU,
+			Linker:       LinkerFlavorCOFFLLD,
+		}
+	default:
+		return NativeToolchain{}
+	}
+}
+
+// driverDebugInfoPolicy describes invocation through a compiler driver, including
+// hosted Wasm builds whose driver ultimately invokes wasm-ld. Direct linker
+// invocation instead uses targetDebugInfoPolicy and must not receive driver flags.
+func driverDebugInfoPolicy() DebugInfoPolicy {
+	return DebugInfoPolicy{
+		OmitLinkFlags:       []string{"-Wl,-S"},
+		PreserveDriverFlags: []string{"-gdwarf-4"},
+	}
+}
+
+func nativeDebugInfoPolicy(toolchain NativeToolchain) DebugInfoPolicy {
+	policy := driverDebugInfoPolicy()
+	switch toolchain.Linker {
+	case LinkerFlavorMachO, LinkerFlavorELFLLD, LinkerFlavorMinGWLLD:
+	case LinkerFlavorCOFFLLD:
+		policy.OmitLinkFlags = []string{"-Wl,/debug:none"}
+		policy.PreserveLinkFlags = []string{"-Wl,/debug:dwarf"}
+	default:
+		policy.OmitLinkFlags = nil
+	}
+	return policy
+}
+
+func (p DebugInfoPolicy) CanRetain() bool {
+	return p.Capability == DebugInfoRetainable
+}
+
+// targetDebugInfoPolicy covers direct linker invocations from UseTarget. Normal
+// hosted Wasm/WASI builds route through useWithGOARMAndToolchain and the driver
+// policy; the wasm-ld case also supports direct target-policy callers.
+func targetDebugInfoPolicy(linker, llvmTarget string) DebugInfoPolicy {
+	switch linker {
+	case "ld.lld":
+		if !strings.HasPrefix(llvmTarget, "wasm") {
+			return DebugInfoPolicy{OmitLinkFlags: []string{"-S"}}
+		}
+	case "wasm-ld":
+		if strings.HasPrefix(llvmTarget, "wasm") {
+			return DebugInfoPolicy{OmitLinkFlags: []string{"-S"}}
+		}
+	}
+	// Unknown or mismatched linker/target pairs intentionally omit DWARF until
+	// retention has been validated for that direct-linker path.
+	return DebugInfoPolicy{Capability: DebugInfoUnavailable}
+}
+
+// URLs and configuration that can be overridden for testing
+var (
+	wasiSdkUrl      = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-macos.tar.gz"
+	wasiMacosSubdir = "wasi-sdk-25.0-x86_64-macos"
+	espClangBaseUrl = "https://github.com/" + espPins.Repository + "/releases/download"
+	espClangVersion = espPins.Release
+	espClangSHA256  = espClangChecksums()
+)
+
+// cacheRoot can be overridden for testing
+var cacheRoot = env.LLGoCacheDir
+
+func cacheDir() string {
+	return filepath.Join(cacheRoot(), "crosscompile")
+}
+
+// buildEnvMap creates a map of template variables for the current context
+func buildEnvMap(llgoRoot string) map[string]string {
+	envs := make(map[string]string)
+
+	// Basic paths
+	envs["root"] = llgoRoot
+	envs["tmpDir"] = os.TempDir()
+
+	// These will typically be set by calling code when actual values are known
+	// envs["port"] = ""     // Serial port (e.g., "/dev/ttyUSB0", "COM3")
+	// envs["hex"] = ""      // Path to hex file
+	// envs["bin"] = ""      // Path to binary file
+	// envs["img"] = ""      // Path to image file
+	// envs["zip"] = ""      // Path to zip file
+
+	return envs
+}
+
+// getCanonicalArchName returns the canonical architecture name for a target triple
+func getCanonicalArchName(triple string) string {
+	arch := strings.Split(triple, "-")[0]
+	if arch == "arm64" {
+		return "aarch64"
+	}
+	if strings.HasPrefix(arch, "arm") || strings.HasPrefix(arch, "thumb") {
+		return "arm"
+	}
+	if arch == "mipsel" {
+		return "mips"
+	}
+	return arch
+}
+
+// getESPClangRoot returns the ESP Clang root directory, checking LLGoROOT first,
+// then downloading if needed and platform is supported
+func getESPClangRoot(forceEspClang bool) (clangRoot string, err error) {
+	llgoRoot := env.LLGoROOT()
+
+	// First check if clang exists in LLGoROOT
+	espClangRoot := filepath.Join(llgoRoot, envllvm.CrosscompileClangPath)
+	if _, err = os.Stat(espClangRoot); err == nil {
+		clangRoot = espClangRoot
+		return
+	}
+
+	if !forceEspClang {
+		return "", nil
+	}
+
+	// Install bundled ESP Clang, or download it for source checkouts.
+	platformSuffix := getESPClangPlatform(runtime.GOOS, runtime.GOARCH)
+	if platformSuffix != "" {
+		version := espClangVersion
+		checksum, ok := espClangSHA256[platformSuffix]
+		if !ok {
+			err = fmt.Errorf("missing ESP Clang checksum for %s", platformSuffix)
+			return
+		}
+		pin := espPins.Payloads[platformSuffix]
+		if pin.Asset == "" {
+			return "", fmt.Errorf("missing ESP Clang asset for %s", platformSuffix)
+		}
+		cacheClangDir := espClangCacheDir(platformSuffix)
+		if _, err = os.Stat(cacheClangDir); err != nil {
+			if !errors.Is(err, fs.ErrNotExist) {
+				return
+			}
+			bundle := filepath.Join(filepath.Dir(espClangRoot), pin.Asset)
+			_, bundleErr := os.Stat(bundle)
+			switch {
+			case bundleErr == nil:
+				fmt.Fprintln(os.Stderr, "Using bundled ESP Clang archive:", bundle)
+				err = checkInstallESPClangArchive(bundle, checksum, cacheClangDir)
+			case errors.Is(bundleErr, fs.ErrNotExist):
+				fmt.Fprintln(os.Stderr, "ESP Clang not found in LLGO_ROOT or cache, will download.")
+				err = checkDownloadAndExtractESPClang(espClangBaseUrl+"/"+version, pin.Asset, checksum, cacheClangDir)
+			default:
+				return "", bundleErr
+			}
+			if err != nil {
+				return
+			}
+		}
+		clangRoot = cacheClangDir
+		return
+	}
+
+	err = fmt.Errorf("ESP Clang not found in LLGoROOT and platform %s/%s is not supported for download", runtime.GOOS, runtime.GOARCH)
+	return
+}
+
+// Include the tool host in the cache key: x64 and ARM64 LLGo installations
+// can share a Windows user cache, but cannot share a native ESP payload.
+func espClangCacheDir(platform string) string {
+	return filepath.Join(cacheDir(), "esp-clang-"+espClangVersion+"-"+platform)
+}
+
+// getESPClangPlatform returns the platform suffix for ESP Clang downloads
+func getESPClangPlatform(goos, goarch string) string {
+	switch goos {
+	case "darwin":
+		switch goarch {
+		case "amd64":
+			return "x86_64-apple-darwin"
+		case "arm64":
+			return "aarch64-apple-darwin"
+		}
+	case "linux":
+		switch goarch {
+		case "amd64":
+			return "x86_64-linux-gnu"
+		case "arm64":
+			return "aarch64-linux-gnu"
+		}
+	case "windows":
+		switch goarch {
+		case "386":
+			return "i686-w64-mingw32"
+		case "amd64":
+			return "x86_64-w64-mingw32"
+		case "arm64":
+			return "aarch64-w64-mingw32"
+		}
+	}
+	return ""
+}
+
+// ldFlagsFromFileName extracts the library name from a filename for use in linker flags
+// For example, "libmath.a" becomes "math" for use with "-lmath"
+func ldFlagsFromFileName(fileName string) string {
+	return strings.TrimPrefix(strings.TrimSuffix(fileName, ".a"), "lib")
+}
+
+// compileWithConfig compiles libraries according to the provided configuration
+// and returns the necessary linker flags for linking against the compiled libraries
+func compileWithConfig(
+	compileConfig compile.CompileConfig,
+	outputDir string, options compile.CompileOptions,
+) (ldflags []string, err error) {
+	if err = os.MkdirAll(outputDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create compiled library cache %q: %w", outputDir, err)
+	}
+	ldflags = append(ldflags, "-nostdlib", "-L"+outputDir)
+
+	for _, group := range compileConfig.Groups {
+		err = group.Compile(outputDir, options)
+		if err != nil {
+			break
+		}
+		if filepath.Ext(group.OutputFileName) == ".o" {
+			continue
+		}
+		ldflags = append(ldflags, "-l"+ldFlagsFromFileName(group.OutputFileName))
+	}
+	return
+}
+
+// ltoLinkerOptFlag maps LLGo's optimization level to lld's numeric LTO
+// optimizer level. lld accepts only O0 through O3 here; Os/Oz are carried by
+// the optsize/minsize function attributes in LLGo's bitcode and use O2 as
+// LLVM's corresponding speed level.
+func ltoLinkerOptFlag(level optlevel.Level) string {
+	switch level {
+	case optlevel.O0, optlevel.O1, optlevel.O2, optlevel.O3:
+		return "--lto-" + level.Name()
+	case optlevel.Os, optlevel.Oz:
+		return "--lto-O2"
+	default:
+		return ""
+	}
+}
+
+func nativeLLDFlags(toolchain NativeToolchain, level optlevel.Level, ltoMode lto.Mode) []string {
+	flags := []string{"-fuse-ld=lld"}
+	if toolchain.Linker == LinkerFlavorCOFFLLD {
+		flags = append(flags,
+			"-Wl,/errorlimit:0",
+			// Go requires distinct functions to have distinct PCs. lld-link
+			// enables identical COMDAT folding through /opt:icf, so keep it
+			// disabled even when dead-code elimination is enabled.
+			"-Wl,/opt:noicf",
+		)
+	} else {
+		flags = append(flags,
+			"-Wl,--error-limit=0",
+			// lld's safe mode still folds llgo-emitted same-body functions.
+			"-Wl,--icf=none",
+		)
+	}
+	if !ltoMode.Enabled() {
+		return flags
+	}
+
+	flags = append(flags, ltoMode.ClangFlag())
+	if toolchain.Linker == LinkerFlavorCOFFLLD {
+		flags = append(flags, "-Wl,/opt:lldlto="+coffLTOLevel(level))
+	} else if optFlag := ltoLinkerOptFlag(level); optFlag != "" {
+		flags = append(flags, "-Wl,"+optFlag)
+	}
+	return flags
+}
+
+func coffLTOLevel(level optlevel.Level) string {
+	switch level {
+	case optlevel.O0:
+		return "0"
+	case optlevel.O1:
+		return "1"
+	case optlevel.O3:
+		return "3"
+	default:
+		// lld-link accepts only 0 through 3. -Os and -Oz remain encoded in
+		// the input IR through optsize/minsize attributes; use its normal
+		// optimization pipeline for the link-wide setting.
+		return "2"
+	}
+}
+
+func nativeSectionFlags(toolchain NativeToolchain) (ccflags, ldflags []string) {
+	switch toolchain.ObjectFormat {
+	case ObjectFormatMachO:
+		return nil, []string{"-Xlinker", "-dead_strip"}
+	case ObjectFormatCOFF:
+		if toolchain.ABI == PlatformABIGNU {
+			return []string{"-fdata-sections", "-ffunction-sections"}, []string{
+				"-fdata-sections",
+				"-ffunction-sections",
+				"-Wl,--gc-sections",
+			}
+		}
+		return []string{"-fdata-sections", "-ffunction-sections"}, []string{
+			"-fdata-sections",
+			"-ffunction-sections",
+			"--rtlib=compiler-rt",
+			"-Wl,/opt:ref",
+			// UCRT defines printf-family entry points inline in its headers.
+			// LLGo C linknames use the traditional external symbols supplied by
+			// this Microsoft compatibility import library.
+			"-llegacy_stdio_definitions",
+		}
+	default:
+		return []string{"-fdata-sections", "-ffunction-sections"}, []string{
+			"-fdata-sections",
+			"-ffunction-sections",
+			"-Xlinker",
+			"--gc-sections",
+			"-latomic",
+			// libpthread & libdl is built-in since glibc 2.34 (2021-08-01);
+			// retain these flags for older supported systems.
+			"-lpthread",
+			"-ldl",
+		}
+	}
+}
+
+func use(goos, goarch string, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (Export, error) {
+	return useWithGOARM(goos, goarch, "", forceEspClang, level, ltoMode, goGlobalDCE)
+}
+
+func useWithGOARM(goos, goarch, goarm string, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
+	return useWithGOARMAndToolchain(goos, goarch, goarm, forceEspClang, level, ltoMode, goGlobalDCE, NativeToolchainInput{}, WasmProfileNone, WasmProviderNone)
+}
+
+func useWithGOARMAndToolchain(goos, goarch, goarm string, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool, nativeInput NativeToolchainInput, wasmProfile WasmProfile, wasmProvider WasmProvider) (export Export, err error) {
+	if !validWasmSelection(wasmProfile, wasmProvider) {
+		return export, fmt.Errorf("unsupported WebAssembly profile/provider %q/%q", wasmProfile, wasmProvider)
+	}
+	targetTriple := target.TripleWithGOARM(goos, goarch, goarm)
+	switch wasmProfile {
+	case WasmProfileJ32:
+		targetTriple = "wasm32-unknown-emscripten"
+	case WasmProfileJ64:
+		targetTriple = "wasm64-unknown-emscripten"
+	case WasmProfileW32:
+		targetTriple = "wasm32-unknown-wasip1"
+	}
+	llgoRoot := env.LLGoROOT()
+	nativePlatformToolchain := usesNativePlatformToolchain(
+		runtime.GOOS, runtime.GOARCH, goos, goarch, nativeInput.ResolveWindows,
+	)
+
+	// Linked Windows output resolves its compiler and dependencies as one
+	// coherent profile below, including when the LLGo host is macOS or Linux.
+	// Do not inspect an unrelated embedded Clang before that profile resolves.
+	var clangRoot string
+	if goarch != "wasm" && !(nativePlatformToolchain && goos == "windows") {
+		clangRoot, err = getESPClangRoot(forceEspClang)
+		if err != nil {
+			return
+		}
+	}
+
+	// Set ClangRoot and CC if clang is available
+	export.ClangRoot = clangRoot
+	if clangRoot != "" {
+		export.CC = filepath.Join(clangRoot, "bin", "clang++")
+	} else {
+		export.CC = "clang++"
+	}
+
+	if nativePlatformToolchain {
+		if goos == "windows" {
+			export, err = resolveWindowsToolchain(goarch, nativeInput, probeNativeTool)
+			if err != nil {
+				return
+			}
+			targetTriple = export.Toolchain.TargetTriple
+			// Native Windows tool selection is authoritative. An embedded
+			// toolchain cached below LLGO_ROOT must not leak include or library
+			// paths into this profile.
+			clangRoot = ""
+			export.ClangRoot = ""
+		} else {
+			export.Toolchain = nativeToolchain(goos)
+			if len(nativeInput.ExternalLinker) != 0 {
+				export.Linker = nativeInput.ExternalLinker[0]
+				export.LinkerArgs = slices.Clone(nativeInput.ExternalLinker[1:])
+			}
+			export.LDFLAGS = slices.Clone(nativeInput.ExternalFlags)
+		}
+		export.DebugInfo = nativeDebugInfoPolicy(export.Toolchain)
+		// not cross compile
+		// Set up basic flags for non-cross-compile
+		externalLDFlags := slices.Clone(export.LDFLAGS)
+		export.LDFLAGS = []string{
+			"-target", targetTriple,
+			"-Qunused-arguments",
+			"-Wno-unused-command-line-argument",
+		}
+		export.LDFLAGS = append(export.LDFLAGS, nativeLLDFlags(export.Toolchain, level, ltoMode)...)
+		if clangRoot != "" {
+			clangLib := filepath.Join(clangRoot, "lib")
+			clangInc := filepath.Join(clangRoot, "include")
+			export.CFLAGS = append(export.CFLAGS, "-I"+clangInc)
+			export.LDFLAGS = append(export.LDFLAGS, "-L"+clangLib)
+			// Add platform-specific rpath flags
+			switch goos {
+			case "darwin":
+				export.LDFLAGS = append(export.LDFLAGS, "-Wl,-rpath,"+clangLib)
+			case "linux":
+				export.LDFLAGS = append(export.LDFLAGS, "-Wl,-rpath,"+clangLib)
+			case "windows":
+				// Windows doesn't support rpath, DLLs should be in PATH or same directory
+			default:
+				// For other Unix-like systems, try the generic rpath
+				export.LDFLAGS = append(export.LDFLAGS, "-Wl,-rpath,"+clangLib)
+			}
+		}
+		export.CCFLAGS = []string{
+			level.Flag(),
+			"-target", targetTriple,
+			"-Qunused-arguments",
+			"-Wno-unused-command-line-argument",
+			// Keep frame pointers in C code too: the runtime's physical
+			// unwinder walks fault-site chains through C frames (Go keeps
+			// them via the "frame-pointer"="non-leaf" attribute; x86-64 C
+			// would omit them at -O by default).
+			"-fno-omit-frame-pointer",
+		}
+		if ltoMode.Enabled() {
+			export.CCFLAGS = append(export.CCFLAGS, ltoMode.ClangFlag())
+		}
+		if ltoMode == lto.Full && goGlobalDCE {
+			export.CCFLAGS = append(export.CCFLAGS, "-fvirtual-function-elimination", "-fwhole-program-vtables")
+		}
+
+		// Add sysroot for macOS only
+		if goos == "darwin" {
+			sdk, sysrootErr := getMacOSSDK()
+			if sysrootErr != nil {
+				err = fmt.Errorf("failed to get macOS SDK path: %w", sysrootErr)
+				return
+			}
+			// Override both Clang config spellings: -isysroot selects headers,
+			// but a configured --sysroot takes precedence for the linker's SDK.
+			export.CCFLAGS = append(export.CCFLAGS, "-isysroot", sdk.path)
+			export.LDFLAGS = append(export.LDFLAGS, "-isysroot", sdk.path, "--sysroot="+sdk.path)
+			export.Toolchain.SDKVersion = sdk.version
+		}
+
+		ccflags, ldflags := nativeSectionFlags(export.Toolchain)
+		export.CCFLAGS = append(export.CCFLAGS, ccflags...)
+		export.LDFLAGS = append(export.LDFLAGS, ldflags...)
+		export.LDFLAGS = append(export.LDFLAGS, externalLDFlags...)
+		return
+	}
+	if goarch != "wasm" {
+		return
+	}
+	if wasmProfile == WasmProfileNone {
+		switch goos {
+		case "js":
+			wasmProfile, wasmProvider = WasmProfileJ32, WasmProviderGoJS
+			targetTriple = "wasm32-unknown-emscripten"
+		case "wasip1":
+			wasmProfile, wasmProvider = WasmProfileW32, WasmProviderWASI
+			targetTriple = "wasm32-unknown-wasip1"
+		default:
+			return export, fmt.Errorf("GOOS=%s GOARCH=wasm has no supported hosted profile", goos)
+		}
+	}
+	export.WasmProfile = wasmProfile
+	export.WasmProvider = wasmProvider
+	export.LLVMTarget = targetTriple
+	if wasmProvider == WasmProviderWASI {
+		export.BuildTags = appendUniqueStrings(export.BuildTags, "llgo.wasm.wasi")
+	}
+	export.DebugInfo = driverDebugInfoPolicy()
+
+	// Configure based on GOOS
+	switch goos {
+	case "wasip1":
+		// Set wasiSdkRoot path
+		wasiSdkRoot := filepath.Join(llgoRoot, "crosscompile", "wasi-libc")
+
+		// If not exists in LLGoROOT, download and use cached wasiSdkRoot
+		if _, err = os.Stat(wasiSdkRoot); err != nil {
+			sdkDir := filepath.Join(cacheDir(), target.Triple(goos, goarch))
+			if wasiSdkRoot, err = checkDownloadAndExtractWasiSDK(sdkDir); err != nil {
+				return
+			}
+		}
+		// WASI-SDK configuration
+		// Clang selects crt1 from the target triple, independently of -L.
+		// The threads crt1 initializes the main pthread TLS before Go runs.
+		triple := "wasm32-wasip1-threads"
+		clangTriple := triple
+
+		// Set up flags for the WASI-SDK or wasi-libc
+		sysrootDir := filepath.Join(wasiSdkRoot, "share", "wasi-sysroot")
+		libclangDir := filepath.Join(wasiSdkRoot, "lib", "clang", "19")
+		includeDir := filepath.Join(sysrootDir, "include", triple)
+		libDir := filepath.Join(sysrootDir, "lib", triple)
+
+		// Use system clang and sysroot of wasi-sdk
+		// Add compiler flags
+		export.CCFLAGS = []string{
+			level.Flag(),
+			"-target", clangTriple,
+			"--sysroot=" + sysrootDir,
+			"-resource-dir=" + libclangDir,
+			"-matomics",
+			"-mbulk-memory",
+		}
+		export.CCFLAGS = append(export.CCFLAGS, "-pthread")
+		if ltoMode.Enabled() {
+			export.CCFLAGS = append(export.CCFLAGS, ltoMode.ClangFlag())
+		}
+		export.CFLAGS = []string{
+			"-I" + includeDir,
+			"-Qunused-arguments",
+			"-Wno-unused-command-line-argument",
+		}
+		// Add WebAssembly linker flags
+		export.LDFLAGS = append(export.LDFLAGS, export.CCFLAGS...)
+		export.LDFLAGS = append(export.LDFLAGS, "-fwasm-exceptions")
+		if ltoMode.Enabled() {
+			if optFlag := ltoLinkerOptFlag(level); optFlag != "" {
+				export.LDFLAGS = append(export.LDFLAGS, "-Wl,"+optFlag)
+			}
+			// Clang does not forward -fwasm-exceptions to the LTO backend.
+			// Without an explicit exception model, codegen drops SjLj catch pads.
+			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-exception-model=wasm")
+			// Supply atomics, bulk-memory and exception-handling defaults to both
+			// Thin and Full LTO. These defaults do not merge into an existing
+			// per-function target-features attribute.
+			export.LDFLAGS = append(export.LDFLAGS, "-Xlinker", "--mllvm=-mattr=+atomics,+bulk-memory,+exception-handling")
+			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-wasm-enable-sjlj")
+			export.LDFLAGS = append(export.LDFLAGS, "-Wl,--mllvm=-wasm-use-legacy-eh=false")
+		}
+		export.CCFLAGS = append(
+			export.CCFLAGS,
+			"-fwasm-exceptions",
+			"-mllvm", "-wasm-enable-sjlj",
+			"-mllvm", "-wasm-use-legacy-eh=false",
+		)
+		export.LDFLAGS = append(export.LDFLAGS, []string{
+			"-Wno-override-module",
+			"-Wl,--error-limit=0",
+			"-L" + libDir,
+			"-Wl,--allow-undefined",
+			"-Wl,--export-memory",
+			// Keep process-stack placement stable across host linker versions.
+			"-Wl,--stack-first",
+			"-mbulk-memory",
+			"-mmultimemory",
+			"-z", defaultWASIStackFlag,
+			"-Wl,--export=malloc", "-Wl,--export=free",
+			"-lc",
+			"-lcrypt",
+			"-lm",
+			"-lrt",
+			"-lutil",
+			"-lsetjmp",
+			"-lwasi-emulated-mman",
+			"-lwasi-emulated-getpid",
+			"-lwasi-emulated-process-clocks",
+			"-lwasi-emulated-signal",
+		}...)
+		export.BuildTags = append(export.BuildTags, "llgo.wasi_threads")
+		export.LDFLAGS = append(
+			export.LDFLAGS,
+			// Leave room for 256 default 1 MiB pthread stacks, the process
+			// stack, libc metadata, and independently owned GC arenas.
+			defaultWASIMaxMemoryFlag,
+			"-Wl,--import-memory",
+			"-lpthread",
+		)
+
+	case "js":
+		// Emscripten configuration using system installation
+		// Specify emcc as the compiler
+		export.CC = "emcc"
+		// Add compiler flags
+		export.CCFLAGS = []string{
+			level.Flag(),
+			"-target", targetTriple,
+			"-Qunused-arguments",
+			"-Wno-unused-command-line-argument",
+		}
+		export.CFLAGS = []string{}
+		// Add WebAssembly linker flags for Emscripten
+		export.LDFLAGS = []string{
+			level.Flag(),
+			"-target", targetTriple,
+			"-Wno-override-module",
+			"-Wl,--error-limit=0",
+			"-s", "ALLOW_MEMORY_GROWTH=1",
+			"-Wl,--allow-undefined",
+			// "-Wl,--import-memory,",
+			// "-Wl,--export-memory",
+			// "-Wl,--initial-memory=67108864", // 64MB
+			// "-mbulk-memory",
+			// "-mmultimemory",
+			// "-z", "stack-size=10485760", // 10MB
+			// "-Wl,--export=malloc", "-Wl,--export=free",
+		}
+		export.LDFLAGS = append(export.LDFLAGS, []string{
+			emscriptenBrowserEnvironment,
+			"-DPLATFORM_WEB",
+			"-sEXPORT_KEEPALIVE=1",
+			"-sEXPORT_ES6=1",
+			// Emscripten pthread workers instantiate the module in a fresh JS
+			// realm. Import Node's environment there as well as in the launcher,
+			// and expose ENV so browser hosts can provide the equivalent map.
+			"-sNODE_HOST_ENV=1",
+			"-sALLOW_MEMORY_GROWTH=1",
+			emscriptenAllowTableGrowth,
+			"-sRESERVED_FUNCTION_POINTERS=1",
+			"-sEXPORTED_RUNTIME_METHODS=cwrap,allocateUTF8,stringToUTF8,UTF8ToString,FS,setValue,getValue,ENV",
+			"-sWASM=1",
+			"-sEXPORT_ALL=1",
+			"-sASYNCIFY=1",
+			emscriptenAsyncifyImports,
+			emscriptenAsyncifyRemove,
+			"-sSTACK_SIZE=5242880", // 5MB
+			// Fibers have fixed-size stacks. Check every stack-pointer change
+			// before an overflow can overwrite another goroutine's memory.
+			"-sSTACK_OVERFLOW_CHECK=2",
+		}...)
+		if ltoMode.Enabled() {
+			export.CCFLAGS = append(export.CCFLAGS, ltoMode.ClangFlag())
+			export.LDFLAGS = append(export.LDFLAGS, ltoMode.ClangFlag())
+			// emcc's -O controls its compile and post-link pipelines, but can
+			// leave wasm-ld's LTO optimizer at its default O2 (e.g. SDK 6.0.8).
+			// Set the LTO level explicitly, as for the WASI linker above.
+			if optFlag := ltoLinkerOptFlag(level); optFlag != "" {
+				export.LDFLAGS = append(export.LDFLAGS, "-Wl,"+optFlag)
+			}
+		}
+		appendEmscriptenLibffiSearchPath(&export, llgoRoot, wasmProfile)
+	default:
+		err = errors.New("unsupported GOOS for WebAssembly: " + goos)
+		return
+	}
+	return
+}
+
+// EnableWasmReflectLibffi keeps the JS closure replay entries outside Asyncify.
+// The separately instrumented Go invocation resumes with the current buffers.
+func EnableWasmReflectLibffi(export *Export) error {
+	for i, flag := range export.LDFLAGS {
+		if flag == emscriptenAsyncifyRemove {
+			export.LDFLAGS[i] = strings.TrimSuffix(flag, "]") +
+				`,"llgo_reflect_bind0_js","llgo_reflect_bind1_js","llgo_reflect_bindn_js"]`
+			return nil
+		}
+	}
+	return errors.New("JavaScript libffi reflection requires Emscripten Asyncify")
+}
+
+func appendEmscriptenLibffiSearchPath(export *Export, llgoRoot string, wasmProfile WasmProfile) {
+	// An empty LLGO_ROOT leaves -lffi without a search path; the linker then
+	// reports that it cannot find -lffi.
+	if llgoRoot == "" {
+		return
+	}
+	dir := wasm32LibffiRelDir
+	if wasmProfile == WasmProfileJ64 {
+		dir = wasm64LibffiRelDir
+	}
+	export.LDFLAGS = append(export.LDFLAGS, "-L"+filepath.Join(llgoRoot, dir))
+}
+
+func appendUniqueStrings(dst []string, values ...string) []string {
+	for _, value := range values {
+		if value != "" && !slices.Contains(dst, value) {
+			dst = append(dst, value)
+		}
+	}
+	return dst
+}
+
+func usesNativePlatformToolchain(hostGOOS, hostGOARCH, targetGOOS, targetGOARCH string, resolveWindows bool) bool {
+	if targetGOOS == "windows" && resolveWindows {
+		return true
+	}
+	return hostGOOS == targetGOOS && hostGOARCH == targetGOARCH
+}
+
+// UseTarget loads configuration from a target name (e.g., "rp2040", "wasi")
+func UseTarget(targetName string, level optlevel.Level, ltoMode lto.Mode) (export Export, err error) {
+	return useTarget(targetName, level, ltoMode, compileWithConfig)
+}
+
+func useTarget(targetName string, level optlevel.Level, ltoMode lto.Mode,
+	buildLibrary func(compile.CompileConfig, string, compile.CompileOptions) ([]string, error),
+) (export Export, err error) {
+	resolver := target.NewResolver(env.LLGoTargetsDir())
+
+	config, err := resolver.Resolve(targetName)
+	if err != nil {
+		return export, fmt.Errorf("failed to resolve target %s: %w", targetName, err)
+	}
+
+	target := config.LLVMTarget
+	if target == "" {
+		return export, fmt.Errorf("target '%s' does not have a valid LLVM target triple", targetName)
+	}
+
+	cpu := config.CPU
+	if cpu == "" {
+		return export, fmt.Errorf("target '%s' does not have a valid CPU configuration", targetName)
+	}
+	wasmProfile := WasmProfile(config.WasmProfile)
+	wasmProvider := WasmProvider(config.WasmProvider)
+	if !validWasmSelection(wasmProfile, wasmProvider) {
+		return Export{}, fmt.Errorf("target %q has unsupported WebAssembly profile/provider %q/%q", targetName, config.WasmProfile, config.WasmProvider)
+	}
+
+	// The downloaded Espressif toolchain carries all backends used by LLGo's
+	// embedded profiles on every supported host.
+	clangRoot, clangErr := getESPClangRoot(true)
+	if clangErr != nil {
+		err = clangErr
+		return
+	}
+	export.ClangRoot = clangRoot
+	export.CC = filepath.Join(clangRoot, "bin", "clang++")
+
+	// Convert target config to Export - only export necessary fields
+	export.BuildTags = config.BuildTags
+	export.GOOS = config.GOOS
+	export.GOARCH = config.GOARCH
+	export.WasmProfile = wasmProfile
+	export.WasmProvider = wasmProvider
+	export.ExtraFiles = config.ExtraFiles
+	export.LLVMTarget = config.LLVMTarget
+	export.TargetABI = config.TargetABI
+	export.BinaryFormat = config.BinaryFormat
+	export.FormatDetail = config.FormatDetail()
+	export.GDB = append([]string(nil), config.GDB...)
+	export.DebugInfo = targetDebugInfoPolicy(config.Linker, config.LLVMTarget)
+
+	// Set flashing/debugging configuration
+	export.Device = flash.Device{
+		Serial:     config.Serial,
+		SerialPort: config.SerialPort,
+		Flash: flash.Flash{
+			Method:            config.FlashMethod,
+			Command:           config.FlashCommand,
+			Flash1200BpsReset: config.Flash1200BpsReset == "true",
+		},
+		MSD: flash.MSD{
+			VolumeName:   config.MSDVolumeName,
+			FirmwareName: config.MSDFirmwareName,
+		},
+		OpenOCD: flash.OpenOCD{
+			Interface: config.OpenOCDInterface,
+			Transport: config.OpenOCDTransport,
+			Target:    config.OpenOCDTarget,
+		},
+	}
+
+	// Build environment map for template variable expansion
+	envs := buildEnvMap(env.LLGoROOT())
+	// Keep the unnamed output placeholder for build/run to fill after linking,
+	// while resolving stable target paths at configuration time.
+	export.Emulator = env.ExpandEnvWithDefault(config.Emulator, envs, "{}")
+
+	// Convert LLVMTarget, CPU, Features to CCFLAGS/LDFLAGS
+	// ICF off for Go pc-identity semantics (see the non-cross flags above).
+	ldflags := []string{"--icf=none"}
+	ccflags := []string{level.Flag()}
+	cflags := []string{"-Wno-override-module", "-Qunused-arguments", "-Wno-unused-command-line-argument"}
+	clangTarget := config.LLVMTarget
+	if clangTarget != "" {
+		cflags = append(cflags, "--target="+clangTarget)
+		ccflags = append(ccflags, "--target="+clangTarget)
+	}
+	// Expand template variables in cflags
+	expandedCFlags := env.ExpandEnvSlice(config.CFlags, envs)
+	cflags = append(cflags, expandedCFlags...)
+
+	if config.Linker == "ld.lld" && ltoMode.Enabled() {
+		if optFlag := ltoLinkerOptFlag(level); optFlag != "" {
+			ldflags = append(ldflags, optFlag)
+		}
+		cflags = append(cflags, ltoMode.ClangFlag())
+		ccflags = append(ccflags, ltoMode.ClangFlag())
+	}
+
+	// The following parameters are inspired by tinygo/builder/library.go
+	// Handle CPU configuration
+	if cpu != "" {
+		// X86 has deprecated the -mcpu flag, so we need to use -march instead.
+		// However, ARM has not done this.
+		if strings.HasPrefix(target, "i386") || strings.HasPrefix(target, "x86_64") {
+			ccflags = append(ccflags, "-march="+cpu)
+		} else if strings.HasPrefix(target, "avr") {
+			ccflags = append(ccflags, "-mmcu="+cpu)
+		} else {
+			ccflags = append(ccflags, "-mcpu="+cpu)
+		}
+
+		// For ld.lld linker, also add CPU info to linker flags
+		if config.Linker == "ld.lld" {
+			ldflags = append(ldflags, "-mllvm", "-mcpu="+cpu)
+		}
+	}
+
+	// Handle architecture-specific flags
+	canonicalArch := getCanonicalArchName(target)
+	switch canonicalArch {
+	case "arm":
+		if strings.Split(target, "-")[2] == "linux" {
+			ccflags = append(ccflags, "-fno-unwind-tables", "-fno-asynchronous-unwind-tables")
+		} else {
+			ccflags = append(ccflags, "-fshort-enums", "-fomit-frame-pointer", "-mfloat-abi=soft", "-fno-unwind-tables", "-fno-asynchronous-unwind-tables")
+		}
+	case "avr":
+		// AVR defaults to C float and double both being 32-bit. This deviates
+		// from what most code (and certainly compiler-rt) expects. So we need
+		// to force the compiler to use 64-bit floating point numbers for
+		// double.
+		ccflags = append(ccflags, "-mdouble=64")
+	case "riscv32":
+		// Check llvm-target to distinguish ESP RISC-V chips from others
+		// ESP series (riscv32-esp-elf) only supports RV32IMC (no A/D/F extensions)
+		// Other RISC-V32 targets support RV32IMAC (with A extension)
+		if config.LLVMTarget == "riscv32-esp-elf" {
+			ccflags = append(ccflags, "-march=rv32imc")
+		} else {
+			ccflags = append(ccflags, "-march=rv32imac")
+		}
+		ccflags = append(ccflags, "-fforce-enable-int128")
+	case "riscv64":
+		ccflags = append(ccflags, "-march=rv64gc")
+		// codegen option should be added to ldflags for lto
+		ldflags = append(ldflags, "-mllvm", "-march=rv64gc")
+	case "mips":
+		ccflags = append(ccflags, "-fno-pic")
+	}
+
+	// Handle soft float
+	if strings.Contains(config.Features, "soft-float") || strings.Contains(strings.Join(config.CFlags, " "), "soft-float") {
+		// Use softfloat instead of floating point instructions. This is
+		// supported on many architectures.
+		ccflags = append(ccflags, "-msoft-float")
+	} else {
+		if strings.HasPrefix(target, "armv5") {
+			// On ARMv5 we need to explicitly enable hardware floating point
+			// instructions: Clang appears to assume the hardware doesn't have a
+			// FPU otherwise.
+			ccflags = append(ccflags, "-mfpu=vfpv2")
+		}
+	}
+
+	// Handle Features
+	if config.Features != "" {
+		// Only add -mllvm flags for non-WebAssembly linkers
+		if config.Linker == "ld.lld" {
+			ldflags = append(ldflags, "-mllvm", "-mattr="+config.Features)
+		}
+	}
+
+	// Handle code generation configuration
+	if config.CodeModel != "" {
+		ccflags = append(ccflags, "-mcmodel="+config.CodeModel)
+		if ltoMode.Enabled() {
+			// codegen option should be added to ldflags for lto
+			ldflags = append(ldflags, "-mllvm", "-code-model="+config.CodeModel)
+		}
+	}
+	if config.TargetABI != "" {
+		ccflags = append(ccflags, "-mabi="+config.TargetABI)
+		if ltoMode.Enabled() {
+			// codegen option should be added to ldflags for lto
+			ldflags = append(ldflags, "-mllvm", "-target-abi="+config.TargetABI)
+		}
+	}
+	if config.RelocationModel != "" {
+		switch config.RelocationModel {
+		case "pic":
+			ccflags = append(ccflags, "-fPIC")
+		case "static":
+			ccflags = append(ccflags, "-fno-pic")
+		}
+	}
+
+	// Handle Linker - keep it for external usage
+	if config.Linker != "" {
+		export.Linker = config.Linker
+		if clangRoot != "" {
+			export.Linker = filepath.Join(clangRoot, "bin", config.Linker)
+		}
+	}
+	if config.LinkerScript != "" {
+		ldflags = append(ldflags, "-T", config.LinkerScript)
+	}
+	var libcIncludeDir []string
+	var compiledLibraryKey string
+	if config.Libc != "" || config.RTLib != "" {
+		var compilerKey string
+		compilerKey, err = compilerCacheKey(export.CC)
+		if err != nil {
+			return
+		}
+		compiledLibraryKey = compiledLibraryCacheKey(compilerKey, ccflags, ldflags)
+	}
+	ldflags = append(ldflags, "-L", env.LLGoROOT()) // search targets/*.ld
+
+	if config.Libc != "" {
+		var outputDir string
+		var libcLDFlags []string
+		var compileConfig compile.CompileConfig
+		baseDir := filepath.Join(cacheRoot(), "crosscompile")
+
+		outputDir, compileConfig, err = getLibcCompileConfigByName(baseDir, config.Libc, config.LLVMTarget, config.CPU, compiledLibraryKey)
+		if err != nil {
+			return
+		}
+		libcLDFlags, err = buildLibrary(compileConfig, outputDir, compile.CompileOptions{
+			CC:      export.CC,
+			Linker:  export.Linker,
+			CCFLAGS: ccflags,
+			LDFLAGS: ldflags,
+		})
+		if err != nil {
+			return
+		}
+		cflags = append(cflags, compileConfig.ExportCFlags...)
+		ldflags = append(ldflags, libcLDFlags...)
+
+		libcIncludeDir = compileConfig.ExportCFlags
+		export.Libc = config.Libc
+	}
+
+	if config.RTLib != "" {
+		var outputDir string
+		var rtLibLDFlags []string
+		var compileConfig compile.CompileConfig
+		baseDir := filepath.Join(cacheRoot(), "crosscompile")
+
+		rtKey := compiledLibraryCacheKey(compiledLibraryKey, libcIncludeDir)
+		outputDir, compileConfig, err = getRTCompileConfigByName(baseDir, config.RTLib, config.LLVMTarget, rtKey)
+		if err != nil {
+			return
+		}
+		rtLibLDFlags, err = buildLibrary(compileConfig, outputDir, compile.CompileOptions{
+			CC:      export.CC,
+			Linker:  export.Linker,
+			CCFLAGS: ccflags,
+			LDFLAGS: ldflags,
+			CFLAGS:  libcIncludeDir,
+		})
+		if err != nil {
+			return
+		}
+		ldflags = append(ldflags, rtLibLDFlags...)
+	}
+
+	// Combine with config flags and expand template variables
+	export.CFLAGS = cflags
+	export.CCFLAGS = ccflags
+	expandedLDFlags := env.ExpandEnvSlice(config.LDFlags, envs)
+	export.LDFLAGS = append(ldflags, expandedLDFlags...)
+
+	return export, nil
+}
+
+// Use extends the original Use function to support target-based configuration
+// If targetName is provided, it takes precedence over goos/goarch
+func Use(goos, goarch, targetName string, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
+	return UseWithGOARM(goos, goarch, "", targetName, forceEspClang, level, ltoMode, goGlobalDCE)
+}
+
+// UseWithGOARM is Use with an explicit Go ARM architecture setting. The
+// setting affects native GOARCH=arm clang and linker triples; named targets
+// retain their target configuration's LLVM triple.
+func UseWithGOARM(goos, goarch, goarm, targetName string, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool) (export Export, err error) {
+	return UseWithGOARMAndToolchain(goos, goarch, goarm, targetName, forceEspClang, level, ltoMode, goGlobalDCE, NativeToolchainInput{})
+}
+
+// UseWithGOARMAndToolchain is UseWithGOARM with explicit Go-compatible native
+// compiler commands. Named -target configurations intentionally ignore these
+// host commands and preserve their existing toolchain selection.
+func UseWithGOARMAndToolchain(goos, goarch, goarm, targetName string, forceEspClang bool, level optlevel.Level, ltoMode lto.Mode, goGlobalDCE bool, nativeInput NativeToolchainInput) (export Export, err error) {
+	if targetName == "" {
+		return useWithGOARMAndToolchain(goos, goarch, goarm, forceEspClang, level, ltoMode, goGlobalDCE, nativeInput, WasmProfileNone, WasmProviderNone)
+	}
+
+	// Resolve every named target before selecting its toolchain. Inherited wasm
+	// profile/provider metadata is authoritative, so aliases and downstream
+	// target definitions do not require another name switch here.
+	resolver := target.NewResolver(env.LLGoTargetsDir())
+	config, resolveErr := resolver.Resolve(targetName)
+	if resolveErr != nil {
+		return export, fmt.Errorf("failed to resolve target %s: %w", targetName, resolveErr)
+	}
+	wasmProfile := WasmProfile(config.WasmProfile)
+	wasmProvider := WasmProvider(config.WasmProvider)
+	if wasmProfile == WasmProfileNone && wasmProvider == WasmProviderNone {
+		return UseTarget(targetName, level, ltoMode)
+	}
+	if !validWasmSelection(wasmProfile, wasmProvider) {
+		return export, fmt.Errorf("target %q has unsupported WebAssembly profile/provider %q/%q", targetName, config.WasmProfile, config.WasmProvider)
+	}
+	export, err = useWithGOARMAndToolchain(config.GOOS, config.GOARCH, "", false, level, ltoMode, goGlobalDCE, nativeInput, wasmProfile, wasmProvider)
+	if err != nil {
+		return export, err
+	}
+	if export.LLVMTarget != config.LLVMTarget {
+		return export, fmt.Errorf(
+			"target %q declares LLVM target %q, but WebAssembly profile/provider %q/%q requires %q",
+			targetName, config.LLVMTarget, wasmProfile, wasmProvider, export.LLVMTarget,
+		)
+	}
+	export.GOOS = config.GOOS
+	export.GOARCH = config.GOARCH
+	export.Emulator = env.ExpandEnvWithDefault(config.Emulator, buildEnvMap(env.LLGoROOT()), "{}")
+	if wasmProvider == WasmProviderWASI && (targetName == "wasi" || targetName == "wasip1") {
+		export.Emulator = WASIThreadedEmulator
+	}
+	export.BuildTags = appendUniqueStrings(export.BuildTags, config.BuildTags...)
+	if wasmProvider == WasmProviderWASI {
+		export.WASIInitialMemory = config.WasmInitialMemory
+		// The base WASI exporter emits each default exactly once, using these
+		// same constants. Override those defaults before package linker flags.
+		for i, flag := range export.LDFLAGS {
+			switch {
+			case flag == defaultWASIStackFlag && config.WasmStackSize != 0:
+				export.LDFLAGS[i] = fmt.Sprintf("stack-size=%d", config.WasmStackSize)
+			case flag == defaultWASIMaxMemoryFlag && config.WasmMaxMemory != 0:
+				export.LDFLAGS[i] = fmt.Sprintf("-Wl,--max-memory=%d", config.WasmMaxMemory)
+			}
+		}
+	}
+	if wasmProvider == WasmProviderEmscripten {
+		// The existing raw js/wasm path remains browser/worker-only. Named
+		// Emscripten targets also promise their configured Node emulator, so
+		// enable that host without changing raw output or its glue size.
+		for i, flag := range export.LDFLAGS {
+			if flag == emscriptenBrowserEnvironment {
+				export.LDFLAGS[i] = emscriptenNamedEnvironment
+			}
+		}
+		// Asyncify otherwise keeps Node alive after exit(2), so fatal runtime
+		// errors neither terminate the process nor produce a useful status.
+		export.LDFLAGS = appendUniqueStrings(export.LDFLAGS, "-sEXIT_RUNTIME=1")
+	}
+	return export, nil
+}

@@ -2072,30 +2072,72 @@ func prebuiltTextContains(pc uintptr) bool {
 }
 
 // frameSymbolResultCache memoizes full symbolization results per pc. Deep
-// CallersFrames walks re-symbolize the same return addresses on every walk,
-// and a miss below costs a dladdr; entries are immutable heap nodes so the
-// benign-racy word-sized store never tears.
+// CallersFrames walks and Windows unwinds re-symbolize the same return
+// addresses on every walk, and a miss below allocates strings and a cache
+// node (or pays a dladdr). Use a 4-way set-associative table of immutable
+// heap nodes stored as atomic words so active frames congruent modulo the
+// cache stride cannot thrash a single slot and concurrent readers never
+// observe a torn entry.
 type frameSymbolResult struct {
 	pc  uintptr
 	sym pcSymbol
 }
 
-const frameSymbolResultCacheSize = 4096
+const (
+	frameSymbolResultCacheSets = 1024
+	frameSymbolResultCacheWays = 4
+)
 
-var frameSymbolResultCache [frameSymbolResultCacheSize]*frameSymbolResult
+var (
+	frameSymbolResultCache     [frameSymbolResultCacheSets][frameSymbolResultCacheWays]unsafe.Pointer
+	frameSymbolResultCacheNext [frameSymbolResultCacheSets]uint32
+)
 
 // minLegalPC: nothing below the zero page can be code. Values under it are
 // null-ish slots or shadow-stack synthetic markers, never return addresses.
 const minLegalPC = 4096
 
+func frameSymbolResultCacheIndex(pc uintptr) uintptr {
+	return ((pc >> 2) ^ (pc >> 12)) & (frameSymbolResultCacheSets - 1)
+}
+
+func cachedFrameSymbolResult(pc uintptr) *frameSymbolResult {
+	if pc <= minLegalPC {
+		return nil
+	}
+	set := &frameSymbolResultCache[frameSymbolResultCacheIndex(pc)]
+	for i := 0; i < frameSymbolResultCacheWays; i++ {
+		if p := latomic.LoadPointer(&set[i]); p != nil {
+			if e := (*frameSymbolResult)(p); e.pc == pc {
+				return e
+			}
+		}
+	}
+	return nil
+}
+
+func cacheFrameSymbolResult(pc uintptr, sym pcSymbol) {
+	setIndex := frameSymbolResultCacheIndex(pc)
+	set := &frameSymbolResultCache[setIndex]
+	entry := unsafe.Pointer(&frameSymbolResult{pc: pc, sym: sym})
+	for i := 0; i < frameSymbolResultCacheWays; i++ {
+		p := latomic.LoadPointer(&set[i])
+		if p == nil || (*frameSymbolResult)(p).pc == pc {
+			latomic.StorePointer(&set[i], entry)
+			return
+		}
+	}
+	way := (latomic.AddUint32(&frameSymbolResultCacheNext[setIndex], 1) - 1) & (frameSymbolResultCacheWays - 1)
+	latomic.StorePointer(&set[way], entry)
+}
+
 func frameSymbol(pc uintptr) pcSymbol {
 	if pc > minLegalPC {
-		i := (pc >> 2) & uintptr(len(frameSymbolResultCache)-1)
-		if e := frameSymbolResultCache[i]; e != nil && e.pc == pc {
+		if e := cachedFrameSymbolResult(pc); e != nil {
 			return e.sym
 		}
 		sym := frameSymbolUncached(pc)
-		frameSymbolResultCache[i] = &frameSymbolResult{pc: pc, sym: sym}
+		cacheFrameSymbolResult(pc, sym)
 		return sym
 	}
 	return frameSymbolUncached(pc)

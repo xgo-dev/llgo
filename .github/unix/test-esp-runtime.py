@@ -21,7 +21,7 @@ def run(command, env, cwd, log):
 
 def validate(root, output):
     pins = json.loads((Path(__file__).resolve().parents[2] /
-                       'internal/crosscompile/espressif.json').read_text())
+                       'cmd/compiler/crosscompile/espressif.json').read_text())
     goos = {'Darwin': 'darwin', 'Linux': 'linux'}[platform.system()]
     arch = {'arm64': 'aarch64', 'aarch64': 'aarch64',
             'x86_64': 'x86_64', 'AMD64': 'x86_64'}[platform.machine()]

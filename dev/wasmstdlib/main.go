@@ -253,7 +253,11 @@ func subprocess(root string, c command) *exec.Cmd {
 	// An empty GOFLAGS alone falls back to flags saved by go env -w, so also
 	// isolate persistent Go configuration. Explicit process environment such
 	// as GOPROXY remains available for dependency downloads.
-	env := map[string]string{"LLGO_ROOT": root, "GOWORK": "off", "GOENV": "off", "GOFLAGS": ""}
+	gowork := "off"
+	if info, err := os.Stat(filepath.Join(root, "go.work")); err == nil && !info.IsDir() {
+		gowork = filepath.Join(root, "go.work")
+	}
+	env := map[string]string{"LLGO_ROOT": root, "GOWORK": gowork, "GOENV": "off", "GOFLAGS": ""}
 	for k, v := range c.Env {
 		env[k] = v
 	}

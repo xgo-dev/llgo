@@ -1,0 +1,91 @@
+[TypeChildren]
+*_llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source:
+    _llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source
+[]_llgo_uint8:
+    _llgo_uint8
+_llgo_func$8rsrSd_r3UHd_2DiYTyaOKR7BYkei4zw5ysG35KF38w:
+    _llgo_error
+_llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk:
+    []_llgo_uint8
+    _llgo_error
+    _llgo_int
+_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
+    _llgo_string
+_llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source:
+    *_llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source
+
+[OrdinaryEdges]
+*_llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source:
+    _llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequalptr
+[]_llgo_uint8:
+    _llgo_uint8
+_llgo_error:
+    _llgo_iface$Fh8eUJ-Gw4e6TYuajcFIOSCuqSPKAt5nS4ow7xeGXEU$imethods
+    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
+_llgo_func$8rsrSd_r3UHd_2DiYTyaOKR7BYkei4zw5ysG35KF38w:
+    _llgo_func$8rsrSd_r3UHd_2DiYTyaOKR7BYkei4zw5ysG35KF38w$out
+_llgo_func$8rsrSd_r3UHd_2DiYTyaOKR7BYkei4zw5ysG35KF38w$out:
+    _llgo_error
+_llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk:
+    _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk$in
+    _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk$out
+_llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk$in:
+    []_llgo_uint8
+_llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk$out:
+    _llgo_error
+    _llgo_int
+_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to:
+    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out
+_llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to$out:
+    _llgo_string
+_llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source:
+    *_llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal0
+_llgo_iface$Fh8eUJ-Gw4e6TYuajcFIOSCuqSPKAt5nS4ow7xeGXEU$imethods:
+    _llgo_func$zNDVRsWTIpUPKouNUS805RGX--IV9qVK8B31IZbg5to
+_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw:
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw$imethods
+    github.com/xgo-dev/llgo/runtime/internal/runtime.interequal
+_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw$imethods:
+    _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
+_llgo_int:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal64
+_llgo_itab$-SbJ0MgP08NImv_BPbxtZs8DkIWyDpeKsdILYRi_BSI:
+    _llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw
+    github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.(*Source).Read
+_llgo_string:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.strequal
+_llgo_uint8:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.memequal8
+main.init:
+    github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.init
+    main.init$guard
+main.main:
+    _llgo_itab$-SbJ0MgP08NImv_BPbxtZs8DkIWyDpeKsdILYRi_BSI
+    github.com/xgo-dev/llgo/runtime/internal/runtime.AllocAtomicU
+    main.use
+main.use:
+    github.com/xgo-dev/llgo/runtime/internal/runtime.IfacePtrDataBuffer
+
+[UseIface]
+main.main:
+    _llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source
+
+[UseIfaceMethod]
+main.use:
+    _llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw Read _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
+
+[MethodInfo]
+*_llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source:
+    0 Close _llgo_func$8rsrSd_r3UHd_2DiYTyaOKR7BYkei4zw5ysG35KF38w github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.(*Source).Close github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.(*Source).Close
+    1 Read _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.(*Source).Read github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.(*Source).Read
+_llgo_github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source:
+    0 Close _llgo_func$8rsrSd_r3UHd_2DiYTyaOKR7BYkei4zw5ysG35KF38w github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.(*Source).Close github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source.Close
+    1 Read _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.(*Source).Read github.com/xgo-dev/llgo/cmd/cl/_testmeta/interface_imported/api.Source.Read
+
+[InterfaceInfo]
+_llgo_iface$uycIKA3bbxRhudEjW1hHKWKdLqHQsCVy8NdW1bkQmNw:
+    Read _llgo_func$G2hch9Iy9DrhKKsg70PbL54bK-XSl-1IUUORN17J2Dk
+

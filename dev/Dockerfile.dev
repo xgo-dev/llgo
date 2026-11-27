@@ -111,9 +111,10 @@ ENV GOTOOLCHAIN="local"
 ENV LLGO_ASSETS_DIR="/opt/llgo-assets"
 
 WORKDIR /tmp/llgo-mod
-COPY go.mod go.sum ./
+COPY go.mod go.work ./
+COPY cmd/go.mod cmd/go.sum ./cmd/
 COPY runtime/go.mod runtime/go.sum ./runtime/
-RUN go mod download
+RUN cd cmd && go mod download
 
 ARG TARGETARCH
 RUN set -eux; \

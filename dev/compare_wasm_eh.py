@@ -20,7 +20,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CPP = ROOT / "dev/testdata/wasm-eh/exception.cpp"
-GO = ROOT / "internal/build/testdata/wasm-runtime"
+GO = ROOT / "cmd/compiler/build/testdata/wasm-runtime"
 GO_CPP = ROOT / "dev/testdata/wasm-eh/go-cpp-boundary"
 EXPECTED = "cpp catch and sjlj ok"
 

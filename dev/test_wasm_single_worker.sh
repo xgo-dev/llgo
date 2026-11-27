@@ -6,15 +6,15 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${repo_root}/dev/wasm_ci_report.sh"
 llgo_cmd="${LLGO:-llgo}"
 node_cmd="${NODE:-node}"
-scheduler_fixture="${repo_root}/internal/build/testdata/wasm-scheduler"
-timer_fixture="${repo_root}/internal/build/testdata/wasm-timers"
-callback_fixture="${repo_root}/internal/build/testdata/wasm-callback"
-gc_fixture="${repo_root}/internal/build/testdata/wasm-gc"
-lifecycle_fixture="${repo_root}/internal/build/testdata/wasm-lifecycle"
-test_fixture="${repo_root}/internal/build/testdata/wasm-test"
-runner_test_fixture="${repo_root}/internal/build/testdata/wasm-runner-test"
-runner_run_fixture="${repo_root}/internal/build/testdata/wasm-runner-run"
-secondary_test_fixture="${repo_root}/internal/build/testdata/wasm-test-secondary"
+scheduler_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-scheduler"
+timer_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-timers"
+callback_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-callback"
+gc_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-gc"
+lifecycle_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-lifecycle"
+test_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-test"
+runner_test_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-runner-test"
+runner_run_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-runner-run"
+secondary_test_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-test-secondary"
 suite="${1:-all}"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-wasm-single-worker.XXXXXX")"
 report_file="${work_dir}/coverage.tsv"
@@ -104,7 +104,7 @@ expect_llgo_runner_failure() {
 		"profile=${profile}" \
 		'artifact="' \
 		"runner=\"${runner}\"" \
-		'package="github.com/xgo-dev/llgo/internal/build/testdata/wasm-scheduler"' \
+		'package="github.com/xgo-dev/llgo/cmd/compiler/build/testdata/wasm-scheduler"' \
 		"status=exit" \
 		"exit_code=2"; do
 		grep -Fq "${expected}" <<<"${output}"
@@ -137,7 +137,7 @@ expect_llgo_runner_timeout() {
 		"profile=${profile}" \
 		'artifact="' \
 		"runner=\"${runner}\"" \
-		'package="github.com/xgo-dev/llgo/internal/build/testdata/wasm-scheduler"' \
+		'package="github.com/xgo-dev/llgo/cmd/compiler/build/testdata/wasm-scheduler"' \
 		"status=timeout" \
 		"timeout=1s"; do
 		grep -Fq "${expected}" <<<"${output}"
@@ -315,7 +315,7 @@ run_llgo_go_profile_run() {
 if [[ "${suite}" == "all" || "${suite}" == "runtime" ]]; then
 # Check finalizer registry scaling and queue removal without timing or
 # conservative-root assumptions, alongside the real Wasm lifecycle fixtures.
-go -C "${repo_root}" test ./internal/build -run '^TestWasmFinalizerCandidates$' -count=1
+go -C "${repo_root}/cmd" test ./compiler/build -run '^TestWasmFinalizerCandidates$' -count=1
 
 # Single-worker browser targets exercise Fiber/Asyncify scheduling.
 # W32 pthread scheduling and segmented GC live in test_wasm_wasi_threads.py.

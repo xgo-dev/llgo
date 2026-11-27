@@ -20,7 +20,7 @@ for target in "$@"; do
 		expected="${test_case#*:}"
 		module="${work_dir}/${target}-${size}.mjs"
 		"${llgo_cmd}" build -target "${target}" -goroutine-stack-size="${size}" \
-			-o "${module}" "${repo_root}/internal/build/testdata/wasm-stack-bounds"
+			-o "${module}" "${repo_root}/cmd/compiler/build/testdata/wasm-stack-bounds"
 		status=0
 		if command -v timeout >/dev/null 2>&1; then
 			timeout 60s "${node_cmd}" "${runner}" "${module}" > "${module}.log" 2>&1 || status=$?

@@ -1,0 +1,319 @@
+package cl
+
+import (
+	"github.com/xgo-dev/llgo/types"
+	"go/ast"
+	"go/token"
+	"strings"
+	"sync"
+
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/locality"
+	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
+	"github.com/xgo-dev/llgo/directive"
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llvm"
+)
+
+// These are frontend import costs, not LLVM instruction counts. LLVM makes
+// the final call-site inlining decision after normal lowering. Like Go's
+// inliner, charge calls whose bodies cannot be imported more than simple ops.
+const (
+	inlineBodyBudget   = 80
+	inlineCallCost     = 57
+	inlineModuleBudget = 1024
+	inlineImportDepth  = 5
+)
+
+type inlineCost struct {
+	cost      int
+	recursive bool
+	limited   bool
+	globals   []*ssa.Global
+}
+
+type inlineCostEntry struct {
+	once sync.Once
+	info inlineCost
+}
+
+// Shared for one compilation, including dependencies whose backend archive is
+// cached. Each root candidate is analyzed once; nested depth/cycle results stay
+// local to that analysis so they cannot affect another root's decision.
+type inlineFacts struct {
+	mu    sync.RWMutex
+	costs map[*ssa.Function]*inlineCostEntry
+}
+
+func newInlineFacts() *inlineFacts {
+	return &inlineFacts{costs: make(map[*ssa.Function]*inlineCostEntry)}
+}
+
+func (f *inlineFacts) cost(fn *ssa.Function) int {
+	return f.info(fn).cost
+}
+
+func (f *inlineFacts) info(fn *ssa.Function) inlineCost {
+	f.mu.RLock()
+	entry := f.costs[fn]
+	f.mu.RUnlock()
+	if entry == nil {
+		f.mu.Lock()
+		entry = f.costs[fn]
+		if entry == nil {
+			entry = &inlineCostEntry{}
+			f.costs[fn] = entry
+		}
+		f.mu.Unlock()
+	}
+	entry.once.Do(func() {
+		entry.info = analyzeInlineCost(fn, make(map[*ssa.Function]inlineCost), make(map[*ssa.Function]bool))
+	})
+	return entry.info
+}
+
+func analyzeInlineCost(fn *ssa.Function, costs map[*ssa.Function]inlineCost, active map[*ssa.Function]bool) inlineCost {
+	reject := inlineCost{cost: inlineBodyBudget + 1}
+	if fn == nil {
+		return reject
+	}
+	if c, ok := costs[fn]; ok {
+		return c
+	}
+	if active[fn] {
+		return inlineCost{cost: reject.cost, recursive: true}
+	}
+	if len(active) >= 32 {
+		// Reject the unresolved chain as a whole, including a possible cycle
+		// beyond the analysis limit, rather than treating it as a cheap call.
+		return inlineCost{cost: reject.cost, limited: true}
+	}
+	result := reject
+	defer func() {
+		if !result.limited {
+			costs[fn] = result
+		}
+	}()
+	if fn.Pkg == nil || fn.Parent() != nil ||
+		len(fn.Blocks) == 0 || len(fn.FreeVars) != 0 || len(fn.AnonFuncs) != 0 || fn.Recover != nil ||
+		fn.Signature.Variadic() ||
+		fn.Name() == "init" || strings.HasPrefix(fn.Name(), "init#") ||
+		inlineProhibited(fn) {
+		return reject
+	}
+	active[fn] = true
+	defer delete(active, fn)
+	cost := 0
+	var globals []*ssa.Global
+	seenGlobals := make(map[*ssa.Global]bool)
+	for _, block := range fn.Blocks {
+		for _, succ := range block.Succs {
+			if succ.Dominates(block) {
+				return reject // Keep loops out of the initial import policy.
+			}
+		}
+		for _, instr := range block.Instrs {
+			switch v := instr.(type) {
+			case *ssa.DebugRef:
+				continue
+			case *ssa.Go, *ssa.Defer, *ssa.RunDefers, *ssa.MakeClosure, *ssa.Panic:
+				return reject
+			case *ssa.Call:
+				if builtin, ok := v.Call.Value.(*ssa.Builtin); ok {
+					if builtin.Name() == "recover" {
+						return reject
+					}
+				} else {
+					callee := analyzeInlineCost(v.Call.StaticCallee(), costs, active)
+					if callee.recursive || callee.limited {
+						result = callee
+						return result
+					}
+					if callee.cost <= inlineBodyBudget {
+						cost += callee.cost
+					} else {
+						cost += inlineCallCost
+					}
+				}
+			}
+			for _, operand := range instr.Operands(nil) {
+				if operand != nil {
+					if global, ok := (*operand).(*ssa.Global); ok && !seenGlobals[global] {
+						seenGlobals[global] = true
+						globals = append(globals, global)
+					}
+				}
+			}
+			cost++
+			if cost > inlineBodyBudget {
+				return reject
+			}
+		}
+	}
+	result = inlineCost{cost: cost, globals: globals}
+	return result
+}
+
+// inlineProhibited checks declaration restrictions shared by the original and
+// replacement. Body availability and cost apply only to the resolved target.
+func inlineProhibited(fn *ssa.Function) bool {
+	if fn.Pkg != nil {
+		if kind, _ := PkgKindOf(fn.Pkg.Pkg); kind == PkgDeclOnly {
+			return true // Declaration packages do not own executable Go bodies.
+		}
+	}
+	if fn.Synthetic != "" || fn.Origin() != nil ||
+		fn.Signature.RecvTypeParams().Len() != 0 || fn.Signature.TypeParams().Len() != 0 {
+		return true
+	}
+	decl, _ := fn.Syntax().(*ast.FuncDecl)
+	if decl == nil {
+		return false
+	}
+	for _, d := range directive.ParseGroup(decl.Doc) {
+		switch d.Name {
+		case "go:noinline", "go:cgo_unsafe_args", "go:uintptrkeepalive", "go:uintptrescapes",
+			"go:yeswritebarrierrec", "go:norace", "go:nocheckptr",
+			"llgo:env", "llgo:link", "go:linkname":
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveInlineTarget selects the same implementation for frontend body
+// preloading and backend import. An unresolved patched method must not fall
+// back to its original body. Body availability and cost are checked separately.
+func ResolveInlineTarget(fn *ssa.Function, patches Patches) *ssa.Function {
+	if fn == nil || fn.Pkg == nil || inlineProhibited(fn) {
+		return nil
+	}
+	patch, ok := patches[llvmgen.PathOf(fn.Pkg.Pkg)]
+	if !ok {
+		return fn
+	}
+	if patch.Alt == nil {
+		return nil
+	}
+	recv := fn.Signature.Recv()
+	if recv == nil {
+		if replacement := patch.Alt.Func(fn.Name()); replacement != nil {
+			return replacement
+		}
+		return fn
+	}
+	receiver := recvNamedOk(recv.Type())
+	if receiver == nil {
+		return nil
+	}
+	// Use SSA members, not the merged type scope: the latter may contain
+	// original types and has a different package identity after lowering.
+	member := patch.Alt.Type(receiver.Obj().Name())
+	if member == nil {
+		// Even an original-only type may be excluded by skip directives.
+		// The merged scope alone cannot prove ownership of its method bodies.
+		return nil
+	}
+	replacement, ok := types.Unalias(member.Type()).(*types.Named)
+	if !ok {
+		return nil
+	}
+	for i := 0; i < replacement.NumMethods(); i++ {
+		method := replacement.Method(i)
+		if method.Name() == fn.Name() {
+			return patch.Alt.Prog.FuncValue(method)
+		}
+	}
+	return nil
+}
+
+// importInlineBody supplies an optimization-only definition for a direct
+// cross-package call. The defining package remains the owner of the real
+// function entry, including when its address escapes or LLVM declines to inline.
+func (p *context) importInlineBody(original *ssa.Function) {
+	if disableInline || p.options.DisableInlineBodyImports ||
+		p.prog.Target().OptLevel == optlevel.O0 || p.inlineFacts == nil ||
+		p.options.DebuggerFrames || p.options.ShadowStack ||
+		p.inlineCost >= inlineModuleBudget || original.Pkg == nil || original.Pkg == p.goPkg ||
+		llvmgen.PathOf(original.Pkg.Pkg) == p.pkg.Path() {
+		return
+	}
+	if p.inlineChecked[original] {
+		return
+	}
+	if p.inlineChecked == nil {
+		p.inlineChecked = make(map[*ssa.Function]bool)
+	}
+	p.inlineChecked[original] = true
+	depth := p.inlineImports[p.goFn] + 1
+	if depth > inlineImportDepth {
+		return
+	}
+	fn := ResolveInlineTarget(original, p.patches)
+	if fn == nil {
+		return
+	}
+	facts := p.inlineFacts.info(fn)
+	cost := facts.cost
+	if cost > inlineBodyBudget || p.inlineCost+cost > inlineModuleBudget ||
+		p.callerTracking != nil && runtimeCallerFuncSet(p.callerTracking, fn.Pkg)[fn] ||
+		needsRuntimeStackNoInline(fn.Pkg.Pkg, fn) || p.functionUsesRecover(fn) {
+		return
+	}
+	// Locality storage is owned by its defining package and deliberately hidden
+	// behind functions. Do not import bodies that expose that internal ABI.
+	for _, global := range facts.globals {
+		if global.Pkg == nil || global.Pkg.Pkg == nil {
+			return
+		}
+		if info, ok := p.resolveLocality(global.Pkg.Pkg, llvmgen.FullName(global.Pkg.Pkg, global.Name())); ok && info.Locality != locality.None {
+			return
+		}
+	}
+	_, name, kind := p.funcName(original)
+	_, replacementName, replacementKind := p.funcName(fn)
+	if kind != goFunc || replacementKind != goFunc || name != replacementName ||
+		!types.Identical(p.patchType(original.Signature), p.patchType(fn.Signature)) {
+		return
+	}
+	// Signature identity excludes receivers. Check their mapped types as
+	// well before giving an existing call the replacement method's body.
+	if recv := original.Signature.Recv(); recv != nil {
+		replacementRecv := fn.Signature.Recv()
+		if replacementRecv == nil || !types.Identical(p.patchType(recv.Type()), p.patchType(replacementRecv.Type())) {
+			return
+		}
+	}
+	if existing := p.pkg.Module().NamedFunction(name); !existing.IsNil() && !existing.IsDeclaration() {
+		return // Never turn an existing real definition into an imported copy.
+	}
+	if p.inlineImports == nil {
+		p.inlineImports = make(map[*ssa.Function]int)
+	}
+	if p.inlineImports[fn] != 0 {
+		return
+	}
+	p.inlineImports[fn] = depth
+	p.inlineCost += cost
+	// Queue declaration/body construction between function lowerings: lowering
+	// an imported body recursively would overwrite the current builder's state.
+	p.inits = append(p.inits, func() {
+		if existing := p.pkg.Module().NamedFunction(name); !existing.IsNil() && !existing.IsDeclaration() {
+			return
+		}
+		if decl, ok := fn.Syntax().(*ast.FuncDecl); ok {
+			fields := collectAddrOfFieldSelectors([]*ast.File{{Decls: []ast.Decl{decl}}})
+			if len(fields) != 0 && p.addrOfFieldAddrs == nil {
+				p.addrOfFieldAddrs = make(map[token.Pos]none)
+			}
+			for pos := range fields {
+				p.addrOfFieldAddrs[pos] = none{}
+			}
+		}
+		state := p.state
+		p.state = pkgNormal
+		entry, _, _ := p.compileFuncDecl(p.pkg, fn)
+		p.state = state
+		p.pkg.Module().NamedFunction(entry.Name()).SetLinkage(llvm.AvailableExternallyLinkage)
+	})
+}

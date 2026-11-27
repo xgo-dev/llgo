@@ -8,11 +8,11 @@ llgo_cmd="${LLGO:-llgo}"
 node_cmd="${NODE:-node}"
 wasm_tools_cmd="${WASM_TOOLS:-wasm-tools}"
 wasm_opt_cmd="${WASMOPT:-wasm-opt}"
-worker_fixture="${repo_root}/internal/build/testdata/wasm-workers"
-hardening_fixture="${repo_root}/internal/build/testdata/wasm-hardening"
+worker_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-workers"
+hardening_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-hardening"
 js_worker_fixture="${repo_root}/test/wasm/js-workers"
 reflect_worker_fixture="${repo_root}/test/wasm/reflect-workers"
-test_fixture="${repo_root}/internal/build/testdata/wasm-test"
+test_fixture="${repo_root}/cmd/compiler/build/testdata/wasm-test"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/llgo-wasm-workers.XXXXXX")"
 browser_server=
 
@@ -215,7 +215,7 @@ run_filesystem_acceptance() {
 			if [[ "${workers}" = 2 ]]; then mode=workers; fi
 			module="${work_dir}/fs-${mode}-${target}.mjs"
 			LLGO_WASM_WORKERS="${workers}" "${llgo_cmd}" build -target "${target}" \
-				-o "${module}" "${repo_root}/internal/build/testdata/wasm-browser-fs"
+				-o "${module}" "${repo_root}/cmd/compiler/build/testdata/wasm-browser-fs"
 			"${wasm_tools_cmd}" validate --features all "${module%.mjs}.wasm"
 			local stress_args=()
 			if [[ "${workers}" = 2 ]]; then stress_args=(--gc-stress); fi

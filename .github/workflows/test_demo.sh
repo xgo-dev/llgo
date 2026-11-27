@@ -169,7 +169,9 @@ run_case() {
   fi
 
   if [ "$kind" = cmptest ]; then
-    if (cd "$dir" && GOTOOLCHAIN=local GOWORK=off llgo cmptest -p=1 .); then
+    # _cmptest fixtures live in the root module and import workspace packages
+    # such as cmd/xtool; let Go discover the repository go.work.
+    if (cd "$dir" && GOTOOLCHAIN=local GOWORK= llgo cmptest -p=1 .); then
       echo "PASS"
       return
     fi

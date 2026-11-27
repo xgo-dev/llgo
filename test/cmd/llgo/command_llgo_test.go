@@ -88,7 +88,7 @@ func repositoryRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "runtime", "go.mod")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)

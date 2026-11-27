@@ -21,13 +21,13 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/xgo-dev/llgo/cmd/compiler/crosscompile"
+	"github.com/xgo-dev/llgo/cmd/compiler/lto"
+	"github.com/xgo-dev/llgo/cmd/compiler/mockable"
+	"github.com/xgo-dev/llgo/cmd/compiler/monitor"
+	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 	"github.com/xgo-dev/llgo/cmd/internal/base"
 	"github.com/xgo-dev/llgo/cmd/internal/flags"
-	"github.com/xgo-dev/llgo/internal/crosscompile"
-	"github.com/xgo-dev/llgo/internal/lto"
-	"github.com/xgo-dev/llgo/internal/mockable"
-	"github.com/xgo-dev/llgo/internal/monitor"
-	"github.com/xgo-dev/llgo/internal/optlevel"
 )
 
 // Cmd represents the monitor command.

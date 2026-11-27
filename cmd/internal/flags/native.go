@@ -22,9 +22,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/cmd/compiler/quoted"
 	"github.com/xgo-dev/llgo/cmd/internal/compat"
 	"github.com/xgo-dev/llgo/cmd/internal/gocommand"
-	"github.com/xgo-dev/llgo/internal/quoted"
 )
 
 // ValidateMemProfileRate accepts the full-allocation mode implemented by LLGo.

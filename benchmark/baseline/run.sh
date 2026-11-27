@@ -31,10 +31,15 @@ if [[ "$host_goos" == windows && "$llgo_output" != *.exe ]]; then
   llgo_output+=.exe
 fi
 
+source_gowork=off
+if [[ -f "$source_root/go.work" ]]; then
+  source_gowork="$source_root/go.work"
+fi
+
 if [[ -z "${LLGO_BENCHMARK_PREBUILT_LLGO:-}" ]]; then
   (
     cd "$source_root"
-    LLGO_ROOT="$source_root" go build -p=1 -o "$llgo_output" ./cmd/llgo
+    GOWORK="$source_gowork" LLGO_ROOT="$source_root" go build -p=1 -o "$llgo_output" ./cmd/llgo
   )
 fi
 
@@ -84,13 +89,17 @@ run_llgo_timer_samples() {
 
 (
   cd "$source_root"
-  GOMAXPROCS=1 LLGO_ROOT="$source_root" go test \
+  bench_pkgs=(./internal/clang ./internal/build/funcinfo)
+  if [[ -d cmd/compiler/clang ]]; then
+    bench_pkgs=(./cmd/compiler/clang ./cmd/compiler/build/funcinfo)
+  fi
+  GOMAXPROCS=1 GOWORK="$source_gowork" LLGO_ROOT="$source_root" go test \
     -run '^$' \
     -bench '^(BenchmarkMergeCompilerFlags|BenchmarkMergeLinkerFlags|BenchmarkLookupPCRandom)$' \
     -benchtime=250ms \
     -count=5 \
     -cpu=1 \
-    ./internal/clang ./internal/build/funcinfo
+    "${bench_pkgs[@]}"
 ) | tee -a "$go_results"
 
 # Run one benchmark source through native Go and the compiler revision under
@@ -125,7 +134,7 @@ run_llgo_timer_samples '^BenchmarkTimer(RearmStopped|ResetActive|ResetHeap1024)$
 
 (
   cd "$source_root"
-  GOMAXPROCS=1 LLGO_ROOT="$source_root" "$llgo_output" test \
+  GOMAXPROCS=1 GOWORK="$source_gowork" LLGO_ROOT="$source_root" "$llgo_output" test \
     -run '^$' \
     -bench '^(BenchmarkRuntimeGetG|BenchmarkGlobal(Read|Write)|Benchmark(DirectCall|InterfaceCall|Defer|ChannelBuffered|ChannelHandoff))$' \
     -benchtime=250ms \
@@ -138,7 +147,7 @@ run_llgo_timer_samples '^BenchmarkTimer(RearmStopped|ResetActive|ResetHeap1024)$
 # instead of letting testing auto-calibrate to millions of host threads.
 (
   cd "$source_root"
-  GOMAXPROCS=1 LLGO_ROOT="$source_root" "$llgo_output" test \
+  GOMAXPROCS=1 GOWORK="$source_gowork" LLGO_ROOT="$source_root" "$llgo_output" test \
     -run '^$' \
     -bench '^BenchmarkGoroutine$' \
     -benchtime=100x \

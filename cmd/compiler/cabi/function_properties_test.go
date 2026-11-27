@@ -1,0 +1,20 @@
+package cabi
+
+import (
+	"testing"
+
+	"github.com/xgo-dev/llgo/cmd/compiler/abi/abitest"
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llvm"
+)
+
+func TestAggregateLoweringFunctionProperties(t *testing.T) {
+	llvm.InitializeAllTargets()
+	llvm.InitializeAllTargetMCs()
+	llvm.InitializeAllTargetInfos()
+	abitest.CheckFunctionProperties(t, "{ i64, i64, i64 }", func(mod llvm.Module) {
+		prog := llvmgen.NewProgram(&llvmgen.Target{GOOS: "linux", GOARCH: "amd64"})
+		defer prog.Dispose()
+		NewTransformer(prog, "x86_64-unknown-linux-gnu", "", true).TransformModule("test", mod)
+	})
+}

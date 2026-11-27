@@ -11,5 +11,5 @@ fi
 
 (
 	cd "${repo_root}/runtime"
-	"${repo_root}/dev/with_go_version.sh" "$1" go test ./...
+	GOWORK=off "${repo_root}/dev/with_go_version.sh" "$1" go test ./...
 )

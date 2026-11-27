@@ -15,9 +15,14 @@ mkdir -p "$(dirname "$2")" "$3"
 llgo_output="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
 result_directory="$(cd "$3" && pwd)"
 
+source_gowork=off
+if [[ -f "$source_root/go.work" ]]; then
+  source_gowork="$source_root/go.work"
+fi
+
 (
   cd "$source_root"
-  LLGO_ROOT="$source_root" go build -p=1 -o "$llgo_output" ./cmd/llgo
+  GOWORK="$source_gowork" LLGO_ROOT="$source_root" go build -p=1 -o "$llgo_output" ./cmd/llgo
 )
 
 (

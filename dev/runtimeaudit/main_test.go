@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/build"
 )
 
 func TestAuditCommand(t *testing.T) {

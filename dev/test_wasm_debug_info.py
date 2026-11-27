@@ -14,7 +14,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURE = ROOT / "internal/build/testdata/wasm-debug"
+FIXTURE = ROOT / "cmd/compiler/build/testdata/wasm-debug"
 PROFILES = {"j32": "emscripten", "j64": "emscripten-memory64", "w32": "wasi"}
 SOURCE_LINES = {"main.go": 12, "probe.cpp": 4}
 

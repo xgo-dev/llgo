@@ -35,7 +35,7 @@ def _load_schema():
     candidates = [source.with_name(LLGO_DEBUGGER_SCHEMA_FILENAME)]
     if len(source.parents) > 3:
         candidates.append(
-            source.parents[3] / "internal" / "debugabi" / "schema_v1.json")
+            source.parents[3] / "cmd" / "compiler" / "debugabi" / "schema_v1.json")
     errors = []
     for path in candidates:
         try:

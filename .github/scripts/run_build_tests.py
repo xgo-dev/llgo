@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every internal/build test in isolated processes within one CI job."""
+"""Run every cmd/compiler/build test in isolated processes within one CI job."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -15,7 +15,7 @@ import threading
 import time
 
 
-PACKAGE = "github.com/xgo-dev/llgo/internal/build"
+PACKAGE = "github.com/xgo-dev/llgo/cmd/compiler/build"
 
 
 def shard_index(name, workers):
@@ -100,7 +100,7 @@ def run(args):
                                      dir=os.getenv("RUNNER_TEMP")) as temporary:
         temporary = Path(temporary).resolve()
         go_test = ["go", "test", "-count=1", "-timeout=45m",
-                   "-coverpkg=./...", "-covermode=set", "-benchtime=1x"]
+                   "-coverpkg=./...,./cmd/...", "-covermode=set", "-benchtime=1x"]
         if args.overlay:
             go_test.append("-overlay=" + args.overlay)
         if args.ldflags:
@@ -108,13 +108,13 @@ def run(args):
         # Compile before starting workers so they can reuse the same Go build
         # cache. Keep cmd/go responsible for coverage metadata, helper-process
         # GOCOVERDIR propagation, overlays, JSON output, and test exit status.
-        progress("Listing all internal/build tests and preparing their shared build cache")
-        listing = subprocess.check_output(go_test + ["-list=.", "./internal/build"],
+        progress("Listing all cmd/compiler/build tests and preparing their shared build cache")
+        listing = subprocess.check_output(go_test + ["-list=.", "./cmd/compiler/build"],
                                           cwd=root, text=True, encoding="utf-8")
         names = [line for line in listing.splitlines()
                  if line.startswith(("Test", "Example", "Fuzz", "BenchmarkGo126"))]
         if not names:
-            raise ValueError("internal/build listed no tests")
+            raise ValueError("cmd/compiler/build listed no tests")
         groups = partition(names, args.workers * args.batches)
         timing_dir = root / "go-test-timings"
         timing_dir.mkdir(exist_ok=True)
@@ -146,7 +146,7 @@ def run(args):
                 command = go_test + ["-json", "-run=" + selection(tests),
                                      "-bench=" + selection(benchmarks),
                                      "-coverprofile=" + str(profiles[shard]),
-                                     "-exec=" + executor, "./internal/build"]
+                                     "-exec=" + executor, "./cmd/compiler/build"]
                 progress(f"Starting build worker {index + 1}/{args.workers}, "
                          f"batch {batch + 1}/{args.batches}: "
                          f"{len(tests)} tests, {len(benchmarks)} benchmarks")
@@ -194,7 +194,7 @@ def run(args):
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--run-binary":
         root, gomaxprocs, *command = sys.argv[2:]
-        directory = Path(root) / "internal/build"
+        directory = Path(root) / "cmd/compiler/build"
         return subprocess.call(command, cwd=directory,
                                env={**os.environ, "LLGO_ROOT": root,
                                     "PWD": str(directory),

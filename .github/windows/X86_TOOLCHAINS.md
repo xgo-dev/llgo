@@ -4,9 +4,9 @@ Official upstream LLVM 22 does not publish the native i686 development SDK
 needed for a 32-bit LLGo host. LLGo downloads the Windows x86 LLVM SDK from
 [xgo-dev/espressif-llvm-project-prebuilt's 22.1.4_20261020 release](https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/tag/22.1.4_20261020).
 ESP payloads for all seven supported hosts have a separate runtime release pin. The producer commits are recorded in
-[`espressif.json`](../../internal/crosscompile/espressif.json).
+[`espressif.json`](../../cmd/compiler/crosscompile/espressif.json).
 
-[`espressif.json`](../../internal/crosscompile/espressif.json) pins the releases, asset names, and independent SHA-256
+[`espressif.json`](../../cmd/compiler/crosscompile/espressif.json) pins the releases, asset names, and independent SHA-256
 values. Compiler builds, release staging and fallback source-build downloads
 consume these pins. Release staging checks downloaded and restored archives
 against the committed hash and extracts a fresh copy; release checksum sidecars

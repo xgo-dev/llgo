@@ -47,7 +47,7 @@ def main():
                 print(f"Checking {name}", flush=True)
                 subprocess.run(
                     [llgo, "build", "-target", target, f"-{level}", "-o", str(output),
-                     str(ROOT / "internal/build/testdata" / fixture)],
+                     str(ROOT / "cmd/compiler/build/testdata" / fixture)],
                     env=build_env, check=True, timeout=300,
                 )
                 result = subprocess.run(
@@ -73,7 +73,7 @@ def main():
             output = pathlib.Path(directory) / f"{target}-exports.mjs"
             subprocess.run(
                 [llgo, "build", "-target", target, "-Oz", "-ldflags=-s",
-                 "-o", str(output), str(ROOT / "internal/build/testdata/wasm-exports")],
+                 "-o", str(output), str(ROOT / "cmd/compiler/build/testdata/wasm-exports")],
                 env=dict(env, LLGO_WASM_WORKERS="1"), check=True, timeout=300,
             )
             manifest = json.loads(output.with_suffix(".wasm-manifest.json").read_text())
@@ -94,7 +94,7 @@ console.log("wasm public export ok");
         raw_env = dict(env, GOOS="js", GOARCH="wasm", LLGO_WASM_WORKERS="1")
         subprocess.run(
             [llgo, "build", "-Oz", "-o", str(output),
-             str(ROOT / "internal/build/testdata/wasm-callback")],
+             str(ROOT / "cmd/compiler/build/testdata/wasm-callback")],
             env=raw_env, check=True, timeout=300,
         )
         marker = "wasm callback-only wake ok"
