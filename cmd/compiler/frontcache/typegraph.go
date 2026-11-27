@@ -405,9 +405,27 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 		result = types.NewSIMDVec(types.Typ[n.Basic], int(n.Length), n.IsMask)
 	case "interface":
 		var methods []*types.Func
+		var methodNodes []int
 		var embeds []types.Type
 		for _, m := range n.Methods {
+			if m.Type >= 0 && m.Type < len(p.Graph.Nodes) {
+				fnNode := &p.Graph.Nodes[m.Type]
+				if fnNode.Kind == "func" && fnNode.Receiver != nil && fnNode.Receiver.Type == id {
+					// Explicit methods of an anonymous interface carry a
+					// synthetic receiver pointing back to the interface itself.
+					// Build the signature without the self-receiver so
+					// NewInterfaceType can re-bind it after constructing iface.
+					sig := types.NewSignatureType(nil, parameters(fnNode.RecvParams), parameters(fnNode.TypeParams), namedTuple(fnNode.Params, fnNode.Parameters), namedTuple(fnNode.Results, fnNode.Returns), fnNode.Variadic)
+					if types.CallConv(fnNode.CallConv) != types.Go {
+						sig = sig.WithCallConv(types.CallConv(fnNode.CallConv))
+					}
+					methods = append(methods, types.NewFunc(pos(m), owner(m), m.Name, sig))
+					methodNodes = append(methodNodes, m.Type)
+					continue
+				}
+			}
 			methods = append(methods, method(m))
+			methodNodes = append(methodNodes, -1)
 		}
 		for _, ref := range n.Types {
 			embeds = append(embeds, get(ref))
@@ -417,6 +435,11 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 			iface.MarkImplicit()
 		}
 		result = iface.Complete()
+		for i, ref := range methodNodes {
+			if ref >= 0 {
+				p.values[ref] = methods[i].Type()
+			}
+		}
 	case "union":
 		if len(n.Types) != len(n.Tilde) {
 			return nil, fmt.Errorf("invalid frontend union terms")
