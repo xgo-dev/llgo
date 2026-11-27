@@ -339,6 +339,10 @@ static inline int usb_serial_jtag_ll_write_txfifo(const uint8_t *buf, uint32_t w
 }
 
 // ============================================================================
+// NOTE: esp32c3-basic is this target minus this file. That keeps the ROM-armed
+// watchdogs alive and leaves the console on semihosting, so it is an emulator
+// target: flashing it to a board produces an ~8 s reset loop with no output.
+
 // Boot-time HP watchdog shutdown
 // ============================================================================
 // The ROM bootloader arms the RWDT (RTC watchdog) in flashboot mode with an
@@ -422,10 +426,14 @@ static void esp_disable_hp_wdt(void) {
  * @brief Push buf into the TX FIFO, handing full packets to the host as needed.
  */
 static void usb_serial_jtag_push(const uint8_t *buf, size_t len) {
-    // Once a timeout has proved that no host drains the FIFO, skip future
-    // writes instead of re-running the full spin for every following chunk.
-    static int host_lost;
-    if (host_lost) {
+    // Once a timeout proves that nothing drains the FIFO, stop paying the full
+    // spin for every later chunk - but keep re-probing every 64th one. A host
+    // that attaches late must still get output: opening the port resets the
+    // chip, so the enumeration window itself produces no reader, and a
+    // permanent "no host" latch would silence every line printed afterwards.
+    static unsigned int lost_chunks;
+    if (lost_chunks != 0 && (lost_chunks & 63u) != 0) {
+        lost_chunks++;
         return;
     }
     size_t off = 0;
@@ -438,9 +446,10 @@ static void usb_serial_jtag_push(const uint8_t *buf, size_t len) {
                 // Busy wait until the host drains the packet
             }
             if (spin <= 0) {
-                host_lost = 1;
-                return; // no host is reading; drop the remainder and future output
+                lost_chunks++;
+                return; // no host is reading; drop this packet
             }
+            lost_chunks = 0;
         }
     }
 }
@@ -600,10 +609,46 @@ __attribute__((naked, aligned(4))) static void esp_trap_handler(void) {
         : "i"(ESP_SEMIHOST_SLII_HIGH), "i"(ESP_USB_SJ_BASE), "i"(ESP_TRAP_DRAIN_SPIN));
 }
 
+// ============================================================================
+// Cycle counter enable
+// ============================================================================
+// csrr cycle drives the runtime monotonic clock, time.Sleep deadlines and GC
+// pacing, but mcountinhibit.CY is first-stage-loader state: on parts whose
+// boot ROM leaves the bit set the CSR reads a frozen value and every
+// cycle-based wait spins forever (measured on an ESP32-C3 board; IDF clears
+// the bit explicitly in cpu_hal_enable_cycle_count for the same reason).
+// The CSR is written numerically: clang only knows the mnemonic when the
+// target declares Zicntr, and this core advertises the counter through its
+// own naming.
+#define ESP_MCOUNTINHIBIT 0x320u
+#define ESP_MCOUNTINHIBIT_CY 1u
+
+static void esp_enable_cycle_count(void) {
+  uint32_t inhibit;
+  __asm__ volatile("csrr %0, 0x320" : "=r"(inhibit));
+  if (inhibit & ESP_MCOUNTINHIBIT_CY) {
+    inhibit &= ~ESP_MCOUNTINHIBIT_CY;
+    __asm__ volatile("csrw 0x320, %0" ::"r"(inhibit));
+  }
+  // Report honestly instead of hanging later: a still-frozen counter makes
+  // time.Sleep never return.
+  uint32_t t0, t1;
+  __asm__ volatile("csrr %0, cycle" : "=r"(t0));
+  for (volatile int i = 0; i < 64; i++) {
+  }
+  __asm__ volatile("csrr %0, cycle" : "=r"(t1));
+  if (t1 == t0) {
+    static const char msg[] =
+        "[c] warning: cycle counter is frozen; time.Sleep cannot advance\n";
+    _write(2, msg, sizeof msg - 1);
+  }
+}
+
 // Boot hook: disarm the ROM-armed watchdogs and install the exit trap.
 // crt0 runs .init_array constructors before main, so this happens before
 // any Go code - the earliest hook the device C file can install.
 __attribute__((constructor)) static void esp_boot_early(void) {
+    esp_enable_cycle_count();
     esp_disable_hp_wdt();
     uint32_t prev;
     __asm__ volatile("csrr %0, mtvec" : "=r"(prev));
