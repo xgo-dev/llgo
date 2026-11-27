@@ -2166,6 +2166,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.MakeSlice:
 		t := p.type_(v.Type(), llssa.GoDecl)
 		nLen := p.compileValue(b, v.Len)
+		if freshNilAppendAllocation(v) {
+			ret = b.MakeSliceRounded(t, nLen)
+			break
+		}
 		nCap := p.compileValue(b, v.Cap)
 		ret = b.MakeSliceEx(t, nLen, nCap, !p.stackStorage(v))
 	case *ssa.MakeMap:
