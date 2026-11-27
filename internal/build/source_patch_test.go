@@ -1428,3 +1428,57 @@ func drop() string {
 		t.Fatalf("expected unused strings import to be commented out, got:\n%s", got)
 	}
 }
+
+func TestNetHTTPSourcePatchTypeChecks(t *testing.T) {
+	for _, target := range []string{
+		"linux/amd64", "linux/386", "linux/arm64",
+		"darwin/arm64", "windows/amd64",
+	} {
+		t.Run(target, func(t *testing.T) {
+			parts := strings.Split(target, "/")
+			cfgEnv := withEnv(os.Environ(), "GOOS="+parts[0], "GOARCH="+parts[1])
+			sourceGo, err := resolveSourceGoConfig(commandEnv{environ: cfgEnv}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfgEnv = sourceGo.apply(cfgEnv)
+			flags := []string{"-tags=llgo"}
+			overlay, files, err := buildSourcePatchOverlayForGOROOT(nil, env.LLGoRuntimeDir(), sourceGo.GOROOT, sourcePatchBuildContext{
+				goos: parts[0], goarch: parts[1], goversion: sourceGo.GOVERSION,
+				toolTags: sourceGo.toolTags, buildFlags: flags,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if parts[0] == "windows" {
+				if len(files["net/http"]) != 0 {
+					t.Fatalf("expected no net/http source patch on windows, got %v", files["net/http"])
+				}
+			} else if len(files["net/http"]) == 0 {
+				t.Fatalf("expected net/http source patch on %s", target)
+			}
+			dedup := packages.NewDeduper()
+			dedup.SetLLGoFiles(files)
+			pkgs, err := packages.LoadEx(dedup, nil, &packages.Config{
+				Mode: loadSyntax | packages.NeedDeps | packages.NeedModule | packages.NeedExportFile,
+				Env:  cfgEnv, Fset: token.NewFileSet(), BuildFlags: flags,
+				ParseFile: func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
+					if data, ok := overlay[filename]; ok {
+						src = data
+					}
+					return parser.ParseFile(fset, filename, src, parser.AllErrors|parser.ParseComments)
+				},
+			}, "net/http")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pkgs) != 1 {
+				t.Fatalf("loaded %d packages, want 1", len(pkgs))
+			}
+			if pkgs[0].IllTyped {
+				logPackageErrors(t, pkgs[0], make(map[string]bool))
+				t.Fatal("net/http source patch did not type-check")
+			}
+		})
+	}
+}
