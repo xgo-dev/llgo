@@ -238,6 +238,9 @@ func (p Program) withoutNativeStorage(t Type) Type {
 		if t.kind == vkFuncPtr {
 			return p.funcPtrType(t.raw.Type)
 		}
+		if t.kind == vkFuncDecl {
+			return t
+		}
 		if cc := p.nativeCallConvOf(t); isNativeCallConv(cc) {
 			return p.nativeType(t.raw.Type, cc)
 		}

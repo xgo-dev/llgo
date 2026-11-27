@@ -22,27 +22,20 @@ func main() {
 }
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// The named string uses an exact (panicking) assertion, then deliberately fails
-// a comma-ok assertion to the underlying unnamed string type.
-// CHECK: br i1 true, label %{{.*}}, label %{{.*}}
+// The named string uses an exact assertion folded directly to its boxed value,
+// then statically rejects a comma-ok assertion to the underlying string type.
 // CHECK: [[T_VALUE:%.*]] = load %"{{.*}}String", ptr @"_llgo_ifacebox${{.*}}"
 // CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[T_VALUE]])
-// CHECK: call void @"{{.*}}PanicTypeAssert"(ptr null, ptr @_llgo_main.T, ptr @_llgo_main.T)
-// CHECK-NEXT: unreachable
-// CHECK: [[STRING_OK_RESULT:%.*]] = phi { %"{{.*}}String", i1 } [ {{%.*}}, %{{.*}} ], [ zeroinitializer, %{{.*}} ]
-// CHECK: [[STRING_VALUE:%.*]] = extractvalue { %"{{.*}}String", i1 } [[STRING_OK_RESULT]], 0
-// CHECK-NEXT: [[STRING_OK:%.*]] = extractvalue { %"{{.*}}String", i1 } [[STRING_OK_RESULT]], 1
-// CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[STRING_VALUE]])
-// CHECK: call void @"{{.*}}PrintBool"(i1 [[STRING_OK]])
-// The named array is boxed, matched by its named type, copied out, and returned
+// CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" zeroinitializer)
+// CHECK: call void @"{{.*}}PrintBool"(i1 false)
+// The named array is boxed with its named descriptor, copied out, and returned
 // together with the comma-ok bit used by the print.
 // CHECK: store [2 x {{i[0-9]+}}] {{%.*}}, ptr [[A_BOX:%[0-9]+]]
 // CHECK: [[A_EFACE:%.*]] = insertvalue %"{{.*}}eface" { ptr @_llgo_main.A, ptr undef }, ptr [[A_BOX]], 1
-// CHECK: [[A_DYN_TYPE:%.*]] = extractvalue %"{{.*}}eface" [[A_EFACE]], 0
-// CHECK-NEXT: [[IS_A:%.*]] = icmp eq ptr [[A_DYN_TYPE]], @_llgo_main.A
 // CHECK: [[A_DYN_DATA:%.*]] = extractvalue %"{{.*}}eface" [[A_EFACE]], 1
 // CHECK-NEXT: [[A_VALUE:%.*]] = load [2 x {{i[0-9]+}}], ptr [[A_DYN_DATA]]
-// CHECK: [[A_OK_RESULT:%.*]] = phi { [2 x {{i[0-9]+}}], i1 } [ {{%.*}}, %{{.*}} ], [ zeroinitializer, %{{.*}} ]
+// CHECK: [[A_OK_RESULT0:%.*]] = insertvalue { [2 x {{i[0-9]+}}], i1 } undef, [2 x {{i[0-9]+}}] [[A_VALUE]], 0
+// CHECK-NEXT: [[A_OK_RESULT:%.*]] = insertvalue { [2 x {{i[0-9]+}}], i1 } [[A_OK_RESULT0]], i1 true, 1
 // CHECK: [[A_RESULT:%.*]] = extractvalue { [2 x {{i[0-9]+}}], i1 } [[A_OK_RESULT]], 0
 // CHECK: [[A_OK:%.*]] = extractvalue { [2 x {{i[0-9]+}}], i1 } [[A_OK_RESULT]], 1
 // CHECK: [[A0:%.*]] = load i{{[0-9]+}}, ptr {{%.*}}
@@ -52,12 +45,12 @@ func main() {
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[A_OK]])
 // A named slice uses its named descriptor while the asserted payload retains
 // the ordinary three-word slice representation.
-// CHECK: br i1 {{.*}}, label %{{.*}}, label %{{.*}}
 // CHECK-DARWIN: load %"{{.*}}Slice", ptr @"_llgo_ifacebox${{.*}}"
 // CHECK-LINUX: load %"{{.*}}Slice", ptr @"_llgo_ifacebox${{.*}}"
 // CHECK-WINDOWS: [[BYTES_BOX:%.*]] = call ptr @"{{.*}}AllocU"(i{{[0-9]+}} {{[0-9]+}})
 // CHECK-WINDOWS-NEXT: store %"{{.*}}Slice" { ptr @"__llgo.moduleZeroSizedAlloc$", i{{[0-9]+}} 0, i{{[0-9]+}} 0 }, ptr [[BYTES_BOX]]
 // CHECK-WINDOWS: load %"{{.*}}Slice", ptr [[BYTES_BOX]]
-// CHECK: [[BYTES_RESULT:%.*]] = phi { %"{{.*}}Slice", i1 } [ {{.*}}, %{{.*}} ], [ zeroinitializer, %{{.*}} ]
+// CHECK: [[BYTES_RESULT0:%.*]] = insertvalue { %"{{.*}}Slice", i1 } undef, %"{{.*}}Slice" %{{.*}}, 0
+// CHECK-NEXT: [[BYTES_RESULT:%.*]] = insertvalue { %"{{.*}}Slice", i1 } [[BYTES_RESULT0]], i1 true, 1
 // CHECK: [[BYTES_OK:%.*]] = extractvalue { %"{{.*}}Slice", i1 } [[BYTES_RESULT]], 1
 // CHECK: call void @"{{.*}}PrintBool"(i1 [[BYTES_OK]])

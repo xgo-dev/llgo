@@ -647,6 +647,37 @@ func (p Program) retType(raw *types.Signature) Type {
 	}
 }
 
+func (p Program) callResultType(fn Expr, sig *types.Signature) Type {
+	native := fn.kind == vkFuncPtr || isNativeCallConv(p.nativeCallConvOf(fn.Type)) || p.isNativeStorage(fn.Type)
+	if !native {
+		return p.retType(sig)
+	}
+	out := sig.Results()
+	switch n := out.Len(); n {
+	case 0:
+		return p.Void()
+	case 1:
+		return p.nativeType(out.At(0).Type(), CDecl)
+	default:
+		hasNativeDiff := false
+		for i := 0; i < n; i++ {
+			if p.hasNativeFuncDiff(p.patch(out.At(i).Type())) {
+				hasNativeDiff = true
+				break
+			}
+		}
+		if !hasNativeDiff {
+			return p.retType(sig)
+		}
+		fields := make([]llvm.Type, n)
+		for i := range fields {
+			fields[i] = p.nativeType(p.patch(out.At(i).Type()), CDecl).ll
+		}
+		tup := &aType{p.ctx.StructType(fields, false), rawType{out}, vkTuple}
+		return p.markNativeCallConv(tup, CDecl)
+	}
+}
+
 func (p Program) llvmNameOf(named *types.Named) (name string) {
 	name = NameOf(named)
 	if obj := named.Obj(); obj != nil {

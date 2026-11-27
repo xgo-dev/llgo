@@ -476,7 +476,7 @@ func (p Package) newFunc(
 		entrySig = FuncAddCtx(rawEnv, entrySig)
 		entry := Type(&aType{p.Prog.toLLVMFuncBackground(entrySig, cc), t.raw, vkFuncDecl})
 		if isNativeCallConv(cc) {
-			entry = p.Prog.withNativeStorage(entry)
+			entry = p.Prog.withNativeStorage(p.Prog.markNativeCallConv(entry, cc))
 		}
 		t = entry
 	}

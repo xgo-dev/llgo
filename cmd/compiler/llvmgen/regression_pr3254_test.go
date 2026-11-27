@@ -63,44 +63,104 @@ func TestSliceUncheckedArrayPointerElementStride(t *testing.T) {
 }
 
 func TestWasmReflectBridgeMethodAndNativeFuncPtr(t *testing.T) {
-	target := &Target{
-		GOOS:               "js",
-		GOARCH:             "wasm",
-		LLVMTarget:         "wasm32-unknown-emscripten",
-		WasmReflectBridges: true,
+	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs)
+	targets := []*Target{
+		{
+			GOOS:               "js",
+			GOARCH:             "wasm",
+			WasmProfile:        "j32",
+			WasmProvider:       "emscripten",
+			LLVMTarget:         "wasm32-unknown-emscripten",
+			WasmReflectBridges: true,
+		},
+		{
+			GOOS:               "wasip1",
+			GOARCH:             "wasm",
+			WasmProfile:        "w32",
+			WasmProvider:       "wasi",
+			WasmReflectBridges: true,
+		},
 	}
-	prog := NewProgram(target)
+	for _, target := range targets {
+		t.Run(target.WasmProfile, func(t *testing.T) {
+			prog := NewProgram(target)
+			defer prog.Dispose()
+			setTestRuntime(t, prog)
+			pkg := prog.NewPackage("wbridge", "example.com/wbridge")
+
+			// Case 1: method signature with non-nil receiver must strip Recv() before
+			// computing native integer attributes or Go/C prototypes.
+			recvPkg := types.NewPackage("example.com/wbridge", "wbridge")
+			recvType := types.NewNamed(types.NewTypeName(token.NoPos, recvPkg, "T", nil), types.NewStruct(nil, nil), nil)
+			recv := types.NewVar(token.NoPos, recvPkg, "t", types.NewPointer(recvType))
+			methodSig := types.NewSignatureType(recv, nil, nil,
+				types.NewTuple(types.NewParam(token.NoPos, recvPkg, "x", types.Typ[types.Int32])),
+				types.NewTuple(types.NewParam(token.NoPos, recvPkg, "", types.Typ[types.Bool])),
+				false,
+			)
+			pkg.wasmReflectBridge(methodSig)
+
+			// Case 2: function signature taking a callback func(uintptr) unsafe.Pointer
+			// must preserve CDecl across Convert(prog.Pointer(nativeType), slot) on Wasm32.
+			cbSig := types.NewSignatureType(nil, nil, nil,
+				types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uintptr])),
+				types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.UnsafePointer])),
+				false,
+			)
+			workerSig := types.NewSignatureType(nil, nil, nil,
+				types.NewTuple(types.NewParam(token.NoPos, nil, "cb", cbSig)),
+				nil,
+				false,
+			)
+			pkg.wasmReflectBridge(workerSig)
+
+			// Case 3: multi-return signatures containing Go function values (such as
+			// encoding/json/v2's (string, func(), func()) and (func(), bool) signatures)
+			// must keep native CDecl result tuple types aligned with ll.ReturnType() on Wasm32.
+			for _, results := range [][]*types.Var{
+				{
+					types.NewParam(token.NoPos, nil, "", types.Typ[types.String]),
+					types.NewParam(token.NoPos, nil, "", NoArgsNoRet),
+					types.NewParam(token.NoPos, nil, "", NoArgsNoRet),
+				},
+				{
+					types.NewParam(token.NoPos, nil, "", NoArgsNoRet),
+					types.NewParam(token.NoPos, nil, "", types.Typ[types.Bool]),
+				},
+				{
+					types.NewParam(token.NoPos, nil, "", types.Typ[types.Uintptr]),
+					types.NewParam(token.NoPos, nil, "", cbSig),
+					types.NewParam(token.NoPos, nil, "", types.Typ[types.Bool]),
+				},
+			} {
+				pkg.wasmReflectBridge(types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(results...), false))
+			}
+
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid wasm reflect bridge module: %v\n%s", err, pkg.Module().String())
+			}
+		})
+	}
+}
+
+func TestRuntimePkgDoesNotTriggerLazyImport(t *testing.T) {
+	prog := NewProgram(nil)
 	defer prog.Dispose()
-	pkg := prog.NewPackage("wbridge", "example.com/wbridge")
-
-	// Case 1: method signature with non-nil receiver must strip Recv() before
-	// computing native integer attributes or Go/C prototypes.
-	recvPkg := types.NewPackage("example.com/wbridge", "wbridge")
-	recvType := types.NewNamed(types.NewTypeName(token.NoPos, recvPkg, "T", nil), types.NewStruct(nil, nil), nil)
-	recv := types.NewVar(token.NoPos, recvPkg, "t", types.NewPointer(recvType))
-	methodSig := types.NewSignatureType(recv, nil, nil,
-		types.NewTuple(types.NewParam(token.NoPos, recvPkg, "x", types.Typ[types.Int32])),
-		types.NewTuple(types.NewParam(token.NoPos, recvPkg, "", types.Typ[types.Bool])),
-		false,
-	)
-	pkg.wasmReflectBridge(methodSig)
-
-	// Case 2: function signature taking a callback func(uintptr) unsafe.Pointer
-	// must preserve CDecl across Convert(prog.Pointer(nativeType), slot) on Wasm32.
-	cbSig := types.NewSignatureType(nil, nil, nil,
-		types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.Uintptr])),
-		types.NewTuple(types.NewParam(token.NoPos, nil, "", types.Typ[types.UnsafePointer])),
-		false,
-	)
-	workerSig := types.NewSignatureType(nil, nil, nil,
-		types.NewTuple(types.NewParam(token.NoPos, nil, "cb", cbSig)),
-		nil,
-		false,
-	)
-	pkg.wasmReflectBridge(workerSig)
-
-	if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
-		t.Fatalf("invalid wasm reflect bridge module: %v\n%s", err, pkg.Module().String())
+	called := false
+	prog.SetRuntime(func() *types.Package {
+		called = true
+		return nil
+	})
+	if got := prog.RuntimePkg(); got != nil {
+		t.Fatalf("RuntimePkg() = %v, want nil before runtime is loaded", got)
+	}
+	if called {
+		t.Fatal("RuntimePkg() eagerly invoked lazy runtime importer")
+	}
+	rt := newDebugRuntimePackage()
+	prog.SetRuntime(rt)
+	if got := prog.RuntimePkg(); got != rt {
+		t.Fatalf("RuntimePkg() = %v, want %v", got, rt)
 	}
 }
 

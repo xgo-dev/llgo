@@ -119,6 +119,9 @@ func (p Program) structLayout(typ Type) (structLayout, bool) {
 	if !p.hasStructLayouts {
 		return structLayout{}, false
 	}
+	if typ.kind == vkTuple && isNativeCallConv(p.nativeCallConvOf(typ)) {
+		return structLayout{}, false
+	}
 	layout := p.structLayouts.At(typ.raw.Type)
 	if layout == nil {
 		return structLayout{}, false

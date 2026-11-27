@@ -553,13 +553,7 @@ func (p Program) RuntimePkg() *types.Package {
 	if p == nil {
 		return nil
 	}
-	if p.rt != nil {
-		return p.rt
-	}
-	if p.rtget != nil {
-		return p.rtget()
-	}
-	return nil
+	return p.rt
 }
 
 // SetTypeCallConv sets the default calling convention for the named type, controlling

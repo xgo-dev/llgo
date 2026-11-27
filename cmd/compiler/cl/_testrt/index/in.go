@@ -99,10 +99,7 @@ type S []int
 // CHECK: %[[SLICE:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE1]], i64 4, 2
 // CHECK: %[[SLICE_DATA:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE]], 0
 // CHECK: %[[SLICE_LEN:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE]], 1
-// CHECK: %[[SLICE_OOB:[0-9]+]] = icmp uge i64 1, %[[SLICE_LEN]]
-// CHECK: br i1 %[[SLICE_OOB]], label %{{_llgo_[0-9]+}}, label %{{_llgo_[0-9]+}}
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PanicIndex"(i64 1, i64 %[[SLICE_LEN]])
-// CHECK-NEXT: br label %{{_llgo_[0-9]+}}
+// CHECK-NOT: runtime.PanicIndex
 // CHECK: %[[SLICE_ELEM:[0-9]+]] = getelementptr inbounds i64, ptr %[[SLICE_DATA]], i64 1
 // CHECK: load i64, ptr %[[SLICE_ELEM]]
 

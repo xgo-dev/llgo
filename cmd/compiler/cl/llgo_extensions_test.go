@@ -168,7 +168,7 @@ func CallViaValue(x int) int { f := dep.EnvTarget; return f(x) }
 		t.Fatalf("imported //llgo:env declaration param count = %d, want 2 (env + x):\n%s", got, decl.String())
 	}
 	callIR := mustNamedFunction(t, mod, "example.com/root.Call").String()
-	callPat := regexp.MustCompile(`call i(?:32|64) @"example\.com/dep\.EnvTarget"\(ptr (?:swiftself )?null,`)
+	callPat := regexp.MustCompile(`call i(?:32|64) @"example\.com/dep\.EnvTarget"\(ptr (?:(?:swiftself|nest) )?null,`)
 	if !callPat.MatchString(callIR) {
 		t.Fatalf("direct call to imported //llgo:env function did not pass leading null env argument:\n%s", callIR)
 	}

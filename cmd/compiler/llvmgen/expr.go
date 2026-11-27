@@ -1680,10 +1680,7 @@ func (b Builder) callFunction(fn Expr, args []Expr, cc llvm.CallConv) Expr {
 func (b Builder) emitFunctionCall(fn Expr, args []Expr, cc llvm.CallConv) Expr {
 	dbgInstrCall("Call", fn, args)
 	sig, ll := b.Prog.callSignature(fn)
-	resultType := b.Prog.retType(sig)
-	if resultType.kind == vkClosure && ll.ReturnType().TypeKind() == llvm.PointerTypeKind {
-		resultType = b.Prog.funcPtrType(resultType.raw.Type)
-	}
+	resultType := b.Prog.callResultType(fn, sig)
 	physicalParams := ll.ParamTypes()
 	hasEnv := false
 	if fn.kind == vkFuncDecl && len(physicalParams) == len(args)+1 {

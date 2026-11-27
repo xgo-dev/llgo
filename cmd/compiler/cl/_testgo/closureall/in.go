@@ -126,11 +126,9 @@ func makeWithFree(base int) Fn {
 // AMD64: call i64 [[METHOD_CODE]](ptr nest [[METHOD_CALL_ENV]], i64 7)
 // A method expression uses the receiver as an ordinary first argument.
 // CHECK: call i64 @"main.(*S).Add$thunk"(ptr [[S]], i64 8)
-// The interface method value keeps the same interface payload and checks it is non-nil.
+// The interface method value keeps the same interface payload without a redundant nil check.
 // CHECK: [[IFACE:%.*]] = insertvalue %"{{.*}}iface" { ptr @"_llgo_itab${{.*}}", ptr undef }, ptr [[S]], 1
-// CHECK: [[IFACE_TYPE:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}iface" [[IFACE]])
-// CHECK: [[IFACE_OK:%.*]] = icmp ne ptr [[IFACE_TYPE]], null
-// CHECK: br i1 [[IFACE_OK]], label %{{.*}}, label %{{.*}}
+// CHECK-NOT: runtime.IfaceType
 // CHECK: call void @llvm.memset.p0.i64(ptr [[IFACE_METHOD_ENV]], i8 0, i64 16, i1 false)
 // CHECK: [[IFACE_METHOD_SLOT:%.*]] = getelementptr inbounds nuw { %"{{.*}}iface" }, ptr [[IFACE_METHOD_ENV]], i32 0, i32 0
 // CHECK: store %"{{.*}}iface" [[IFACE]], ptr [[IFACE_METHOD_SLOT]]

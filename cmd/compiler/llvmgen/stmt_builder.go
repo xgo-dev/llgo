@@ -208,8 +208,8 @@ func (b Builder) Return(results ...Expr) {
 		b.impl.CreateRet(b.fitLLVMValue(ret.impl, ret.Type, retTy))
 	default:
 		tret := b.Func.raw.Type.(*types.Signature).Results()
-		values := llvmParams(0, results, tret, b)
-		if !b.Prog.isNativeStorage(b.Func.Type) {
+		if !b.Prog.isNativeStorage(b.Func.Type) && !isNativeCallConv(b.Prog.nativeCallConvOf(b.Func.Type)) {
+			values := llvmParams(0, results, tret, b)
 			typ := b.Prog.rawType(tret)
 			expr := b.aggregateValue(typ, values...)
 			b.impl.CreateRet(expr.impl)
@@ -217,9 +217,10 @@ func (b Builder) Return(results ...Expr) {
 		}
 		physical := b.Func.ll.ReturnType()
 		elements := physical.StructElementTypes()
+		values := llvmParamsForPhysical(0, results, tret, elements, 0, b)
 		aggregate := llvm.Undef(physical)
 		for i, value := range values {
-			source := b.Prog.rawType(tret.At(i).Type())
+			source := b.Prog.nativeType(tret.At(i).Type(), CDecl)
 			aggregate = b.impl.CreateInsertValue(aggregate, b.fitLLVMValue(value, source, elements[i]), i, "")
 		}
 		b.impl.CreateRet(aggregate)

@@ -64,11 +64,11 @@ type namedFunc func(int) int
 // CHECK: [[SLICE_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(
 // CHECK: [[ARRAY_TYPE:%[0-9]+]] = call %{{.*}} @reflect.TypeOf(
 // CHECK: [[ARRAY_VALUE:%[0-9]+]] = call %reflect.Value @reflect.Value.Convert(%reflect.Value [[SLICE_VALUE]], {{.*}} [[ARRAY_TYPE]])
+// CHECK: call %reflect.Value @reflect.Value.Index(%reflect.Value [[ARRAY_VALUE]], i64 0)
 // CHECK: [[POINTER_TYPE:%[0-9]+]] = call %{{.*}} @reflect.TypeOf(
 // CHECK: [[POINTER_VALUE:%[0-9]+]] = call %reflect.Value @reflect.Value.Convert({{.*}}[[POINTER_TYPE]])
-// CHECK: call i1 @reflect.Value.CanConvert(
-// CHECK: call %reflect.Value @reflect.Value.Index(%reflect.Value [[ARRAY_VALUE]], i64 0)
 // CHECK: call %reflect.Value @reflect.Value.Elem(%reflect.Value [[POINTER_VALUE]])
+// CHECK: call i1 @reflect.Value.CanConvert(
 
 // CHECK-LABEL: define void @main.textConversions(){{.*}} {
 // CHECK: [[STRING_VALUE:%[0-9]+]] = call %reflect.Value @reflect.ValueOf(

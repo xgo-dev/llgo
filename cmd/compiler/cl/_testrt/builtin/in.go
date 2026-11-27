@@ -70,7 +70,10 @@ func demo() {
 // CHECK-DAG: [[INT_TAIL:%.*]] = alloca [4 x i64], align 8
 // make([]byte, 4, 10) must preserve both the requested length and capacity.
 // CHECK-DAG: [[D_STORAGE:%.*]] = alloca [10 x i8], align 1
-// CHECK: [[D:%.*]] = call %"{{.*}}Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr [[D_STORAGE]], i64 1, i64 10, i64 0, i64 4, i1 true, i1 true, i1 true)
+// CHECK: [[D_BASE:%.*]] = getelementptr i8, ptr [[D_STORAGE]], i64 0
+// CHECK: [[D0:%.*]] = insertvalue %"{{.*}}Slice" undef, ptr %{{.*}}, 0
+// CHECK-NEXT: [[D1:%.*]] = insertvalue %"{{.*}}Slice" [[D0]], i64 4, 1
+// CHECK-NEXT: [[D:%.*]] = insertvalue %"{{.*}}Slice" [[D1]], i64 10, 2
 // len("hello"[5:]) keeps the empty string slice's bounds.
 // CHECK: call %"{{.*}}String" @"{{.*}}/runtime/internal/runtime.StringSlice"(%"{{.*}}String" { ptr @{{.*}}, i64 5 }, i64 5, i64 5)
 // append(s, 5, 6, 7, 8) forwards the materialized four-element tail.

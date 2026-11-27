@@ -61,8 +61,10 @@ package main
 // Slices compare with nil through their data pointer. Check the non-empty and
 // zero-length/non-zero-capacity make paths separately.
 // CHECK-LABEL: define void @"main.init#4"(){{.*}} {
-// CHECK: %[[SLICE_LEN:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr %{{[0-9]+}}, i64 8, i64 2, i64 0, i64 2,{{.*}})
-// CHECK: %[[SLICE_CAP:[0-9]+]] = call %"{{.*}}/runtime/internal/runtime.Slice" @"{{.*}}/runtime/internal/runtime.NewSlice2"(ptr %{{[0-9]+}}, i64 8, i64 2, i64 0, i64 0,{{.*}})
+// CHECK: %[[SLICE_LEN1:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, i64 2, 1
+// CHECK-NEXT: %[[SLICE_LEN:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE_LEN1]], i64 2, 2
+// CHECK: %[[SLICE_CAP1:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %{{[0-9]+}}, i64 0, 1
+// CHECK-NEXT: %[[SLICE_CAP:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE_CAP1]], i64 2, 2
 // CHECK: %[[SLICE_PTR:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.Slice" %[[SLICE_CAP]], 0
 // CHECK: %[[SLICE_NONNULL:[0-9]+]] = icmp ne ptr %[[SLICE_PTR]], null
 // CHECK: call void @main.assert(i1 %[[SLICE_NONNULL]])

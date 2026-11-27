@@ -177,11 +177,22 @@ func (p Program) nativeType(typ types.Type, cc CallConv) Type {
 	return p.rawType(typ)
 }
 
+func (p Program) markNativeCallConv(t Type, cc CallConv) Type {
+	if t == nil || !isNativeCallConv(cc) {
+		return t
+	}
+	if p.nativeCC == nil {
+		p.nativeCC = make(map[Type]CallConv)
+	}
+	p.nativeCC[t] = cc
+	return t
+}
+
 // FuncDecl converts a Go/C function declaration into its LLVM function type.
 func (p Program) FuncDecl(sig *types.Signature, cc CallConv) Type {
 	decl := p.funcDeclType(sig, cc)
 	if isNativeCallConv(cc) {
-		return p.withNativeStorage(&decl)
+		return p.withNativeStorage(p.markNativeCallConv(&decl, cc))
 	}
 	return &decl
 }
