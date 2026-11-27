@@ -183,7 +183,7 @@ func caller() {
 	}
 }
 
-func TestSSAAllocNoScanAndRecvNilCheck(t *testing.T) {
+func TestSSARecvNilCheckAndVerify(t *testing.T) {
 	const src = `package demo
 
 type Scalar struct { A int; B float64 }
@@ -194,10 +194,10 @@ func (*T) M(int) {}
 type OuterVal struct { Pad int; T }
 type OuterPtr struct { *T }
 
-func allocs() (*Scalar, *HasPtr) {
-	s := new(Scalar)
+func allocs(s []int) (*Scalar, *HasPtr, []int, map[int]int) {
+	sc := new(Scalar)
 	p := new(HasPtr)
-	return s, p
+	return sc, p, s[:], make(map[int]int)
 }
 
 func calls(t *T, v *OuterVal, p *OuterPtr) func(int) {
@@ -208,23 +208,27 @@ func calls(t *T, v *OuterVal, p *OuterPtr) func(int) {
 }
 `
 	ssaPkg, _ := buildSSAPkg(t, "example.com/demo", src, nil)
+	if err := ssa.VerifyPackage(ssaPkg); err != nil {
+		t.Fatalf("VerifyPackage failed on real package with optional nil operands: %v", err)
+	}
 
-	var sawNoScanTrue, sawNoScanFalse bool
+	var sawPtrFree, sawPtrBearing bool
 	for _, blk := range ssaPkg.Func("allocs").Blocks {
 		for _, instr := range blk.Instrs {
 			alloc, ok := instr.(*ssa.Alloc)
 			if !ok {
 				continue
 			}
-			if alloc.NoScan {
-				sawNoScanTrue = true
+			elem := alloc.Type().(*types.Pointer).Elem()
+			if elem.HasPtrData() {
+				sawPtrBearing = true
 			} else {
-				sawNoScanFalse = true
+				sawPtrFree = true
 			}
 		}
 	}
-	if !sawNoScanTrue || !sawNoScanFalse {
-		t.Fatalf("Alloc.NoScan not populated accurately: true=%v false=%v", sawNoScanTrue, sawNoScanFalse)
+	if !sawPtrFree || !sawPtrBearing {
+		t.Fatalf("HasPtrData classification incomplete: ptrFree=%v ptrBearing=%v", sawPtrFree, sawPtrBearing)
 	}
 
 	var callChecks, addrChecks, closureChecks int

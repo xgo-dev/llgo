@@ -189,6 +189,14 @@ func (c *Context) HasNativeMetadata() bool {
 	return c.hasNativeMetadata.Load()
 }
 
+// Spec returns the target ABI specification configured for c.
+func (c *Context) Spec() target.Spec {
+	if c == nil {
+		return target.ResolveSpec(target.Spec{})
+	}
+	return c.spec
+}
+
 // SetTypeCallConv registers a type-level calling convention directive (such as
 // //llgo:cdecl or //llgo:stdcall) by qualified type name ("pkg.Name") and
 // invalidates cached layouts so subsequent queries reflect it.

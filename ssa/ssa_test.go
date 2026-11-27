@@ -114,11 +114,27 @@ func TestVerifyCatchesErrors(t *testing.T) {
 	sig := types.NewSignatureType(nil, nil, nil, nil, types.NewTuple(types.NewVar(0, nil, "", types.Typ[types.Int])), false)
 	fn := prog.NewFunction("bad", sig, "")
 	b := fn.NewBasicBlock("entry")
-	// Alloc.NoScan on pointer-bearing type must fail verification.
-	b.Emit(&ssa.Alloc{Heap: true, NoScan: true}, types.NewPointer(types.NewPointer(types.Typ[types.Int])), token.NoPos)
+	// Local Alloc (Heap=false) missing from fn.Locals must fail verification.
+	b.Emit(&ssa.Alloc{Heap: false}, types.NewPointer(types.Typ[types.Int]), token.NoPos)
 	b.Emit(&ssa.Return{Results: []ssa.Value{ssa.NewConst(constant.MakeInt64(0), types.Typ[types.Int])}}, nil, token.NoPos)
-	if err := ssa.VerifyFunction(fn); err == nil || !strings.Contains(err.Error(), "noscan") {
-		t.Fatalf("expected noscan verification error, got %v", err)
+	fn.Locals = nil
+	if err := ssa.VerifyFunction(fn); err == nil || !strings.Contains(err.Error(), "Locals") {
+		t.Fatalf("expected Locals verification error, got %v", err)
+	}
+
+	// Optional nil operands (e.g. Slice with nil Low/High/Max, MakeMap with nil Reserve) must pass.
+	sliceFn := prog.NewFunction("ok_nil_opts", types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(types.NewVar(0, nil, "s", types.NewSlice(types.Typ[types.Int]))),
+		types.NewTuple(types.NewVar(0, nil, "", types.NewSlice(types.Typ[types.Int]))), false), "")
+	sb := sliceFn.NewBasicBlock("entry")
+	p := sliceFn.AddParam("s", nil, types.NewSlice(types.Typ[types.Int]))
+	sl := &ssa.Slice{X: p}
+	sb.Emit(sl, types.NewSlice(types.Typ[types.Int]), token.NoPos)
+	sb.Emit(&ssa.MakeMap{}, types.NewMap(types.Typ[types.Int], types.Typ[types.Int]), token.NoPos)
+	sb.Emit(&ssa.Return{Results: []ssa.Value{sl}}, nil, token.NoPos)
+	sliceFn.Finish()
+	if err := ssa.VerifyFunction(sliceFn); err != nil {
+		t.Fatalf("optional nil operands failed VerifyFunction: %v", err)
 	}
 
 	// BuilderMode flag round-trip (matching x/tools/go/ssa letter order DPFSCNLIG).

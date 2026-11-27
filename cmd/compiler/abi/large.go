@@ -4,34 +4,18 @@ package abi
 import (
 	"slices"
 
+	"github.com/xgo-dev/llgo/cmd/compiler/abipolicy"
 	"github.com/xgo-dev/llgo/cmd/compiler/env"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmattr"
 	"github.com/xgo-dev/llvm"
 )
 
 const (
-	// MaxStackVarSize matches cmd/compile's default limit for explicitly
-	// declared variables. Values larger than this must not live on LLGo's
-	// fixed native stack.
-	MaxStackVarSize uint64 = 128 * 1024
-	// MaxImplicitStackVarSize matches cmd/compile's default limit for
-	// compiler-generated temporaries.
-	MaxImplicitStackVarSize uint64 = 64 * 1024
-	// MinAggregateCopySize is the point at which aggregate loads and
-	// stores are lowered to memory intrinsics to avoid LLVM scalarization.
-	// Return types and the native stack/return ABI still use MaxImplicitStackVarSize.
-	MinAggregateCopySize uint64 = 4 * 1024
-	// MaxSSAValueWords matches cmd/compile's ssa.MaxStruct: a value may occupy
-	// at most this many pointer-sized words and still be SSAable.
-	MaxSSAValueWords = 4
-	// MaxNativeRecoverStackValueSize is the upper bound for promoting a
-	// recover-visible local aggregate to entry-frame stack storage on native
-	// amd64 and arm64 targets. Promoted recover slots require a volatile zero
-	// initialization and volatile owner accesses across SJLJ; up to 128 bytes
-	// covers bounded structs and small buffers measured in #3208, while larger
-	// captures remain on the heap because volatile zeroing, repeated volatile
-	// loads/stores, and stack roots can cost more than a heap allocation.
-	MaxNativeRecoverStackValueSize uint64 = 128
+	MaxStackVarSize                = abipolicy.MaxStackVarSize
+	MaxImplicitStackVarSize        = abipolicy.MaxImplicitStackVarSize
+	MinAggregateCopySize           = abipolicy.MinAggregateCopySize
+	MaxSSAValueWords               = abipolicy.MaxSSAValueWords
+	MaxNativeRecoverStackValueSize = abipolicy.MaxNativeRecoverStackValueSize
 
 	// HeaderSnapshotMD marks a reload after the frontend has copied a value
 	// and cleared its Wasm header padding in private storage.
@@ -43,25 +27,20 @@ const (
 
 // MaxSSAValueSize is cmd/compile's CanSSA size limit (MaxStruct * PtrSize).
 func MaxSSAValueSize(ptrSize int) uint64 {
-	return uint64(MaxSSAValueWords * ptrSize)
+	return abipolicy.MaxSSAValueSize(ptrSize)
 }
 
 // MaxRecoverStackValueSize returns the maximum size of a recover-visible local
 // capture that may be promoted to entry-frame stack storage on goarch.
 func MaxRecoverStackValueSize(goarch string, ptrSize int) uint64 {
-	switch goarch {
-	case "arm64", "amd64":
-		return MaxNativeRecoverStackValueSize
-	default:
-		return MaxSSAValueSize(ptrSize)
-	}
+	return abipolicy.MaxRecoverStackValueSize(goarch, ptrSize)
 }
 
 // ShouldLowerArrayCopy reports whether a multi-element array should be copied
 // in memory instead of as a first-class LLVM value. Arrays larger than
 // MaxSSAValueSize are not SSAable in cmd/compile; smaller ones stay in registers.
 func ShouldLowerArrayCopy(length int, size uint64, ptrSize int) bool {
-	return length > 1 && size > MaxSSAValueSize(ptrSize)
+	return abipolicy.ShouldLowerArrayCopy(length, size, ptrSize)
 }
 
 // ShouldSnapshotAggregateLoad reports whether ABI copy lowering may heap-allocate
@@ -69,10 +48,7 @@ func ShouldLowerArrayCopy(length int, size uint64, ptrSize int) bool {
 // safepoint. Copies smaller than MinAggregateCopySize use a stack alloca
 // instead, including CanSSA-sized arrays, so they are not safepoints.
 func ShouldSnapshotAggregateLoad(isArray bool, arrayLen int, isStruct bool, size uint64, ptrSize int) bool {
-	if (isArray || isStruct) && size >= MinAggregateCopySize {
-		return true
-	}
-	return false
+	return abipolicy.ShouldSnapshotAggregateLoad(isArray, arrayLen, isStruct, size, ptrSize)
 }
 
 // AggregateLoweringConfig describes the Go runtime ABI used by lowering-created

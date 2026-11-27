@@ -28,7 +28,9 @@ func (ctx *context) prepareEscapeAnalysis(event func(int, int)) *goescape.Result
 		manifest := newManifestBuilder()
 		ctx.collectEnvInputs(manifest)
 		ctx.collectCommonInputs(manifest)
-		namespace := fmt.Sprintf("%s|roots=%v|word=%d|layout=%s", manifest.Fingerprint(), ctx.prog.GCRootsEnabled(), ctx.prog.GoWordSize(), ctx.prog.DataLayout())
+		spec := ctx.targetSpec()
+		namespace := fmt.Sprintf("%s|roots=%v|word=%d|ptr=%d|arch=%s|os=%s|abi=%s",
+			manifest.Fingerprint(), ctx.prog.GCRootsEnabled(), spec.WordSize, spec.PtrSize, spec.GOARCH, spec.GOOS, spec.TargetABI)
 		dir := filepath.Join(ctx.ensureCacheManager().root, "escape")
 		files = &escapeCacheFiles{dir: dir, shards: make(map[string]*escapeCacheShard)}
 		cache = &goescape.Cache{

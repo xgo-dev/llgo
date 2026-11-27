@@ -491,7 +491,6 @@ func TestXToolsPackageParityGuards(t *testing.T) {
 			nil,
 			map[string]bool{
 				// Verified LLGo-specific metadata fields:
-				"field:Alloc.NoScan":             true,
 				"field:CallCommon.RecvNilCheck":  true,
 				"field:Function.ExportName":      true,
 				"field:Function.HasClosureEnv":   true,

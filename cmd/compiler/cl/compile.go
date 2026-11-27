@@ -35,6 +35,8 @@ import (
 	"github.com/xgo-dev/llgo/cmd/compiler/genmethod"
 	"github.com/xgo-dev/llgo/cmd/compiler/goembed"
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
+	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
+	"github.com/xgo-dev/llgo/cmd/compiler/ssaopt"
 	"github.com/xgo-dev/llgo/cmd/compiler/typepatch"
 	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/ssa"
@@ -93,6 +95,11 @@ type Options struct {
 	// PreloadedSyntax means all Program-side source metadata was collected
 	// before lowering and is now shared read-only by backend Programs.
 	PreloadedSyntax bool
+	// OptLevel controls ssaopt pass aggressiveness when OptPlan is built on
+	// demand (e.g. O0 preserves every required semantic check).
+	OptLevel optlevel.Level
+	// OptPlan provides precomputed, verified pure-Go ssaopt FunctionPlans.
+	OptPlan *ssaopt.ProgramPlan
 	// ReceiverNilChecks retains pointer-method selection semantics erased
 	// during Go SSA construction. It is collected from checked source info.
 	ReceiverNilChecks *ReceiverNilChecks
@@ -194,6 +201,7 @@ type context struct {
 	skips                map[string]none
 	loaded               map[*types.Package]*pkgInfo // loaded packages
 	bvals                map[ssa.Value]llvmgen.Expr  // block values
+	optPlan              *ssaopt.FunctionPlan
 	methodNilDerefChecks map[*ssa.UnOp]none
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	nilCheckBlock        *ssa.BasicBlock
@@ -967,7 +975,7 @@ func (p *context) compileFuncDecl(pkg llvmgen.Package, f *ssa.Function) (llvmgen
 		dbgEnabled := p.options.Debug
 		dbgSymsEnabled := p.options.DebugSymbols && (f == nil || f.Origin() == nil)
 		p.inits = append(p.inits, func() {
-			oldFn, oldGoFn, oldMethodNilDerefChecks, oldCallerFrameMark := p.fn, p.goFn, p.methodNilDerefChecks, p.callerFrameMark
+			oldFn, oldGoFn, oldOptPlan, oldMethodNilDerefChecks, oldCallerFrameMark := p.fn, p.goFn, p.optPlan, p.methodNilDerefChecks, p.callerFrameMark
 			oldRecvNilDerefChecks := p.recvNilDerefChecks
 			oldLocalityFunction := p.locality.function
 			oldRecoverSlots, oldImplicitDeferResults := p.recoverSlots, p.implicitDeferResults
@@ -987,7 +995,7 @@ func (p *context) compileFuncDecl(pkg llvmgen.Package, f *ssa.Function) (llvmgen
 				p.recoverSlots = nil
 			}
 			defer func() {
-				p.fn, p.goFn, p.methodNilDerefChecks, p.callerFrameMark = oldFn, oldGoFn, oldMethodNilDerefChecks, oldCallerFrameMark
+				p.fn, p.goFn, p.optPlan, p.methodNilDerefChecks, p.callerFrameMark = oldFn, oldGoFn, oldOptPlan, oldMethodNilDerefChecks, oldCallerFrameMark
 				p.recvNilDerefChecks = oldRecvNilDerefChecks
 				p.locality.function = oldLocalityFunction
 				p.recoverSlots = oldRecoverSlots
@@ -1020,7 +1028,13 @@ func (p *context) compileFuncDecl(pkg llvmgen.Package, f *ssa.Function) (llvmgen
 			p.bvals = make(map[ssa.Value]llvmgen.Expr)
 			p.mapLitLoops = collectLargeMapLits(f)
 			p.applyMapLitPlans(p.mapLitLoops)
-			p.methodNilDerefChecks, p.recvNilDerefChecks = collectMethodNilDerefChecks(f, p.options.ReceiverNilChecks)
+			p.optPlan = p.optPlanFor(f)
+			if p.optPlan != nil {
+				p.methodNilDerefChecks = p.optPlan.MethodNilDerefChecks
+				p.recvNilDerefChecks = p.optPlan.RecvNilDerefChecks
+			} else {
+				p.methodNilDerefChecks, p.recvNilDerefChecks = collectMethodNilDerefChecks(f, p.options.ReceiverNilChecks)
+			}
 			p.prepareCooperativeSafepoints(f, isCgo)
 			p.prepareGCRoots(f, hasCtx)
 			p.initGCRoots(b, f)
@@ -1070,6 +1084,33 @@ func (p *context) compileFuncDecl(pkg llvmgen.Package, f *ssa.Function) (llvmgen
 // affected.
 func funcInfoDisplayName(goName string) string {
 	return normalizeRuntimeAnonFuncName(goName)
+}
+
+func (p *context) optPlanFor(f *ssa.Function) *ssaopt.FunctionPlan {
+	if f == nil || len(f.Blocks) == 0 {
+		return nil
+	}
+	if p.options.OptPlan != nil {
+		return p.options.OptPlan.Function(f)
+	}
+	var patchTypes map[string]*types.Package
+	if len(p.patches) > 0 {
+		patchTypes = make(map[string]*types.Package, len(p.patches))
+		for path, patch := range p.patches {
+			if patch.Types != nil {
+				patchTypes[path] = patch.Types
+			}
+		}
+	}
+	plan, _ := ssaopt.PlanFunction(f, ssaopt.Config{
+		TypeCtx:    p.prog.TypeContext(),
+		OptLevel:   p.options.OptLevel,
+		GCRoots:    p.prog.GCRootsEnabled(),
+		Escape:     p.options.EscapeAnalysis,
+		PatchTypes: patchTypes,
+		RuntimePkg: p.prog.RuntimePkg(),
+	})
+	return plan
 }
 
 func hasNoInlineDirective(f *ssa.Function) bool {
@@ -1851,7 +1892,7 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 			ret = b.AppendFreshSliceToNil(p.type_(v.Type(), llvmgen.GoDecl), p.compileValue(b, src))
 			break
 		}
-		p.checkMethodCallReceiver(b, &v.Call)
+		p.checkMethodCallReceiver(b, v, &v.Call)
 		ret = p.call(b, llvmgen.Call, &v.Call)
 		if p.rangeFuncCallNeedsDeferDrain(&v.Call) {
 			b.DeferStackDrain()
@@ -2037,9 +2078,18 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 		}
 		ret = b.FieldAddr(x, v.Field)
 	case *ssa.Alloc:
+		var ap ssaopt.AllocPlan
+		hasPlan := false
+		if p.optPlan != nil {
+			ap, hasPlan = p.optPlan.Allocs[v]
+		}
 		// An allocation with no uses has no observable result. In particular,
 		// do not emit a runtime GC call for an unused composite literal.
-		if refs, ok := nonDebugReferrers(v); ok && len(refs) == 0 {
+		if hasPlan {
+			if ap.Dead {
+				return
+			}
+		} else if refs, ok := nonDebugReferrers(v); ok && len(refs) == 0 {
 			return
 		}
 		t := v.Type().(*types.Pointer)
@@ -2050,26 +2100,38 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 			return
 		}
 		elem := p.type_(t.Elem(), llvmgen.GoDecl)
-		hoistToEntry := true
-		if p.goFn != nil && (p.goFn.Synthetic == "package initializer" || p.goFn.Name() == "init") {
-			inLoop := false
-			if blk := v.Block(); blk != nil && blk.Index < len(p.blkInfos) {
-				inLoop = p.blkInfos[blk.Index].Kind == llvmgen.DeferInLoop
+		var heap, hoistToEntry, noScan, uintptrEsc, recoverVolatile bool
+		if hasPlan {
+			heap = ap.Heap
+			hoistToEntry = ap.HoistToEntry
+			noScan = ap.NoScan
+			uintptrEsc = ap.UintptrEscapes
+			recoverVolatile = ap.RecoverVolatile && p.recoverSlots != nil
+		} else {
+			hoistToEntry = true
+			if p.goFn != nil && (p.goFn.Synthetic == "package initializer" || p.goFn.Name() == "init") {
+				inLoop := false
+				if blk := v.Block(); blk != nil && blk.Index < len(p.blkInfos) {
+					inLoop = p.blkInfos[blk.Index].Kind == llvmgen.DeferInLoop
+				}
+				hoistToEntry = inLoop
 			}
-			hoistToEntry = inLoop
+			heap = !p.stackStorage(v)
+			uintptrEsc = heap && uintptrEscapesBackingArray(v)
+			noScan = !elem.RawType().HasPtrData() && !uintptrEsc
+			recoverVolatile = !heap && p.recoverSlots != nil
 		}
-		heap := !p.stackStorage(v)
-		if heap && uintptrEscapesBackingArray(v) {
+		if heap && uintptrEsc {
 			// The pragma gives uintptr arguments pointer lifetime semantics.
 			// Pending go/defer calls retain their pointees through this array.
 			ret = b.AllocZ(p.prog.IntVal(p.prog.SizeOf(elem), p.prog.Uintptr()))
 			ret.Type = p.prog.Pointer(elem)
-		} else if !heap && p.recoverSlots != nil {
+		} else if recoverVolatile {
 			// SjLj restores the entry stack pointer. Recover-visible slots
 			// must survive that reset, including in package initializers.
-			ret = b.AllocRecover(elem)
+			ret = b.AllocWithPlan(elem, false, true, true, noScan)
 		} else {
-			ret = b.AllocEx(elem, heap, hoistToEntry)
+			ret = b.AllocWithPlan(elem, heap, hoistToEntry, false, noScan)
 		}
 		p.debugAlloc(b, v, ret)
 		p.markRecoverSlot(v, heap)
@@ -2798,14 +2860,14 @@ func (p *context) compileInstr(b llvmgen.Builder, instr ssa.Instruction) {
 		p.recordPanicSite(b, v.Pos())
 		b.MapUpdate(m, key, val)
 	case *ssa.Defer:
-		p.checkMethodCallReceiver(b, &v.Call)
+		p.checkMethodCallReceiver(b, v, &v.Call)
 		if v.DeferStack != nil {
 			p.callDeferStack(b, p.blkInfos[v.Block().Index].Kind, &v.Call, v.DeferStack, v.Parent())
 			return
 		}
 		p.call(b, p.blkInfos[v.Block().Index].Kind, &v.Call)
 	case *ssa.Go:
-		p.checkMethodCallReceiver(b, &v.Call)
+		p.checkMethodCallReceiver(b, v, &v.Call)
 		p.call(b, llvmgen.Go, &v.Call)
 	case *ssa.RunDefers:
 		if p.skipRunDefers[v.Block()] {

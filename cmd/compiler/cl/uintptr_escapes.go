@@ -18,8 +18,8 @@ package cl
 
 import (
 	"github.com/xgo-dev/llgo/types"
-	"strings"
 
+	"github.com/xgo-dev/llgo/cmd/compiler/ssaopt"
 	"github.com/xgo-dev/llgo/ssa"
 )
 
@@ -117,87 +117,11 @@ func uintptrEscapesRoots(fn *ssa.Function) map[ssa.Value]struct{} {
 	return roots
 }
 
-// uintptrEscapesBackingArray identifies compiler-created variadic storage whose
-// uintptr elements retain pointers for a marked call. Such storage must remain
-// scanned while a go/defer call is pending, even though uintptr has no pointers
-// in its ordinary type layout.
+// uintptrEscapesBackingArray delegates to ssaopt.UintptrEscapesBackingArray.
 func uintptrEscapesBackingArray(alloc *ssa.Alloc) bool {
-	if alloc.Comment != "varargs" {
-		return false
-	}
-	array, ok := alloc.Type().(*types.Pointer).Elem().Underlying().(*types.Array)
-	if !ok || basicKind(array.Elem()) != types.Uintptr {
-		return false
-	}
-	seen := make(map[ssa.Value]bool)
-	var usedByMarkedCall func(ssa.Value) bool
-	usedByMarkedCall = func(value ssa.Value) bool {
-		if seen[value] {
-			return false
-		}
-		seen[value] = true
-		for _, ref := range *value.Referrers() {
-			if call, ok := ref.(ssa.CallInstruction); ok {
-				common := call.Common()
-				if common.Signature().Variadic() && len(common.Args) != 0 &&
-					common.Args[len(common.Args)-1] == value &&
-					hasUintptrEscapesDirective(common.StaticCallee()) {
-					return true
-				}
-			}
-			switch ref := ref.(type) {
-			case *ssa.Slice:
-				if usedByMarkedCall(ref) {
-					return true
-				}
-			case *ssa.ChangeType:
-				if usedByMarkedCall(ref) {
-					return true
-				}
-			case *ssa.Phi:
-				if usedByMarkedCall(ref) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return usedByMarkedCall(alloc)
+	return ssaopt.UintptrEscapesBackingArray(alloc)
 }
 
 func hasUintptrEscapesDirective(fn *ssa.Function) bool {
-	seen := make(map[*ssa.Function]bool)
-	var visit func(*ssa.Function) bool
-	visit = func(fn *ssa.Function) bool {
-		if fn == nil || seen[fn] {
-			return false
-		}
-		seen[fn] = true
-		// Generic directives belong to the source declaration. Visit it
-		// first; an instantiated body may also retain the same syntax.
-		if origin := fn.Origin(); origin != nil && visit(origin) {
-			return true
-		}
-		if hasFuncDirective(fn, "go:uintptrescapes") {
-			return true
-		}
-		// SSA promoted-method wrappers, thunks (method expressions), and
-		// bound-method wrappers have no FuncDecl of their own. Only these
-		// transparent adapters inherit the target's pragma;
-		// an ordinary function that happens to call it must not inherit it.
-		if !strings.HasPrefix(fn.Synthetic, "wrapper for ") &&
-			!strings.HasPrefix(fn.Synthetic, "thunk for ") &&
-			!strings.HasPrefix(fn.Synthetic, "bound method wrapper for ") {
-			return false
-		}
-		for _, block := range fn.Blocks {
-			for _, instr := range block.Instrs {
-				if call, ok := instr.(*ssa.Call); ok && visit(call.Call.StaticCallee()) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return visit(fn)
+	return ssaopt.HasUintptrEscapesDirective(fn)
 }

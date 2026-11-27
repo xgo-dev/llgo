@@ -548,6 +548,20 @@ func (p Program) SetRuntime(runtime any) {
 	}
 }
 
+// RuntimePkg returns the configured runtime *types.Package, if already set.
+func (p Program) RuntimePkg() *types.Package {
+	if p == nil {
+		return nil
+	}
+	if p.rt != nil {
+		return p.rt
+	}
+	if p.rtget != nil {
+		return p.rtget()
+	}
+	return nil
+}
+
 // SetTypeCallConv sets the default calling convention for the named type, controlling
 // how that type (and functions using it) are lowered.
 // For a programmatically constructed native struct, supply its original fields

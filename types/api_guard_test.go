@@ -525,6 +525,7 @@ func buildVerifiedLLGoExtensions() map[string]bool {
 		"method:Context.SetNativeStructFields":  true,
 		"method:Context.MarkNativeField":        true,
 		"method:Context.SetSizes":               true,
+		"method:Context.Spec":                   true,
 	}
 	for _, tn := range concreteGoTypeNames {
 		for _, mn := range verifiedTypeInterfaceExtensions {

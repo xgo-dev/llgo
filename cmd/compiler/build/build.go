@@ -783,6 +783,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	emitDebugInfo := shouldEmitDebugInfo(conf, &export)
 	emitCodeView := shouldEmitCodeView(conf, &export)
 	frontendOptions := cl.Options{
+		OptLevel:                 conf.OptLevel,
 		DisableInlineBodyImports: conf.ltoMode() == lto.Full,
 		Debug:                    emitDebugInfo,
 		DebugSymbols:             emitDebugInfo,
@@ -1177,6 +1178,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		escapeSpan.setArg("cache_misses", misses)
 	})
 	escapeSpan.done()
+	ssaOptSpan := buildTrace.startCoordinator("ssaopt planning", nil)
+	ctx.frontendOptions.OptPlan = ctx.newOptPlan()
+	ssaOptSpan.done()
 	if ctx.frontend != nil {
 		ctx.frontend.capture(ctx.frontendOptions.EscapeAnalysis)
 	}
@@ -1358,6 +1362,7 @@ func (ctx *context) releaseSingleExecutableBackend() {
 	ctx.callerTracking = nil
 	ctx.patches = nil
 	ctx.frontendOptions.EscapeAnalysis = nil
+	ctx.frontendOptions.OptPlan = nil
 	ctx.frontendOptions.ReceiverNilChecks = nil
 	ctx.pkgs = nil
 	ctx.pkgByID = nil

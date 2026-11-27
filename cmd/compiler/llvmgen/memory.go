@@ -162,16 +162,22 @@ func (b Builder) Alloc(elem Type, heap bool) (ret Expr) {
 
 // AllocEx allocates space for a variable of type elem with hoistToEntry control.
 func (b Builder) AllocEx(elem Type, heap bool, hoistToEntry bool) Expr {
-	return b.allocEx(elem, heap, hoistToEntry, false)
+	return b.allocEx(elem, heap, hoistToEntry, false, !b.Prog.abi.HasPointers(elem.raw.Type))
+}
+
+// AllocWithPlan allocates space for a variable of type elem honoring explicit
+// compiler placement, hoisting, recover-volatility, and GC NoScan decisions.
+func (b Builder) AllocWithPlan(elem Type, heap, hoistToEntry, volatile, noScan bool) Expr {
+	return b.allocEx(elem, heap, hoistToEntry, volatile, noScan)
 }
 
 // AllocRecover places a local in the entry frame and zeroes it with a volatile
 // operation at its declaration so recovery sees the initialized storage.
 func (b Builder) AllocRecover(elem Type) Expr {
-	return b.allocEx(elem, false, true, true)
+	return b.allocEx(elem, false, true, true, !b.Prog.abi.HasPointers(elem.raw.Type))
 }
 
-func (b Builder) allocEx(elem Type, heap, hoistToEntry, volatile bool) (ret Expr) {
+func (b Builder) allocEx(elem Type, heap, hoistToEntry, volatile, noScan bool) (ret Expr) {
 	dbgInstrf("Alloc %v, %v\n", elem.RawType(), heap)
 	prog := b.Prog
 	pkg := b.Pkg
@@ -183,7 +189,7 @@ func (b Builder) allocEx(elem Type, heap, hoistToEntry, volatile bool) (ret Expr
 		if prog.SizeOf(elem) == 0 {
 			return pkg.moduleZeroSizedAlloc(elem)
 		}
-		ret = b.allocTyped(elem, size, true)
+		ret = b.allocTypedEx(elem, size, true, !noScan)
 	} else {
 		// Stack-local zero-sized variables keep a distinct alloca. Only heap
 		// allocations and package globals use the shared module sentinel.
@@ -223,7 +229,10 @@ func (b Builder) AllocU(elem Type, n ...int64) (ret Expr) {
 }
 
 func (b Builder) allocTyped(elem Type, size Expr, zero bool) Expr {
-	hasPointers := b.Prog.abi.HasPointers(elem.raw.Type)
+	return b.allocTypedEx(elem, size, zero, b.Prog.abi.HasPointers(elem.raw.Type))
+}
+
+func (b Builder) allocTypedEx(elem Type, size Expr, zero, hasPointers bool) Expr {
 	helper := "AllocAtomicU"
 	if hasPointers {
 		helper = "AllocU"

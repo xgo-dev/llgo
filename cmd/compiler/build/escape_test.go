@@ -203,7 +203,8 @@ func main() {
 					}
 				} else if phase == "typefallback" {
 					var record frontendTypeExport
-					if json.Unmarshal(envelope.Payload, &record) == nil && record.Package != nil && record.Package.ID == "example.com/escape/dep" {
+					if json.Unmarshal(envelope.Payload, &record) == nil &&
+						(record.PkgID == "example.com/escape/dep" || (record.Package != nil && record.Package.ID == "example.com/escape/dep")) {
 						changed = true
 						return os.WriteFile(filename, []byte("{"), 0600)
 					}

@@ -4,9 +4,9 @@ import (
 	"github.com/xgo-dev/llgo/types"
 	"go/ast"
 	"go/token"
-	"strings"
 
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	"github.com/xgo-dev/llgo/cmd/compiler/ssaopt"
 	"github.com/xgo-dev/llgo/ssa"
 )
 
@@ -94,71 +94,71 @@ func receiverNeedsAddressCheck(sel *types.Selection) bool {
 	return !isPointerGoType(typ)
 }
 
-func (p *context) checkMethodCallReceiver(b llvmgen.Builder, call *ssa.CallCommon) {
+func (p *context) checkMethodCallReceiver(b llvmgen.Builder, ins ssa.Instruction, call *ssa.CallCommon) {
 	if len(call.Args) == 0 {
 		return
 	}
-	// Promoted method expressions and interface adapters also contain
-	// implicit field-address arithmetic, but have no source selector or call
-	// position. Keep the required base checks in the generated wrapper itself
-	// so storing (*Outer).M in a function value cannot bypass them. The final
-	// declared pointer receiver may still legally be nil.
-	if isPointerMethodWrapperCall(p.goFn, call) {
-		p.checkAddressedMethodReceiver(b, call.Args[0], receiverNilCheck{pos: p.goFn.Pos()})
-		return
+	if p.optPlan != nil {
+		if nc, ok := p.optPlan.NilChecks[ins]; ok {
+			p.emitPlannedReceiverNilCheck(b, call.Args[0], nc)
+			return
+		}
+		// Single owner: ssaopt owns every call with RecvNilCheck or wrapper call.
+		if isPointerMethodWrapperCall(p.goFn, call) || call.RecvNilCheck != nil {
+			return
+		}
 	}
-	if call.RecvNilCheck != nil {
-		// Prefer the first-class receiver nil check recorded directly by llgo/ssa.
-		p.checkAddressedMethodReceiver(b, call.Args[0], receiverNilCheck{
-			pos:     call.RecvNilCheck.Pos,
-			address: call.RecvNilCheck.Address,
-		})
-		return
-	}
+	// Legacy fallback only when Options.ReceiverNilChecks is explicitly supplied
+	// by direct cl unit tests without ssa.CallCommon.RecvNilCheck.
 	checks := p.options.ReceiverNilChecks
 	if checks == nil {
 		return
 	}
 	if check, ok := checks.calls[call.Pos()]; ok {
-		// SSA has evaluated the argument expressions by this instruction.
-		// Checking while compiling FieldAddr would move the panic before
-		// those side effects. The saved receiver also avoids re-reading a
-		// variable that an argument expression may have reassigned.
 		p.checkAddressedMethodReceiver(b, call.Args[0], check)
 	}
 }
 
 func isPointerMethodWrapperCall(owner *ssa.Function, call *ssa.CallCommon) bool {
-	if !isMethodReceiverWrapper(owner) {
-		return false
-	}
-	fn := call.StaticCallee()
-	return fn != nil && fn.Signature.Recv() != nil && isPointerGoType(fn.Signature.Recv().Type())
+	return ssaopt.IsPointerMethodWrapperCall(owner, call)
 }
 
 func isMethodReceiverWrapper(fn *ssa.Function) bool {
-	return fn != nil && (strings.HasPrefix(fn.Synthetic, "wrapper for ") || strings.HasPrefix(fn.Synthetic, "thunk for "))
+	return ssaopt.IsMethodReceiverWrapper(fn)
 }
 
 func (p *context) checkBoundMethodReceiver(b llvmgen.Builder, closure *ssa.MakeClosure) {
 	if len(closure.Bindings) == 0 {
 		return
 	}
-	if closure.RecvNilCheck != nil {
-		p.checkAddressedMethodReceiver(b, closure.Bindings[0], receiverNilCheck{
-			pos:     closure.RecvNilCheck.Pos,
-			address: closure.RecvNilCheck.Address,
-		})
-		return
+	if p.optPlan != nil {
+		if nc, ok := p.optPlan.NilChecks[closure]; ok {
+			p.emitPlannedReceiverNilCheck(b, closure.Bindings[0], nc)
+			return
+		}
+		if closure.RecvNilCheck != nil {
+			return
+		}
 	}
 	checks := p.options.ReceiverNilChecks
 	if checks == nil {
 		return
 	}
 	if check, ok := checks.values[closure.Pos()]; ok {
-		// Method-value formation must panic now, even if the value is never
-		// invoked; there is no later argument-evaluation phase to preserve.
 		p.checkAddressedMethodReceiver(b, closure.Bindings[0], check)
+	}
+}
+
+func (p *context) emitPlannedReceiverNilCheck(b llvmgen.Builder, receiver ssa.Value, nc ssaopt.NilCheckPlan) {
+	if nc.Elided || (!nc.NeedBaseCheck && !nc.NeedAddrCheck) {
+		return
+	}
+	p.recordPanicSite(b, nc.Pos)
+	if nc.NeedBaseCheck {
+		p.emitNilDerefBaseCheck(b, receiver)
+	}
+	if nc.NeedAddrCheck {
+		b.AssertNilDeref(p.compileValue(b, receiver))
 	}
 }
 
@@ -182,11 +182,5 @@ func (p *context) checkAddressedMethodReceiver(b llvmgen.Builder, receiver ssa.V
 }
 
 func methodReceiverHasUncheckedBase(receiver ssa.Value) bool {
-	switch receiver := receiver.(type) {
-	case *ssa.UnOp:
-		return receiver.Op == token.MUL && !isKnownNonNilAddr(receiver.X) && !isWrapNilCheckCall(receiver.X)
-	case *ssa.FieldAddr:
-		return !isKnownNonNilAddr(receiver.X) && !isWrapNilCheckCall(receiver.X)
-	}
-	return false
+	return ssaopt.MethodReceiverHasUncheckedBase(receiver)
 }

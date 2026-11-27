@@ -132,7 +132,11 @@ func (a *analyzer) cacheIdentity() (string, []cacheFunction) {
 	var functions []cacheFunction
 	for fn := range a.functions {
 		name := fn.String()
-		id := fmt.Sprintf("%s|%s|%s", name, types.TypeString(fn.Signature, qualifier), fn.Prog.Fset.Position(fn.Pos()))
+		pos := ""
+		if !isPositionIndependentFunc(fn) {
+			pos = fn.Prog.Fset.Position(fn.Pos()).String()
+		}
+		id := fmt.Sprintf("%s|%s|%s", name, types.TypeString(fn.Signature, qualifier), pos)
 		functions = append(functions, cacheFunction{fn: fn, name: name, id: id})
 	}
 	sort.Slice(functions, func(i, j int) bool { return functions[i].id < functions[j].id })
@@ -232,6 +236,38 @@ func (a *analyzer) cacheIdentity() (string, []cacheFunction) {
 }
 
 func qualifier(pkg *types.Package) string { return pkg.Path() }
+
+func isPositionIndependentFunc(fn *ssa.Function) bool {
+	if fn == nil || fn.Parent() != nil || fn.Name() == "_" {
+		return false
+	}
+	if recv := fn.Signature.Recv(); recv != nil && isLocalNamed(recv.Type()) {
+		return false
+	}
+	if fn.Synthetic != "" && fn.Synthetic != "from type information" {
+		if len(fn.FreeVars) == 1 && isLocalNamed(fn.FreeVars[0].Type()) {
+			return false
+		}
+		return true
+	}
+	return fn.Object() != nil
+}
+
+func isLocalNamed(typ types.Type) bool {
+	if typ == nil {
+		return false
+	}
+	typ = types.Unalias(typ)
+	if ptr, ok := typ.(*types.Pointer); ok {
+		typ = types.Unalias(ptr.Elem())
+	}
+	named, ok := typ.(*types.Named)
+	if !ok || named.Obj() == nil {
+		return false
+	}
+	obj := named.Obj()
+	return obj.Pkg() != nil && obj.Parent() != nil && obj.Parent() != obj.Pkg().Scope()
+}
 
 // Fingerprint the type properties queried by this field-insensitive analysis.
 // Following pointees or interface method signatures recursively is unnecessary:

@@ -1,10 +1,10 @@
 package abi
 
-import runtimeabi "github.com/xgo-dev/llgo/runtime/abi"
+import "github.com/xgo-dev/llgo/cmd/compiler/abipolicy"
 
-const SmallStackBufferSize = runtimeabi.SmallStackBufferSize
+const SmallStackBufferSize = abipolicy.SmallStackBufferSize
 
 // MaxEscapeStackBytes bounds storage newly promoted by Go escape analysis and
 // its lowering helpers in one function. Existing locals and later LLVM frame
 // layout remain independent; this is not a bound on the entire call stack.
-const MaxEscapeStackBytes uint64 = 64 * 1024
+const MaxEscapeStackBytes = abipolicy.MaxEscapeStackBytes

@@ -574,8 +574,7 @@ type Alloc struct {
 	register
 	Comment string
 	Heap    bool
-	NoScan  bool // LLGo extension: GC pointer-free allocation hint
-	index   int  // dense numbering; for lifting
+	index   int // dense numbering; for lifting
 }
 
 // The Phi instruction represents an SSA φ-node, which combines values
