@@ -16,12 +16,16 @@ import (
 // Runtime netpoll backing for internal/poll.
 //
 // internal/poll assumes non-blocking I/O and a working runtime poller when
-// pollDesc.init succeeds. Each poll descriptor owns its own mutex and caches
-// one reusable wake pipe for the common single-waiter path so repeated
+// pollDesc.init succeeds. Each poll descriptor owns its own mutex and may
+// cache one reusable wake pipe for the common single-waiter path so repeated
 // pollWait calls avoid global lock contention and per-wait pipe/fcntl/close
-// syscalls. If a second waiter concurrently blocks on the same descriptor
-// (e.g. full-duplex Read + Write), it allocates a dedicated temporary wake
-// pipe so close/deadline wakes never steal another waiter's notification.
+// syscalls. To avoid tripling fd consumption across large idle descriptor
+// sets (e.g. under a tight RLIMIT_NOFILE), cached wake pipes are capped
+// process-wide at pollCachedPipeCap (at most 2*pollCachedPipeCap cached fds);
+// descriptors beyond the cap or concurrent second waiters on the same
+// descriptor (e.g. full-duplex Read + Write) allocate a dedicated temporary
+// wake pipe closed on pollRemoveWaiter so close/deadline wakes never steal
+// another waiter's notification.
 
 // Must match the error codes in internal/poll/fd_poll_runtime.go.
 const (
@@ -30,6 +34,10 @@ const (
 	pollErrTimeout     = 2
 	pollErrNotPollable = 3
 )
+
+// Cap process-wide cached wake pipes (2 fds each, max 256 cached fds total)
+// so idle descriptors do not exhaust tight RLIMIT_NOFILE budgets.
+const pollCachedPipeCap = 128
 
 const (
 	pollIn  int16 = 0x0001
@@ -77,6 +85,29 @@ type pollWaiter struct {
 var pollOnce psync.Once
 var pollRootMu psync.Mutex
 var pollDescRoots map[uintptr]*llgoPollDesc
+var pollCachedPipes int64
+
+func pollTryAcquireCachedPipeSlot() bool {
+	for {
+		cur := latomic.LoadInt64(&pollCachedPipes)
+		if cur >= pollCachedPipeCap {
+			return false
+		}
+		if latomic.CompareAndSwapInt64(&pollCachedPipes, cur, cur+1) {
+			return true
+		}
+	}
+}
+
+func pollCloseCachedWakePipeLocked(pd *llgoPollDesc) {
+	if pd.wakeR >= 0 {
+		cliteos.Close(pd.wakeR)
+		cliteos.Close(pd.wakeW)
+		pd.wakeR = -1
+		pd.wakeW = -1
+		latomic.AddInt64(&pollCachedPipes, -1)
+	}
+}
 
 func pollInit() {
 	pollRootMu.Init(nil)
@@ -108,11 +139,19 @@ func pollRootDel(ctx uintptr) {
 func pollAddWaiter(pd *llgoPollDesc, w *pollWaiter, mode int) bool {
 	pd.mu.Lock()
 	if !pd.wakeInUse {
-		if pd.wakeR < 0 && !pd.closed {
+		if pd.closed {
+			pd.mu.Unlock()
+			return false
+		}
+		if pd.wakeR < 0 && pollTryAcquireCachedPipeSlot() {
 			var fds [2]c.Int
 			if pollPipe(&fds) {
 				pd.wakeR = fds[0]
 				pd.wakeW = fds[1]
+			} else {
+				latomic.AddInt64(&pollCachedPipes, -1)
+				pd.mu.Unlock()
+				return false
 			}
 		}
 		if pd.wakeR >= 0 {
@@ -127,8 +166,6 @@ func pollAddWaiter(pd *llgoPollDesc, w *pollWaiter, mode int) bool {
 			pd.mu.Unlock()
 			return true
 		}
-		pd.mu.Unlock()
-		return false
 	}
 	pd.mu.Unlock()
 
@@ -163,11 +200,8 @@ func pollRemoveWaiter(pd *llgoPollDesc, w *pollWaiter) {
 			pd.wakePending = false
 		}
 		pd.wakeInUse = false
-		if pd.closed && pd.wakeR >= 0 {
-			cliteos.Close(pd.wakeR)
-			cliteos.Close(pd.wakeW)
-			pd.wakeR = -1
-			pd.wakeW = -1
+		if pd.closed {
+			pollCloseCachedWakePipeLocked(pd)
 		}
 	} else {
 		// Close under pd.mu so a concurrent pollWake cannot write to reused fds.
@@ -182,20 +216,31 @@ func pollWakeLocked(pd *llgoPollDesc, mode int) {
 		if mode != 0 && mode != 'r'+'w' && mode != w.mode {
 			continue
 		}
-		if w.cached {
-			if pd.wakePending {
-				continue
-			}
-			pd.wakePending = true
+		if w.cached && pd.wakePending {
+			continue
 		}
 		// Only readability matters; repeated notifications may coalesce.
 		var b byte
-		for cliteos.Write(w.w, unsafe.Pointer(&b), 1) < 0 {
-			if int(cliteos.Errno()) != int(csyscall.EINTR) {
-				// EAGAIN means a notification is already pending. Other
-				// errors also stop retries so remaining waiters can be signaled.
+		notified := false
+		for {
+			if cliteos.Write(w.w, unsafe.Pointer(&b), 1) >= 0 {
+				notified = true
 				break
 			}
+			errno := int(cliteos.Errno())
+			if errno == int(csyscall.EINTR) {
+				continue
+			}
+			if errno == pollEAGAIN {
+				// Pipe is already full, so a wake notification is pending.
+				notified = true
+			}
+			// Other errors also stop retries so remaining waiters can be signaled,
+			// leaving wakePending false so a later wake can retry.
+			break
+		}
+		if w.cached && notified {
+			pd.wakePending = true
 		}
 	}
 }
@@ -303,11 +348,8 @@ func poll_runtime_pollClose(ctx uintptr) {
 	if pd.waiters != nil {
 		pollWakeLocked(pd, 0)
 	}
-	if !pd.wakeInUse && pd.wakeR >= 0 {
-		cliteos.Close(pd.wakeR)
-		cliteos.Close(pd.wakeW)
-		pd.wakeR = -1
-		pd.wakeW = -1
+	if !pd.wakeInUse {
+		pollCloseCachedWakePipeLocked(pd)
 	}
 	pd.mu.Unlock()
 	pollRootDel(ctx)
