@@ -8,6 +8,7 @@ import (
 	"go/build"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,6 +120,13 @@ func TestAtomicSourcePatchValidationGuards(t *testing.T) {
 				t.Fatalf("expected error for %s", tc.name)
 			}
 		})
+	}
+
+	// atomicSourcePatchSignature rejects nil/unformattable AST field types.
+	if _, err := atomicSourcePatchSignature(&ast.FuncType{
+		Params: &ast.FieldList{List: []*ast.Field{{Type: nil}}},
+	}); err == nil {
+		t.Fatal("expected atomicSourcePatchSignature error for nil type")
 	}
 }
 
@@ -432,6 +440,62 @@ func llgoStdCallAddr() uintptr { return 1 }
 			t.Fatalf("expected error for bad replacement body:\n%s", badBody)
 		}
 	}
+
+	// MatchFile error via ctx.OpenFile (windows_stdcall_source_patch.go:67-68).
+	badMatchCtx := ctx
+	badMatchCtx.OpenFile = func(string) (io.ReadCloser, error) { return nil, errors.New("open boom") }
+	if _, err := windowsStdCallSourcePatchView(dir, entries, badMatchCtx, readDisk, nil, patchName, validBody, wantSkips); err == nil {
+		t.Fatal("expected MatchFile error from OpenFile failure")
+	}
+
+	// Reused overlay when original physical Go source on disk was removed (windows_stdcall_source_patch.go:84-85).
+	missingDir := t.TempDir()
+	missingGo := filepath.Join(missingDir, "syscall_windows.go")
+	missingAsm := filepath.Join(missingDir, "asm_windows_amd64.s")
+	if err := os.WriteFile(missingGo, origGo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(missingAsm, origAsm, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	missingEntries, err := os.ReadDir(missingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(missingGo); err != nil {
+		t.Fatal(err)
+	}
+	missingReused := map[string][]byte{
+		missingAsm: []byte(marker),
+		missingGo:  filteredGo,
+		filepath.Join(missingDir, "z_llgo_patch_"+patchName): validBody,
+	}
+	missingMatchCtx := ctx
+	missingMatchCtx.OpenFile = func(p string) (io.ReadCloser, error) {
+		if b, ok := missingReused[p]; ok {
+			return io.NopCloser(strings.NewReader(string(b))), nil
+		}
+		return os.Open(p)
+	}
+	if _, err := windowsStdCallSourcePatchView(missingDir, missingEntries, missingMatchCtx, func(p string) ([]byte, error) {
+		if b, ok := missingReused[p]; ok {
+			return b, nil
+		}
+		return os.ReadFile(p)
+	}, missingReused, patchName, validBody, wantSkips); err == nil {
+		t.Fatal("expected os.ReadFile error when reused physical syscall_windows.go is missing")
+	}
+
+	// Duplicate Go function declaration across two matching files (windows_stdcall_source_patch.go:127-128).
+	dupPath := filepath.Join(dir, "dup_windows.go")
+	if err := os.WriteFile(dupPath, []byte("package windows\nfunc StdCall(fn uintptr) uintptr\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entriesDup, _ := os.ReadDir(dir)
+	if _, err := windowsStdCallSourcePatchView(dir, entriesDup, ctx, readDisk, nil, patchName, validBody, wantSkips); err == nil {
+		t.Fatal("expected duplicate Go function owner error")
+	}
+	_ = os.Remove(dupPath)
 }
 
 func TestGCScanSourcePatchViewGuards(t *testing.T) {
@@ -591,6 +655,67 @@ func FilterNilAVX512(n int) { _ = llgoGCScanFactor(n) }
 			t.Fatalf("expected error for bad gcScan body:\n%s", bad)
 		}
 	}
+
+	// MatchFile error via buildCtx.OpenFile (gc_scan_source_patch.go:79-80).
+	badMatchCtx := ctx
+	badMatchCtx.OpenFile = func(string) (io.ReadCloser, error) { return nil, errors.New("open boom") }
+	if _, err := gcScanSourcePatchView(dir, entries, badMatchCtx, readDisk, nil, validBody, wantSkips); err == nil {
+		t.Fatal("expected MatchFile error from OpenFile failure in gcScanSourcePatchView")
+	}
+
+	// Reused overlay when original physical reviewed file on disk was removed (gc_scan_source_patch.go:95-96).
+	missingDir := t.TempDir()
+	missingReused := map[string][]byte{
+		filepath.Join(missingDir, "expand_amd64.s"):             []byte(marker),
+		filepath.Join(missingDir, "scan_amd64.s"):               []byte(marker),
+		filepath.Join(missingDir, "filter_amd64.s"):             []byte(marker),
+		filepath.Join(missingDir, "z_llgo_patch_scan_amd64.go"): validBody,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(missingDir, name), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasSuffix(name, ".go") {
+			filtered, _, ferr := filterSourcePatchFile(content, wantSkips)
+			if ferr != nil {
+				t.Fatal(ferr)
+			}
+			missingReused[filepath.Join(missingDir, name)] = filtered
+		}
+	}
+	missingEntries, err := os.ReadDir(missingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(missingDir, "expand_amd64.go")); err != nil {
+		t.Fatal(err)
+	}
+	missingMatchCtx := ctx
+	missingMatchCtx.OpenFile = func(p string) (io.ReadCloser, error) {
+		if b, ok := missingReused[p]; ok {
+			return io.NopCloser(strings.NewReader(string(b))), nil
+		}
+		return os.Open(p)
+	}
+	if _, err := gcScanSourcePatchView(missingDir, missingEntries, missingMatchCtx, func(p string) ([]byte, error) {
+		if b, ok := missingReused[p]; ok {
+			return b, nil
+		}
+		return os.ReadFile(p)
+	}, missingReused, validBody, wantSkips); err == nil {
+		t.Fatal("expected os.ReadFile error when reused physical expand_amd64.go is missing")
+	}
+
+	// Duplicate Go function declaration across two matching files (gc_scan_source_patch.go:161-162).
+	dupPath := filepath.Join(dir, "dup_amd64.go")
+	if err := os.WriteFile(dupPath, []byte("package scan\nfunc ExpandAVX512(n int)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entriesDup, _ := os.ReadDir(dir)
+	if _, err := gcScanSourcePatchView(dir, entriesDup, ctx, readDisk, nil, validBody, wantSkips); err == nil {
+		t.Fatal("expected duplicate Go function owner error in gcScanSourcePatchView")
+	}
+	_ = os.Remove(dupPath)
 }
 
 func TestSourcePatchHelperEdgeCases(t *testing.T) {

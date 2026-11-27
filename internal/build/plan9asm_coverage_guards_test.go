@@ -1,19 +1,23 @@
 package build
 
 import (
+	"fmt"
 	"go/ast"
 	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
@@ -549,10 +553,11 @@ func TestIsolatedPackageExclusiveOptLevelGuards(t *testing.T) {
 		prog: prog,
 		mode: ModeBuild,
 		buildConf: &Config{
-			Goos:      runtime.GOOS,
-			Goarch:    runtime.GOARCH,
-			BuildMode: BuildModeExe,
-			OptLevel:  optlevel.Os,
+			Goos:              runtime.GOOS,
+			Goarch:            runtime.GOARCH,
+			BuildMode:         BuildModeExe,
+			OptLevel:          optlevel.Os,
+			optLevelDefaulted: true,
 		},
 		patches:       cl.Patches{},
 		sfilesCache:   map[string][]string{"example.com/heavy": nil},
@@ -571,8 +576,25 @@ func TestIsolatedPackageExclusiveOptLevelGuards(t *testing.T) {
 	ctx.conf = &packages.Config{Fset: fset}
 	badTask := newPackageBuildTask(badPkg)
 	badTask.isolated = true
+	if got := ctx.isolatedPackageOptLevel(badTask); got != optlevel.O0 {
+		t.Fatalf("isolatedPackageOptLevel(defaulted heavy) = %v, want O0", got)
+	}
 	if err := ctx.executeIsolatedPackage(badTask, false); err == nil {
 		t.Fatal("expected frontend error from invalidEmbedPackage")
+	}
+	// Explicit optimization flags, LTO, and wasm keep the configured OptLevel.
+	for _, tc := range []struct {
+		name string
+		conf Config
+	}{
+		{name: "explicit-O2", conf: Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH, OptLevel: optlevel.O2, optLevelDefaulted: false}},
+		{name: "lto-enabled", conf: Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH, OptLevel: optlevel.Os, optLevelDefaulted: true, LTO: lto.Thin}},
+		{name: "wasm-target", conf: Config{Goos: "wasip1", Goarch: "wasm", OptLevel: optlevel.Os, optLevelDefaulted: true}},
+	} {
+		probeCtx := &context{buildConf: &tc.conf}
+		if got := probeCtx.isolatedPackageOptLevel(badTask); got != tc.conf.OptLevel {
+			t.Fatalf("isolatedPackageOptLevel(%s) = %v, want %v", tc.name, got, tc.conf.OptLevel)
+		}
 	}
 
 	unsafePkg := &aPackage{
@@ -605,5 +627,337 @@ func TestIsolatedPackageExclusiveOptLevelGuards(t *testing.T) {
 	ctx.patches["unsafe"] = cl.Patch{}
 	if err := tracePackageBuild(ctx, heavyTask, false, true, false); err != nil {
 		t.Fatalf("tracePackageBuild(patched) error = %v", err)
+	}
+}
+
+func TestNativeAsmComponentsNeedRtErrorAndPlan9CompileGuards(t *testing.T) {
+	// bindNativeAsmExports with NeedRt=true propagates runtime export errors.
+	cleanPkg := typecheckTestPkg(t, "example.com/rtneed", "package rtneed\nvar _ int\n")
+	rtPkg := &packages.Package{PkgPath: "runtime"}
+	rtAPkg := &aPackage{
+		Package: rtPkg,
+		linkSnapshot: &packageLinkSnapshot{
+			cExports: []cExport{{goName: "BadRt", cName: "bad_rt_sym", sig: nil}},
+		},
+	}
+	rtPlan := &nativeAsmPlan{
+		files:      map[string]extplan9asm.NativeOptions{"a.s": {Imports: map[string]string{}}},
+		unresolved: map[string][]string{"a.s": {"bad_rt_sym"}},
+	}
+	if err := bindNativeAsmExports(&context{pkgs: map[*packages.Package]*aPackage{rtPkg: rtAPkg}}, &aPackage{NeedRt: true}, cleanPkg, rtPlan); err == nil || !strings.Contains(err.Error(), "no compiled signature") {
+		t.Fatalf("bindNativeAsmExports(NeedRt nil sig) err = %v, want compiled signature error", err)
+	}
+
+	// compileSelectedPkgSFiles propagates planNativeAsmComponents errors.
+	conflictPkg := typecheckTestPkg(t, "example.com/planerr", `package planerr
+//go:cgo_import_dynamic dup dup1 "libc.so"
+//go:cgo_import_dynamic dup dup2 "libc.so"
+var _ int
+`)
+	conflictAsm := filepath.Join(conflictPkg.Dir, "a.s")
+	if err := os.WriteFile(conflictAsm, []byte("TEXT callback<>(SB), 4, $0\nJMP dup(SB)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prog := llssa.NewProgram(&llssa.Target{GOOS: "linux", GOARCH: "arm64"})
+	defer prog.Dispose()
+	ctx := &context{
+		prog:            prog,
+		buildConf:       &Config{Goos: "linux", Goarch: "arm64"},
+		commands:        commandEnv{dir: conflictPkg.Dir, environ: []string{"GOROOT=" + runtime.GOROOT()}},
+		plan9AsmSources: &sync.Map{},
+	}
+	aPkg := &aPackage{Package: conflictPkg, LPkg: prog.NewPackage("planerr", conflictPkg.PkgPath)}
+	if _, err := compileSelectedPkgSFiles(ctx, aPkg, conflictPkg, []string{conflictAsm}, false); err == nil || !strings.Contains(err.Error(), "conflicting dynamic import") {
+		t.Fatalf("compileSelectedPkgSFiles(plan error) err = %v, want conflicting dynamic import", err)
+	}
+
+	// compileSelectedPkgSFiles disposes native module and returns error when
+	// externalizeNativeCodeAliases finds conflicting non-zero Go storage.
+	aliasPkg := typecheckTestPkg(t, "example.com/aliaserr", `package aliaserr
+import "unsafe"
+//go:linkname aliasByte entry_code
+var aliasByte byte
+func Addr() uintptr { return uintptr(unsafe.Pointer(&aliasByte)) }
+`)
+	aliasAsm := filepath.Join(aliasPkg.Dir, "entry.s")
+	if err := os.WriteFile(aliasAsm, []byte("TEXT entry_code(SB), 4, $0-0\nRET\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	aliasAPkg := &aPackage{Package: aliasPkg, LPkg: prog.NewPackage("aliaserr", aliasPkg.PkgPath)}
+	goMod := aliasAPkg.LPkg.Module()
+	badGlobal := llvm.AddGlobal(goMod, goMod.Context().Int8Type(), "entry_code")
+	badGlobal.SetInitializer(llvm.ConstInt(goMod.Context().Int8Type(), 1, false))
+	ctx.commands.dir = aliasPkg.Dir
+	if _, err := compileSelectedPkgSFiles(ctx, aliasAPkg, aliasPkg, []string{aliasAsm}, false); err == nil || !strings.Contains(err.Error(), "conflicts with Go storage") {
+		t.Fatalf("compileSelectedPkgSFiles(alias conflict) err = %v, want Go storage conflict", err)
+	}
+}
+
+func TestBuildCgoErrorAndCXXGuards(t *testing.T) {
+	t.Run("packageUsesOriginalCgo error", func(t *testing.T) {
+		dir := t.TempDir()
+		file, pkg, ctx := buildCgoTestFile(t, dir, "")
+		pkg.GoFiles = []string{filepath.Join(dir, "missing.go")}
+		ctx.commands.environ = withEnv(ctx.commands.environ, "CGO_ENABLED=1")
+		if _, _, err := buildCgo(ctx, pkg, []*ast.File{file}, nil, false); err == nil {
+			t.Fatal("expected buildCgo to propagate packageUsesOriginalCgo error")
+		}
+	})
+
+	t.Run("cgoCompilationFlags error", func(t *testing.T) {
+		dir := t.TempDir()
+		goFile := filepath.Join(dir, "cgo.go")
+		src := "package demo\nimport \"C\"\n"
+		if err := os.WriteFile(goFile, []byte(src), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, goFile, src, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkg := &aPackage{Package: &packages.Package{
+			Fset:       fset,
+			PkgPath:    "example.com/cgoerr",
+			Dir:        dir,
+			GoFiles:    []string{goFile},
+			ExportFile: filepath.Join(dir, "demo.a"),
+		}}
+		ctx := &context{
+			conf:      &packages.Config{},
+			buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH},
+			commands: commandEnv{
+				dir:     dir,
+				environ: withEnv(os.Environ(), "CGO_ENABLED=1", `CGO_CPPFLAGS="-unterminated`),
+			},
+		}
+		if _, _, err := buildCgo(ctx, pkg, []*ast.File{file}, nil, false); err == nil || !strings.Contains(err.Error(), "CGO_CPPFLAGS") {
+			t.Fatalf("buildCgo(malformed CGO_CPPFLAGS) err = %v, want CGO_CPPFLAGS parse error", err)
+		}
+	})
+
+	t.Run("sibling C++ source uses cxxflags", func(t *testing.T) {
+		if _, err := exec.LookPath("clang++"); err != nil {
+			if _, err2 := exec.LookPath("clang"); err2 != nil {
+				t.Skip("clang/clang++ not found")
+			}
+		}
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "helper.cpp"), []byte("extern \"C\" int cpp_helper_val() { return CXX_MACRO; }\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		file, pkg, ctx := buildCgoTestFile(t, dir, "#cgo CXXFLAGS: -DCXX_MACRO=9\nint c_preamble_val = 1;")
+		objects, _, err := buildCgo(ctx, pkg, []*ast.File{file}, nil, false)
+		if err != nil {
+			t.Fatalf("buildCgo with sibling .cpp failed: %v", err)
+		}
+		defer removeFiles(objects)
+		if len(objects) != 2 {
+			t.Fatalf("buildCgo(.cpp + preamble) objects = %v, want 2", objects)
+		}
+	})
+}
+
+func runFakeCCHelper(mode string) {
+	var outPath string
+	for i := 1; i < len(os.Args); i++ {
+		if os.Args[i] == "-o" && i+1 < len(os.Args) {
+			outPath = os.Args[i+1]
+			break
+		}
+	}
+	if outPath == "" {
+		os.Exit(2)
+	}
+	switch mode {
+	case "empty":
+		if err := os.WriteFile(outPath, nil, 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(3)
+		}
+	case "dir":
+		_ = os.Remove(outPath)
+		if err := os.MkdirAll(outPath, 0o700); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(4)
+		}
+		if err := os.WriteFile(filepath.Join(outPath, "keep"), []byte("x"), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(5)
+		}
+	case "unreadable":
+		if err := os.WriteFile(outPath, []byte("nonempty"), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(6)
+		}
+		if err := os.Chmod(outPath, 0o000); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(7)
+		}
+	default:
+		os.Exit(8)
+	}
+}
+
+func TestLLGoFilesReuseAndFingerprintErrorGuards(t *testing.T) {
+	// llgoPkgFileInputs rejects duplicate explicit .s owners declared via LLGoFiles.
+	dupPkg := typecheckTestPkg(t, "example.com/dupllgo", `package dupllgo
+const LLGoFiles = "a.s; ./a.s"
+`)
+	if _, err := llgoPkgFileInputs(&context{buildConf: &Config{}}, dupPkg); err == nil || !strings.Contains(err.Error(), "duplicate explicit LLGoFiles owners") {
+		t.Fatalf("llgoPkgFileInputs(duplicate .s) err = %v, want duplicate explicit owner error", err)
+	}
+
+	// reuseCompiledObject guards: missing file, directory, 0-byte file, and bad temp dir.
+	dir := t.TempDir()
+	if _, err := reuseCompiledObject("a.S", filepath.Join(dir, "missing.o")); err == nil {
+		t.Fatal("expected reuseCompiledObject error for missing object")
+	}
+	if _, err := reuseCompiledObject("a.S", dir); err == nil {
+		t.Fatal("expected reuseCompiledObject error for directory")
+	}
+	emptyObj := filepath.Join(dir, "empty.o")
+	if err := os.WriteFile(emptyObj, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reuseCompiledObject("a.S", emptyObj); err == nil {
+		t.Fatal("expected reuseCompiledObject error for empty object")
+	}
+	goodObj := filepath.Join(dir, "good.o")
+	if err := os.WriteFile(goodObj, []byte("objdata"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("reuseCompiledObject temp dir error", func(t *testing.T) {
+		badTmp := filepath.Join(t.TempDir(), "no-such-tmp")
+		t.Setenv("TMPDIR", badTmp)
+		t.Setenv("TMP", badTmp)
+		t.Setenv("TEMP", badTmp)
+		if _, err := reuseCompiledObject("a.S", goodObj); err == nil {
+			t.Fatal("expected reuseCompiledObject error when temp dir does not exist")
+		}
+	})
+
+	// digestLLGoFileInputs error propagation for both assembly and C preprocessor paths.
+	if _, err := exec.LookPath("clang"); err == nil {
+		badAsm := filepath.Join(dir, "bad.S")
+		badC := filepath.Join(dir, "bad.c")
+		if err := os.WriteFile(badAsm, []byte(".llgo_invalid_asm_directive\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(badC, []byte("#error boom\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fpCtx := &context{
+			mode:              ModeBuild,
+			buildConf:         &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH},
+			commands:          commandEnv{dir: dir, environ: os.Environ()},
+			llgoFileHashCache: make(map[llgoFileHashKey]string),
+		}
+		if _, err := digestLLGoFileInputs(fpCtx, []llgoFileInput{{path: badAsm}}, nil); err == nil {
+			t.Fatal("expected digestLLGoFileInputs error for invalid assembly")
+		}
+		if _, err := digestLLGoFileInputs(fpCtx, []llgoFileInput{{path: badC}}, nil); err == nil || !strings.Contains(err.Error(), "preprocess file") {
+			t.Fatalf("digestLLGoFileInputs(bad .c) err = %v, want preprocess error", err)
+		}
+	}
+
+	// digestNativeAssemblyObject error branches: temp creation failure, empty object,
+	// non-regular output directory (also exercises defer os.Remove error join), and unreadable object.
+	asmSrc := filepath.Join(dir, "stub.S")
+	if err := os.WriteFile(asmSrc, []byte(".text\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("digestNativeAssemblyObject temp dir error", func(t *testing.T) {
+		badTmp := filepath.Join(t.TempDir(), "no-such-tmp")
+		t.Setenv("TMPDIR", badTmp)
+		t.Setenv("TMP", badTmp)
+		t.Setenv("TEMP", badTmp)
+		ctx := &context{buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH}}
+		if _, _, err := digestNativeAssemblyObject(ctx, asmSrc, nil, false); err == nil || !strings.Contains(err.Error(), "create assembly fingerprint object") {
+			t.Fatalf("digestNativeAssemblyObject(bad temp) err = %v, want create error", err)
+		}
+	})
+
+	fakeCC := writeBuildTestTool(t, t.TempDir(), "clang")
+	for _, mode := range []string{"empty", "dir", "unreadable"} {
+		t.Run("fakeCC-"+mode, func(t *testing.T) {
+			if mode == "unreadable" && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+				t.Skip("chmod 0000 unreadable file test requires non-root Unix")
+			}
+			tmpDir := t.TempDir()
+			t.Setenv("TMPDIR", tmpDir)
+			t.Setenv("TMP", tmpDir)
+			t.Setenv("TEMP", tmpDir)
+			t.Cleanup(func() {
+				entries, _ := os.ReadDir(tmpDir)
+				for _, e := range entries {
+					p := filepath.Join(tmpDir, e.Name())
+					_ = os.Chmod(p, 0o700)
+					_ = os.RemoveAll(p)
+				}
+			})
+			ctx := &context{
+				buildConf:    &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH},
+				crossCompile: crosscompile.Export{CC: fakeCC},
+				commands:     commandEnv{dir: dir, environ: withEnv(os.Environ(), "LLGO_TEST_FAKE_CC_HELPER="+mode)},
+			}
+			_, _, err := digestNativeAssemblyObject(ctx, asmSrc, nil, false)
+			if err == nil {
+				t.Fatalf("digestNativeAssemblyObject(%s) unexpectedly succeeded", mode)
+			}
+			if mode == "dir" && !strings.Contains(err.Error(), "remove assembly fingerprint object") {
+				t.Fatalf("digestNativeAssemblyObject(dir) err = %v, want joined remove error", err)
+			}
+		})
+	}
+}
+
+func TestCollectAndUnusedGlobalInitErrorGuards(t *testing.T) {
+	// collectPackageInputs propagates packageUsesOriginalCgo error when CGO_ENABLED=1
+	// and a selected Go source has invalid syntax (file hashing succeeds, import parse fails).
+	dir := t.TempDir()
+	badGo := filepath.Join(dir, "bad.go")
+	if err := os.WriteFile(badGo, []byte("package p\nimport ("), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pkg := &packages.Package{
+		ID:      "example.com/badcgo",
+		PkgPath: "example.com/badcgo",
+		Dir:     dir,
+		GoFiles: []string{badGo},
+	}
+	ctx := &context{
+		mode:           ModeGen,
+		buildConf:      &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH},
+		commands:       commandEnv{dir: dir, environ: []string{"CGO_ENABLED=1"}},
+		sfilesCache:    map[string][]string{pkg.ID: nil},
+		llgoFilesCache: map[*packages.Package][]llgoFileInput{pkg: nil},
+	}
+	m := newManifestBuilder()
+	if err := ctx.collectPackageInputs(m, &aPackage{Package: pkg}); err == nil || !strings.Contains(err.Error(), "inspect cgo inputs") {
+		t.Fatalf("collectPackageInputs(malformed Go) err = %v, want inspect cgo inputs error", err)
+	}
+
+	// collectAsmGlobalInitReferences returns false when captureSelectedPlan9Asm fails.
+	badAsm := filepath.Join(dir, "bad.s")
+	if err := os.WriteFile(badAsm, []byte("#include \"missing-init-header.h\"\nTEXT ·F(SB),$0-0\nRET\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	asmPkg := &packages.Package{
+		ID:         "example.com/badinitasm",
+		PkgPath:    "example.com/badinitasm",
+		Dir:        dir,
+		OtherFiles: []string{badAsm},
+	}
+	asmCtx := &context{
+		buildConf:       &Config{Goos: "linux", Goarch: "amd64"},
+		commands:        commandEnv{dir: dir, environ: []string{"GOROOT=" + runtime.GOROOT()}},
+		sfilesCache:     map[string][]string{asmPkg.ID: {badAsm}},
+		plan9asmReady:   true,
+		plan9asmMode:    plan9asmEnvAll,
+		plan9AsmSources: &sync.Map{},
+	}
+	if ok := collectAsmGlobalInitReferences(asmCtx, asmPkg, map[string]bool{}, nil); ok {
+		t.Fatal("collectAsmGlobalInitReferences unexpectedly returned true on missing include")
 	}
 }

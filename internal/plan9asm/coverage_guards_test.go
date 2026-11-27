@@ -2,6 +2,10 @@ package plan9asm
 
 import (
 	"context"
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
 	"go/types"
 	"os"
 	"path/filepath"
@@ -178,5 +182,148 @@ func TestFrameMetadataAndBindAMD64ExtraGuards(t *testing.T) {
 	if tr3, err := TranslateSourceModuleForPkg(callerPkg, "tail_arm64.s", []byte(conflictSrc), "linux", "arm64"); err == nil {
 		tr3.Module.Dispose()
 		t.Fatal("expected declareNativeTailEntries conflict error against DATA ·Enter")
+	}
+}
+
+func TestPreprocessBudgetAndReadErrorGuards(t *testing.T) {
+	// Generated go_asm.h exceeding remaining maxAssemblyInputBytes triggers charge(data) error.
+	dir := t.TempDir()
+	pkg := mustTestPackage(t, "example.com/budget", "package budget\ntype S struct{ A, B, C, D uint64 }\nfunc F()\n")
+	pkg.Dir = dir
+	src := []byte("#include \"h1.h\"\n#include \"h2.h\"\n#include \"h3.h\"\n#include \"h4.h\"\n#include \"go_asm.h\"\nTEXT ·F(SB),$0-0\nRET\n")
+	// Leave only 10 bytes of the 16 MiB input budget so h1..h4 succeed and generated go_asm.h triggers charge(data).
+	chunk := make([]byte, maxAssemblySourceBytes)
+	for i := range chunk {
+		chunk[i] = ' '
+	}
+	chunk[len(chunk)-1] = '\n'
+	tailLen := maxAssemblySourceBytes - len(src) - 10
+	tailChunk := append([]byte(nil), chunk[:tailLen]...)
+	tailChunk[len(tailChunk)-1] = '\n'
+	overlay := map[string][]byte{
+		filepath.Join(dir, "h1.h"): chunk,
+		filepath.Join(dir, "h2.h"): chunk,
+		filepath.Join(dir, "h3.h"): chunk,
+		filepath.Join(dir, "h4.h"): tailChunk,
+	}
+	if _, err := PreprocessSourceForPkg(pkg, "f.s", src, "linux", "amd64", TranslateOptions{
+		GOROOT:  runtime.GOROOT(),
+		Overlay: overlay,
+	}); err == nil || !strings.Contains(err.Error(), "input byte bound") {
+		t.Fatalf("PreprocessSourceForPkg(go_asm.h over budget) err = %v, want input byte bound error", err)
+	}
+
+	// readAssemblyFile fails on os.Open after os.Stat succeeds for an unreadable regular file.
+	if runtime.GOOS != "windows" && os.Geteuid() != 0 {
+		noRead := filepath.Join(dir, "unreadable.s")
+		if err := os.WriteFile(noRead, []byte("TEXT ·F(SB),$0-0\nRET\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(noRead, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(noRead, 0o600) })
+		if _, err := readAssemblyFile(nil, noRead); err == nil {
+			t.Fatal("expected readAssemblyFile error on unreadable 0000 file")
+		}
+	}
+}
+
+func TestAMD64FrameTranslateAndNativeTailErrorGuards(t *testing.T) {
+	physSrc := []byte("TEXT ·Copy(SB),4,$16-24\nMOVQ $1, 0(SP)\nRET\n")
+	pkg, _ := amd64SDKFrameFixture(t)
+	resolve := ResolveSymFunc(pkg.PkgPath)
+	goPkg := asm.GoPackage{Path: pkg.PkgPath, Types: pkg.Types, Syntax: pkg.Syntax}
+
+	// bindAMD64Frame empty filename -> assemblyPackageFile error (amd64_frame.go:47-48).
+	if _, _, err := bindAMD64Frame(pkg, physSrc, "", "linux", "amd64", TranslateOptions{GOROOT: runtime.GOROOT()}, goPkg, "", resolve); err == nil {
+		t.Fatal("expected assemblyPackageFile error for empty filename")
+	}
+
+	// bindAMD64Frame nonexistent pkg.Dir -> physicalFramePath error (amd64_frame.go:51-52).
+	missingDirPkg := *pkg
+	missingDirPkg.Dir = filepath.Join(t.TempDir(), "does-not-exist")
+	if _, _, err := bindAMD64Frame(&missingDirPkg, physSrc, "copy_amd64.s", "linux", "amd64", TranslateOptions{GOROOT: runtime.GOROOT()}, goPkg, "", resolve); err == nil {
+		t.Fatal("expected physicalFramePath error for missing pkg.Dir")
+	}
+
+	// bindAMD64Frame invalid temp dir -> os.MkdirTemp error (amd64_frame.go:121-123).
+	t.Run("bindAMD64Frame MkdirTemp error", func(t *testing.T) {
+		badTmp := filepath.Join(t.TempDir(), "missing-tmp")
+		t.Setenv("TMPDIR", badTmp)
+		t.Setenv("TMP", badTmp)
+		t.Setenv("TEMP", badTmp)
+		absCache := t.TempDir()
+		env := []string{
+			"GOPATH=" + absCache,
+			"GOMODCACHE=" + absCache,
+			"GOCACHE=" + absCache,
+		}
+		if _, _, err := bindAMD64Frame(pkg, physSrc, "copy_amd64.s", "linux", "amd64", TranslateOptions{
+			GOROOT:      runtime.GOROOT(),
+			Environment: env,
+		}, goPkg, "", resolve); err == nil {
+			t.Fatal("expected os.MkdirTemp error in bindAMD64Frame")
+		}
+	})
+
+	// bindAMD64Frame with a variadic Go function triggers DeriveGoFuncABI0Signature error (amd64_frame.go:166-167).
+	t.Run("bindAMD64Frame variadic signature error", func(t *testing.T) {
+		dir := t.TempDir()
+		goMod := "module example.com/varframe\n\ngo 1.24\n"
+		goSrc := "package varframe\n\nfunc Var(args ...uintptr)\n"
+		asmSrc := "TEXT ·Var(SB), 4, $16-24\nMOVQ $1, 0(SP)\nRET\n"
+		if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		goPath := filepath.Join(dir, "var.go")
+		if err := os.WriteFile(goPath, []byte(goSrc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		asmPath := filepath.Join(dir, "var_amd64.s")
+		if err := os.WriteFile(asmPath, []byte(asmSrc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		fset := token.NewFileSet()
+		syntax, err := parser.ParseFile(fset, goPath, goSrc, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info := &types.Info{Defs: make(map[*ast.Ident]types.Object), Uses: make(map[*ast.Ident]types.Object)}
+		sizes := types.SizesFor("gc", "amd64")
+		typed, err := (&types.Config{Sizes: sizes, Importer: importer.Default()}).Check("example.com/varframe", fset, []*ast.File{syntax}, info)
+		if err != nil {
+			t.Fatal(err)
+		}
+		varPkg := &packages.Package{
+			ID: typed.Path(), PkgPath: typed.Path(), Name: typed.Name(), Dir: dir,
+			Fset: fset, Types: typed, TypesInfo: info, TypesSizes: sizes,
+			Syntax: []*ast.File{syntax}, GoFiles: []string{goPath}, CompiledGoFiles: []string{goPath},
+			OtherFiles: []string{asmPath},
+		}
+		_, finish, err := bindAMD64Frame(varPkg, []byte(asmSrc), "var_amd64.s", "linux", "amd64",
+			TranslateOptions{GOROOT: runtime.GOROOT()},
+			asm.GoPackage{Path: typed.Path(), Types: typed, Syntax: varPkg.Syntax},
+			"x86_64-unknown-linux-gnu", ResolveSymFunc(typed.Path()))
+		if finish != nil {
+			_ = finish()
+		}
+		if err == nil || !strings.Contains(err.Error(), "variadic") {
+			t.Fatalf("bindAMD64Frame(variadic) err = %v, want variadic error", err)
+		}
+	})
+
+	// TranslateSourceModuleForPkg with PkgPath="runtime" (no Imports["runtime"]) and ARM64 memmove
+	// triggers manualErr != nil while TranslateGoModule succeeded (tr != nil -> disposes tr.Module, translate.go:196-197).
+	rtPkg := mustTestPackage(t, "runtime", "package runtime\nimport \"unsafe\"\nfunc memmove(to, from unsafe.Pointer, n uintptr)\n")
+	if tr, err := TranslateSourceModuleForPkg(rtPkg, "memmove_arm64.s", []byte("TEXT ·memmove(SB), 4, $0-24\nRET\n"), "linux", "arm64"); err == nil {
+		tr.Module.Dispose()
+		t.Fatal("expected manualErr for runtime.memmove without runtime import")
+	}
+
+	// nativeTailSignatures with a variadic ARM64 function triggers DeriveGoFuncABI0Signature error (native_tail.go:54-55).
+	varTailPkg := mustTestPackage(t, "example.com/vartail", "package vartail\nfunc Enter(args ...uintptr)\n")
+	if _, _, err := nativeTailSignatures(varTailPkg, []byte("TEXT ·Enter(SB), NOSPLIT|NOFRAME, $0-24\nJMP (R0)\n"), ResolveSymFunc("example.com/vartail"), "linux", "arm64"); err == nil || !strings.Contains(err.Error(), "variadic") {
+		t.Fatalf("nativeTailSignatures(variadic) err = %v, want variadic error", err)
 	}
 }
