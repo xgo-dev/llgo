@@ -8,8 +8,8 @@ package i2s
 
 const errUnsupported = 0x7F00
 
-func newChannel(handle *uintptr, tx int32) int32 {
-	_, _ = handle, tx
+func newChannel(handle *uintptr, tx int32, slave int32) int32 {
+	_, _, _ = handle, tx, slave
 	return errUnsupported
 }
 func initStd(chan_ uintptr, mclk int32, bclk int32, ws int32, dout int32,

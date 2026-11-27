@@ -9,7 +9,7 @@ package i2s
 import _ "unsafe" // for go:linkname
 
 //go:linkname newChannel C.llgo_i2s_new_channel
-func newChannel(handle *uintptr, tx int32) int32
+func newChannel(handle *uintptr, tx int32, slave int32) int32
 
 //go:linkname initStd C.llgo_i2s_init_std
 func initStd(chan_ uintptr, mclk int32, bclk int32, ws int32, dout int32,

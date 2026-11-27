@@ -31,9 +31,10 @@ static gpio_num_t lg_i2s_pin(int32_t pin)
 
 /* Alloc one TX or RX channel on any free port; the channel config macro
  * embeds the DMA descriptor/frame counts Go cannot spell. */
-int32_t llgo_i2s_new_channel(uintptr_t *out, int32_t tx)
+int32_t llgo_i2s_new_channel(uintptr_t *out, int32_t tx, int32_t slave)
 {
-    i2s_chan_config_t cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_AUTO, I2S_ROLE_MASTER);
+    i2s_chan_config_t cfg = I2S_CHANNEL_DEFAULT_CONFIG(
+        I2S_NUM_AUTO, slave ? I2S_ROLE_SLAVE : I2S_ROLE_MASTER);
     i2s_chan_handle_t handle = NULL;
     esp_err_t e;
     if (tx) {

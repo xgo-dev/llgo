@@ -76,8 +76,26 @@ type Channel struct {
 // false a receive channel. On error the Channel is nil and the error
 // carries the esp_err code.
 func NewChannel(tx bool) (*Channel, error) {
+	return NewChannelRole(tx, RoleMaster)
+}
+
+// Role selects the clock role at channel creation. A master drives BCLK/WS
+// (the normal case: the codec is a slave). A slave takes BCLK/WS as inputs
+// and rides somebody else's clock - the shape playback needs when the wake
+// engine already owns the codec's single I2S port as master: a second
+// controller in slave mode reads the same pins and shares the 16 kHz frame
+// clock without a second master fighting for them.
+type Role int32
+
+const (
+	RoleMaster Role = 0
+	RoleSlave  Role = 1
+)
+
+// NewChannelRole is NewChannel with an explicit clock role.
+func NewChannelRole(tx bool, role Role) (*Channel, error) {
 	var c Channel
-	if e := newChannel(&c.handle, txBool(tx)); e != 0 {
+	if e := newChannel(&c.handle, txBool(tx), int32(role)); e != 0 {
 		return nil, errOf(e)
 	}
 	return &c, nil
