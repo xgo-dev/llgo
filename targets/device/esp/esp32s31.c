@@ -609,28 +609,16 @@ __attribute__((naked, aligned(4))) static void esp_trap_handler(void) {
 }
 
 // ============================================================================
-// Cycle counter enable
+// Cycle counter health probe
 // ============================================================================
-// csrr cycle drives the runtime monotonic clock, time.Sleep deadlines and GC
-// pacing, but mcountinhibit.CY is first-stage-loader state: on parts whose
-// boot ROM leaves the bit set the CSR reads a frozen value and every
-// cycle-based wait spins forever (measured on an ESP32-C3 board; IDF clears
-// the bit explicitly in cpu_hal_enable_cycle_count for the same reason).
-// The CSR is written numerically: clang only knows the mnemonic when the
-// target declares Zicntr, and this core advertises the counter through its
-// own naming.
-#define ESP_MCOUNTINHIBIT 0x320u
-#define ESP_MCOUNTINHIBIT_CY 1u
-
-static void esp_enable_cycle_count(void) {
-  uint32_t inhibit;
-  __asm__ volatile("csrr %0, 0x320" : "=r"(inhibit));
-  if (inhibit & ESP_MCOUNTINHIBIT_CY) {
-    inhibit &= ~ESP_MCOUNTINHIBIT_CY;
-    __asm__ volatile("csrw 0x320, %0" ::"r"(inhibit));
-  }
-  // Report honestly instead of hanging later: a still-frozen counter makes
-  // time.Sleep never return.
+// csrr cycle feeds the runtime monotonic clock, time.Sleep deadlines and GC
+// pacing. These cores do not implement mcountinhibit: IDF reads the counter
+// directly (riscv/rv_utils.h) and only the H4 sleep code touches 0x320, so
+// *writing* that CSR traps as an illegal instruction here - measured on an
+// ESP32-C3 board (mtval carried the csrr encoding). A board that reports a
+// frozen counter therefore needs a different time base, not a CSR poke; this
+// probe only says so out loud instead of letting time.Sleep spin forever.
+static void esp_probe_cycle_count(void) {
   uint32_t t0, t1;
   __asm__ volatile("csrr %0, cycle" : "=r"(t0));
   for (volatile int i = 0; i < 64; i++) {
@@ -647,7 +635,7 @@ static void esp_enable_cycle_count(void) {
 // crt0 runs .init_array constructors before main, so this happens before
 // any Go code - the earliest hook the device C file can install.
 __attribute__((constructor)) static void esp_boot_early(void) {
-    esp_enable_cycle_count();
+    esp_probe_cycle_count();
     esp_disable_hp_wdt();
     uint32_t prev;
     __asm__ volatile("csrr %0, mtvec" : "=r"(prev));
