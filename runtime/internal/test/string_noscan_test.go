@@ -25,12 +25,15 @@ func TestStringAllocationsNoScan(t *testing.T) {
 	data := []byte(text)
 	from := runtimeStringValue(rt.StringFrom(unsafe.Pointer(unsafe.SliceData(data)), len(data)))
 	joined := runtimeStringValue(rt.StringCat(stringRuntimeValue(text), stringRuntimeValue("tail")))
+	parts := []rt.String{stringRuntimeValue(text), stringRuntimeValue(""), stringRuntimeValue("tail")}
+	fused := runtimeStringValue(concatStrings(parts, nil))
 	for _, tc := range []struct {
 		name string
 		ptr  unsafe.Pointer
 	}{
 		{"StringFrom", unsafe.Pointer(unsafe.StringData(from))},
 		{"StringCat", unsafe.Pointer(unsafe.StringData(joined))},
+		{"StringConcat", unsafe.Pointer(unsafe.StringData(fused))},
 		{"CStrDup", unsafe.Pointer(rt.CStrDup(stringRuntimeValue(text)))},
 		{"CStrDupEmpty", unsafe.Pointer(rt.CStrDup(rt.String{}))},
 		{"AllocAtomicU", rt.AllocAtomicU(32)},
@@ -46,6 +49,7 @@ func TestStringAllocationsNoScan(t *testing.T) {
 	}
 	runtime.KeepAlive(from)
 	runtime.KeepAlive(joined)
+	runtime.KeepAlive(fused)
 	runtime.KeepAlive(atomic)
 	runtime.KeepAlive(scanned)
 }
