@@ -55,14 +55,26 @@ import (
 // Never call rawConn.Control, c.rwc.Close, or user hooks under httpIdleMgr.mu.
 
 const (
-	httpIdleHotGrace    = 5 * time.Millisecond
-	httpIdleMaxHot      = 64
-	httpIdleProbeNs     = 250_000_000 // 250ms liveness check for external rwc.Close
+	httpIdleHotGrace    = 150 * time.Millisecond
+	httpIdleMaxHot      = 128
+	httpIdleMinWorkers  = 16
+	httpIdleProbeNs     = 500_000_000 // 500ms liveness check for external rwc.Close
 	httpIdleWorkerTTL   = 500 * time.Millisecond
+	httpHotSweepTickNs  = 50_000_000 // 50ms lazy grace sweep while hot conns exist
+	httpHotIdleTicks    = 3          // evict hot conn after ~100..150ms idle
+	httpHotEvictBit     = uint64(1) << 63
+	httpHotClosedVal    = uint64(0)
 	httpIdleStateParkng = 1
 	httpIdleStateParked = 2
 	httpIdleStateTaken  = 3
 )
+
+type httpHotEntry struct {
+	c         *conn
+	idleGen   atomic.Uint64 // odd: blocked in Peek(4); even: active/closed; bit63: sweeper evicted
+	lastGen   uint64        // watcher-private
+	idleTicks uint8         // watcher-private
+}
 
 type httpIdleEntry struct {
 	c         *conn
@@ -76,17 +88,19 @@ type httpIdleEntry struct {
 }
 
 var httpIdleMgr struct {
-	once        sync.Once
-	ready       atomic.Bool
-	poller      *httpBgPoller
-	mu          sync.Mutex
-	byConn      map[*conn]*httpIdleEntry
-	byFD        map[int]*httpIdleEntry
-	nextWakeNs  int64 // UnixNano of watcher's next wake deadline; 0 means sleeping indefinitely
-	hotCount    atomic.Int64
-	work        chan func()
-	idleWorkers atomic.Int32
-	maxWorkers  int32
+	once          sync.Once
+	ready         atomic.Bool
+	poller        *httpBgPoller
+	mu            sync.Mutex
+	byConn        map[*conn]*httpIdleEntry
+	byFD          map[int]*httpIdleEntry
+	hotEntries    map[*httpHotEntry]struct{}
+	deadlineCount int
+	nextWakeNs    int64 // UnixNano of watcher's next wake deadline; 0 means sleeping indefinitely
+	hotCount      atomic.Int64
+	work          chan func()
+	idleWorkers   atomic.Int32
+	maxWorkers    int32
 }
 
 func ensureHTTPIdleWatcher() bool {
@@ -97,13 +111,14 @@ func ensureHTTPIdleWatcher() bool {
 		}
 		httpIdleMgr.byConn = make(map[*conn]*httpIdleEntry, 64)
 		httpIdleMgr.byFD = make(map[int]*httpIdleEntry, 64)
+		httpIdleMgr.hotEntries = make(map[*httpHotEntry]struct{}, 32)
 		httpIdleMgr.work = make(chan func())
 		maxW := int32(runtime.GOMAXPROCS(0) * 2)
 		if maxW < 4 {
 			maxW = 4
 		}
-		if maxW > 16 {
-			maxW = 16
+		if maxW > 32 {
+			maxW = 32
 		}
 		httpIdleMgr.maxWorkers = maxW
 		httpIdleMgr.poller = p
@@ -111,6 +126,34 @@ func ensureHTTPIdleWatcher() bool {
 		go runHTTPIdleWatcher(p)
 	})
 	return httpIdleMgr.ready.Load()
+}
+
+func httpHotRegister(c *conn) *httpHotEntry {
+	if !ensureHTTPIdleWatcher() {
+		return nil
+	}
+	he := &httpHotEntry{c: c}
+	var wake bool
+	httpIdleMgr.mu.Lock()
+	httpIdleMgr.hotEntries[he] = struct{}{}
+	if httpIdleMgr.nextWakeNs == 0 {
+		wake = true
+	}
+	httpIdleMgr.mu.Unlock()
+	if wake {
+		httpIdleMgr.poller.wake()
+	}
+	return he
+}
+
+func httpHotUnregister(he *httpHotEntry) {
+	if he == nil {
+		return
+	}
+	he.idleGen.Store(httpHotClosedVal)
+	httpIdleMgr.mu.Lock()
+	delete(httpIdleMgr.hotEntries, he)
+	httpIdleMgr.mu.Unlock()
 }
 
 // httpIdleDispatch runs fn on an already-idle pooled worker if one is waiting,
@@ -126,13 +169,36 @@ func httpIdleDispatch(fn func()) {
 }
 
 func httpIdleWorkerRun(fn func()) {
+	var timer *time.Timer
 	for {
 		fn()
-		if httpIdleMgr.idleWorkers.Add(1) > httpIdleMgr.maxWorkers {
+		select {
+		case next := <-httpIdleMgr.work:
+			fn = next
+			continue
+		default:
+		}
+		idle := httpIdleMgr.idleWorkers.Add(1)
+		if idle > httpIdleMgr.maxWorkers {
 			httpIdleMgr.idleWorkers.Add(-1)
+			if timer != nil {
+				timer.Stop()
+			}
 			return
 		}
-		timer := time.NewTimer(httpIdleWorkerTTL)
+		// Keep a small warm core of idle workers parked directly on the work
+		// channel so active dispatch bursts avoid global timer-heap lock contention.
+		if idle <= httpIdleMinWorkers {
+			next := <-httpIdleMgr.work
+			httpIdleMgr.idleWorkers.Add(-1)
+			fn = next
+			continue
+		}
+		if timer == nil {
+			timer = time.NewTimer(httpIdleWorkerTTL)
+		} else {
+			timer.Reset(httpIdleWorkerTTL)
+		}
 		select {
 		case next := <-httpIdleMgr.work:
 			httpIdleMgr.idleWorkers.Add(-1)
@@ -217,6 +283,9 @@ func httpIdlePark(c *conn, ctx context.Context, cancelCtx context.CancelFunc, ra
 					httpIdleMgr.mu.Unlock()
 					return
 				}
+				if !deadline.IsZero() {
+					httpIdleMgr.deadlineCount++
+				}
 				// Wake watcher if it was sleeping indefinitely or its next wake is
 				// later than this entry's idle deadline.
 				if httpIdleMgr.nextWakeNs == 0 {
@@ -289,6 +358,9 @@ func httpIdleNotifyClosed(c *conn) {
 	if httpIdleMgr.byFD[entry.fd] == entry {
 		delete(httpIdleMgr.byFD, entry.fd)
 	}
+	if !entry.deadline.IsZero() {
+		httpIdleMgr.deadlineCount--
+	}
 	entry.state = httpIdleStateTaken
 	httpIdleMgr.mu.Unlock()
 
@@ -299,7 +371,9 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 	readyFDs := make([]int, 0, 64)
 	expired := make([]*httpIdleEntry, 0, 32)
 	probeList := make([]*httpIdleEntry, 0, 64)
+	hotList := make([]*httpHotEntry, 0, 64)
 	lastProbe := time.Now()
+	lastHotSweep := time.Now()
 
 	for {
 		now := time.Now()
@@ -307,32 +381,39 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 		var timeoutNs int64 = -1
 
 		httpIdleMgr.mu.Lock()
+		hasHot := len(httpIdleMgr.hotEntries) > 0
 		if len(httpIdleMgr.byFD) > 0 {
 			timeoutNs = httpIdleProbeNs
-			for fd, entry := range httpIdleMgr.byFD {
-				if entry.state != httpIdleStateParked {
-					delete(httpIdleMgr.byFD, fd)
-					continue
-				}
-				if !entry.deadline.IsZero() {
-					rem := entry.deadline.Sub(now)
-					if rem <= 0 {
+			if httpIdleMgr.deadlineCount > 0 {
+				for fd, entry := range httpIdleMgr.byFD {
+					if entry.state != httpIdleStateParked {
 						delete(httpIdleMgr.byFD, fd)
-						if httpIdleMgr.byConn[entry.c] == entry {
-							delete(httpIdleMgr.byConn, entry.c)
-						}
-						entry.state = httpIdleStateTaken
-						expired = append(expired, entry)
 						continue
 					}
-					if int64(rem) < timeoutNs {
-						timeoutNs = int64(rem)
+					if !entry.deadline.IsZero() {
+						rem := entry.deadline.Sub(now)
+						if rem <= 0 {
+							delete(httpIdleMgr.byFD, fd)
+							if httpIdleMgr.byConn[entry.c] == entry {
+								delete(httpIdleMgr.byConn, entry.c)
+							}
+							httpIdleMgr.deadlineCount--
+							entry.state = httpIdleStateTaken
+							expired = append(expired, entry)
+							continue
+						}
+						if int64(rem) < timeoutNs {
+							timeoutNs = int64(rem)
+						}
 					}
 				}
+				if len(httpIdleMgr.byFD) == 0 {
+					timeoutNs = -1
+				}
 			}
-			if len(httpIdleMgr.byFD) == 0 {
-				timeoutNs = -1
-			}
+		}
+		if hasHot && (timeoutNs < 0 || timeoutNs > httpHotSweepTickNs) {
+			timeoutNs = httpHotSweepTickNs
 		}
 		if timeoutNs < 0 {
 			httpIdleMgr.nextWakeNs = 0
@@ -362,6 +443,9 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 			if httpIdleMgr.byConn[entry.c] == entry {
 				delete(httpIdleMgr.byConn, entry.c)
 			}
+			if !entry.deadline.IsZero() {
+				httpIdleMgr.deadlineCount--
+			}
 			entry.state = httpIdleStateTaken
 			httpIdleMgr.mu.Unlock()
 
@@ -369,6 +453,44 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 			httpIdleDispatch(func() {
 				e.c.serveHTTP1(e.ctx, e.cancelCtx, true, e.deadline)
 			})
+		}
+
+		// Lazily evict hot-grace keep-alive connections that have been idle in
+		// Peek(4) across httpHotIdleTicks consecutive sweeps (~100..150ms) so
+		// active keep-alive loops pay zero per-request SetReadDeadline overhead.
+		if time.Since(lastHotSweep) >= time.Duration(httpHotSweepTickNs) {
+			lastHotSweep = time.Now()
+			hotList = hotList[:0]
+			httpIdleMgr.mu.Lock()
+			for he := range httpIdleMgr.hotEntries {
+				hotList = append(hotList, he)
+			}
+			httpIdleMgr.mu.Unlock()
+
+			for _, he := range hotList {
+				g := he.idleGen.Load()
+				if g&1 == 1 && g&httpHotEvictBit == 0 {
+					if g == he.lastGen {
+						he.idleTicks++
+					} else {
+						he.lastGen = g
+						he.idleTicks = 1
+					}
+					if he.idleTicks >= httpHotIdleTicks {
+						he.c.r.lock()
+						if he.idleGen.CompareAndSwap(g, g|httpHotEvictBit) {
+							he.c.r.aborted = true
+							he.c.rwc.SetReadDeadline(aLongTimeAgo)
+						}
+						he.c.r.unlock()
+						he.lastGen = 0
+						he.idleTicks = 0
+					}
+				} else {
+					he.lastGen = 0
+					he.idleTicks = 0
+				}
+			}
 		}
 
 		// Periodically probe parked rawConns outside httpIdleMgr.mu so even an
@@ -393,6 +515,9 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 						}
 						if httpIdleMgr.byConn[entry.c] == entry {
 							delete(httpIdleMgr.byConn, entry.c)
+						}
+						if !entry.deadline.IsZero() {
+							httpIdleMgr.deadlineCount--
 						}
 						entry.state = httpIdleStateTaken
 						httpIdleMgr.mu.Unlock()
@@ -587,7 +712,15 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 			}
 		}
 	}
+	var hotEntry *httpHotEntry
+	if hotSlot && cachedRawConn != nil {
+		hotEntry = httpHotRegister(c)
+	}
+	var hotWaitSeq uint64 = 1
 	defer func() {
+		if hotEntry != nil {
+			httpHotUnregister(hotEntry)
+		}
 		if hotSlot {
 			httpIdleMgr.hotCount.Add(-1)
 		}
@@ -727,36 +860,78 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 			needPark := false
 			fallback := false
 			if hotSlot {
-				graceDeadline := time.Now().Add(httpIdleHotGrace)
-				if !idleDeadline.IsZero() && idleDeadline.Before(graceDeadline) {
-					graceDeadline = idleDeadline
-				}
-				switch httpIdleWaitReadable(c, cachedRawConn, graceDeadline) {
-				case idleWaitReady:
-					// Next request arrived during hot-grace window.
-					if !idleDeadline.IsZero() {
-						c.rwc.SetReadDeadline(idleDeadline)
+				if hotEntry != nil && idleDeadline.IsZero() {
+					// Lazy watcher-driven hot-grace wait: zero per-request
+					// time.Now(), SetReadDeadline(), or cr.lock() on active
+					// keep-alive bursts. The idle watcher evicts only if
+					// hotWaitSeq remains unchanged for ~100..150ms.
+					if c.server.ReadTimeout != 0 || readHeaderTO > 0 {
+						c.rwc.SetReadDeadline(time.Time{})
+					}
+					seq := hotWaitSeq
+					hotWaitSeq += 2
+					if hotWaitSeq&httpHotEvictBit != 0 {
+						hotWaitSeq = 1
+					}
+					hotEntry.idleGen.Store(seq)
+					_, peekErr := c.bufr.Peek(4)
+					prev := hotEntry.idleGen.Swap(seq + 1)
+					if prev&httpHotEvictBit != 0 {
+						c.r.lock()
+						c.r.aborted = false
+						c.rwc.SetReadDeadline(time.Time{})
+						c.r.unlock()
+						if peekErr == nil {
+							if readHeaderTO > 0 {
+								c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
+							}
+							continue
+						}
+						if os.IsTimeout(peekErr) {
+							needPark = true
+						} else {
+							return
+						}
 					} else {
-						c.rwc.SetReadDeadline(time.Time{})
-					}
-					if _, err := c.bufr.Peek(4); err != nil {
+						if peekErr == nil {
+							if readHeaderTO > 0 {
+								c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
+							}
+							continue
+						}
 						return
 					}
-					if readHeaderTO > 0 {
-						c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
-					} else if !idleDeadline.IsZero() {
-						c.rwc.SetReadDeadline(time.Time{})
+				} else {
+					graceDeadline := time.Now().Add(httpIdleHotGrace)
+					if !idleDeadline.IsZero() && idleDeadline.Before(graceDeadline) {
+						graceDeadline = idleDeadline
 					}
-					continue
-				case idleWaitClosed:
-					return
-				case idleWaitFallback:
-					fallback = true
-				case idleWaitTimeout:
-					if !idleDeadline.IsZero() && !time.Now().Before(idleDeadline) {
+					// Explicit IdleTimeout (or watcher init fallback): use a
+					// direct bounded deadline on c.bufr.Peek(4).
+					c.rwc.SetReadDeadline(graceDeadline)
+					c.r.lock()
+					c.r.aborted = true
+					c.r.unlock()
+					_, peekErr := c.bufr.Peek(4)
+					c.r.lock()
+					c.r.aborted = false
+					c.r.unlock()
+					if peekErr == nil {
+						if readHeaderTO > 0 {
+							c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
+						} else {
+							c.rwc.SetReadDeadline(time.Time{})
+						}
+						continue
+					}
+					if os.IsTimeout(peekErr) {
+						if !idleDeadline.IsZero() && !time.Now().Before(idleDeadline) {
+							return
+						}
+						needPark = true
+					} else {
 						return
 					}
-					needPark = true
 				}
 			} else {
 				needPark = true

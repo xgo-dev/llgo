@@ -601,3 +601,108 @@ func TestServerBackgroundReadNonSocketSyscallConnFallback(t *testing.T) {
 		t.Fatal("non-socket syscall.Conn fallback did not observe client close promptly")
 	}
 }
+
+func TestClientSyncTransportKeepAliveRetryTimeoutAndLargePost(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/slow-header":
+			time.Sleep(120 * time.Millisecond)
+			io.WriteString(w, "slow")
+		case "/echo":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Write(body)
+		default:
+			hits.Add(1)
+			io.WriteString(w, "ok")
+		}
+	}))
+	defer srv.Close()
+
+	tr := &http.Transport{
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   32,
+		ResponseHeaderTimeout: 50 * time.Millisecond,
+	}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr}
+
+	// 1. Keep-alive GET reuse should stay low-goroutine on LLGo.
+	baseG := runtime.NumGoroutine()
+	const conns = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, conns)
+	for i := 0; i < conns; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				resp, err := client.Get(srv.URL + "/ok")
+				if err != nil {
+					errs <- err
+					return
+				}
+				data, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil || string(data) != "ok" {
+					errs <- io.ErrUnexpectedEOF
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("keep-alive GET failed: %v", err)
+	}
+	if runtime.Compiler == "llgo" {
+		time.Sleep(25 * time.Millisecond)
+		if g := runtime.NumGoroutine(); g > baseG+24 {
+			t.Fatalf("expected sync client transport to avoid per-conn readLoop/writeLoop threads: goroutines=%d baseline=%d", g, baseG)
+		}
+	}
+
+	// 2. ResponseHeaderTimeout fires cleanly on sync path.
+	if resp, err := client.Get(srv.URL + "/slow-header"); err == nil {
+		resp.Body.Close()
+		t.Fatal("expected ResponseHeaderTimeout error, got nil")
+	}
+
+	// 3. Large POST (> 64 KiB) promotes transparently to async readLoop/writeLoop.
+	payload := strings.Repeat("0123456789abcdef", 8192) // 128 KiB
+	trLarge := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer trLarge.CloseIdleConnections()
+	resp, err := (&http.Client{Transport: trLarge}).Post(srv.URL+"/echo", "text/plain", strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("large POST failed: %v", err)
+	}
+	got, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil || string(got) != payload {
+		t.Fatalf("large POST echo mismatch: len=%d want=%d err=%v", len(got), len(payload), err)
+	}
+
+	// 4. Server closing an idle keep-alive conn is retried transparently on GET.
+	trRetry := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer trRetry.CloseIdleConnections()
+	cRetry := &http.Client{Transport: trRetry}
+	r1, err := cRetry.Get(srv.URL + "/ok")
+	if err != nil {
+		t.Fatalf("first GET: %v", err)
+	}
+	io.Copy(io.Discard, r1.Body)
+	r1.Body.Close()
+	srv.CloseClientConnections()
+	time.Sleep(15 * time.Millisecond)
+	r2, err := cRetry.Get(srv.URL + "/ok")
+	if err != nil {
+		t.Fatalf("GET after server closed idle conn failed: %v", err)
+	}
+	io.Copy(io.Discard, r2.Body)
+	r2.Body.Close()
+}
