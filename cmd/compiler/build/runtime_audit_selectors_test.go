@@ -31,7 +31,7 @@ func TestRuntimeAuditBoundedSelectors(t *testing.T) {
 				// Include the real declaration shape so ParseFile resolves the
 				// unqualified call to its package-level function object.
 				"cmd/compiler/llvmgen/use.go": "package llvmgen\nfunc RuntimeSymbol(name string, candidates ...string) string { return name }\nfunc use() { p.rtFunc(" + tc.expression + ") }",
-				"cmd/compiler/cl/use.go":               "package cl",
+				"cmd/compiler/cl/use.go":      "package cl",
 			} {
 				path = filepath.Join(filepath.Dir(a.runtimeDir), path)
 				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {

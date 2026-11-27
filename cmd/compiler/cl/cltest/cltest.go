@@ -38,8 +38,8 @@ import (
 	"testing"
 
 	"github.com/qiniu/x/test"
-	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/filecheck"
 	"github.com/xgo-dev/llgo/cmd/compiler/littest"
 	"github.com/xgo-dev/llgo/cmd/compiler/llgen"

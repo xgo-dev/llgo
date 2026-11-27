@@ -22,8 +22,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/buildenv"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/crosscompile"
 	"github.com/xgo-dev/llgo/cmd/compiler/env"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"

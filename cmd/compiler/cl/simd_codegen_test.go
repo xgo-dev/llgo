@@ -3,8 +3,8 @@ package cl_test
 import (
 	"testing"
 
-	"github.com/xgo-dev/llgo/cmd/compiler/cl/cltest"
 	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl/cltest"
 )
 
 func TestSIMDMidwayCodegen(t *testing.T) {

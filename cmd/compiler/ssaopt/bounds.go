@@ -384,8 +384,11 @@ type boundsFacts struct {
 
 func collectBoundsFacts(fn *ssa.Function, wordBits int) *boundsFacts {
 	f := &boundsFacts{
-		wordBits:     wordBits,
-		instrPos:     make(map[ssa.Instruction]struct{ blk *ssa.BasicBlock; idx int }, 64),
+		wordBits: wordBits,
+		instrPos: make(map[ssa.Instruction]struct {
+			blk *ssa.BasicBlock
+			idx int
+		}, 64),
 		nonNegInstr:  make(map[ssa.Value][]anchoredFact),
 		ltLenInstr:   make(map[valBaseKey][]anchoredFact),
 		leLenInstr:   make(map[valBaseKey][]anchoredFact),

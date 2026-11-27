@@ -29,9 +29,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xgo-dev/llgo/cmd/compiler/cl/cltest"
 	"github.com/xgo-dev/llgo/cmd/compiler/build"
 	"github.com/xgo-dev/llgo/cmd/compiler/buildenv"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl/cltest"
 	"github.com/xgo-dev/llgo/cmd/compiler/llgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/lto"

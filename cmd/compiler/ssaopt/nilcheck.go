@@ -343,9 +343,12 @@ type nonNilProof struct {
 }
 
 type domNonNilTable struct {
-	enabled   bool
-	hasDom    bool
-	instrPos  map[ssa.Instruction]struct{ blk *ssa.BasicBlock; idx int }
+	enabled  bool
+	hasDom   bool
+	instrPos map[ssa.Instruction]struct {
+		blk *ssa.BasicBlock
+		idx int
+	}
 	proofs    map[ssa.Value][]nonNilProof
 	edgeProof map[*ssa.BasicBlock]map[ssa.Value]nonNilProof
 }
@@ -359,7 +362,10 @@ func collectDomNonNilProofs(fn *ssa.Function, optimizing bool) *domNonNilTable {
 	if !t.hasDom {
 		return t
 	}
-	t.instrPos = make(map[ssa.Instruction]struct{ blk *ssa.BasicBlock; idx int }, 64)
+	t.instrPos = make(map[ssa.Instruction]struct {
+		blk *ssa.BasicBlock
+		idx int
+	}, 64)
 	t.proofs = make(map[ssa.Value][]nonNilProof)
 	t.edgeProof = make(map[*ssa.BasicBlock]map[ssa.Value]nonNilProof)
 
@@ -372,7 +378,10 @@ func collectDomNonNilProofs(fn *ssa.Function, optimizing bool) *domNonNilTable {
 
 	for _, blk := range fn.Blocks {
 		for idx, ins := range blk.Instrs {
-			t.instrPos[ins] = struct{ blk *ssa.BasicBlock; idx int }{blk: blk, idx: idx}
+			t.instrPos[ins] = struct {
+				blk *ssa.BasicBlock
+				idx int
+			}{blk: blk, idx: idx}
 			switch ins := ins.(type) {
 			case *ssa.UnOp:
 				// A dereference *p proves p != nil for all dominated instructions

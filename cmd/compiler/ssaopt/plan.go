@@ -161,19 +161,19 @@ const (
 
 // IfaceConvPlan records interface conversion or type-assertion folding decisions.
 type IfaceConvPlan struct {
-	Kind       IfaceConvKind
-	KnownType  types.Type
-	KnownValue ssa.Value
+	Kind        IfaceConvKind
+	KnownType   types.Type
+	KnownValue  ssa.Value
 	ProofAnchor ssa.Instruction
 }
 
 // DevirtTarget records a statically resolved callee for an interface method call.
 type DevirtTarget struct {
-	Target        *ssa.Function
-	Receiver      ssa.Value
-	NeedNilCheck  bool
-	WholeProgram  bool
-	ProofAnchor   ssa.Instruction
+	Target       *ssa.Function
+	Receiver     ssa.Value
+	NeedNilCheck bool
+	WholeProgram bool
+	ProofAnchor  ssa.Instruction
 }
 
 // FunctionPlan is the read-only optimization and lowering decision table for a

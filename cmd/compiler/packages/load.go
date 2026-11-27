@@ -85,12 +85,12 @@ type Cached struct {
 }
 
 type aDeduper struct {
-	cache       sync.Map
-	checked     sync.Map
-	setpath     func(path string, name string) string
-	preload     func(pkg *Package)
-	prepare     func([]*Package, *Config) error
-	rewrite     func(*Package) (bool, error)
+	cache        sync.Map
+	checked      sync.Map
+	setpath      func(path string, name string) string
+	preload      func(pkg *Package)
+	prepare      func([]*Package, *Config) error
+	rewrite      func(*Package) (bool, error)
 	llgoFiles    map[string][]string
 	importTypes  func(*Package, *token.FileSet) bool
 	exported     sync.Map

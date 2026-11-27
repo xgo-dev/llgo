@@ -23,8 +23,8 @@ import (
 	"strings"
 
 	"github.com/goplus/mod"
-	"github.com/xgo-dev/llgo/cmd/compiler/cl/cltest"
 	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl/cltest"
 	"github.com/xgo-dev/llgo/cmd/compiler/lto"
 	"github.com/xgo-dev/llgo/cmd/xtool/env/llvm"
 )
@@ -34,7 +34,7 @@ func main() {
 	dir, _, err := mod.FindGoMod(".")
 	check(err)
 
-	genMetaDir(dir, dir + "/compiler/cl/_testmeta")
+	genMetaDir(dir, dir+"/compiler/cl/_testmeta")
 
 	genExpects(dir)
 }

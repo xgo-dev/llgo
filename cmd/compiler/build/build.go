@@ -41,10 +41,10 @@ import (
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/ssa/ssautil"
 
-	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	llabi "github.com/xgo-dev/llgo/cmd/compiler/abi"
 	"github.com/xgo-dev/llgo/cmd/compiler/buildenv"
 	"github.com/xgo-dev/llgo/cmd/compiler/cabi"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl"
 	"github.com/xgo-dev/llgo/cmd/compiler/clang"
 	"github.com/xgo-dev/llgo/cmd/compiler/compilerhash"
 	"github.com/xgo-dev/llgo/cmd/compiler/crosscompile"
