@@ -55,14 +55,14 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 			shard := array.ElementType()
 			offset := td.ElementOffset(shard, 1)
 			stride := td.TypeAllocSize(shard)
-			if shards.Alignment() < 128 || shards.Alignment()%128 != 0 || offset%8 != 0 || stride%8 != 0 {
-				t.Fatalf("unaligned memory profile shards: base alignment=%d, field offset=%d, stride=%d", shards.Alignment(), offset, stride)
+			if offset%8 != 0 {
+				t.Fatalf("unaligned memory profile shard counts field: offset=%d, want multiple of 8", offset)
 			}
 			if stride != 256 {
 				t.Fatalf("unexpected shard stride: got %d, want 256", stride)
 			}
-			if uint64(shards.Alignment()) < stride {
-				t.Fatalf("base alignment smaller than shard stride: base alignment=%d, stride=%d", shards.Alignment(), stride)
+			if got := shards.Alignment(); uint64(got) != stride {
+				t.Fatalf("unexpected memory profile shards base alignment: got %d, want %d (matching shard stride)", got, stride)
 			}
 			// Allocator accounting must remain an intrinsic at O0 too: an
 			// instrumented stdlib method can allocate and re-enter profiling.

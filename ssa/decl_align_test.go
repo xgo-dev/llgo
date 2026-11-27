@@ -11,6 +11,9 @@ func TestMemProfileShardsGlobalAlignment(t *testing.T) {
 	defer prog.Dispose()
 
 	pkg := prog.NewPackage("runtime", PkgRuntime)
+	// Synthetic type: this test only verifies that the name-based alignment
+	// override fires for runtimeMemProfileShardsSym. Real memProfileShard
+	// stride matching is verified by internal/build.TestMemProfileCounterAlignment.
 	arrTy := types.NewPointer(types.NewArray(types.Typ[types.Uint64], 32))
 
 	shards := pkg.NewVar(runtimeMemProfileShardsSym, arrTy, GoDecl)

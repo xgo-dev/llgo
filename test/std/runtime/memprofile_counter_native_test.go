@@ -31,7 +31,7 @@ const nativeProfileTestBucket = 26 // 1 GiB bucket; unaffected by ordinary test 
 
 func TestNativeProfileShardBaseAlignment(t *testing.T) {
 	base := nativeProfileShardsBaseAddr()
-	if base == 0 || base%128 != 0 || base%256 != 0 {
+	if base == 0 || base%256 != 0 {
 		t.Fatalf("memProfileShardsData base address %#x is not aligned to 256-byte shard stride / 128-byte cache lines", base)
 	}
 }

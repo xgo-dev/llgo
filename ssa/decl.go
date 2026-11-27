@@ -83,7 +83,13 @@ const (
 	moduleZeroName               = "__llgo.moduleZeroSizedAlloc$"
 	moduleMapZeroName            = "__llgo.map.zero"
 	directClosureNilEnvName      = "__llgo.directClosureNilEnv$"
-	runtimeZeroSizedAllocSymbol  = "zeroSizedAlloc"
+	runtimeZeroSizedAllocSymbol = "zeroSizedAlloc"
+
+	// Keep runtimeMemProfileShardsSym and runtimeMemProfileShardsAlign in sync
+	// with memProfileShardsData and memProfileShard's 256-byte stride
+	// (memProfileNumBuckets*8 + padding*8) in
+	// runtime/internal/runtime/memprofile_atomic_native.go; update both when
+	// renaming the global or changing the shard stride.
 	runtimeMemProfileShardsSym   = PkgRuntime + ".memProfileShardsData"
 	runtimeMemProfileShardsAlign = 256
 )

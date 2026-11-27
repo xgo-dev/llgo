@@ -23,9 +23,13 @@ type memProfileShard struct {
 	padding [5]uint64
 }
 
-// memProfileShardsData is emitted with 256-byte base alignment (see
-// ssa/decl.go) to match memProfileShard's 256-byte stride, ensuring adjacent
-// shards never share a 64-byte or 128-byte cache line.
+// memProfileShardsData is emitted with 256-byte base alignment matching
+// memProfileShard's 256-byte stride (memProfileNumBuckets*8 + padding*8),
+// ensuring adjacent shards never share a 64-byte or 128-byte cache line.
+// The compiler overrides this global's alignment via
+// runtimeMemProfileShardsSym and runtimeMemProfileShardsAlign in ssa/decl.go;
+// update both when renaming memProfileShardsData or changing memProfileShard's
+// stride.
 var memProfileShardsData [memProfileShards]memProfileShard
 
 // memProfileShardsBaseAddr exposes the linked base address for native layout tests.
