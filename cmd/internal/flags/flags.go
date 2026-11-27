@@ -397,7 +397,7 @@ func AddCmpTestFlags(fs *flag.FlagSet) {
 
 func UpdateConfig(conf *build.Config) error {
 	conf.CompilerHash = compilerhash.Value()
-	conf.Tags = Tags
+	conf.Tags = normalizeTags(Tags)
 	conf.Verbose = Verbose
 	conf.PrintPackages = false
 	switch conf.Mode {
@@ -504,4 +504,13 @@ func UpdateBuildConfig(conf *build.Config) error {
 	conf.BuildMode = build.BuildMode(BuildMode)
 
 	return nil
+}
+
+// normalizeTags accepts the two spellings the go tool tolerates ("a,b" and
+// "a b"). The build side passes conf.Tags into "-tags=", which only takes the
+// comma form, so a space-separated list silently produced an empty tag set.
+func normalizeTags(s string) string {
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	}), ",")
 }

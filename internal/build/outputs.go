@@ -337,8 +337,46 @@ func buildOutFmts(pkgName string, conf *Config, multiPkg bool, crossCompile *cro
 			details.Zip = base + ".zip"
 		}
 	}
+	// Drop derived artifacts before the compile/link runs: callers flash them
+	// by path, so a failed build would otherwise leave the previous image in
+	// place and every later check would pass against stale bytes.
+	for _, stale := range []string{details.Bin, details.Hex, details.Img, details.Uf2, details.Zip} {
+		if stale != "" {
+			_ = os.Remove(stale)
+		}
+	}
 
 	return details, nil
+}
+
+// purgeStaleOutputs removes the artifacts a previous build left behind at the
+// configured output paths. Callers flash those paths directly, so without this
+// a failed build silently keeps the old image and every later check passes
+// against stale bytes. Runs before any compilation starts.
+func purgeStaleOutputs(conf *Config) {
+	if conf.OutFile == "" {
+		return
+	}
+	base := strings.TrimSuffix(conf.OutFile, filepath.Ext(conf.OutFile))
+	stale := make([]string, 0, 5)
+	if conf.OutFmts.Bin {
+		stale = append(stale, base+".bin")
+	}
+	if conf.OutFmts.Hex {
+		stale = append(stale, base+".hex")
+	}
+	if conf.OutFmts.Img {
+		stale = append(stale, base+".img")
+	}
+	if conf.OutFmts.Uf2 {
+		stale = append(stale, base+".uf2")
+	}
+	if conf.OutFmts.Zip {
+		stale = append(stale, base+".zip")
+	}
+	for _, p := range stale {
+		_ = os.Remove(p)
+	}
 }
 
 // ToEnvMap converts OutFmtDetails to a map for template substitution

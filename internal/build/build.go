@@ -707,6 +707,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if conf.AppExt == "" {
 		conf.AppExt = defaultAppExt(conf)
 	}
+	purgeStaleOutputs(conf)
 	applyBuildModeCompileFlags(conf.BuildMode, export.Toolchain, &export)
 	if err := resolveDebugArtifactMode(conf, &export); err != nil {
 		return nil, err
@@ -1053,6 +1054,12 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 
+	if len(altPkgs) == 0 {
+		// Loading the runtime normally fails loudly; a silent empty result
+		// would index out of range three lines down.
+		return nil, fmt.Errorf("runtime packages %s: no packages loaded (build tags %q)",
+			strings.Join(altPkgPaths, " "), conf.Tags)
+	}
 	prog.SetRuntime(altPkgs[0].Types)
 	var pythonPackage *types.Package
 	if python := dedup.Check(llssa.PkgPython); python != nil {
