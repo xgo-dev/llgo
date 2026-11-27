@@ -7,8 +7,8 @@ import (
 	"reflect"
 )
 
-// This is the LTO-plugin owner for finite names formed by concatenation or
-// slicing. The multi-part cases preserve the historical concat regression.
+// Both nested and fused concatenations must retain their own finite method
+// names. Falling back to a generic lookup in either path would retain S.Drop.
 // SYMBOL-NOT: main{{.*}}S{{.*}}Drop
 // SYMBOL-DAG: main{{.*}}S{{.*}}KeepValue
 // SYMBOL-DAG: main{{.*}}S{{.*}}KeepValueAlt
@@ -18,6 +18,10 @@ import (
 // SYMBOL-DAG: main{{.*}}S{{.*}}KeepMultiAltValue
 // SYMBOL-DAG: main{{.*}}S{{.*}}KeepMultiType
 // SYMBOL-DAG: main{{.*}}S{{.*}}KeepMultiAltType
+// SYMBOL-DAG: main{{.*}}S{{.*}}FusedMultiValue
+// SYMBOL-DAG: main{{.*}}S{{.*}}FusedMultiAltValue
+// SYMBOL-DAG: main{{.*}}S{{.*}}FusedMultiType
+// SYMBOL-DAG: main{{.*}}S{{.*}}FusedMultiAltType
 // SYMBOL-DAG: main{{.*}}S{{.*}}KeepSliceValue
 // SYMBOL-DAG: main{{.*}}S{{.*}}KeepSliceType
 // SYMBOL-NOT: main{{.*}}S{{.*}}Drop
@@ -63,6 +67,18 @@ func (S) KeepMultiType() string {
 func (S) KeepMultiAltType() string {
 	return "keep-multi-alt-type"
 }
+
+//go:noinline
+func (S) FusedMultiValue() string { return "fused-multi-value" }
+
+//go:noinline
+func (S) FusedMultiAltValue() string { return "fused-multi-alt-value" }
+
+//go:noinline
+func (S) FusedMultiType() string { return "fused-multi-type" }
+
+//go:noinline
+func (S) FusedMultiAltType() string { return "fused-multi-alt-type" }
 
 //go:noinline
 func (S) KeepSliceValue() string {
@@ -141,6 +157,17 @@ func multiTypeName() string {
 	return multiPrefix() + multiMiddle() + multiTypeSuffix()
 }
 
+// Evaluate the calls before the additions to form a single StringConcat.
+func fusedValueName() string {
+	middle, suffix := multiMiddle(), multiValueSuffix()
+	return "Fused" + middle + suffix
+}
+
+func fusedTypeName() string {
+	middle, suffix := multiMiddle(), multiTypeSuffix()
+	return "Fused" + middle + suffix
+}
+
 func sliceValueName() string {
 	return "__KeepSliceValue__"[2:16]
 }
@@ -166,6 +193,16 @@ func main() {
 	m, ok = reflect.TypeOf(S{}).MethodByName(multiTypeName())
 	if !ok {
 		panic("missing multi method")
+	}
+	out = m.Func.Call([]reflect.Value{reflect.ValueOf(S{})})
+	println(out[0].String())
+
+	out = reflect.ValueOf(S{}).MethodByName(fusedValueName()).Call(nil)
+	println(out[0].String())
+
+	m, ok = reflect.TypeOf(S{}).MethodByName(fusedTypeName())
+	if !ok {
+		panic("missing fused method")
 	}
 	out = m.Func.Call([]reflect.Value{reflect.ValueOf(S{})})
 	println(out[0].String())
