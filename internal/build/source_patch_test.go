@@ -1436,7 +1436,7 @@ func TestNetHTTPSourcePatchTypeChecks(t *testing.T) {
 	} {
 		t.Run(target, func(t *testing.T) {
 			parts := strings.Split(target, "/")
-			cfgEnv := withEnv(os.Environ(), "GOOS="+parts[0], "GOARCH="+parts[1])
+			cfgEnv := withEnv(os.Environ(), "GOOS="+parts[0], "GOARCH="+parts[1], "CGO_ENABLED=0")
 			sourceGo, err := resolveSourceGoConfig(commandEnv{environ: cfgEnv}, "")
 			if err != nil {
 				t.Fatal(err)
