@@ -169,6 +169,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		if plan.selected != nil {
 			usesDescriptor := plan.selected == plan.descriptor
 			if native && usesDescriptor {
+				// Disable the skip guard to capture the inherited nonblocking state.
 				ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, stdoutPollInitGuard)
 			}
 			if conf.Verbose || conf.PrintCommands {
