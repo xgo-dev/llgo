@@ -1201,3 +1201,221 @@ func TestClientTransportCancelCompletedRequestAndReuseConn(t *testing.T) {
 		})
 	}
 }
+
+func TestServerIdlePartialPrefixDefersHeaderTimeout(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	srv.Config.ReadHeaderTimeout = 90 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	br := bufio.NewReader(conn)
+	if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if _, err := io.WriteString(conn, "G"); err != nil {
+		t.Fatal(err)
+	}
+	// Allow the waiter to leave hot grace, then exceed ReadHeaderTimeout
+	// before completing the four-byte prefix.
+	time.Sleep(400 * time.Millisecond)
+	if _, err := io.WriteString(conn, "ET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("second status = %d, want 204", resp.StatusCode)
+	}
+}
+
+type observedTCPConn struct {
+	*net.TCPConn
+	idle      atomic.Bool
+	polls     chan int
+	idlePolls chan int
+}
+
+type observedRawConn struct {
+	syscall.RawConn
+	observe func(int)
+}
+
+func (c observedRawConn) Control(f func(uintptr)) error {
+	fd := -1
+	err := c.RawConn.Control(func(u uintptr) {
+		fd = int(u)
+		f(u)
+	})
+	if err == nil {
+		c.observe(fd)
+	}
+	return err
+}
+
+func (c *observedTCPConn) SyscallConn() (syscall.RawConn, error) {
+	rc, err := c.TCPConn.SyscallConn()
+	if err != nil {
+		return nil, err
+	}
+	return observedRawConn{rc, func(fd int) {
+		ch := c.polls
+		if c.idle.Load() {
+			ch = c.idlePolls
+		}
+		select {
+		case ch <- fd:
+		default:
+		}
+	}}, nil
+}
+
+type observedTCPListener struct {
+	*net.TCPListener
+	accepted         chan *observedTCPConn
+	acceptAfterFirst <-chan struct{}
+	sawFirst         bool
+}
+
+func (ln *observedTCPListener) Accept() (net.Conn, error) {
+	if ln.sawFirst && ln.acceptAfterFirst != nil {
+		<-ln.acceptAfterFirst
+	}
+	conn, err := ln.AcceptTCP()
+	if err != nil {
+		return nil, err
+	}
+	ln.sawFirst = true
+	observed := &observedTCPConn{TCPConn: conn, polls: make(chan int, 1), idlePolls: make(chan int, 1)}
+	ln.accepted <- observed
+	return observed, nil
+}
+
+func observeTCP(t *testing.T) *observedTCPListener {
+	t.Helper()
+	if runtime.Compiler != "llgo" {
+		t.Skip("requires the LLGo HTTP pollers")
+	}
+	ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &observedTCPListener{TCPListener: ln, accepted: make(chan *observedTCPConn, 2)}
+}
+
+func awaitHTTPEvent[T any](t *testing.T, ch <-chan T, desc string) T {
+	t.Helper()
+	select {
+	case result := <-ch:
+		return result
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", desc)
+		var zero T
+		return zero
+	}
+}
+
+func TestServerCloseCancelsPolledRequest(t *testing.T) {
+	ln := observeTCP(t)
+	done := make(chan struct{})
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		close(done)
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+	client, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := io.WriteString(client, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	conn := awaitHTTPEvent(t, ln.accepted, "accepted connection")
+	awaitHTTPEvent(t, conn.polls, "background poll registration")
+	if err := srv.Close(); err != nil {
+		t.Fatal(err)
+	}
+	awaitHTTPEvent(t, done, "request cancellation after Server.Close")
+}
+
+func TestServerIdleRetiresReusedFD(t *testing.T) {
+	ln := observeTCP(t)
+	allowAccept := make(chan struct{})
+	ln.acceptAfterFirst = allowAccept
+	openAcceptGate := sync.OnceFunc(func() { close(allowAccept) })
+	closed := make(chan net.Conn, 2)
+	srv := &http.Server{
+		IdleTimeout: 450 * time.Millisecond,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		ConnState: func(c net.Conn, state http.ConnState) {
+			switch state {
+			case http.StateIdle:
+				c.(*observedTCPConn).idle.Store(true)
+			case http.StateClosed:
+				closed <- c
+			}
+		},
+	}
+	go srv.Serve(ln)
+	defer func() {
+		openAcceptGate()
+		srv.Close()
+	}()
+	dial := func() net.Conn {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		c.SetDeadline(time.Now().Add(2 * time.Second))
+		return c
+	}
+	warm := func(c net.Conn) (*observedTCPConn, int) {
+		if _, err := io.WriteString(c, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		conn := awaitHTTPEvent(t, ln.accepted, "accepted connection")
+		return conn, awaitHTTPEvent(t, conn.idlePolls, "idle poll registration")
+	}
+	first, fd1 := warm(dial())
+	// Allocate the second client fd before closing the first server fd, so
+	// Accept can reuse the server fd when the gate opens.
+	secondClient := dial()
+	first.Close()
+	openAcceptGate()
+	second, fd2 := warm(secondClient)
+	if fd1 != fd2 {
+		t.Skipf("kernel assigned different server fds (%d and %d)", fd1, fd2)
+	}
+	seen := make(map[net.Conn]bool, 2)
+	for range 2 {
+		seen[awaitHTTPEvent(t, closed, "StateClosed for a parked connection")] = true
+	}
+	if !seen[first] || !seen[second] {
+		t.Fatalf("StateClosed callbacks: first=%t second=%t", seen[first], seen[second])
+	}
+}

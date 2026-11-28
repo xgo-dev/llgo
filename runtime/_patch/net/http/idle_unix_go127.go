@@ -231,6 +231,20 @@ func (e *httpIdleEntry) closeConnection() {
 	}
 }
 
+// detachLocked removes a parked entry from both indexes under httpIdleMgr.mu.
+func (e *httpIdleEntry) detachLocked() {
+	if httpIdleMgr.byConn[e.c] == e {
+		delete(httpIdleMgr.byConn, e.c)
+	}
+	if httpIdleMgr.byFD[e.fd] == e {
+		delete(httpIdleMgr.byFD, e.fd)
+	}
+	if !e.deadline.IsZero() {
+		httpIdleMgr.deadlineCount--
+	}
+	e.state = httpIdleStateTaken
+}
+
 // httpIdlePark attempts to transfer ownership of an idle HTTP/1.1 connection to
 // the shared kqueue/epoll watcher.
 //   - parked=true: ownership transferred; caller MUST return without closing c.
@@ -261,6 +275,7 @@ func httpIdlePark(c *conn, ctx context.Context, cancelCtx context.CancelFunc, ra
 
 	var buf [1]byte
 	var wakeWatcher bool
+	var displaced *httpIdleEntry
 	ctrlErr := rawConn.Control(func(u uintptr) {
 		fd := int(u)
 		for {
@@ -278,11 +293,12 @@ func httpIdlePark(c *conn, ctx context.Context, cancelCtx context.CancelFunc, ra
 					closed = true
 					return
 				}
-				entry.fd = fd
-				entry.state = httpIdleStateParked
-				httpIdleMgr.byFD[fd] = entry
+				// A locally closed socket can lose its poll registration before
+				// the watcher has removed its entry. This fd now belongs to c.
+				if displaced = httpIdleMgr.byFD[fd]; displaced != nil {
+					displaced.detachLocked()
+				}
 				if err := httpIdleMgr.poller.add(fd); err != nil {
-					delete(httpIdleMgr.byFD, fd)
 					if httpIdleMgr.byConn[c] == entry {
 						delete(httpIdleMgr.byConn, c)
 					}
@@ -290,6 +306,9 @@ func httpIdlePark(c *conn, ctx context.Context, cancelCtx context.CancelFunc, ra
 					httpIdleMgr.mu.Unlock()
 					return
 				}
+				entry.fd = fd
+				entry.state = httpIdleStateParked
+				httpIdleMgr.byFD[fd] = entry
 				if !deadline.IsZero() {
 					httpIdleMgr.deadlineCount++
 				}
@@ -319,6 +338,9 @@ func httpIdlePark(c *conn, ctx context.Context, cancelCtx context.CancelFunc, ra
 			return
 		}
 	})
+	if displaced != nil {
+		httpIdleDispatch(displaced.closeConnection)
+	}
 
 	if parked {
 		if wakeWatcher {
@@ -361,14 +383,7 @@ func httpIdleNotifyClosed(c *conn) {
 		httpIdleMgr.mu.Unlock()
 		return
 	}
-	delete(httpIdleMgr.byConn, c)
-	if httpIdleMgr.byFD[entry.fd] == entry {
-		delete(httpIdleMgr.byFD, entry.fd)
-	}
-	if !entry.deadline.IsZero() {
-		httpIdleMgr.deadlineCount--
-	}
-	entry.state = httpIdleStateTaken
+	entry.detachLocked()
 	httpIdleMgr.mu.Unlock()
 
 	httpIdleDispatch(entry.closeConnection)
@@ -400,12 +415,7 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 					if !entry.deadline.IsZero() {
 						rem := entry.deadline.Sub(now)
 						if rem <= 0 {
-							delete(httpIdleMgr.byFD, fd)
-							if httpIdleMgr.byConn[entry.c] == entry {
-								delete(httpIdleMgr.byConn, entry.c)
-							}
-							httpIdleMgr.deadlineCount--
-							entry.state = httpIdleStateTaken
+							entry.detachLocked()
 							expired = append(expired, entry)
 							continue
 						}
@@ -452,14 +462,7 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 				httpIdleMgr.mu.Unlock()
 				continue
 			}
-			delete(httpIdleMgr.byFD, fd)
-			if httpIdleMgr.byConn[entry.c] == entry {
-				delete(httpIdleMgr.byConn, entry.c)
-			}
-			if !entry.deadline.IsZero() {
-				httpIdleMgr.deadlineCount--
-			}
-			entry.state = httpIdleStateTaken
+			entry.detachLocked()
 			httpIdleMgr.mu.Unlock()
 
 			e := entry
@@ -523,16 +526,7 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 				if err := entry.rawConn.Control(func(uintptr) {}); err != nil {
 					httpIdleMgr.mu.Lock()
 					if entry.state == httpIdleStateParked {
-						if httpIdleMgr.byFD[entry.fd] == entry {
-							delete(httpIdleMgr.byFD, entry.fd)
-						}
-						if httpIdleMgr.byConn[entry.c] == entry {
-							delete(httpIdleMgr.byConn, entry.c)
-						}
-						if !entry.deadline.IsZero() {
-							httpIdleMgr.deadlineCount--
-						}
-						entry.state = httpIdleStateTaken
+						entry.detachLocked()
 						httpIdleMgr.mu.Unlock()
 						e := entry
 						httpIdleDispatch(e.closeConnection)
@@ -850,26 +844,18 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 						c.r.aborted = false
 						c.rwc.SetReadDeadline(time.Time{})
 						c.r.unlock()
-						if peekErr == nil || c.bufr.Buffered() > 0 {
-							if readHeaderTO > 0 {
-								c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
-							}
-							continue
+					}
+					if peekErr == nil {
+						if readHeaderTO > 0 {
+							c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
 						}
-						if os.IsTimeout(peekErr) {
-							needPark = true
-						} else {
-							return
-						}
-					} else {
-						if peekErr == nil || c.bufr.Buffered() > 0 {
-							if readHeaderTO > 0 {
-								c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
-							}
-							continue
-						}
+						continue
+					}
+					if prev&httpHotEvictBit == 0 || !os.IsTimeout(peekErr) {
 						return
 					}
+					// Finish buffered prefixes below without a header deadline.
+					needPark = c.bufr.Buffered() == 0
 				} else {
 					graceDeadline := time.Now().Add(httpIdleDeadlineGrace)
 					if !idleDeadline.IsZero() && idleDeadline.Before(graceDeadline) {
@@ -964,6 +950,11 @@ func (s *Server) Close() error {
 
 	for c := range s.activeConn {
 		c.rwc.Close()
+		// A local close can remove the background poll registration without
+		// delivering a read error to the handler waiting on its context.
+		if w := c.curReq.Load(); w != nil {
+			w.cancelCtx()
+		}
 		httpIdleNotifyClosed(c)
 		delete(s.activeConn, c)
 	}
