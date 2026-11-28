@@ -60,6 +60,16 @@ func ThreadIsRegistered() c.Int
 //go:linkname UnregisterMyThread C.GC_unregister_my_thread
 func UnregisterMyThread() c.Int
 
+//llgo:cdecl
+type BlockingFunc func(c.Pointer) c.Pointer
+
+// DoBlocking runs fn with the current thread marked inactive to the collector
+// so stop-the-world collections neither suspend the thread nor scan stack
+// frames below this call.
+//
+//go:linkname DoBlocking C.GC_do_blocking
+func DoBlocking(fn BlockingFunc, clientData c.Pointer) c.Pointer
+
 //go:linkname Malloc C.GC_malloc
 func Malloc(size uintptr) c.Pointer
 

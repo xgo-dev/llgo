@@ -90,6 +90,9 @@ func wakeAllConditionVariable(cond *Cond)
 //go:linkname winCondWait C.llgo_win_cond_wait
 func winCondWait(cond *Cond, m *Mutex) c.Int
 
+//go:linkname winCondWaitInactive C.llgo_win_cond_wait_inactive
+func winCondWaitInactive(cond *Cond, m *Mutex) c.Int
+
 //go:linkname winCondTimedWait C.llgo_win_cond_timedwait
 func winCondTimedWait(cond *Cond, m *Mutex, abstime *ctime.Timespec) c.Int
 
@@ -112,6 +115,13 @@ func (cond *Cond) Broadcast() c.Int {
 
 func (cond *Cond) Wait(m *Mutex) c.Int {
 	return winCondWait(cond, m)
+}
+
+// WaitInactive blocks outside BDWGC's active thread set on every Windows ABI
+// (including MSVC ARM64). Use only for detached runtime worker threads that
+// carry no Go frames.
+func (cond *Cond) WaitInactive(m *Mutex) c.Int {
+	return winCondWaitInactive(cond, m)
 }
 
 func (cond *Cond) TimedWait(m *Mutex, abstime *ctime.Timespec) c.Int {

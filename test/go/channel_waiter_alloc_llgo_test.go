@@ -45,3 +45,57 @@ func TestChannelWaiterSteadyStateAllocations(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectSteadyStateAllocations(t *testing.T) {
+	jobs := make(chan uint64)
+	replies := make(chan uint64)
+	idle1 := make(chan uint64)
+	idle2 := make(chan uint64)
+	idle3 := make(chan uint64)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case v, ok := <-jobs:
+				if !ok {
+					return
+				}
+				select {
+				case replies <- v:
+				case <-idle1:
+				}
+			case <-idle2:
+			case <-idle3:
+			}
+		}
+	}()
+	exchange := func(n int) {
+		for i := 0; i < n; i++ {
+			select {
+			case jobs <- uint64(i):
+			case <-idle1:
+			}
+			select {
+			case v := <-replies:
+				if v != uint64(i) {
+					t.Fatalf("received %d, want %d", v, i)
+				}
+			case <-idle2:
+			case <-idle3:
+			}
+		}
+	}
+	exchange(2000)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	exchange(10000)
+	runtime.ReadMemStats(&after)
+	close(jobs)
+	<-done
+	allocated := after.TotalAlloc - before.TotalAlloc
+	t.Logf("steady-state blocking select: %d collector bytes / 10000 exchanges", allocated)
+	if allocated > 64<<10 {
+		t.Errorf("steady-state blocking select allocated %d bytes", allocated)
+	}
+}

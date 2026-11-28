@@ -18,6 +18,7 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 	}
 	t.Setenv("LLGO_ROOT", root)
 	for _, target := range []string{
+		"darwin/arm64", "linux/amd64", "windows/amd64",
 		"windows/386", "linux/386", "linux/arm", "linux/mips",
 	} {
 		t.Run(target, func(t *testing.T) {
@@ -54,11 +55,14 @@ func TestMemProfileCounterAlignment(t *testing.T) {
 			shard := array.ElementType()
 			offset := td.ElementOffset(shard, 1)
 			stride := td.TypeAllocSize(shard)
-			if shards.Alignment() < 8 || offset%8 != 0 || stride%8 != 0 {
-				t.Fatalf("unaligned 64-bit atomic counters: base alignment=%d, field offset=%d, stride=%d", shards.Alignment(), offset, stride)
+			if offset%8 != 0 {
+				t.Fatalf("unaligned memory profile shard counts field: offset=%d, want multiple of 8", offset)
 			}
 			if stride != 256 {
 				t.Fatalf("unexpected shard stride: got %d, want 256", stride)
+			}
+			if got := shards.Alignment(); uint64(got) != stride {
+				t.Fatalf("unexpected memory profile shards base alignment: got %d, want %d (matching shard stride)", got, stride)
 			}
 			// Allocator accounting must remain an intrinsic at O0 too: an
 			// instrumented stdlib method can allocate and re-enter profiling.
