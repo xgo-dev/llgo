@@ -152,13 +152,6 @@ func SkipNamesRetainingInit(altFiles []*ast.File) map[string]bool {
 	return names
 }
 
-// PatchSkipsOriginalPackage reports whether the alternate replaces every
-// declaration, including the original package initializer.
-func PatchSkipsOriginalPackage(files []*ast.File) bool {
-	_, skipAll := patchSkipNames(files)
-	return skipAll
-}
-
 func patchSkipNames(files []*ast.File) (map[string]bool, bool) {
 	ctx := &context{skips: make(map[string]none)}
 	for _, file := range files {
