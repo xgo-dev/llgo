@@ -10,6 +10,11 @@ import "github.com/xgo-dev/llvm"
 // passes still optimize them normally.
 const maxFunctionInstructions = 1024
 
+// After inlining, a large aggregate can become a chain of insertvalue
+// instructions. Attributor recursively asks for the value of each predecessor.
+// Leave headroom on a Darwin worker's 512 KiB pthread stack.
+const maxInsertValueDepth = 64
+
 type skippedFunction struct {
 	fn              llvm.Value
 	hadNoinline     bool
@@ -212,12 +217,28 @@ func hasConstantAllocCall(fn llvm.Value, allocKind uint) bool {
 }
 
 func exceedsAnalysisBudget(fn llvm.Value) bool {
-	n := 0
+	n, inserts := 0, 0
 	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
 			n++
 			if n > maxFunctionInstructions {
 				return true
+			}
+			if i.InstructionOpcode() == llvm.InsertValue {
+				inserts++
+			}
+		}
+	}
+	if inserts <= maxInsertValueDepth {
+		return false
+	}
+	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
+			for depth, v := 0, i; !v.IsAInsertValueInst().IsNil(); v = v.Operand(0) {
+				if depth >= maxInsertValueDepth {
+					return true
+				}
+				depth++
 			}
 		}
 	}

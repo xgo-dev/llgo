@@ -108,3 +108,44 @@ define i64 @local() {
 		})
 	}
 }
+
+func TestPostInlineAggregateChainBudget(t *testing.T) {
+	var source strings.Builder
+	fmt.Fprintf(&source, "declare nonnull ptr @alloc(i64) allocsize(0)\ndeclare void @consume([%d x i8])\n", maxInsertValueDepth+1)
+	cases := []struct {
+		name       string
+		lengths    []int
+		retainHeap bool
+	}{
+		{"at_limit", []int{maxInsertValueDepth}, false},
+		{"deep", []int{maxInsertValueDepth + 1}, true},
+		{"independent", []int{maxInsertValueDepth, maxInsertValueDepth}, false},
+	}
+	for _, tc := range cases {
+		fmt.Fprintf(&source, "define i8 @%s(i8 %%x) {\n", tc.name)
+		source.WriteString("  %p = call ptr @alloc(i64 16) allockind(\"alloc,uninitialized\")\n")
+		for k, n := range tc.lengths {
+			prev := "poison"
+			for i := range n {
+				value := fmt.Sprintf("%%v%d_%d", k, i)
+				fmt.Fprintf(&source, "  %s = insertvalue [%d x i8] %s, i8 %%x, %d\n", value, maxInsertValueDepth+1, prev, i)
+				prev = value
+			}
+			fmt.Fprintf(&source, "  call void @consume([%d x i8] %s)\n", maxInsertValueDepth+1, prev)
+		}
+		source.WriteString("  store i8 %x, ptr %p\n  %r = load i8, ptr %p\n  ret i8 %r\n}\n")
+	}
+	mod := parseModule(t, source.String())
+	if _, err := RunPostInline(mod, tailTarget(t, mod)); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		hasAllocation := strings.Contains(mod.NamedFunction(tc.name).String(), "call ptr @alloc(")
+		if hasAllocation != tc.retainHeap {
+			t.Fatalf("heap allocation in %s = %v", tc.name, hasAllocation)
+		}
+	}
+}
