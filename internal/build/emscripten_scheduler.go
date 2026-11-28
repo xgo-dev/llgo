@@ -166,7 +166,10 @@ func linkStagedWasm(ctx *context, plan *mainLinkPlan, output, dir string, verbos
 		attempt := local
 		attempt.outputPath = filepath.Join(probeDir, filepath.Base(output))
 		attempt.linkInputs = plan.directWasmInputs
-		if err := executeMainLink(probe, &attempt, verbose); err == nil {
+		err = executeMainLink(probe, &attempt, verbose)
+		// The ordinary fallback uses the same driver and Closure installation.
+		ctx.skipEmscriptenMinifier = probe.skipEmscriptenMinifier
+		if err == nil {
 			_, _ = diagnostics.WriteTo(os.Stderr)
 			if ctx.shouldPrintCommands(verbose) {
 				fmt.Fprintf(os.Stderr, "llgo: omit Emscripten %s after link reachability check\n", feature)
