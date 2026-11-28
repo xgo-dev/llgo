@@ -1,20 +1,11 @@
-//go:build (darwin || linux) && !baremetal && go1.27 && !go1.28
+// Copyright 2011 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license.
+// See LICENSES/Go-BSD-3-Clause.txt at this module root for license terms.
+//
+// Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+// Licensed under the Apache License, Version 2.0 (see LICENSE).
 
-/*
- * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+//go:build (darwin || linux) && !baremetal && go1.27 && !go1.28
 
 package http
 
@@ -39,15 +30,21 @@ import (
 	"unsafe"
 )
 
+// Upstream provenance:
+//   `getConn`, `dialConn`, `roundTrip` (async fallback), `closeLocked`, and
+//   `proxyAuth` are derived from Go 1.27 `src/net/http/transport.go` and must
+//   be resynced when the target Go toolchain major version advances (gated by
+//   the `go1.27 && !go1.28` build constraint above).
+//
 // On LLGo's 1:1 OS-thread runtime, Go's standard HTTP/1.1 client Transport
 // spawns two dedicated background goroutines (readLoop + writeLoop) per
 // persistent connection, multiplying OS threads by 3x and adding 5 cross-thread
 // channel handoffs to every keep-alive request.
 //
 // For pooled plaintext socket HTTP/1.1 connections (non-ClientConn, non-TLS,
-// non-Expect-100-continue, and small/known request bodies <= 64 KiB that cannot
-// deadlock against kernel TCP send buffers), keep persistConn in synchronous
-// mode (pc.writech == nil):
+// non-Expect-100-continue, no write-side httptrace hooks, and known request
+// bodies <= 64 KiB via Request.outgoingLength() that cannot deadlock against
+// kernel TCP send buffers), keep persistConn in synchronous mode (pc.writech == nil):
 //   - Write the request and read response headers directly on the caller's
 //     goroutine with zero channel hops and zero extra OS threads.
 //   - Attach request context cancellation via context.AfterFunc (zero goroutines
@@ -56,7 +53,8 @@ import (
 //     userspace pending window (~1-2ms, zero syscalls on hot keep-alive reuse)
 //     so server-initiated idle closes/EOF/RST are detected promptly.
 //   - Lazily promote to standard readLoop+writeLoop on demand for Expect: 100-
-//     continue or large/streaming request bodies.
+//     continue, unknown-length/chunked or >64 KiB request bodies, or requests
+//     with write-side httptrace hooks (WroteHeaders/WroteRequest/100-continue).
 
 // errSyncClosedEarly is local to the patch so it compiles across all Go 1.27.x
 // point releases (upstream net/http added errClosedEarly in a 1.27 point release).
@@ -84,7 +82,8 @@ type clientIdleEntry struct {
 type clientIdleShard struct {
 	mu      sync.Mutex
 	entries map[*persistConn]*clientIdleEntry
-	_       [40]byte
+	pending map[*persistConn]*clientIdleEntry
+	_       [32]byte
 }
 
 var httpClientIdleMgr struct {
@@ -96,10 +95,6 @@ var httpClientIdleMgr struct {
 	pendingCount  atomic.Int64
 	polledDisarms atomic.Int64
 	sleeping      atomic.Int32
-}
-
-var clientIdleEntryPool = sync.Pool{
-	New: func() any { return new(clientIdleEntry) },
 }
 
 func clientIdleShardFor(pc *persistConn) *clientIdleShard {
@@ -115,6 +110,7 @@ func ensureHTTPClientIdleWatcher() bool {
 		}
 		for i := range httpClientIdleMgr.shards {
 			httpClientIdleMgr.shards[i].entries = make(map[*persistConn]*clientIdleEntry, 16)
+			httpClientIdleMgr.shards[i].pending = make(map[*persistConn]*clientIdleEntry, 8)
 		}
 		httpClientIdleMgr.poller = p
 		httpClientIdleMgr.ready.Store(true)
@@ -127,13 +123,11 @@ func httpClientIdleArm(pc *persistConn) {
 	if !httpClientIdleMgr.ready.Load() {
 		return
 	}
-	e := clientIdleEntryPool.Get().(*clientIdleEntry)
-	e.pc = pc
-	e.rawConn = nil
-	e.fd = -1
-	e.state = clientIdlePend
-	e.seen = false
-	e.disarmed.Store(false)
+	e := &clientIdleEntry{
+		pc:    pc,
+		fd:    -1,
+		state: clientIdlePend,
+	}
 
 	var replacedState uint8
 	sh := clientIdleShardFor(pc)
@@ -144,6 +138,7 @@ func httpClientIdleArm(pc *persistConn) {
 		prev.disarmed.Store(true)
 	}
 	sh.entries[pc] = e
+	sh.pending[pc] = e
 	sh.mu.Unlock()
 
 	if replacedState == clientIdleUnused {
@@ -171,6 +166,7 @@ func httpClientIdleDisarm(pc *persistConn) {
 		return
 	}
 	delete(sh.entries, pc)
+	delete(sh.pending, pc)
 	prevState := e.state
 	rawConn := e.rawConn
 	e.state = clientIdleDisarm
@@ -180,11 +176,6 @@ func httpClientIdleDisarm(pc *persistConn) {
 	httpClientIdleMgr.totalArmed.Add(-1)
 	if prevState == clientIdlePend {
 		httpClientIdleMgr.pendingCount.Add(-1)
-		e.pc = nil
-		e.rawConn = nil
-		e.fd = -1
-		e.seen = false
-		clientIdleEntryPool.Put(e)
 		return
 	}
 	if prevState == clientIdlePoll {
@@ -234,13 +225,15 @@ func runHTTPClientIdleWatcher(p *httpBgPoller) {
 			for i := range httpClientIdleMgr.shards {
 				sh := &httpClientIdleMgr.shards[i]
 				sh.mu.Lock()
-				for pc, e := range sh.entries {
+				for pc, e := range sh.pending {
 					if e.state == clientIdlePend {
 						if !e.seen {
 							e.seen = true
 						} else {
 							pending = append(pending, pc)
 						}
+					} else {
+						delete(sh.pending, pc)
 					}
 				}
 				sh.mu.Unlock()
@@ -265,6 +258,7 @@ func promotePendingClientIdleEntry(p *httpBgPoller, pc *persistConn, byFD map[in
 	sh.mu.Lock()
 	e, ok := sh.entries[pc]
 	if !ok || e.state != clientIdlePend {
+		delete(sh.pending, pc)
 		sh.mu.Unlock()
 		return
 	}
@@ -274,13 +268,12 @@ func promotePendingClientIdleEntry(p *httpBgPoller, pc *persistConn, byFD map[in
 		sh.mu.Lock()
 		if sh.entries[pc] == e && e.state == clientIdlePend {
 			delete(sh.entries, pc)
+			delete(sh.pending, pc)
 			e.state = clientIdleDisarm
 			e.disarmed.Store(true)
 			sh.mu.Unlock()
 			httpClientIdleMgr.pendingCount.Add(-1)
 			httpClientIdleMgr.totalArmed.Add(-1)
-			e.pc = nil
-			clientIdleEntryPool.Put(e)
 			return
 		}
 		sh.mu.Unlock()
@@ -297,6 +290,7 @@ func promotePendingClientIdleEntry(p *httpBgPoller, pc *persistConn, byFD map[in
 		sh.mu.Lock()
 		if sh.entries[pc] == e && e.state == clientIdlePend {
 			delete(sh.entries, pc)
+			delete(sh.pending, pc)
 			e.state = clientIdleDisarm
 			e.disarmed.Store(true)
 			sh.mu.Unlock()
@@ -315,6 +309,7 @@ func promotePendingClientIdleEntry(p *httpBgPoller, pc *persistConn, byFD map[in
 		sh.mu.Lock()
 		if sh.entries[pc] == e && e.state == clientIdlePend {
 			delete(sh.entries, pc)
+			delete(sh.pending, pc)
 			e.state = clientIdleDisarm
 			e.disarmed.Store(true)
 			sh.mu.Unlock()
@@ -330,6 +325,7 @@ func promotePendingClientIdleEntry(p *httpBgPoller, pc *persistConn, byFD map[in
 	if armed && fd >= 0 {
 		sh.mu.Lock()
 		if sh.entries[pc] == e && e.state == clientIdlePend {
+			delete(sh.pending, pc)
 			e.rawConn = rawConn
 			e.fd = fd
 			e.state = clientIdlePoll
@@ -348,6 +344,7 @@ func promotePendingClientIdleEntry(p *httpBgPoller, pc *persistConn, byFD map[in
 	sh.mu.Lock()
 	if sh.entries[pc] == e && e.state == clientIdlePend {
 		delete(sh.entries, pc)
+		delete(sh.pending, pc)
 		e.state = clientIdleDisarm
 		e.disarmed.Store(true)
 		sh.mu.Unlock()
@@ -424,6 +421,12 @@ func (pc *persistConn) promoteToAsync() {
 }
 
 func (pc *persistConn) syncPutIdleConn(treq *transportRequest) {
+	// Never return a connection with unread/unsolicited bytes already buffered
+	// in pc.br (matches upstream readLoopPeekFailLocked response-desync guard).
+	if pc.br.Buffered() != 0 {
+		pc.close(errServerClosedIdle)
+		return
+	}
 	trace := treq.trace
 	httpClientIdleArm(pc)
 	if err := pc.t.tryPutIdleConn(pc); err != nil {
@@ -453,6 +456,9 @@ func (pc *persistConn) mapSyncRoundTripError(req *transportRequest, startBytesWr
 		return reqErr
 	}
 	if err == errServerClosedIdle {
+		if pc.nwrite == startBytesWritten {
+			return nothingWrittenError{err}
+		}
 		return err
 	}
 	if _, ok := err.(transportReadFromServerError); ok {
@@ -652,8 +658,10 @@ func (pc *persistConn) roundTripSync(req *transportRequest) (*Response, error) {
 func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err error) {
 	if pc.writech == nil {
 		httpClientIdleDisarm(pc)
+		outLen := req.Request.outgoingLength()
 		needAsync := (req.ProtoAtLeast(1, 1) && req.Body != nil && req.expectsContinue()) ||
-			(req.Body != nil && req.Body != NoBody && (req.ContentLength < 0 || req.ContentLength > clientIdleMaxSyncBody))
+			outLen < 0 || outLen > clientIdleMaxSyncBody ||
+			(req.trace != nil && (req.trace.WroteHeaders != nil || req.trace.WroteRequest != nil || req.trace.Wait100Continue != nil || req.trace.Got100Continue != nil))
 		if !needAsync {
 			return pc.roundTripSync(req)
 		}

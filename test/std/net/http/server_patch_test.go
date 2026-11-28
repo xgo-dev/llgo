@@ -262,8 +262,8 @@ func TestServerIdleKeepAliveOffloadAndShutdown(t *testing.T) {
 	}
 
 	// On LLGo, idle keep-alive connections offload to the shared kqueue/epoll
-	// watcher after the 5ms hot-grace window instead of pinning one OS thread
-	// per idle socket.
+	// watcher after the hot-grace window (~150ms) instead of pinning one OS
+	// thread per idle socket.
 	if runtime.Compiler == "llgo" {
 		deadline := time.Now().Add(1500 * time.Millisecond)
 		var afterG int
@@ -504,9 +504,9 @@ func TestServerIdleKeepAlivePreservesRequestContext(t *testing.T) {
 		if resp.StatusCode != http.StatusOK || string(body) != "ok:"+path {
 			t.Fatalf("%s: got status=%d body=%q, want 200 ok:%s", path, resp.StatusCode, string(body), path)
 		}
-		// Pause past the 5ms hot-grace window so the connection parks on the
-		// shared idle watcher and resumes for the next request with live ctx.
-		time.Sleep(20 * time.Millisecond)
+		// Pause past the 150ms lazy hot-grace window so the connection parks on
+		// the shared idle watcher and resumes for the next request with live ctx.
+		time.Sleep(220 * time.Millisecond)
 	}
 }
 
@@ -705,4 +705,143 @@ func TestClientSyncTransportKeepAliveRetryTimeoutAndLargePost(t *testing.T) {
 	}
 	io.Copy(io.Discard, r2.Body)
 	r2.Body.Close()
+
+	// 5. Unknown-length / chunked POST (ContentLength == 0 with non-NoBody reader)
+	// promotes to async and echoes cleanly.
+	chunkedReq, err := http.NewRequest("POST", srv.URL+"/echo", io.NopCloser(strings.NewReader("chunked-body")))
+	if err != nil {
+		t.Fatalf("new chunked req: %v", err)
+	}
+	chunkedReq.ContentLength = 0
+	rChunk, err := cRetry.Do(chunkedReq)
+	if err != nil {
+		t.Fatalf("chunked POST failed: %v", err)
+	}
+	gotChunk, err := io.ReadAll(rChunk.Body)
+	rChunk.Body.Close()
+	if err != nil || string(gotChunk) != "chunked-body" {
+		t.Fatalf("chunked POST mismatch: got=%q err=%v", string(gotChunk), err)
+	}
+}
+
+func TestServerIdleClearsHandlerReadDeadlineAndHandlesPartialPrefix(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/set-deadline" {
+			rc := http.NewResponseController(w)
+			if err := rc.SetReadDeadline(time.Now().Add(40 * time.Millisecond)); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		io.WriteString(w, "ok:"+r.URL.Path)
+	}))
+	defer srv.Close()
+
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	br := bufio.NewReader(conn)
+
+	// 1. Handler sets a 40ms read deadline via ResponseController; keeping the
+	// connection idle for 80ms must not kill it (deadline must be cleared).
+	if _, err := io.WriteString(conn, "GET /set-deadline HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatalf("write 1: %v", err)
+	}
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("read 1: %v", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	time.Sleep(80 * time.Millisecond)
+
+	// 2. Send a 2-byte prefix before grace expiry, pause past the 150ms grace
+	// window, then send the rest of the request; server must not stall in park.
+	if _, err := io.WriteString(conn, "GE"); err != nil {
+		t.Fatalf("write partial prefix: %v", err)
+	}
+	time.Sleep(220 * time.Millisecond)
+	if _, err := io.WriteString(conn, "T /after HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatalf("write remainder: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp2, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("read 2 after handler deadline + partial prefix: %v", err)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK || string(body2) != "ok:/after" {
+		t.Fatalf("resp2: status=%d body=%q", resp2.StatusCode, string(body2))
+	}
+}
+
+func TestClientSyncTransportRejectsUnsolicitedBufferedBytes(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	var accepted atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			n := accepted.Add(1)
+			go func(conn net.Conn, id int32) {
+				defer conn.Close()
+				br := bufio.NewReader(conn)
+				req, err := http.ReadRequest(br)
+				if err != nil {
+					return
+				}
+				io.Copy(io.Discard, req.Body)
+				req.Body.Close()
+				if id == 1 {
+					// Append a fabricated unsolicited second response in the same
+					// write so pc.br buffers it alongside the first response.
+					_, _ = io.WriteString(conn,
+						"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst"+
+							"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\npoison")
+				} else {
+					_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecond")
+				}
+			}(c, n)
+		}
+	}()
+
+	tr := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr}
+	url := "http://" + ln.Addr().String() + "/"
+
+	r1, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("first GET: %v", err)
+	}
+	b1, err := io.ReadAll(r1.Body)
+	r1.Body.Close()
+	if err != nil || string(b1) != "first" {
+		t.Fatalf("first body=%q err=%v", string(b1), err)
+	}
+
+	r2, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("second GET: %v", err)
+	}
+	b2, err := io.ReadAll(r2.Body)
+	r2.Body.Close()
+	if err != nil || string(b2) != "second" {
+		t.Fatalf("second body=%q (want \"second\", not poisoned) err=%v", string(b2), err)
+	}
+	if got := accepted.Load(); got < 2 {
+		t.Fatalf("expected second request to open a new connection, accepted=%d", got)
+	}
 }
