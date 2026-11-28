@@ -5,6 +5,7 @@ package abi
 // FuncType represents a function type on targets that use libffi.
 type FuncType struct {
 	Type
-	In  []*Type
-	Out []*Type
+	Types    **Type // input types followed by output types
+	InCount  int
+	OutCount int
 }

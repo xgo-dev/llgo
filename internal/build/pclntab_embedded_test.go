@@ -9,11 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	buildfuncinfo "github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/lto"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 )
 
 func TestEmbeddedPCLNPruningScope(t *testing.T) {
@@ -271,5 +273,91 @@ func TestCompileEmbeddedEntryLTO(t *testing.T) {
 				t.Fatal("accepted malformed IR")
 			}
 		})
+	}
+}
+
+func TestEmbeddedFuncInfoTypes(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	for _, tc := range []struct {
+		name    string
+		compact bool
+		ids     int
+		bytes   int
+		want    uint8
+	}{
+		{"wide profile", false, 1, 1, 0},
+		{"compact at limit", true, 1 << 16, 1 << 16, funcInfoShortIDs | funcInfoShortOffsets},
+		{"large string table", true, 1, 1<<16 + 1, funcInfoShortIDs},
+		{"many string IDs", true, 1<<16 + 1, 1, funcInfoShortOffsets},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			table := buildfuncinfo.Table{StringOffsets: make([]uint32, tc.ids), Strings: make([]byte, tc.bytes)}
+			record, offsets, layout := embeddedFuncInfoTypes(ctx, table, tc.compact)
+			if layout != tc.want {
+				t.Fatalf("layout = %d, want %d", layout, tc.want)
+			}
+			fields := record.StructElementTypes()
+			if fields[6] != ctx.Int32Type() || (fields[0] == ctx.Int16Type()) != (layout&funcInfoShortIDs != 0) ||
+				(offsets == ctx.Int16Type()) != (layout&funcInfoShortOffsets != 0) {
+				t.Fatalf("wrong field widths for layout %d", layout)
+			}
+		})
+	}
+}
+
+func TestEncodePackedFuncInfo(t *testing.T) {
+	ctx := llvm.NewContext()
+	defer ctx.Dispose()
+	record := buildfuncinfo.EncodedRecord{SymbolPkg: 1, SymbolName: 2, NamePkg: 1, NameName: 2, FileRoot: 3, FileName: 4, Line: buildfuncinfo.EncodedLineWrapper | 17}
+	table := buildfuncinfo.Table{
+		Records:       []buildfuncinfo.EncodedRecord{record, record, record},
+		StringOffsets: make([]uint32, 5),
+	}
+	table.Records[1].NameName = 0 // a display-name override
+	packed, _, layout := encodeEmbeddedFuncInfo(ctx, table, true)
+	if layout&funcInfoPackedRecords == 0 {
+		t.Fatal("repeated file paths did not use the packed layout")
+	}
+	for _, want := range []string{
+		"[3 x { i16, i16, i8, i8, i16 }]",
+		"{ i16 1, i16 2, i8 0, i8 1, i16 -32751 }",
+		"{ i16 1, i16 2, i8 2, i8 1, i16 -32751 }",
+		"{ i16 3, i16 4 }",
+		"{ i16 1, i16 0 }",
+	} {
+		if !strings.Contains(packed.String(), want) {
+			t.Fatalf("packed funcinfo is missing %q: %s", want, packed)
+		}
+	}
+	table.Records[0].Line = 1 << 15
+	if _, _, layout := encodeEmbeddedFuncInfo(ctx, table, true); layout&funcInfoPackedRecords != 0 {
+		t.Fatal("packed layout accepted a source line that would truncate")
+	}
+}
+
+func TestRewriteEmbeddedPCLNIRCompactsFinalWidths(t *testing.T) {
+	ir, data := embeddedPCLNFixture(t)
+	path := filepath.Join(t.TempDir(), "entry.ll")
+	// A large initial catalog can use wider records than the live catalog.
+	// The relink must update the arrays and their layout flag together.
+	ir += "\n@__llgo_funcinfo_layout = hidden constant i8 0\n"
+	if err := os.WriteFile(path, []byte(ir), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteEmbeddedPCLNIR(path, data); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"@__llgo_funcinfo_layout = hidden constant i8 3",
+		"{ i16, i16, i16, i16, i16, i16, i32 }",
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("pruned pclntab is missing %s", want)
+		}
 	}
 }

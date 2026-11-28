@@ -3,10 +3,9 @@
 package tinygogc
 
 import (
-	"unsafe"
-
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/gcroot"
+	_ "unsafe"
 )
 
 const LLGoFiles = "_wrap/gc_wasm.c"
@@ -72,11 +71,7 @@ func gcMarkReachable() {
 			markRoots(globalsStart, globalsEnd)
 		}
 	}
-	gcroot.Visit(markWasmGCRoot)
-}
-
-func markWasmGCRoot(root *unsafe.Pointer, metadata unsafe.Pointer) {
-	markRoot(uintptr(unsafe.Pointer(root)), gcroot.RootValue(root, metadata))
+	gcroot.Visit(markRoot)
 }
 
 func gcStackStats() (inuse, sys uintptr) {

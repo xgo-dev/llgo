@@ -8,13 +8,15 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func TestDirectWasmFinalizer(t *testing.T) {
+func TestDirectFinalizer(t *testing.T) {
 	const src = `package finalizers
 import ("runtime"; _ "unsafe")
 type Item struct { N int }
 func register(p *Item) { runtime.SetFinalizer(p, func(*Item) {}) }
 func closure(p *Item, seen *int) { runtime.SetFinalizer(p, func(p *Item) { *seen += p.N }) }
 func result(p *Item) { runtime.SetFinalizer(p, func(*Item) error { return nil }) }
+func otherInterface(p *Item) { runtime.SetFinalizer(p, func(*Item) any { return nil }) }
+func variable(p *Item, f func(*Item)) { runtime.SetFinalizer(p, f) }
 func cancel(p *Item) { runtime.SetFinalizer(p, nil) }
 func shared(p *Item) any { v := any(p); runtime.SetFinalizer(v, nil); return v }
 func dynamic(p, fn any) { runtime.SetFinalizer(p, fn) }
@@ -45,7 +47,9 @@ func nativeValue(p *Item, f nativeCallback) { runtime.SetFinalizer(p, f) }
 		{"no-dce", "wasip1", "wasm", false, true, false},
 		{"browser", "js", "wasm", false, true, false},
 		{"no-gc", "wasip1", "wasm", true, false, false},
-		{"native", "linux", "amd64", true, true, false},
+		{"linux", "linux", "amd64", true, false, false},
+		{"darwin", "darwin", "arm64", true, false, false},
+		{"windows", "windows", "amd64", true, false, false},
 		{"debugger", "wasip1", "wasm", true, true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,7 +65,8 @@ func nativeValue(p *Item, f nativeCallback) { runtime.SetFinalizer(p, f) }
 			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			wantDirect := tc.arch == "wasm" && tc.gc && !tc.debug
+			wasmDirect := tc.arch == "wasm" && tc.gc && !tc.debug
+			wantDirect := wasmDirect || tc.goos == "linux" || tc.goos == "darwin"
 			for _, name := range []string{"register", "closure", "result", "cancel", "shared"} {
 				ir := pkg.Module().NamedFunction("finalizers." + name).String()
 				if got := strings.Contains(ir, "runtime.llgoSetFinalizerPointer"); got != wantDirect {
@@ -72,6 +77,12 @@ func nativeValue(p *Item, f nativeCallback) { runtime.SetFinalizer(p, f) }
 				}
 				if name == "shared" && !strings.Contains(ir, "_llgo_finalizers.Item") {
 					t.Errorf("observable interface lost type metadata:\n%s", ir)
+				}
+			}
+			for _, name := range []string{"otherInterface", "variable"} {
+				ir := pkg.Module().NamedFunction("finalizers." + name).String()
+				if got := strings.Contains(ir, "runtime.llgoSetFinalizerPointer"); got != wasmDirect {
+					t.Errorf("%s direct = %v:\n%s", name, got, ir)
 				}
 			}
 			for _, name := range []string{"dynamic", "nonpointer", "wrong", "iface", "scalar", "tuple", "variadic", "notfunc", "deferred", "async", "indirect", "sameName", "nativeCall", "nativeValue"} {

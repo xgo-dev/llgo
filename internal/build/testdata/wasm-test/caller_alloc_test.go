@@ -36,8 +36,8 @@ func TestCallerInstrumentationAllocations(t *testing.T) {
 	const name, file = "wasmtest.callerAllocationFunction", "caller_alloc_test.go"
 	entry := reflect.ValueOf(callerAllocationFunction).Pointer()
 	nameData, fileData := unsafe.StringData(name), unsafe.StringData(file)
-	// AllocsPerRun warms up the shadow stack and frame registry. Reusing their
-	// capacity and reconstructing literal strings must not allocate.
+	// AllocsPerRun warms up the shadow stack. Reusing its capacity and
+	// reconstructing literal strings must not allocate.
 	want := testing.AllocsPerRun(100, func() {
 		mark := pushCallerFrameDirect(entry, name, file, 1)
 		recordCallerLocationDirect(entry, name, file, 2)

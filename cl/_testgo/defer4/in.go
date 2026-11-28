@@ -38,8 +38,8 @@ package main
 // CHECK-LABEL: define void @"main.fail$1"(){{.*}} {
 // CHECK: call void @"{{.*}}BindRecoverFrame"(ptr @"main.fail$1", ptr [[D4_RECOVER_TOKEN:%[0-9]+]])
 // CHECK-NEXT: [[D4_RECOVERED:%[0-9]+]] = call %"{{.*}}eface" @"{{.*}}Recover"(ptr [[D4_RECOVER_TOKEN]])
-// CHECK-NEXT: [[D4_IS_NIL:%[0-9]+]] = call i1 @"{{.*}}EfaceEqual"(%"{{.*}}eface" [[D4_RECOVERED]], %"{{.*}}eface" zeroinitializer)
-// CHECK-NEXT: [[D4_HAS_PANIC:%[0-9]+]] = xor i1 [[D4_IS_NIL]], true
+// CHECK-NEXT: [[D4_TYPE_WORD:%[0-9]+]] = extractvalue %"{{.*}}eface" [[D4_RECOVERED]], 0
+// CHECK-NEXT: [[D4_HAS_PANIC:%[0-9]+]] = icmp ne ptr [[D4_TYPE_WORD]], null
 // CHECK-NEXT: br i1 [[D4_HAS_PANIC]], label %{{.*}}, label %{{.*}}
 // CHECK: [[D4_RECOVER_TYPE:%[0-9]+]] = extractvalue %"{{.*}}eface" [[D4_RECOVERED]], 0
 // CHECK-NEXT: [[D4_IS_STRING:%[0-9]+]] = icmp eq ptr [[D4_RECOVER_TYPE]], @_llgo_string

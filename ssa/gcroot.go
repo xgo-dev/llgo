@@ -20,8 +20,10 @@ import (
 	"go/types"
 	"strconv"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	rabi "github.com/xgo-dev/llgo/runtime/abi"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -53,6 +55,12 @@ func (p Program) ThreadLocalGCRootsEnabled() bool {
 	return p.threadLocalGCRoots
 }
 
+// Compiler frames store addresses at the physical pointer width, including
+// when Go's wasm32 ABI pads ordinary pointer storage to eight bytes.
+func (p Program) gcRootSlotPointer() Type {
+	return p.Pointer(p.withNativeStorage(p.VoidPtr()))
+}
+
 // NewGCRoots reserves count pointer roots in one compiler-maintained frame.
 // It must be called once, before the function emits a return.
 func (p Function) NewGCRoots(count int) []Expr {
@@ -66,8 +74,8 @@ func (p Function) NewGCRoots(count int) []Expr {
 	// replaceable slots now and link the final single frame in EndBuild.
 	roots := make([]Expr, count)
 	for i := range roots {
-		value := llvm.CreateAlloca(p.entryAllocaBuilder(), p.Prog.storageType(p.Prog.VoidPtr()))
-		roots[i] = Expr{value, p.Prog.Pointer(p.Prog.VoidPtr())}
+		value := llvm.CreateAlloca(p.entryAllocaBuilder(), p.Prog.VoidPtr().ll)
+		roots[i] = Expr{value, p.Prog.gcRootSlotPointer()}
 	}
 	p.gcRootSlots = roots
 	return roots
@@ -80,9 +88,7 @@ func (p Function) buildGCRoots(count int) []Expr {
 
 	prog := p.Prog
 	rootValueType := prog.VoidPtr()
-	rootStorageType := prog.storageType(rootValueType)
-	rootArrayType := llvm.ArrayType(rootStorageType, count)
-	frameType := prog.ctx.StructType([]llvm.Type{rootStorageType, rootStorageType, rootArrayType}, false)
+	frameType, rootArrayType := llabi.GCRootFrameTypes(prog.ctx, count)
 	originalEntry := entry.first
 	prologue := prog.ctx.InsertBasicBlock(originalEntry, "gcroot.entry")
 	b.impl.SetInsertPointAtEnd(prologue)
@@ -103,7 +109,7 @@ func (p Function) buildGCRoots(count int) []Expr {
 	roots := make([]Expr, count)
 	rootArray := llvm.CreateStructGEP(b.impl, frameType, frame, 2)
 	zero := llvm.ConstInt(prog.tyInt32(), 0, false)
-	rootSlotType := prog.Pointer(rootValueType)
+	rootSlotType := prog.gcRootSlotPointer()
 	for i := range roots {
 		index := llvm.ConstInt(prog.tyInt32(), uint64(i), false)
 		root := llvm.CreateInBoundsGEP(b.impl, rootArrayType, rootArray, []llvm.Value{zero, index})
@@ -113,7 +119,7 @@ func (p Function) buildGCRoots(count int) []Expr {
 		helper := p.gcRootHelper(true, count)
 		b.impl.CreateCall(helper.GlobalValueType(), helper, []llvm.Value{frame, frameMap}, "")
 	} else {
-		chain := Expr{p.gcRootChain(), rootSlotType}
+		chain := Expr{p.gcRootChain(), prog.Pointer(rootValueType)}
 		prev := b.Load(chain)
 		reentered := llvm.CreateICmp(b.impl, llvm.IntEQ, prev.impl, frame)
 		sjljReplaying := llvm.CreateLoad(b.impl, prog.Bool().ll, p.gcRootSJLJReplaying())
@@ -187,7 +193,13 @@ func (p Function) newGCRootMap(count int) llvm.Value {
 	prog := p.Prog
 	fields := []llvm.Type{prog.tyInt32(), prog.tyInt32()}
 	values := []llvm.Value{llvm.ConstInt(prog.tyInt32(), uint64(count), false), llvm.ConstInt(prog.tyInt32(), 0, false)}
-	if len(p.gcStackObjects) != 0 {
+	if direct := len(p.gcRootSlots); len(p.gcStackObjects) != 0 && uint64(direct) <= uint64(rabi.GCRootDirectMask) {
+		meta := rabi.CompactGCRootMap | uint32(direct)
+		if prog.PointerSize() == 8 {
+			meta |= rabi.WideGCRootMap
+		}
+		values[1] = llvm.ConstInt(prog.tyInt32(), uint64(meta), false)
+	} else if len(p.gcStackObjects) != 0 {
 		// Metadata is nil for value roots. A non-nil metadata byte gives the
 		// physical width of a pointer loaded from a registered stack field.
 		pointerType := prog.storageType(prog.VoidPtr())
@@ -373,12 +385,11 @@ func (p Function) gcRootHelper(push bool, count int) llvm.Value {
 	defer b.Dispose()
 	entry := prog.ctx.AddBasicBlock(fn, "entry")
 	b.impl.SetInsertPointAtEnd(entry)
-	stored := prog.storageType(ptr)
-	frameType := prog.ctx.StructType([]llvm.Type{stored, stored, llvm.ArrayType(stored, 0)}, false)
+	frameType, _ := llabi.GCRootFrameTypes(prog.ctx, 0)
 	frame := fn.Param(0)
 	chain := Expr{p.gcRootChain(), prog.Pointer(ptr)}
 	current := b.Load(chain)
-	previous := Expr{llvm.CreateStructGEP(b.impl, frameType, frame, 0), prog.Pointer(ptr)}
+	previous := Expr{llvm.CreateStructGEP(b.impl, frameType, frame, 0), prog.gcRootSlotPointer()}
 	same := llvm.CreateICmp(b.impl, llvm.IntEQ, current.impl, frame)
 	if !push {
 		prev := b.Load(previous)
@@ -393,10 +404,10 @@ func (p Function) gcRootHelper(push bool, count int) llvm.Value {
 	b.impl.CreateCondBr(b.impl.CreateOr(same, replay, ""), done, initialize)
 	b.impl.SetInsertPointAtEnd(initialize)
 	b.Store(previous, current)
-	b.Store(Expr{llvm.CreateStructGEP(b.impl, frameType, frame, 1), prog.Pointer(ptr)}, Expr{fn.Param(1), ptr})
+	b.Store(Expr{llvm.CreateStructGEP(b.impl, frameType, frame, 1), prog.gcRootSlotPointer()}, Expr{fn.Param(1), ptr})
 	// Specialize the byte count so small frames clear with fixed stores,
 	// avoiding a dynamic memset call on every function entry.
-	size := llvm.ConstInt(prog.ctx.Int64Type(), uint64(count)*prog.SizeOf(ptr), false)
+	size := llvm.ConstInt(prog.ctx.Int64Type(), uint64(count)*uint64(prog.PointerSize()), false)
 	memset := mod.NamedFunction("llvm.memset.p0.i64")
 	if memset.IsNil() {
 		memset = llvm.AddFunction(mod, "llvm.memset.p0.i64", llvm.FunctionType(prog.ctx.VoidType(), []llvm.Type{ptr.ll, prog.ctx.Int8Type(), prog.ctx.Int64Type(), prog.ctx.Int1Type()}, false))

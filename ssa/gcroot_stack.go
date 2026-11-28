@@ -22,7 +22,7 @@ func (p Program) StackRootBytes(typ Type) uint64 {
 	if count == 0 {
 		return 0
 	}
-	return uint64(count+2) * uint64(p.GoWordSize())
+	return uint64(count+2) * uint64(p.PointerSize())
 }
 
 func (b Builder) registerStackRoots(address llvm.Value, typ Type) {

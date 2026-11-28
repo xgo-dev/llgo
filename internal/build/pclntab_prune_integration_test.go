@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 )
 
@@ -31,6 +32,9 @@ func TestPCLNEmbeddedPruningIntegration(t *testing.T) {
 						Mode: ModeBuild, BuildMode: BuildModeExe, OutFile: bin, LTO: mode,
 						PCLNMode: PCLNEmbedded, PCLNModeSet: true,
 						LinkOptions: LinkOptions{DWARF: DWARFOmit},
+					}
+					if mode == lto.Full {
+						conf.OptLevel = optlevel.Oz
 					}
 					if _, err := Do([]string{writePCLNIntegrationSource(t, source)}, conf); err != nil {
 						t.Fatal(err)

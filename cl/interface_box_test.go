@@ -15,6 +15,7 @@ import (
 	"golang.org/x/tools/go/ssa/ssautil"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -134,7 +135,7 @@ func compileInterfaceBoxIR(t *testing.T, src string, mode ssa.BuilderMode, targe
 func TestInterfaceBoxExplicitRoots(t *testing.T) {
 	ir := compileInterfaceBoxIR(t, interfaceBoxDecl+`func box(f F) F { return extract(f) }`, ssa.InstantiateGenerics, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm"}, true)
 	body := llvmFunction(t, ir, "ifacebox.box")
-	if strings.Contains(body, "runtime.AllocU") || !strings.Contains(ir, "__llgo_gcroot_stack_pointer_") {
+	if strings.Contains(body, "runtime.AllocU") || !ssatest.HasStackFieldRootMap(ir) {
 		t.Fatalf("borrowed box must use typed stack roots:\n%s", body)
 	}
 	for _, want := range []string{"gcroot.init", "llvm_gc_root_chain"} {

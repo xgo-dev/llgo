@@ -438,6 +438,34 @@ func TestValueComparableEqual(t *testing.T) {
 	}
 }
 
+func TestStructOfInterfaceEqualityOrder(t *testing.T) {
+	typ := reflect.StructOf([]reflect.StructField{
+		{Name: "Text", Type: reflect.TypeOf("")},
+		{Name: "Value", Type: reflect.TypeOf((*any)(nil)).Elem()},
+		{Name: "Tail", Type: reflect.TypeOf(0)},
+	})
+	makeStruct := func(text string, tail int64) any {
+		v := reflect.New(typ).Elem()
+		v.Field(0).SetString(text)
+		v.Field(1).Set(reflect.ValueOf([]int{1}))
+		v.Field(2).SetInt(tail)
+		return v.Interface()
+	}
+
+	a := makeStruct("left", 1)
+	if a == makeStruct("lift", 1) {
+		t.Fatal("different equal-length strings compared equal")
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("comparison skipped an uncomparable interface before the trailing mismatch")
+		}
+	}()
+	if a == makeStruct("left", 2) {
+		t.Error("different structs compared equal")
+	}
+}
+
 // Test Value.OverflowComplex
 func TestValueOverflowComplex(t *testing.T) {
 	var c complex64
