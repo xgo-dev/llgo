@@ -27,8 +27,7 @@ type Defer struct {
 func SetDeferGCRoot(frame *Defer, chain unsafe.Pointer) {
 	frame.gcRoot = chain
 	if frame.gcRoot != nil {
-		frame.gcNext = *gcRootHeaderField(frame.gcRoot, 0)
-		frame.gcMap = *gcRootHeaderField(frame.gcRoot, 1)
+		frame.gcNext, frame.gcMap = gcroot.FrameLinks(frame.gcRoot)
 	}
 }
 
@@ -38,17 +37,8 @@ func SetDeferGCRoot(frame *Defer, chain unsafe.Pointer) {
 // initial and non-local returns.
 func RestoreDeferGCRoot(frame *Defer) {
 	if frame.gcRoot != nil {
-		*gcRootHeaderField(frame.gcRoot, 0) = frame.gcNext
-		*gcRootHeaderField(frame.gcRoot, 1) = frame.gcMap
+		gcroot.RestoreFrameLinks(frame.gcRoot, frame.gcNext, frame.gcMap)
 	}
 	gcroot.RestoreChain(frame.gcRoot)
 	gcroot.FinishSJLJReplay()
-}
-
-// gcRootHeaderField addresses the compiler-owned {next, map} frame header.
-// Keep this independent of Go struct layout: Emscripten Memory64 uses 64-bit
-// LLVM pointers while GOARCH remains wasm, and the compiler frame follows the
-// target pointer width selected by the active WASM ABI.
-func gcRootHeaderField(root unsafe.Pointer, field uintptr) *unsafe.Pointer {
-	return (*unsafe.Pointer)(unsafe.Add(root, field*unsafe.Sizeof(root)))
 }

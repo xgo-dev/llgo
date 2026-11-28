@@ -147,6 +147,7 @@ type commonSection struct {
 	EnableLTOPlugin      bool         `yaml:"ENABLE_LTO_PLUGIN,omitempty"`
 	EmitDWARF            bool         `yaml:"EMIT_DWARF,omitempty"`
 	EmitCodeView         bool         `yaml:"EMIT_CODEVIEW,omitempty"`
+	DarwinSymbolEntries  bool         `yaml:"DARWIN_SYMBOL_ENTRIES,omitempty"`
 	PCLNMode             string       `yaml:"PCLN_MODE,omitempty"`
 	DisableBoundsChecks  bool         `yaml:"DISABLE_BOUNDS_CHECKS,omitempty"`
 	SaturatingFloatToInt bool         `yaml:"SATURATING_FLOAT_TO_INT,omitempty"`
@@ -171,7 +172,7 @@ func (s *commonSection) empty() bool {
 		!s.WasmReflectBridges && !s.WasmFuncInfoEntries && !s.WasmRuntimeFree && s.PlatformABI == "" && s.ObjectFormat == "" && s.DriverFlavor == "" && s.LinkerFlavor == "" &&
 		s.TargetTriple == "" && s.CRTFlavor == "" && s.CXXRuntime == "" &&
 		s.SDKVersion == "" && s.CRTVersion == "" && s.ToolsetVersion == "" &&
-		!s.GoGlobalDCE && !s.DeadcodeDrop && !s.EnableLTOPlugin && !s.EmitDWARF && !s.EmitCodeView && s.PCLNMode == "" &&
+		!s.GoGlobalDCE && !s.DeadcodeDrop && !s.EnableLTOPlugin && !s.EmitDWARF && !s.EmitCodeView && !s.DarwinSymbolEntries && s.PCLNMode == "" &&
 		!s.DisableBoundsChecks && !s.SaturatingFloatToInt && !s.LocalContext &&
 		s.CC == "" && len(s.CCArgs) == 0 && s.CCIdentity == "" && s.CXX == "" &&
 		len(s.CXXArgs) == 0 && s.CXXIdentity == "" && len(s.CCFlags) == 0 &&

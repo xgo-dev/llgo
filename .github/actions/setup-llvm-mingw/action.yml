@@ -50,20 +50,35 @@ runs:
 
     - name: Cache llvm-mingw
       if: runner.os == 'Windows'
-      id: llvm_mingw_cache
       uses: actions/cache@v6
       with:
         path: ${{ runner.tool_cache }}\llvm-mingw\20260616\ucrt-x86_64
-        key: llvm-mingw-20260616-ucrt-x86_64-b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35
+        key: llvm-mingw-20260616-ucrt-x86_64-b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35-v2
 
-    - name: Install llvm-mingw
-      if: runner.os == 'Windows' && steps.llvm_mingw_cache.outputs.cache-hit != 'true'
+    - name: Ensure llvm-mingw is installed
+      if: runner.os == 'Windows'
       shell: pwsh
       env:
         LLVM_MINGW_VERSION: "20260616"
         LLVM_MINGW_SHA256: b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35
       run: |
         $ErrorActionPreference = "Stop"
+        $installRoot = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\$env:LLVM_MINGW_VERSION\ucrt-x86_64"
+        function Test-LlvmMingwTree([string] $root) {
+          foreach ($arch in @("i686", "x86_64", "aarch64")) {
+            foreach ($driver in @("clang", "clang++")) {
+              if (-not (Test-Path -LiteralPath (Join-Path $root "bin\$arch-w64-mingw32-$driver.exe") -PathType Leaf)) {
+                return $false
+              }
+            }
+          }
+          return (Test-Path -LiteralPath (Join-Path $root "i686-w64-mingw32\bin") -PathType Container)
+        }
+        if (Test-LlvmMingwTree $installRoot) {
+          Write-Host "Using validated llvm-mingw installation at $installRoot"
+          return
+        }
+
         $asset = "llvm-mingw-$env:LLVM_MINGW_VERSION-ucrt-x86_64.zip"
         $archive = Join-Path $env:RUNNER_TEMP $asset
         $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$env:LLVM_MINGW_VERSION/$asset"
@@ -77,14 +92,17 @@ runs:
         }
 
         $extractRoot = Join-Path $env:RUNNER_TEMP "llgo-llvm-mingw-extract"
-        $installRoot = Join-Path $env:RUNNER_TOOL_CACHE "llvm-mingw\$env:LLVM_MINGW_VERSION\ucrt-x86_64"
         New-Item -ItemType Directory -Force $extractRoot, (Split-Path $installRoot) | Out-Null
         Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot
         $source = Get-ChildItem -LiteralPath $extractRoot -Directory |
-          Where-Object { Test-Path (Join-Path $_.FullName "bin\i686-w64-mingw32-clang.exe") } |
+          Where-Object { Test-LlvmMingwTree $_.FullName } |
           Select-Object -First 1
         if (-not $source) {
-          throw "The llvm-mingw archive does not contain the i686 target compiler"
+          throw "The llvm-mingw archive is missing target compilers or the 386 runtime directory"
+        }
+        if (Test-Path -LiteralPath $installRoot) {
+          # Discard a partial cache only after verifying the replacement.
+          Remove-Item -LiteralPath $installRoot -Recurse -Force
         }
         Move-Item -LiteralPath $source.FullName -Destination $installRoot
 

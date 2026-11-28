@@ -50,16 +50,9 @@ func main() {
 // WINDOWS-ARM64-SAME: ptr swiftself %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1:[0-9]+]]){{.*}} {
 // AMD64-SAME: ptr nest %[[TMP0:[0-9]+]], %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1:[0-9]+]]){{.*}} {
 // CHECK-NEXT: _llgo_[[BB0:[0-9]+]]:
-// CHECK-NEXT:   %[[TMP2:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]])
-// CHECK-NEXT:   %[[TMP3:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]], 1
-// CHECK-NEXT:   %[[TMP4:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" undef, ptr %[[TMP2]], 0
-// CHECK-NEXT:   %[[TMP5:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP4]], ptr %[[TMP3]], 1
-// CHECK-NEXT:   %[[TMP6:[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.IfaceType"(%"{{.*}}/runtime/internal/runtime.iface" zeroinitializer)
-// CHECK-NEXT:   %[[TMP7:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" undef, ptr %[[TMP6]], 0
-// CHECK-NEXT:   %[[TMP8:[0-9]+]] = insertvalue %"{{.*}}/runtime/internal/runtime.eface" %[[TMP7]], ptr null, 1
-// CHECK-NEXT:   %[[TMP9:[0-9]+]] = call i1 @"{{.*}}/runtime/internal/runtime.EfaceEqual"(%"{{.*}}/runtime/internal/runtime.eface" %[[TMP5]], %"{{.*}}/runtime/internal/runtime.eface" %[[TMP8]])
-// CHECK-NEXT:   %[[TMP10:[0-9]+]] = xor i1 %[[TMP9]], true
-// CHECK-NEXT:   br i1 %[[TMP10]], label %_llgo_[[BB1:[0-9]+]], label %_llgo_[[BB2:[0-9]+]]
+// CHECK-NEXT:   %[[ITAB:[0-9]+]] = extractvalue %"{{.*}}/runtime/internal/runtime.iface" %[[TMP1]], 0
+// CHECK-NEXT:   %[[NONNIL:[0-9]+]] = icmp ne ptr %[[ITAB]], null
+// CHECK-NEXT:   br i1 %[[NONNIL]], label %_llgo_[[BB1:[0-9]+]], label %_llgo_[[BB2:[0-9]+]]
 // CHECK-EMPTY:
 // CHECK-NEXT: _llgo_[[BB1]]:
 // CHECK-NEXT:   %[[TMP11:[0-9]+]] = getelementptr inbounds nuw { { ptr, ptr } }, ptr %[[TMP0]], i32 0, i32 0

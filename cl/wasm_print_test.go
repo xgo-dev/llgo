@@ -8,17 +8,26 @@ import (
 )
 
 func TestWasmPrintStringScalarArguments(t *testing.T) {
-	for _, arch := range []string{"wasm", "amd64"} {
-		t.Run(arch, func(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		target     llssa.Target
+		wantScalar bool
+		wantString bool
+	}{
+		{"wasm32", llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"}, true, false},
+		{"wasm64", llssa.Target{GOOS: "js", GOARCH: "wasm", WasmProfile: "j64", LLVMTarget: "wasm64-unknown-emscripten"}, true, true},
+		{"native", llssa.Target{GOOS: "linux", GOARCH: "amd64"}, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			ir := compileWithRewritesTarget(t, `package main
 func literal() { println("你好\x00", "") }
 func dynamic(s string) { print(s) }
-`, nil, &llssa.Target{GOOS: "linux", GOARCH: arch})
-			if got := strings.Contains(ir, llssa.PkgRuntime+".PrintString32"); got != (arch == "wasm") {
-				t.Fatalf("scalar print entry present = %v for %s:\n%s", got, arch, ir)
+`, nil, &tc.target)
+			if got := strings.Contains(ir, llssa.PkgRuntime+".PrintString32"); got != tc.wantScalar {
+				t.Fatalf("scalar print entry present = %v:\n%s", got, ir)
 			}
-			if !strings.Contains(ir, llssa.PkgRuntime+`.PrintString"`) {
-				t.Fatalf("dynamic strings must retain the checked entry:\n%s", ir)
+			if got := strings.Contains(ir, llssa.PkgRuntime+`.PrintString"`); got != tc.wantString {
+				t.Fatalf("full-width print entry present = %v:\n%s", got, ir)
 			}
 		})
 	}

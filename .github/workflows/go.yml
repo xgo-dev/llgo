@@ -297,7 +297,7 @@ jobs:
       - name: Test runtime ABI and helpers with coverage
         shell: bash
         working-directory: runtime
-        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings runtime-helpers go test -json -coverprofile=../coverage-runtime-helpers.txt -covermode=set ./abi ./internal/traceback ./internal/wordmap
+        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings runtime-helpers go test -json -coverprofile=../coverage-runtime-helpers.txt -covermode=set ./abi ./internal/gcroot ./internal/traceback ./internal/wordmap
 
       - name: Test with embedded emulator env
         env:

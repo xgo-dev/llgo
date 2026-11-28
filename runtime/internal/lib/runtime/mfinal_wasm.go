@@ -75,14 +75,14 @@ func SetFinalizer(obj any, finalizer any) {
 	if fnType.Variadic() {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String() + " because dotdotdot")
 	}
-	if len(fnType.In) != 1 {
+	if fnType.InCount != 1 {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String())
 	}
-	interfaceType, ok := prepareWasmFinalizerArgument(objFace._type, fnType.In[0])
+	interfaceType, ok := prepareWasmFinalizerArgument(objFace._type, fnType.In()[0])
 	if !ok {
 		throw("runtime.SetFinalizer: cannot pass " + objFace._type.String() + " to finalizer " + finalizerFace._type.String())
 	}
-	result, resultSize := classifyWasmFinalizerResult(fnType.Out)
+	result, resultSize := classifyWasmFinalizerResult(fnType.Out())
 	fn := finalizerFace.data
 	if finalizerFace._type.HasNativeLayout() {
 		// Existing Wasm bridges consume a code/environment pair. Materialize

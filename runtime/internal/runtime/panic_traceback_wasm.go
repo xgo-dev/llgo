@@ -2,6 +2,10 @@
 
 package runtime
 
+// The Wasm host has no physical PC unwinder. Callers and panic traces use the
+// shadow stack, and function-entry PCs resolve through the symbol table.
+const physicalCallerLookup = false
+
 // The native hook walks frame pointers. WebAssembly instead keeps a logical
 // shadow stack for the functions whose frames are observable. Install the
 // printer in the core so an unrecovered panic has a Go traceback even when the

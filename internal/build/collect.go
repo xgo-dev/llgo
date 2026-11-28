@@ -180,6 +180,7 @@ func (c *context) collectCommonInputs(m *manifestBuilder) {
 	m.common.EnableLTOPlugin = c.buildConf.LTOPlugin.Enabled()
 	m.common.EmitDWARF = shouldEmitDebugInfo(c.buildConf, &c.crossCompile)
 	m.common.EmitCodeView = shouldEmitCodeView(c.buildConf, &c.crossCompile)
+	m.common.DarwinSymbolEntries = darwinSymbolEntries(c)
 	m.common.PCLNMode = effectivePCLNMode(c.buildConf).String()
 	m.common.DisableBoundsChecks = c.buildConf.DisableBoundsChecks
 	m.common.SaturatingFloatToInt = c.buildConf.SaturatingFloatToInt

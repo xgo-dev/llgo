@@ -11,7 +11,15 @@ import (
 type GCRootFrame struct {
 	Frame, Prev llvm.Value
 	Slots       []llvm.Value
-	storageType llvm.Type
+	chainType   llvm.Type
+}
+
+// GCRootFrameTypes returns the compiler's private physical-pointer frame and
+// its root array. The Go word width applies to the chain global, not these slots.
+func GCRootFrameTypes(ctx llvm.Context, count int) (frame, roots llvm.Type) {
+	ptr := llvm.PointerType(ctx.Int8Type(), 0)
+	roots = llvm.ArrayType(ptr, count)
+	return ctx.StructType([]llvm.Type{ptr, ptr, roots}, false), roots
 }
 
 // NewGCRootFrame adds an outer frame before the existing entry. When frames
@@ -21,19 +29,18 @@ func NewGCRootFrame(m llvm.Module, fn llvm.Value, count, pointerSize, goWordSize
 	b := ctx.NewBuilder()
 	defer b.Dispose()
 	ptr := llvm.PointerType(ctx.Int8Type(), 0)
-	storageType := gcRootStorageType(ctx, ptr, pointerSize, goWordSize)
-	array := llvm.ArrayType(storageType, count)
-	typ := ctx.StructType([]llvm.Type{storageType, storageType, array}, false)
+	chainType := gcRootChainType(ctx, ptr, pointerSize, goWordSize)
+	typ, array := GCRootFrameTypes(ctx, count)
 	entry := fn.FirstBasicBlock()
 	prologue := ctx.InsertBasicBlock(entry, "gcroot.entry")
 	initialize := ctx.InsertBasicBlock(entry, "gcroot.init")
 	b.SetInsertPointAtEnd(prologue)
 	frame := b.CreateAlloca(typ, "")
-	chain := rootGlobal(m, "llvm_gc_root_chain", storageType, goWordSize)
+	chain := rootGlobal(m, "llvm_gc_root_chain", chainType, goWordSize)
 	replay := rootGlobal(m, "llvm_gc_root_sjlj_replaying", ctx.Int1Type(), 1)
-	prev := b.CreateLoad(storageType, chain, "")
+	prev := gcRootPointer(b, b.CreateLoad(chainType, chain, ""))
 	prevSlot := b.CreateStructGEP(typ, frame, 0, "")
-	reentered := b.CreateICmp(llvm.IntEQ, gcRootPointer(b, prev), frame, "")
+	reentered := b.CreateICmp(llvm.IntEQ, prev, frame, "")
 	replaying := b.CreateLoad(ctx.Int1Type(), replay, "")
 	reuse := b.CreateOr(reentered, replaying, "")
 	rootArray := b.CreateStructGEP(typ, frame, 2, "")
@@ -47,16 +54,16 @@ func NewGCRootFrame(m llvm.Module, fn llvm.Value, count, pointerSize, goWordSize
 	b.CreateCondBr(reuse, entry, initialize)
 	b.SetInsertPointAtEnd(initialize)
 	b.CreateStore(prev, prevSlot)
-	b.CreateStore(gcRootStorageValue(b, storageType, rootMap(m, fn, count, wasm)), b.CreateStructGEP(typ, frame, 1, ""))
+	b.CreateStore(rootMap(m, fn, count, wasm), b.CreateStructGEP(typ, frame, 1, ""))
 	for _, slot := range slots {
-		b.CreateStore(llvm.ConstNull(storageType), slot)
+		b.CreateStore(llvm.ConstNull(ptr), slot)
 	}
-	b.CreateStore(gcRootStorageValue(b, storageType, frame), chain)
+	b.CreateStore(gcRootChainValue(b, chainType, frame), chain)
 	b.CreateBr(entry)
-	return GCRootFrame{Frame: frame, Prev: prevSlot, Slots: slots, storageType: storageType}
+	return GCRootFrame{Frame: frame, Prev: prevSlot, Slots: slots, chainType: chainType}
 }
 
-func gcRootStorageType(ctx llvm.Context, ptr llvm.Type, pointerSize, goWordSize int) llvm.Type {
+func gcRootChainType(ctx llvm.Context, ptr llvm.Type, pointerSize, goWordSize int) llvm.Type {
 	if goWordSize <= pointerSize {
 		return ptr
 	}
@@ -66,7 +73,7 @@ func gcRootStorageType(ctx llvm.Context, ptr llvm.Type, pointerSize, goWordSize 
 	}, false)
 }
 
-func gcRootStorageValue(b llvm.Builder, storageType llvm.Type, ptr llvm.Value) llvm.Value {
+func gcRootChainValue(b llvm.Builder, storageType llvm.Type, ptr llvm.Value) llvm.Value {
 	if storageType.TypeKind() != llvm.StructTypeKind {
 		return ptr
 	}
@@ -82,11 +89,6 @@ func gcRootPointer(b llvm.Builder, stored llvm.Value) llvm.Value {
 	return b.CreateExtractValue(stored, 0, "")
 }
 
-// StorePointer publishes a physical address in the Go pointer storage format.
-func (frame GCRootFrame) StorePointer(b llvm.Builder, slot, ptr llvm.Value) {
-	b.CreateStore(gcRootStorageValue(b, frame.storageType, ptr), slot)
-}
-
 // PopGCRootFrame restores the chain only when this frame is its actual head.
 // Discarded entries replayed by SJLJ may return without having linked a frame.
 func PopGCRootFrame(m llvm.Module, fn llvm.Value, frame GCRootFrame) {
@@ -100,11 +102,11 @@ func PopGCRootFrame(m llvm.Module, fn llvm.Value, frame GCRootFrame) {
 			continue
 		}
 		b.SetInsertPointBefore(ret)
-		current := gcRootPointer(b, b.CreateLoad(frame.storageType, chain, ""))
-		prev := gcRootPointer(b, b.CreateLoad(frame.storageType, frame.Prev, ""))
+		current := gcRootPointer(b, b.CreateLoad(frame.chainType, chain, ""))
+		prev := b.CreateLoad(frame.Frame.Type(), frame.Prev, "")
 		linked := b.CreateICmp(llvm.IntEQ, current, frame.Frame, "")
 		restored := b.CreateSelect(linked, prev, current, "")
-		b.CreateStore(gcRootStorageValue(b, frame.storageType, restored), chain)
+		b.CreateStore(gcRootChainValue(b, frame.chainType, restored), chain)
 	}
 }
 
