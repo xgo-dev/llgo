@@ -575,18 +575,6 @@ func Build(inv Invocation) ([]Package, error) {
 		return nil, err
 	}
 
-	if conf.BuildTrace != "" && conf.Coverage != nil && conf.Coverage.Profile != "" && !conf.CompileOnly {
-		tracePath := filepath.Clean(resolvePath(dir, conf.BuildTrace))
-		coverDir := dir
-		if conf.Coverage.OutputDir != "" {
-			coverDir = resolvePath(dir, conf.Coverage.OutputDir)
-		}
-		profilePath := filepath.Clean(resolvePath(coverDir, conf.Coverage.Profile))
-		if tracePath == profilePath {
-			return nil, fmt.Errorf("-debug-trace conflicts with -coverprofile: %s", tracePath)
-		}
-	}
-
 	buildTrace := inv.parentBuildTrace
 	isRootTrace := false
 	if buildTrace == nil {

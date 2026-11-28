@@ -47,6 +47,52 @@ func TestCoverageSetupErrors(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
+	t.Run("conflict with build trace symlink alias", func(t *testing.T) {
+		dir := t.TempDir()
+		realDir := filepath.Join(dir, "real")
+		if err := os.Mkdir(realDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		symlinkDir := filepath.Join(dir, "symlink")
+		if err := os.Symlink(realDir, symlinkDir); err != nil {
+			t.Skipf("symlink not supported: %v", err)
+		}
+		conf := &Config{
+			Mode:       ModeTest,
+			BuildTrace: filepath.Join(symlinkDir, "out.file"),
+			Coverage:   &CoverageConfig{Profile: filepath.Join(realDir, "out.file")},
+		}
+		if c, err := newCoverageBuild(conf, commandEnv{dir: dir}); err == nil {
+			c.close()
+			t.Fatal("accepted build trace as coverage profile via symlink alias")
+		} else if !strings.Contains(err.Error(), "conflicts with -coverprofile") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	t.Run("conflict with build trace case alias", func(t *testing.T) {
+		dir := t.TempDir()
+		realDir := filepath.Join(dir, "real")
+		if err := os.Mkdir(realDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		upperDir := filepath.Join(dir, "REAL")
+		if s1, err1 := os.Stat(realDir); err1 != nil {
+			t.Fatal(err1)
+		} else if s2, err2 := os.Stat(upperDir); err2 != nil || !os.SameFile(s1, s2) {
+			t.Skip("filesystem is case-sensitive; skipping case alias test")
+		}
+		conf := &Config{
+			Mode:       ModeTest,
+			BuildTrace: filepath.Join(realDir, "out.file"),
+			Coverage:   &CoverageConfig{Profile: filepath.Join(upperDir, "out.file")},
+		}
+		if c, err := newCoverageBuild(conf, commandEnv{dir: dir}); err == nil {
+			c.close()
+			t.Fatal("accepted build trace as coverage profile via case alias")
+		} else if !strings.Contains(err.Error(), "conflicts with -coverprofile") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }
 
 func TestCoverageRunErrors(t *testing.T) {

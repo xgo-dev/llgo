@@ -126,8 +126,8 @@ func newCoverageBuild(conf *Config, commands commandEnv) (*coverageBuild, error)
 		}
 		options.Profile = resolvePath(outputDir, options.Profile)
 		if conf.BuildTrace != "" {
-			tracePath := filepath.Clean(resolvePath(commands.dir, conf.BuildTrace))
-			if tracePath == filepath.Clean(options.Profile) {
+			tracePath := resolvePath(commands.dir, conf.BuildTrace)
+			if samePathTarget(tracePath, options.Profile) {
 				return nil, fmt.Errorf("-debug-trace conflicts with -coverprofile: %s", tracePath)
 			}
 		}
@@ -418,4 +418,43 @@ func (c *coverageBuild) prepare(
 	}
 	cfg.Overlay = conf.Overlay
 	return nil
+}
+
+// samePathTarget reports whether p1 and p2 resolve to the same underlying file,
+// recognizing symlinks and case-insensitive filesystem directory aliases.
+func samePathTarget(p1, p2 string) bool {
+	p1 = filepath.Clean(p1)
+	p2 = filepath.Clean(p2)
+	if p1 == p2 {
+		return true
+	}
+	fi1, err1 := os.Stat(p1)
+	fi2, err2 := os.Stat(p2)
+	if err1 == nil && err2 == nil {
+		return os.SameFile(fi1, fi2)
+	}
+	d1, f1 := filepath.Split(p1)
+	d2, f2 := filepath.Split(p2)
+	dfi1, derr1 := os.Stat(d1)
+	dfi2, derr2 := os.Stat(d2)
+	if derr1 == nil && derr2 == nil && os.SameFile(dfi1, dfi2) {
+		if f1 == f2 || strings.EqualFold(f1, f2) {
+			return true
+		}
+	}
+	ed1, rerr1 := filepath.EvalSymlinks(d1)
+	ed2, rerr2 := filepath.EvalSymlinks(d2)
+	if rerr1 == nil && rerr2 == nil {
+		s1, serr1 := os.Stat(ed1)
+		s2, serr2 := os.Stat(ed2)
+		if serr1 == nil && serr2 == nil && os.SameFile(s1, s2) {
+			if f1 == f2 || strings.EqualFold(f1, f2) {
+				return true
+			}
+		}
+		if strings.EqualFold(ed1, ed2) && strings.EqualFold(f1, f2) {
+			return true
+		}
+	}
+	return false
 }

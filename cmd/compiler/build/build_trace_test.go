@@ -203,20 +203,74 @@ func TestBuildTraceRefusesExistingOutput(t *testing.T) {
 }
 
 func TestBuildTraceRefusesCoverageProfileConflict(t *testing.T) {
-	dir := t.TempDir()
-	conf := NewDefaultConf(ModeTest)
-	conf.BuildTrace = "trace.json"
-	conf.Coverage = &CoverageConfig{
-		Mode:    "set",
-		Profile: "trace.json",
-	}
-	targetFile := filepath.Join(dir, "trace.json")
-	if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err == nil || !strings.Contains(err.Error(), "conflicts with -coverprofile") {
-		t.Fatalf("Build() err = %v, want conflict with -coverprofile", err)
-	}
-	if _, err := os.Stat(targetFile); !os.IsNotExist(err) {
-		t.Fatalf("target file %s was created despite conflict: %v", targetFile, err)
-	}
+	t.Run("exact path", func(t *testing.T) {
+		dir := t.TempDir()
+		conf := NewDefaultConf(ModeTest)
+		conf.BuildTrace = "trace.json"
+		conf.Coverage = &CoverageConfig{
+			Mode:    "set",
+			Profile: "trace.json",
+		}
+		targetFile := filepath.Join(dir, "trace.json")
+		if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err == nil || !strings.Contains(err.Error(), "conflicts with -coverprofile") {
+			t.Fatalf("Build() err = %v, want conflict with -coverprofile", err)
+		}
+		if got, err := os.ReadFile(targetFile); err == nil && strings.HasPrefix(string(got), "mode:") {
+			t.Fatalf("target file %s was initialized with coverage profile header despite conflict", targetFile)
+		}
+	})
+
+	t.Run("symlink alias", func(t *testing.T) {
+		dir := t.TempDir()
+		realDir := filepath.Join(dir, "real")
+		if err := os.Mkdir(realDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		symlinkDir := filepath.Join(dir, "symlink")
+		if err := os.Symlink(realDir, symlinkDir); err != nil {
+			t.Skipf("symlink not supported: %v", err)
+		}
+		conf := NewDefaultConf(ModeTest)
+		conf.BuildTrace = filepath.Join(symlinkDir, "trace.json")
+		conf.Coverage = &CoverageConfig{
+			Mode:    "set",
+			Profile: filepath.Join(realDir, "trace.json"),
+		}
+		if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err == nil || !strings.Contains(err.Error(), "conflicts with -coverprofile") {
+			t.Fatalf("Build() err = %v, want conflict with -coverprofile", err)
+		}
+		targetFile := filepath.Join(realDir, "trace.json")
+		if got, err := os.ReadFile(targetFile); err == nil && strings.HasPrefix(string(got), "mode:") {
+			t.Fatalf("target file %s was initialized with coverage profile header despite conflict", targetFile)
+		}
+	})
+
+	t.Run("case alias", func(t *testing.T) {
+		dir := t.TempDir()
+		realDir := filepath.Join(dir, "real")
+		if err := os.Mkdir(realDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		upperDir := filepath.Join(dir, "REAL")
+		if s1, err1 := os.Stat(realDir); err1 != nil {
+			t.Fatal(err1)
+		} else if s2, err2 := os.Stat(upperDir); err2 != nil || !os.SameFile(s1, s2) {
+			t.Skip("filesystem is case-sensitive; skipping case alias test")
+		}
+		conf := NewDefaultConf(ModeTest)
+		conf.BuildTrace = filepath.Join(realDir, "trace.json")
+		conf.Coverage = &CoverageConfig{
+			Mode:    "set",
+			Profile: filepath.Join(upperDir, "trace.json"),
+		}
+		if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err == nil || !strings.Contains(err.Error(), "conflicts with -coverprofile") {
+			t.Fatalf("Build() err = %v, want conflict with -coverprofile", err)
+		}
+		targetFile := filepath.Join(realDir, "trace.json")
+		if got, err := os.ReadFile(targetFile); err == nil && strings.HasPrefix(string(got), "mode:") {
+			t.Fatalf("target file %s was initialized with coverage profile header despite conflict", targetFile)
+		}
+	})
 }
 
 func TestBuildNilConfigReturnsError(t *testing.T) {
