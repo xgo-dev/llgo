@@ -19,7 +19,7 @@ import (
 )
 
 func wasiGuardedStaticData(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
-	return !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontend) && wasiSizePruningConfig(conf, target, frontend)
+	return sizeCodecBuild(conf, frontend) && wasiSizePruningConfig(conf, target, frontend)
 }
 
 // Select unused initializers at the final link. Each package archive defines
@@ -102,19 +102,23 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		return
 	}
 
+	symbolRoots := make(map[string]bool)
+	for name, target := range ctx.prog.Linknames() {
+		symbolRoots[name], symbolRoots[target] = true, true
+	}
+	for _, name := range assembly {
+		symbolRoots[name] = true
+	}
+	isSymbolRoot := func(name string) bool { return symbolRoots[name] }
 	roots := wasmReflectRoots(ctx)
 	blankImports := make(map[string]bool)
 	for _, pkg := range ctx.pkgByID {
-		roots = guardedInitializerRoots(ctx, roots, pkg.Package, goroot, blankImports)
+		roots = guardedInitializerRoots(ctx, roots, pkg.Package, goroot, blankImports, isSymbolRoot)
 		if pkg.AltPkg != nil {
-			roots = guardedInitializerRoots(ctx, roots, pkg.AltPkg.Package, goroot, blankImports)
+			roots = guardedInitializerRoots(ctx, roots, pkg.AltPkg.Package, goroot, blankImports, isSymbolRoot)
 		}
 	}
 	roots = appendSymbolRoots(ctx.progSSA, roots, assembly)
-	isSymbolRoot := func(name string) bool {
-		_, aliased := ctx.prog.Linkname(name)
-		return aliased || ctx.prog.HasLinknameTarget(name) || slices.Contains(assembly, name)
-	}
 	// A literal slice can keep a shared object alive even when nobody reads
 	// the slice. Allow omission only when the owner's data is private to its
 	// variable initializers, including reads through another package or alias.
@@ -148,7 +152,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	if len(roots) == 0 {
 		return
 	}
-	unused, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, false)
+	unused, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil)
 
 	var callbackInitializers []cl.OptionalInitializer
 	for _, group := range unused {
@@ -158,8 +162,19 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	}
 	// Address-taken callbacks can keep unrelated package data reachable through
 	// indirect calls. Recheck after removing the already proven-unused edges.
-	if len(callbackInitializers) != 0 {
-		withoutCallbacks, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers, false)
+	if darwinOS != nil && !blankImports["os"] {
+		init := darwinOS.Func(darwinExecutableCwdInitializer)
+		blocks := init.Blocks
+		init.Blocks = nil
+		withoutStartup, reachable := unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers)
+		init.Blocks = blocks
+		// The additional drops are sound only when the omitted cwd edge
+		// really disappears in the linked executable.
+		if configureDarwinExecutableCwd(ctx, darwinOS, reachable, isSymbolRoot) {
+			maps.Copy(unused, withoutStartup)
+		}
+	} else if len(callbackInitializers) != 0 {
+		withoutCallbacks, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers)
 		maps.Copy(unused, withoutCallbacks)
 	}
 	// Drop the standard file startup group together. Keeping a single standard file
@@ -171,9 +186,6 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		for _, group := range standardFiles {
 			delete(unused, group.Global)
 		}
-	}
-	if darwinOS != nil && !blankImports["os"] {
-		configureDarwinExecutableCwd(ctx, darwinOS, roots, isSymbolRoot)
 	}
 	var dataCount, errorCount, interfaceCount, callbackCount, mapCount, filesCount int
 	for global, group := range unused {
@@ -234,21 +246,22 @@ func initializerStoresCallback(value ssa.Value) bool {
 }
 
 func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl.OptionalInitializer,
-	sliceOwners, knownData map[*ssa.Package]bool, omitted []cl.OptionalInitializer, wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *rta.Result) {
+	sliceOwners, knownData map[*ssa.Package]bool, omitted []cl.OptionalInitializer) (map[*ssa.Global]cl.OptionalInitializer, *rta.Result) {
 	if len(omitted) != 0 {
 		restore := omitInitializerEdges(omitted)
 		defer restore()
 	}
 	unused := maps.Clone(candidates)
 	observedData := maps.Clone(knownData)
-	reachable := rta.Analyze(roots, wantGraph)
+	reachable := rta.Analyze(roots, false)
+	var operands [8]*ssa.Value
 	for fn := range reachable.Reachable {
 		for _, block := range fn.Blocks {
 			for _, inst := range block.Instrs {
 				if _, debug := inst.(*ssa.DebugRef); debug {
 					continue
 				}
-				for _, operand := range inst.Operands(nil) {
+				for _, operand := range inst.Operands(operands[:0]) {
 					if global, ok := (*operand).(*ssa.Global); ok {
 						if sliceOwners[global.Pkg] && fn != global.Pkg.Func("init") {
 							observedData[global.Pkg] = true
@@ -373,7 +386,7 @@ func staticDataExpr(pkg *packages.Package, expr ast.Expr) bool {
 	return false
 }
 
-func guardedInitializerRoots(ctx *context, roots []*ssa.Function, pkg *packages.Package, goroot string, blankImports map[string]bool) []*ssa.Function {
+func guardedInitializerRoots(ctx *context, roots []*ssa.Function, pkg *packages.Package, goroot string, blankImports map[string]bool, isSymbolRoot func(string) bool) []*ssa.Function {
 	if pkg == nil || pkg.Types == nil {
 		return roots
 	}
@@ -384,7 +397,7 @@ func guardedInitializerRoots(ctx *context, roots []*ssa.Function, pkg *packages.
 		for _, member := range p.Members {
 			if fn, ok := member.(*ssa.Function); ok && len(fn.Blocks) != 0 {
 				name := llssa.FullName(pkg.Types, fn.Name())
-				if _, aliased := ctx.prog.Linkname(name); aliased || ctx.prog.HasLinknameTarget(name) {
+				if isSymbolRoot(name) {
 					roots = append(roots, fn)
 				}
 			}

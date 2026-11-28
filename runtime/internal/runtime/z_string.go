@@ -19,6 +19,7 @@ package runtime
 import (
 	"unsafe"
 
+	"github.com/xgo-dev/llgo/runtime/abi"
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
@@ -35,13 +36,93 @@ type String struct {
 	len  int
 }
 
-// StringCat concatenates two strings.
+// StringCat concatenates two strings directly into heap storage when non-empty.
 func StringCat(a, b String) String {
-	n := a.len + b.len
+	n := stringConcatLength(a.len, b.len)
+	if n == 0 {
+		return String{}
+	}
 	dest := AllocAtomicU(uintptr(n))
-	c.Memcpy(dest, a.data, uintptr(a.len))
-	c.Memcpy(c.Advance(dest, a.len), b.data, uintptr(b.len))
+	copyStringAt(dest, 0, a)
+	copyStringAt(dest, a.len, b)
 	return String{dest, n}
+}
+
+// StringConcat borrows count initialized strings starting at data for this call.
+// Separate pointer and count arguments avoid a platform-specific slice ABI.
+// The caller keeps every input alive through the copy. A non-nil buffer must
+// be disjoint from all inputs and is used only when the complete result fits.
+// Even a sole non-empty input is copied because it may refer to a stack slot.
+func StringConcat(data *String, count int, buffer *[abi.SmallStackBufferSize]byte) String {
+	if count == 3 {
+		return stringConcatThree(data, buffer)
+	}
+	return concatStringParts(data, count, buffer)
+}
+
+func concatStringParts(data *String, count int, buffer *[abi.SmallStackBufferSize]byte) String {
+	parts := unsafe.Slice(data, count)
+	total := 0
+	for _, part := range parts {
+		total = stringConcatLength(total, part.len)
+	}
+	if total == 0 {
+		return String{}
+	}
+	dest := stringConcatStorage(total, buffer)
+	offset := 0
+	// This counted loop lets LLVM eliminate the per-part bounds check.
+	for i := 0; i < len(parts); i++ {
+		part := parts[i]
+		if part.len == 0 {
+			continue
+		}
+		copyStringAt(dest, offset, part)
+		offset += part.len
+	}
+	return String{dest, total}
+}
+
+func stringConcatThree(data *String, buffer *[abi.SmallStackBufferSize]byte) String {
+	parts := unsafe.Slice(data, 3)
+	// Load each header once for the common three-part case.
+	first, second, third := parts[0], parts[1], parts[2]
+	prefixLen := stringConcatLength(first.len, second.len)
+	total := stringConcatLength(prefixLen, third.len)
+	if total == 0 {
+		return String{}
+	}
+	dest := stringConcatStorage(total, buffer)
+	copyStringAt(dest, 0, first)
+	copyStringAt(dest, first.len, second)
+	copyStringAt(dest, prefixLen, third)
+	return String{dest, total}
+}
+
+// copyStringAt copies src into dst at the given byte offset. The regions must be disjoint.
+func copyStringAt(dst unsafe.Pointer, offset int, src String) {
+	c.MemcpyIntrinsic(unsafe.Add(dst, offset), src.data, uintptr(src.len), false)
+}
+
+// stringConcatStorage requires a validated, non-zero length.
+func stringConcatStorage(length int, buffer *[abi.SmallStackBufferSize]byte) unsafe.Pointer {
+	if buffer != nil && length <= len(buffer) {
+		return unsafe.Pointer(&buffer[0])
+	}
+	return AllocAtomicU(uintptr(length))
+}
+
+func stringConcatLength(total, part int) int {
+	n := total + part
+	// With two nonnegative lengths, signed overflow makes n negative.
+	if total < 0 || part < 0 || n < 0 || uint64(n) > stringConcatMaxAlloc {
+		panicStringConcatLength()
+	}
+	return n
+}
+
+func panicStringConcatLength() {
+	panic("runtime: string concat length out of range")
 }
 
 // -----------------------------------------------------------------------------
@@ -124,12 +205,15 @@ func StringIterNext(it *StringIter) (ok bool, k int, v rune) {
 }
 
 func StringToBytes(s String) []byte {
+	if s.len < 0 || uintptr(s.len) > maxAlloc {
+		panicmakeslicelen()
+	}
 	if s.len == 0 {
 		return []byte{}
 	}
-	data := make([]byte, s.len)
-	c.Memcpy(unsafe.Pointer(&data[0]), s.data, uintptr(s.len))
-	return data
+	p := AllocAtomicU(uintptr(s.len))
+	c.Memcpy(p, s.data, uintptr(s.len))
+	return unsafe.Slice((*byte)(p), s.len)
 }
 
 func StringToRunes(s string) []rune {

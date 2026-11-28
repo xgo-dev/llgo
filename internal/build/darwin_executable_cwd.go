@@ -32,41 +32,35 @@ func llgoInitExecutableCwd() (string, error) {
 `)...)
 }
 
-func configureDarwinExecutableCwd(ctx *context, pkg *ssa.Package, roots []*ssa.Function, isSymbolRoot func(string) bool) {
+func configureDarwinExecutableCwd(ctx *context, pkg *ssa.Package, result *rta.Result, isSymbolRoot func(string) bool) bool {
 	init := pkg.Func(darwinExecutableCwdInitializer)
 	getwd := pkg.Func("Getwd")
 	executable := pkg.Func("executable")
 	if init == nil || getwd == nil || executable == nil {
-		return
+		return false
 	}
 	globals := make(map[ssa.Value]bool)
 	for _, name := range []string{"initCwd", "initCwdErr", "getwdCache"} {
 		global, ok := pkg.Members[name].(*ssa.Global)
 		if !ok || isSymbolRoot("os."+name) {
-			return
+			return false
 		}
 		globals[global] = true
 	}
 	for _, name := range []string{darwinExecutableCwdGuard, "os." + init.Name(), "os.Getwd", "os.Executable", "os.executable"} {
 		if isSymbolRoot(name) {
-			return
+			return false
 		}
 	}
 
-	// Ignore the startup lookup when checking for observers. Getwd itself
-	// must be unobserved because startup may populate its directory cache.
-	// Restore the body before emitting the shared archive's guarded lookup.
-	blocks := init.Blocks
-	init.Blocks = nil
-	result := rta.Analyze(roots, false)
-	init.Blocks = blocks
 	if _, reachable := result.Reachable[getwd]; reachable {
-		return
+		return false
 	}
 	if _, reachable := result.Reachable[executable]; reachable {
-		return
+		return false
 	}
 	pkgInit := pkg.Func("init")
+	var operands [8]*ssa.Value
 	for fn := range result.Reachable {
 		for _, block := range fn.Blocks {
 			for _, inst := range block.Instrs {
@@ -74,9 +68,9 @@ func configureDarwinExecutableCwd(ctx *context, pkg *ssa.Package, roots []*ssa.F
 				if fn == pkgInit && isStore && globals[store.Addr] {
 					continue
 				}
-				for _, operand := range inst.Operands(nil) {
+				for _, operand := range inst.Operands(operands[:0]) {
 					if operand != nil && globals[*operand] {
-						return
+						return false
 					}
 				}
 			}
@@ -86,4 +80,5 @@ func configureDarwinExecutableCwd(ctx *context, pkg *ssa.Package, roots []*ssa.F
 	if ctx.buildConf.Verbose || ctx.buildConf.PrintCommands {
 		fmt.Fprintln(os.Stderr, "llgo: omit unobserved initial executable directory")
 	}
+	return true
 }

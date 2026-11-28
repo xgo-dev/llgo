@@ -40,9 +40,6 @@ typedef struct {
     llgo_dword type;
 } llgo_memory_basic_information;
 
-__declspec(dllimport) int LLGO_WINAPI
-GetProcessAffinityMask(void *process, llgo_uintptr *process_mask,
-                       llgo_uintptr *system_mask);
 __declspec(dllimport) void LLGO_WINAPI GetSystemInfo(llgo_system_info *info);
 __declspec(dllimport) llgo_size_t LLGO_WINAPI
 VirtualQuery(const void *address, llgo_memory_basic_information *info,
@@ -133,29 +130,6 @@ enum {
     llgo_page_execute = 0x10,
     llgo_page_guard = 0x100,
 };
-
-int llgo_maxprocs(void)
-{
-    llgo_uintptr mask;
-    llgo_uintptr system_mask;
-    int count = 0;
-
-    /* Match Go's getCPUCount: report CPUs available to this process, rather
-     * than all active processors on the machine. */
-    if (GetProcessAffinityMask((void *)(intptr_t)-1, &mask, &system_mask)) {
-        while (mask != 0) {
-            count += (int)(mask & 1);
-            mask >>= 1;
-        }
-        if (count != 0)
-            return count;
-    }
-    {
-        llgo_system_info info;
-        GetSystemInfo(&info);
-        return info.num_processors == 0 ? 1 : (int)info.num_processors;
-    }
-}
 
 int llgo_mem_readable(void *p)
 {

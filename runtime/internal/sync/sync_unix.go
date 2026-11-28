@@ -109,3 +109,7 @@ func (cond *Cond) Broadcast() c.Int {
 func (cond *Cond) Wait(m *Mutex) c.Int {
 	return condWait(cond, m)
 }
+
+func (cond *Cond) WaitInactive(m *Mutex) c.Int {
+	return condWait(cond, m)
+}

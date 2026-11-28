@@ -61,35 +61,48 @@ func (gp *g) movePanicToDefer(node *panicNode, link *Defer) {
 }
 
 // Recover recovers a panic.
+//
+// Keep Recover as a distinct frame: Win64 SEH recoverFrameMarks unwinds a
+// fixed depth (recoverFrameMarks -> recoverMark -> Recover -> deferred fn)
+// to identify the recovering deferred function.
+//
+//go:noinline
 func Recover(token unsafe.Pointer) (ret any) {
 	gp := getg()
 	if token == nil || token != gp.recoverFrame {
 		return nil
 	}
 	ptr := gp.recoverPanic
-	if ptr != nil && ptr == gp.panic_ {
-		node := (*panicNode)(ptr)
-		gp.panic_ = node.prev
-		// Keep the activation token until its deferred call returns, so a
-		// same-value repanic can reuse the original snapshot. Clearing the
-		// eligible panic still prevents any subsequent recover from succeeding.
-		gp.recoverPanic = nil
-		ret = node.arg
-		FreeRoot(unsafe.Pointer(node))
-		// The deferred function that recovers keeps observing the panic
-		// stack until it returns (gc runs defers on top of it). The public
-		// runtime marks its frame so the pc snapshot stays spliceable that
-		// long; the mark reads the frame-pointer chain, which after
-		// siglongjmp can reach a stale/unmapped slot, so the guarded read
-		// lives in the package that has a page probe (RecoverMark). Nil
-		// when lib/runtime is not linked — no snapshot machinery, nothing
-		// to mark.
-		if RecoverMark != nil {
-			RecoverMark()
-		}
-		if panicCallerSnapshotAvailable() {
-			gp.panicPCs.recovered = recoveredPanic{value: ret, frame: gp.recoverFrame}
-		}
+	if ptr == nil || ptr != gp.panic_ {
+		return nil
+	}
+	ret = recoverActive(gp, ptr)
+	// The deferred function that recovers keeps observing the panic
+	// stack until it returns (gc runs defers on top of it). The public
+	// runtime marks its frame so the pc snapshot stays spliceable that
+	// long; the mark reads the frame-pointer chain, which after
+	// siglongjmp can reach a stale/unmapped slot, so the guarded read
+	// lives in the package that has a page probe (RecoverMark). Nil
+	// when lib/runtime is not linked — no snapshot machinery, nothing
+	// to mark.
+	if RecoverMark != nil {
+		RecoverMark()
+	}
+	return
+}
+
+//go:noinline
+func recoverActive(gp *g, ptr unsafe.Pointer) (ret any) {
+	node := (*panicNode)(ptr)
+	gp.panic_ = node.prev
+	// Keep the activation token until its deferred call returns, so a
+	// same-value repanic can reuse the original snapshot. Clearing the
+	// eligible panic still prevents any subsequent recover from succeeding.
+	gp.recoverPanic = nil
+	ret = node.arg
+	FreeRoot(unsafe.Pointer(node))
+	if panicCallerSnapshotAvailable() {
+		gp.panicPCs.recovered = recoveredPanic{value: ret, frame: gp.recoverFrame}
 	}
 	return
 }
@@ -189,7 +202,7 @@ var RecoverMark func()
 const (
 	// LLGoFiles: the frame-pointer helper must live in the runtime core —
 	// programs that never import "runtime" still link Recover.
-	LLGoFiles = "_wrap/fp.c; _wrap/synctest_heap.c" + tracebackLLGoFiles + platformSetjmpLLGoFiles + platformFaultLLGoFiles + platformLLGoFiles + softAtomicLLGoFiles + wasiGCLLGoFiles
+	LLGoFiles = "_wrap/fp.c; _wrap/synctest_heap.c" + tracebackLLGoFiles + platformSetjmpLLGoFiles + platformFaultLLGoFiles + platformLLGoFiles + maxprocsLLGoFiles + softAtomicLLGoFiles + wasiGCLLGoFiles + aesCPULLGoFiles + chanSignalLLGoFiles
 )
 
 //go:linkname c_framepointer C.llgo_framepointer

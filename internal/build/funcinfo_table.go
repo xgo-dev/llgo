@@ -312,13 +312,18 @@ func emitFuncInfoTable(ctx *context, pkg llssa.Package, records []funcInfoRecord
 	symbolIndexCount.SetVisibility(llvm.HiddenVisibility)
 	pcLineCount := llvm.AddGlobal(mod, countType, pcLineCountSymbol)
 	hashMask := llvm.AddGlobal(mod, countType, funcInfoHashMaskSymbol)
-	// One byte per binary telling the runtime whether Go functions were
-	// compiled with the frame-pointer attribute — the pairing signal for
-	// the physical unwinder (runtime fpUnwindAvailable).
+	// Pair the runtime FP walk with the emitted code. Only binaries with
+	// wrapper records need a function-table lookup while collecting PCs.
 	fpChain := llvm.AddGlobal(mod, i8Type, fpChainSymbol)
 	fpChainVal := uint64(0)
 	if ctx.prog.NeedsFramePointer() {
 		fpChainVal = 1
+		for _, rec := range records {
+			if rec.flags&buildfuncinfo.RecordFlagWrapper != 0 {
+				fpChainVal |= 2
+				break
+			}
+		}
 	}
 	fpChain.SetInitializer(llvm.ConstInt(i8Type, fpChainVal, false))
 	if ctx.buildConf.PCLNMode == PCLNExternal {

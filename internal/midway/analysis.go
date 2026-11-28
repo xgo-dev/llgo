@@ -10,6 +10,7 @@ import (
 	"go/token"
 	"go/types"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -33,6 +34,38 @@ func suffix(width int) string {
 		return "@simd0"
 	}
 	return "@simd" + strconv.Itoa(width)
+}
+
+// ImplementationWidth recognizes the declaration names minted by specialize.
+// Methods keep their Go names; only the named receiver receives the suffix.
+// Looking at declared identifiers avoids treating generic type arguments and
+// source-level link names as Midway execution contracts.
+func ImplementationWidth(fn *types.Func) int {
+	name := fn.Name()
+	if recv := fn.Signature().Recv(); recv != nil {
+		t := recv.Type()
+		if ptr, ok := t.(*types.Pointer); ok {
+			t = ptr.Elem()
+		}
+		named, ok := types.Unalias(t).(*types.Named)
+		if !ok {
+			return 0
+		}
+		name = named.Obj().Name()
+	}
+	_, n, ok := strings.Cut(name, "@simd")
+	if !ok {
+		return 0
+	}
+	switch n {
+	case "128":
+		return 128
+	case "256":
+		return 256
+	case "512":
+		return 512
+	}
+	return 0
 }
 
 func elementBits(name string) int {

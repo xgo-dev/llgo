@@ -26,7 +26,7 @@ import "simd/archsimd"
 func arithmetic(x, y archsimd.Float32x8) archsimd.Float32x8 { return x.Add(y).Mul(x) }
 //go:noinline
 func guarded(x, y archsimd.Float32x8) archsimd.Float32x8 {
- if archsimd.X86.AVX2() { return arithmetic(x, y) }
+ if archsimd.X86.AVX2() { return arithmetic(x, y).AsUint32x8().Add(x.AsUint32x8()).AsFloat32x8() }
  return x.Sub(y)
 }
 func indirect(f func(archsimd.Float32x8, archsimd.Float32x8) archsimd.Float32x8, x, y archsimd.Float32x8) archsimd.Float32x8 { return f(x, y) }
@@ -55,7 +55,7 @@ func main() {}
 			if fn.IsNil() || !strings.Contains(fn.String(), "fadd <8 x float>") || !strings.Contains(fn.String(), "fmul <8 x float>") {
 				t.Fatalf("missing 256-bit computation:\n%s", fn.String())
 			}
-			for _, name := range []string{"main.arithmetic", "main.guarded", "main.indirect", "main.arithmetic.__llgo_fmv_avx2", "main.guarded.__llgo_fmv_avx2"} {
+			for _, name := range []string{"main.arithmetic", "main.guarded", "main.indirect", "main.guarded.__llgo_fmv_guard_avx2"} {
 				fn := mod.NamedFunction(name)
 				if fn.IsNil() {
 					t.Fatalf("missing %s", name)
@@ -90,11 +90,9 @@ func main() {}
 						t.Fatal(err)
 					}
 				}
-				for _, name := range []string{"main.arithmetic", "main.arithmetic.__llgo_fmv_avx2"} {
-					body := mod.NamedFunction(name).String()
-					if strings.Contains(body, "load volatile") || strings.Contains(body, "store volatile") {
-						t.Fatalf("%s introduced a memory carrier:\n%s", level, body)
-					}
+				body := mod.NamedFunction("main.arithmetic").String()
+				if strings.Contains(body, "load volatile") || strings.Contains(body, "store volatile") {
+					t.Fatalf("%s introduced a memory carrier:\n%s", level, body)
 				}
 				asm, err := pkg.Prog.TargetMachine().EmitToMemoryBuffer(mod, llvm.AssemblyFile)
 				if err != nil {

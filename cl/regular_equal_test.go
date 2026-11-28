@@ -46,7 +46,7 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			optimized := tc.arch == "wasm"
+			wasmRegular := tc.arch == "wasm"
 			for _, item := range []struct{ name, equal, fallback string }{
 				{"Zero", "memequal0", "arrayequal"}, {"One", "memequal8", "structequal"},
 				{"Two", "memequal16", "arrayequal"}, {"Four", "memequal32", "structequal"},
@@ -61,18 +61,24 @@ func TestRegularMemoryEqualLowering(t *testing.T) {
 					t.Fatalf("missing descriptor for %s", item.name)
 				}
 				want := item.fallback
-				if optimized {
+				if wasmRegular {
 					want = item.equal
+				} else if tc.arch == "amd64" && (item.name == "Padded" || item.name == "Blank") {
+					want = "_llgo_equal._llgo_keys." + item.name
+					helper := mod.NamedFunction(want)
+					if helper.IsNil() || helper.IsDeclaration() || helper.Linkage() != llvm.WeakODRLinkage {
+						t.Fatalf("%s: missing definition of the native equality helper %s", item.name, want)
+					}
 				}
 				if !strings.Contains(global.Initializer().String(), want) {
 					t.Errorf("%s: missing %s in %s", item.name, want, global)
 				}
 			}
 			helper := mod.NamedFunction("_llgo_memequal.24")
-			if helper.IsNil() == optimized {
+			if helper.IsNil() == wasmRegular {
 				t.Fatal("unexpected shared equality helper")
 			}
-			if optimized && (helper.Linkage() != llvm.WeakODRLinkage || !strings.Contains(helper.String(), "i32 24")) {
+			if wasmRegular && (helper.Linkage() != llvm.WeakODRLinkage || !strings.Contains(helper.String(), "i32 24")) {
 				t.Fatalf("invalid shared helper: %s", helper)
 			}
 			// The external compiler parses textual IR; VerifyModule alone does not

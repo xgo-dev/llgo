@@ -71,11 +71,18 @@ func TestCompareAndSwapUint32(t *testing.T) {
 	}
 }
 
+// Keep the atomic operation in a named function for the linked-code LTO test.
+//
+//go:noinline
+func compareAndSwapUint64(p *uint64, old, next uint64) bool {
+	return atomic.CompareAndSwapUint64(p, old, next)
+}
+
 func TestCompareAndSwapUint64(t *testing.T) {
 	var i uint64 = 100
 
 	// Test successful compare and swap
-	swapped := atomic.CompareAndSwapUint64(&i, 100, 200)
+	swapped := compareAndSwapUint64(&i, 100, 200)
 	if !swapped {
 		t.Fatalf("CompareAndSwapUint64(100, 100, 200) = false, want true")
 	}
@@ -84,7 +91,7 @@ func TestCompareAndSwapUint64(t *testing.T) {
 	}
 
 	// Test unsuccessful compare and swap
-	swapped = atomic.CompareAndSwapUint64(&i, 100, 300)
+	swapped = compareAndSwapUint64(&i, 100, 300)
 	if swapped {
 		t.Fatalf("CompareAndSwapUint64(200, 100, 300) = true, want false")
 	}

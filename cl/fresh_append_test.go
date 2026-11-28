@@ -44,6 +44,14 @@ func freshConstantLoop() [][]byte { var out [][]byte;for i:=0;i<3;i++ {out=appen
 					t.Errorf("%s retains append copying or returns temporary storage:\n%s", name, body)
 				}
 			}
+			for _, name := range []string{"dynamic", "named", "pointers"} {
+				if body := llvmFunction(t, ir, "fresh."+name); !strings.Contains(body, "runtime.MakeSliceRounded\"") {
+					t.Errorf("%s must lower dynamic fresh nil-append to runtime.MakeSliceRounded:\n%s", name, body)
+				}
+			}
+			if body := llvmFunction(t, ir, "fresh.zero"); strings.Contains(body, "runtime.MakeSliceRounded\"") {
+				t.Errorf("zero-sized fresh nil-append must fall back to standard MakeSlice:\n%s", body)
+			}
 			if body := llvmFunction(t, ir, "fresh.constant"); strings.Count(body, "runtime.AllocAtomicU\"") != 1 {
 				t.Errorf("constant append must retain one escaping backing array:\n%s", body)
 			}

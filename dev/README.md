@@ -7,8 +7,8 @@ For test selection and pull-request expectations, see [CONTRIBUTING.md](../CONTR
 
 ## Host development environment
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md#development-environments) for mise,
-Pixi, platform dependencies, environment checks, and lockfile updates. The
+See [CONTRIBUTING.md](../CONTRIBUTING.md#development-environments) for Pixi,
+platform dependencies, environment checks, and lockfile updates. The
 [manual setup](../CONTRIBUTING.md#manual-development-setup) covers a host
 managed without an environment tool. For Docker setup, see
 [Linux containers](../CONTRIBUTING.md#linux-containers).

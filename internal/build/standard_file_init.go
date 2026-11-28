@@ -5,7 +5,7 @@ import (
 	"go/token"
 
 	"github.com/xgo-dev/llgo/cl"
-	"golang.org/x/tools/go/callgraph/rta"
+
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -93,45 +93,4 @@ func isDescriptorNumber(value ssa.Value, want int64) bool {
 	}
 	number, ok := constant.Int64Val(fd.Value)
 	return ok && number == want
-}
-
-// fixedStdoutDescriptor proves that the variable captured by os.init
-// receives only the normal descriptor and its address cannot escape.
-func fixedStdoutDescriptor(group cl.OptionalInitializer, reachable *rta.Result, isSymbolRoot func(string) bool) bool {
-	load, usesVariable := group.First.(*ssa.UnOp)
-	if !usesVariable {
-		return true
-	}
-	fd := load.X.(*ssa.Global)
-	if isSymbolRoot("syscall.Stdout") {
-		return false
-	}
-	init := fd.Pkg.Func("init")
-	found := false
-	var operands [8]*ssa.Value
-	for fn := range reachable.Reachable {
-		for _, block := range fn.Blocks {
-			for _, instr := range block.Instrs {
-				switch instr := instr.(type) {
-				case *ssa.DebugRef:
-					continue
-				case *ssa.UnOp:
-					if instr.Op == token.MUL {
-						continue
-					}
-				case *ssa.Store:
-					if instr.Addr == fd && fn == init && isDescriptorNumber(instr.Val, 1) && !found {
-						found = true
-						continue
-					}
-				}
-				for _, operand := range instr.Operands(operands[:0]) {
-					if operand != nil && *operand == fd {
-						return false
-					}
-				}
-			}
-		}
-	}
-	return found
 }

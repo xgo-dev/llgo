@@ -88,6 +88,13 @@ func (p Program) closureEnvABI() closureEnvABI {
 	return p.Target().closureEnvABI()
 }
 
+// HasHiddenClosureEnv reports whether the target transports closure
+// environments in a dedicated hidden ABI register rather than branching on
+// a non-nil environment pointer at dynamic call sites.
+func (p Program) HasHiddenClosureEnv() bool {
+	return p.closureEnvABI() != closureEnvExplicit
+}
+
 func (p Program) closureEnvAttribute() llvm.Attribute {
 	var name string
 	switch p.closureEnvABI() {

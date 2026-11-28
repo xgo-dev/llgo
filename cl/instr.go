@@ -603,6 +603,13 @@ func (p *context) atomicStore(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	panic("atomicStore(addr *T, val T) T: invalid arguments")
 }
 
+func (p *context) atomicAddRelaxed(b llssa.Builder, args []llssa.Expr) llssa.Expr {
+	if len(args) == 2 {
+		return b.AtomicWithOrdering(llssa.OpAdd, args[0], args[1], llssa.OrderingMonotonic)
+	}
+	panic("atomicAddRelaxed(addr *T, val T) T: invalid arguments")
+}
+
 func (p *context) atomicStoreUnordered(b llssa.Builder, args []llssa.Expr) llssa.Expr {
 	if len(args) == 2 {
 		return b.Store(args[0], args[1]).SetOrdering(llssa.OrderingUnordered)
@@ -681,6 +688,7 @@ var llgoInstrs = map[string]int{
 	"atomicLoad":           llgoAtomicLoad,
 	"atomicStore":          llgoAtomicStore,
 	"atomicStoreUnordered": llgoAtomicStoreUnordered,
+	"atomicAddRelaxed":     llgoAtomicAddRelaxed,
 	"atomicCmpXchg":        llgoAtomicCmpXchg,
 	"atomicCmpXchgOK":      llgoAtomicCmpXchgOK,
 	"atomicAddReturnNew":   llgoAtomicAddReturnNew,
@@ -2705,6 +2713,21 @@ func collectMethodNilDerefChecks(fn *ssa.Function, receiverChecks *ReceiverNilCh
 }
 
 func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallCommon, ds *explicitDeferStack) (ret llssa.Expr) {
+	if act == llssa.Call && ds == nil && !isRecoverTransparentWrapper(p.goFn) {
+		if builtin, ok := call.Value.(*ssa.Builtin); ok && builtin.Name() == "append" && len(call.Args) == 2 {
+			if _, ok := call.Args[0].Type().Underlying().(*types.Slice); ok {
+				args := p.compileValues(b, call.Args, fnNormal)
+				ret = b.AppendSlice(args[0], args[1], func(b llssa.Builder) {
+					p.lastPCLineFile = ""
+					p.recordCallerLocationForCall(b, call)
+					p.emitPCLineLabel(b, call.Pos())
+				})
+				// The growth path's PC anchor does not cover the merged block.
+				p.lastPCLineFile = ""
+				return
+			}
+		}
+	}
 	p.recordCallerLocationForCall(b, call)
 	p.emitPCLineLabel(b, call.Pos())
 	cv := call.Value
@@ -2838,7 +2861,7 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 				panic("aesRound: expected an operation and three pointers")
 			}
 			op, ok := constInt(args[0])
-			if !ok || op < 0 || op > int(llssa.AESXORBlock) {
+			if !ok || op < 0 || op > int(llssa.AESHashLast) {
 				panic("aesRound: invalid constant operation")
 			}
 			values := p.compileValues(b, args[1:], fnNormal)
@@ -3006,6 +3029,11 @@ func (p *context) callEx(b llssa.Builder, act llssa.DoAction, call *ssa.CallComm
 			args := p.compileValues(b, args, kind)
 			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
 				return b.BinOp(token.ADD, p.atomic(b, llssa.OpAdd, args), args[1])
+			}, args...)
+		case llgoAtomicAddRelaxed:
+			args := p.compileValues(b, args, kind)
+			ret = p.emitDo(b, act, call, ds, false, llssa.Nil, func(b llssa.Builder, _ llssa.Expr, args ...llssa.Expr) llssa.Expr {
+				return p.atomicAddRelaxed(b, args)
 			}, args...)
 		default:
 			if ftype >= llgoAtomicOpBase && ftype <= llgoAtomicOpLast {

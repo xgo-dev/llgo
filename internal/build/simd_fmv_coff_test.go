@@ -61,7 +61,7 @@ func B(x archsimd.Float32x4) archsimd.Float32x4 { return shared.Echo(x, 1) }`,
 				prog := pkgs[0].LPkg.Prog
 				defer prog.Dispose()
 				mod := pkgs[0].LPkg.Module()
-				variant := mod.NamedFunction("fmvcomdat/shared.Echo[int].__llgo_fmv_avx2")
+				variant := mod.NamedFunction("fmvcomdat/shared.Echo[int].__llgo_fmv_guard_avx2")
 				if variant.IsNil() || variant.IsDeclaration() {
 					t.Fatal("generic AVX2 definition missing from package", name)
 				}
@@ -87,6 +87,13 @@ func B(x archsimd.Float32x4) archsimd.Float32x4 { return shared.Echo(x, 1) }`,
 					}
 					objects = append(objects, path)
 				}
+				query := mod.NamedFunction("simd/archsimd.X86Features.AVX2")
+				queryType, queryCC := query.GlobalValueType(), query.FunctionCallConv()
+				cpu := mod.NamedGlobal("internal/cpu.X86")
+				var cpuType llvm.Type
+				if !cpu.IsNil() {
+					cpuType = cpu.GlobalValueType()
+				}
 				writeObject(name, mod)
 				if name == "a" {
 					// Supply the fixture's runtime dependencies without linking the
@@ -98,6 +105,14 @@ func B(x archsimd.Float32x4) archsimd.Float32x4 { return shared.Echo(x, 1) }`,
 					mask.SetInitializer(llvm.ConstNull(ctx.Int64Type()))
 					b := ctx.NewBuilder()
 					defer b.Dispose()
+					// The baseline implementation preserves the source CPU query.
+					if !cpuType.IsNil() {
+						llvm.AddGlobal(support, cpuType, "internal/cpu.X86").SetInitializer(llvm.ConstNull(cpuType))
+					}
+					impl := llvm.AddFunction(support, "simd/archsimd.X86Features.AVX2", queryType)
+					impl.SetFunctionCallConv(queryCC)
+					b.SetInsertPointAtEnd(ctx.AddBasicBlock(impl, "entry"))
+					b.CreateRet(llvm.ConstInt(ctx.Int1Type(), 0, false))
 					for _, init := range []string{"simd/archsimd.init", "fmvcomdat/shared.init"} {
 						fn := llvm.AddFunction(support, init, llvm.FunctionType(ctx.VoidType(), nil, false))
 						b.SetInsertPointAtEnd(ctx.AddBasicBlock(fn, "entry"))

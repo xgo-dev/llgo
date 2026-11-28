@@ -6,8 +6,11 @@
 package runtime
 
 import (
-	_ "unsafe"
+	"unsafe"
 
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/os"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/syscall"
 	"github.com/xgo-dev/llgo/runtime/internal/sync"
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
@@ -26,14 +29,46 @@ type chanSignal struct {
 	cond     sync.Cond
 	notified uint32
 	sleeping bool
+	address  bool
 }
+
+const chanSignalLLGoFiles = "; _wrap/chan_sync_darwin.c"
+
+//go:linkname bindChanAddressWait C.llgo_bind_channel_address_wait
+func bindChanAddressWait() int32
+
+//go:linkname chanAddressWait C.llgo_channel_address_wait
+func chanAddressWait(notified *uint32) int32
+
+//go:linkname chanAddressWake C.llgo_channel_address_wake
+func chanAddressWake(notified *uint32) int32
 
 //go:linkname chanSignalSpinHint llgo.asm
 func chanSignalSpinHint(instruction string)
 
+var chanAddressWaitEnabled uint32
+var chanMaxSpinners uint32
+var chanActiveSpinners uint32
+
+func init() {
+	if bindChanAddressWait() != 0 {
+		atomic.Store(&chanAddressWaitEnabled, 1)
+	}
+	maxSpin := CPUCount() / 2
+	if maxSpin < 1 {
+		maxSpin = 1
+	}
+	atomic.Store(&chanMaxSpinners, uint32(maxSpin))
+}
+
 func (s *chanSignal) init() {
 	s.mutex.Init(nil)
-	s.cond.Init(nil)
+	// Retain the backend chosen at initialization. Early signals use the
+	// condition variable while the address-wait symbols are being resolved.
+	s.address = atomic.Load(&chanAddressWaitEnabled) != 0
+	if !s.address {
+		s.cond.Init(nil)
+	}
 }
 func (s *chanSignal) lock()   { s.mutex.Lock() }
 func (s *chanSignal) unlock() { s.mutex.Unlock() }
@@ -42,9 +77,16 @@ func (s *chanSignal) park() {
 	TracebackWaiting(true)
 	atomic.Store(&s.notified, uint32(0))
 	s.unlock()
-	// The architecture bounds iterations with a CPU relax hint, not elapsed
-	// time. After the budget, fall back to the ordinary condition wait.
-	for i := 0; i < chanSignalSpinLimit; i++ {
+	// First spin briefly without touching shared state to catch immediate
+	// handoffs. If spare CPU cores remain (bounded by active spinners rather
+	// than sleeping goroutine count), continue up to chanSignalSpinLimit so
+	// short cross-thread handoffs avoid kernel sleep/wake without oversubscribing.
+	const fastSpin = 64
+	firstLimit := chanSignalSpinLimit
+	if firstLimit > fastSpin {
+		firstLimit = fastSpin
+	}
+	for i := 0; i < firstLimit; i++ {
 		if atomic.Load(&s.notified) != 0 && s.mutex.TryLock() {
 			// ready publishes before the notifier unlocks. Keep trying until
 			// that unlock instead of immediately joining a fair-share wait.
@@ -53,30 +95,137 @@ func (s *chanSignal) park() {
 		}
 		chanSignalSpinHint(chanSignalSpinInstruction)
 	}
+	if chanSignalSpinLimit > firstLimit {
+		if maxSpin := atomic.Load(&chanMaxSpinners); maxSpin > 0 && atomic.Load(&chanActiveSpinners) < maxSpin {
+			// atomic.Add returns the previous value, so < maxSpin admits at most maxSpin active spinners.
+			if atomic.Add(&chanActiveSpinners, uint32(1)) < maxSpin {
+				for i := firstLimit; i < chanSignalSpinLimit; i++ {
+					if atomic.Load(&s.notified) != 0 && s.mutex.TryLock() {
+						atomic.Sub(&chanActiveSpinners, uint32(1))
+						TracebackWaiting(false)
+						return
+					}
+					chanSignalSpinHint(chanSignalSpinInstruction)
+				}
+			}
+			atomic.Sub(&chanActiveSpinners, uint32(1))
+		}
+	}
 	s.lock()
-	// Reset and the decision to sleep are both protected by mutex. A notifier
-	// either publishes during spinning or signals after Wait releases mutex;
-	// neither transition can lose a wake. Return holding mutex even if the spin
-	// succeeds, so finish completes ready before the waiter can destroy/reuse us.
+	// The mutex protects the decision to sleep. The condition wait releases
+	// it atomically with parking. The address wait releases it first and
+	// then compares the notification word before parking. Both paths return
+	// holding the mutex, after the notifier has finished using the signal.
 	if atomic.Load(&s.notified) == 0 {
 		s.sleeping = true
-		s.cond.Wait(&s.mutex)
+		if s.address {
+			s.waitOnAddress()
+		} else {
+			s.cond.Wait(&s.mutex)
+		}
 		s.sleeping = false
 	}
 	TracebackWaiting(false)
+}
+
+const chanIdleSpinLimit = 64
+
+//llgo:cdecl
+func parkIdleBlockingDarwin(arg unsafe.Pointer) unsafe.Pointer {
+	s := (*chanSignal)(arg)
+	if s.address {
+		s.waitOnAddress()
+	} else {
+		s.cond.Wait(&s.mutex)
+	}
+	return nil
+}
+
+// parkIdle parks a pooled worker thread with no attached G, skipping traceback
+// state updates while allowing a brief uncontended spin before sleeping outside
+// BDWGC's active thread set via GC_do_blocking.
+func (s *chanSignal) parkIdle() {
+	atomic.Store(&s.notified, uint32(0))
+	s.unlock()
+	spinLimit := chanSignalSpinLimit
+	if spinLimit > chanIdleSpinLimit {
+		spinLimit = chanIdleSpinLimit
+	}
+	for i := 0; i < spinLimit; i++ {
+		if atomic.Load(&s.notified) != 0 && s.mutex.TryLock() {
+			return
+		}
+		chanSignalSpinHint(chanSignalSpinInstruction)
+	}
+	s.lock()
+	if atomic.Load(&s.notified) == 0 {
+		s.sleeping = true
+		mPoolDoBlocking(parkIdleBlockingDarwin, unsafe.Pointer(s))
+		s.sleeping = false
+	}
+}
+
+func (s *chanSignal) waitOnAddress() {
+	// The kernel compares the notification word before sleeping. A wake
+	// between unlock and that comparison leaves the word visibly set.
+	s.unlock()
+	for atomic.Load(&s.notified) == 0 {
+		if chanAddressWait(&s.notified) < 0 {
+			switch syscall.Errno(os.Errno()) {
+			case syscall.EINTR:
+				// Recheck the word before retrying the interrupted wait.
+			case syscall.ENOMEM, syscall.EFAULT:
+				// Back off before retrying under memory pressure or a transient page fault.
+				c.Usleep(100)
+			default:
+				panic("channel address wait failed")
+			}
+		}
+	}
+	// The notifier must release the lock before this signal can be reused.
+	// When spare spinner slots remain, try briefly in userspace first so the
+	// woken waiter catches s.unlock() without a second kernel mutex sleep/wake
+	// round-trip, while avoiding RMW storms under broadcast wakes (ChanClose).
+	postWakeSpin := chanSignalSpinLimit
+	if postWakeSpin > 64 {
+		postWakeSpin = 64
+	}
+	if maxSpin := atomic.Load(&chanMaxSpinners); maxSpin > 0 && atomic.Load(&chanActiveSpinners) < maxSpin {
+		if atomic.Add(&chanActiveSpinners, uint32(1)) < maxSpin {
+			for i := 0; i < postWakeSpin; i++ {
+				if s.mutex.TryLock() {
+					atomic.Sub(&chanActiveSpinners, uint32(1))
+					return
+				}
+				chanSignalSpinHint(chanSignalSpinInstruction)
+			}
+		}
+		atomic.Sub(&chanActiveSpinners, uint32(1))
+	}
+	s.lock()
 }
 
 func (s *chanSignal) ready() {
 	// The caller holds mutex through the complete notification. Spinning waiters
 	// only need the atomic publication; sleeping waiters also need a kernel wake.
 	atomic.Store(&s.notified, uint32(1))
-	if s.sleeping {
+	if !s.sleeping {
+		return
+	}
+	if !s.address {
 		s.cond.Signal()
+		return
+	}
+	// There may be no kernel waiter if the notification was published before it parked.
+	if chanAddressWake(&s.notified) < 0 && syscall.Errno(os.Errno()) != syscall.ENOENT {
+		panic("channel address wake failed")
 	}
 }
 
 func (s *chanSignal) destroy() {
-	s.cond.Destroy()
+	if !s.address {
+		s.cond.Destroy()
+	}
 	s.mutex.Destroy()
 }
 

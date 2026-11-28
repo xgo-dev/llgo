@@ -111,11 +111,14 @@ func (w *SynctestWaiter) wake(ready bool) {
 	if w == nil {
 		return
 	}
+	// Channel wakes can run from worker timer polls where getg() is nil, so
+	// keep this helper defer-free instead of initializing a defer frame before
+	// checking w == nil.
 	b := w.gp.bubble
 	b.event.lock()
-	defer b.event.unlock()
 	if w.gp.bubbleBlocked {
 		if b != CurrentSynctestBubble() {
+			b.event.unlock()
 			panic("synctest: wake from outside bubble")
 		}
 		if ready {
@@ -123,6 +126,7 @@ func (w *SynctestWaiter) wake(ready bool) {
 			b.running++
 		}
 	}
+	b.event.unlock()
 }
 
 func SynctestRun(f func()) {

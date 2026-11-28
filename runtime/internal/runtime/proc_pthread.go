@@ -37,6 +37,8 @@ type runtimeContextPlatform struct {
 	// with the native lifecycle because TLS may already be unavailable when an
 	// OS thread destructor runs.
 	foreignThreadAttached bool
+
+	pool mPoolSlot
 }
 
 // Native ABIs agree with Go's runtimeContext layout, so do not add the wasm
@@ -46,6 +48,12 @@ func runtimeContextAllocSize() uintptr {
 }
 
 func newprocBackend(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callergp *g) {
+	if fn == nil {
+		panic("go of nil func value")
+	}
+	if mPoolStart(fn, arg, stackSize, callergp) {
+		return
+	}
 	gp := newproc1(fn, arg, callergp)
 	if errno := newm(gp.m, stackSize); errno != 0 {
 		releaseG()
@@ -85,19 +93,115 @@ func mstart(arg unsafe.Pointer) unsafe.Pointer {
 		fatal("runtime: invalid mstart context")
 		return nil
 	}
+	registerWasiGCThread()
+	for {
+		ret, parkCtx := runGoroutine(mp)
+		if parkCtx == nil {
+			return ret
+		}
+		mPoolScrubStack()
+		if !mPoolPark(parkCtx) {
+			finishRetiredM(parkCtx)
+			return nil
+		}
+	}
+}
+
+// canRecycleM reports whether mp's OS thread is clean to return to the idle
+// worker pool after gp finishes normally.
+func canRecycleM(mp *m, gp *g, ctx *runtimeContext) bool {
+	// Pool disabled on this backend (e.g. wasm/baremetal).
+	if !mPoolEnabled() {
+		return false
+	}
+	// Linux controlled all-threads syscalls require every live OS thread to stay
+	// registered in the traceback/allthreads cohort rather than parking detached.
+	if allThreadsControlled() {
+		return false
+	}
+	// Main and foreign C threads are owned by the TLS destructor lifecycle.
+	if currentGUsesLifecycle() {
+		return false
+	}
+	// Persistent runtime system goroutines exit directly.
+	if ctx.platform.systemG {
+		return false
+	}
+	// Threads that initialized thread-local or goroutine-local guards cannot
+	// safely reset those guards for a later goroutine.
+	if mp.touchedLocal {
+		return false
+	}
+	// Per Go's runtime.LockOSThread contract, exiting while locked must
+	// terminate the OS thread rather than reuse it.
+	if gp.lockedOSThread != 0 {
+		return false
+	}
+	// Abnormal unwind state must complete teardown via mexit.
+	if gp.panic_ != nil || gp.defer_ != nil {
+		return false
+	}
+	return true
+}
+
+// runGoroutine runs one goroutine activation on mp in its own non-inlined stack
+// frame. Returning before mPoolPark ensures every stack slot and callee-saved
+// register touched by the goroutine's entry function is cleared below mstart's
+// stack pointer before BDWGC's GC_do_blocking records the idle stack boundary.
+//
+//go:noinline
+func runGoroutine(mp *m) (unsafe.Pointer, *runtimeContext) {
 	gp := mp.curg
 	pp := mp.p
-	registerWasiGCThread()
+	if gp == nil || pp == nil {
+		fatal("runtime: invalid mstart context")
+		return nil, nil
+	}
 
 	setg(gp)
 	casgstatus(gp, _Grunnable, _Grunning)
 	setpstatus(pp, _Prunning)
 
-	fn, arg := gp.startfn, gp.startarg
+	fn, fnArg := gp.startfn, gp.startarg
 	gp.startfn = nil
-	ret := fn(arg)
-	mexit(mp)
-	return ret
+	ret := fn(fnArg)
+
+	gp = mp.curg
+	pp = mp.p
+	if gp == nil || pp == nil {
+		fatal("runtime: invalid mexit context")
+		return ret, nil
+	}
+	ctx := gp.context
+	if !canRecycleM(mp, gp, ctx) {
+		mexit(mp)
+		return ret, nil
+	}
+	releaseStartArg(gp)
+	leaveSynctest(gp)
+	detachTraceback(gp)
+	casgstatus(gp, _Grunning, _Gdead)
+	setpstatus(pp, _Pidle)
+
+	savedWaiter := gp.chanWaiter
+	*gp = g{chanWaiter: savedWaiter}
+	mp.curg = nil
+	setg(nil)
+
+	releaseGAndCheckDeadlock()
+	return nil, ctx
+}
+
+func finishRetiredM(ctx *runtimeContext) {
+	mp := &ctx.platform.m
+	pp := &ctx.platform.p
+	mPoolDestroySlot(&ctx.platform.pool)
+	setpstatus(pp, _Pdead)
+	pp.m = nil
+	mp.p = nil
+	releaseTracebackThread()
+	freeRuntimeContext(ctx)
+	unregisterWasiGCThread()
 }
 
 func mexit(mp *m) {
@@ -126,6 +230,7 @@ func mexit(mp *m) {
 
 	setg(nil)
 	if !ownedByLifecycle {
+		mPoolDestroySlot(&ctx.platform.pool)
 		freeRuntimeContext(ctx)
 	}
 	if !ownedByLifecycle {
@@ -159,9 +264,11 @@ func MarkUserGoroutine() {
 	gp.context.platform.systemG = false
 }
 
-// GMPForTesting reports the current runtime ownership graph.
-func SchedulerMultiplexesGoroutinesForTesting() bool { return false }
+// SchedulerMultiplexesGoroutinesForTesting reports whether successive
+// goroutines may reuse the same M/P pair (true when the native worker pool is enabled).
+func SchedulerMultiplexesGoroutinesForTesting() bool { return mPoolEnabled() }
 
+// GMPForTesting reports the current runtime ownership graph.
 func GMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gstatus, pstatus uint32, linked bool) {
 	gp := getg()
 	if gp == nil || gp.m == nil || gp.m.p == nil {

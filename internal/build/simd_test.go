@@ -438,7 +438,7 @@ func main() {}
 			simdCodegenVariants(t, []string{"O0", "O2"}, pkgs[:1], func(t *testing.T, mod llvm.Module, asm string) {
 				body := func(name string) string {
 					t.Helper()
-					match := regexp.MustCompile(`(?ms)^main\.` + name + `:[^\n]*\n(.*?)^\s*\.size\s`).FindStringSubmatch(asm)
+					match := regexp.MustCompile(`(?ms)^main\.` + regexp.QuoteMeta(name) + `:[^\n]*\n(.*?)^\s*\.size\s`).FindStringSubmatch(asm)
 					if match == nil {
 						t.Fatalf("missing assembly for %s", name)
 					}
@@ -463,7 +463,10 @@ func main() {}
 				if level == "v4" {
 					checkSAD("sad", "%zmm", 1)
 				} else {
-					checkSAD("sad", "%ymm", 2)
+					// The unguarded 512-bit source can select a ZMM ABI. Its
+					// width-only body has no AVX512BW promise and still uses YMM SAD.
+					checkSAD("sad.__llgo_fmv_guard_base", "%ymm", 2)
+					checkSAD("sad.__llgo_fmv_guard_zmm", "%ymm", 2)
 				}
 				if level != "v4" || !strings.HasSuffix(t.Name(), "/O2") {
 					return
@@ -497,6 +500,14 @@ func sad(o *[8]uint64, a,b *[64]uint8) {
  if archsimd.X86.AVX512() { archsimd.LoadUint8x64Array(a).SumOf8AbsDiff(archsimd.LoadUint8x64Array(b)).StoreArray(o) }
 }
 //go:noinline
+func sadUnguarded(o *[8]uint64, a,b *[64]uint8) {
+ archsimd.LoadUint8x64Array(a).SumOf8AbsDiff(archsimd.LoadUint8x64Array(b)).StoreArray(o)
+}
+//go:noinline
+func sad128(o *[2]uint64, a,b *[16]uint8) {
+ if archsimd.X86.AVX512() { archsimd.LoadUint8x16Array(a).SumOf8AbsDiff(archsimd.LoadUint8x16Array(b)).StoreArray(o) }
+}
+//go:noinline
 func bytes(o,a *[64]uint8, m uint64) {
  if archsimd.X86.AVX512VBMI2() { archsimd.LoadUint8x64Array(a).Compress(archsimd.Mask8x64FromBits(m)).StoreArray(o) }
 }
@@ -526,6 +537,27 @@ func main() {}
 				t.Fatal(err)
 			}
 			defer pkgs[0].LPkg.Prog.Dispose()
+			mod := pkgs[0].LPkg.Module()
+			if !mod.NamedGlobal("main.sad128.__llgo_fmv_slot").IsNil() {
+				t.Fatal("128-bit SAD unexpectedly acquired a dispatcher")
+			}
+			if tc.level == "v1" {
+				if !strings.Contains(mod.NamedFunction("main.sad128").String(), "X86Features.AVX512") {
+					t.Fatal("128-bit SAD lost the source AVX512 query")
+				}
+				for _, suffix := range []string{"base", "ymm", "zmm"} {
+					fn := mod.NamedFunction("main.sadUnguarded.__llgo_fmv_guard_" + suffix)
+					if fn.IsNil() {
+						t.Fatalf("missing unguarded SAD %s body", suffix)
+					}
+					attr := fn.GetStringAttributeAtIndex(-1, "target-features")
+					if !attr.IsNil() && strings.Contains(attr.GetStringValue(), "+avx512bw") {
+						t.Fatalf("%s gained unproven AVX512BW", fn.Name())
+					}
+				}
+			} else if !mod.NamedGlobal("main.sadUnguarded.__llgo_fmv_slot").IsNil() {
+				t.Fatal("v4 has all SAD requirements at its baseline")
+			}
 			simdCodegenVariants(t, []string{"O2"}, pkgs, func(t *testing.T, mod llvm.Module, asm string) {
 				for fn, mnemonic := range tc.ops {
 					for _, suffix := range []string{tc.guard, "base"} {

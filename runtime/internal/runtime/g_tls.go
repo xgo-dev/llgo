@@ -74,6 +74,16 @@ func getg() *g {
 	if gp := (*g)(unsafe.Pointer(currentG)); gp != nil {
 		return gp
 	}
+	return initForeignG()
+}
+
+// initForeignG lazily bootstraps a lifecycle-managed G for threads without an
+// installed G (both the initial main thread before runtime ownership and
+// foreign C threads, matching setAutoG). Keep it //go:noinline so getg stays
+// small enough for the common currentG TLS-load fast path to inline under LTO.
+//
+//go:noinline
+func initForeignG() *g {
 	registerWasiGCThread()
 	gp := initRuntimeContext(allocRuntimeContext(), nil, _Grunning)
 	if ret := setAutoG(gp); ret != 0 {
@@ -132,6 +142,7 @@ func destroyG(ptr c.Pointer) {
 		gp.panic_ = node.prev
 		FreeRoot(unsafe.Pointer(node))
 	}
+	freeSelectCache(gp)
 	ctx := gp.context
 	unregisterTraceback(gp)
 	if ctx != nil && ctx.root != nil {

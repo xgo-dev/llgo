@@ -26,7 +26,7 @@ func sizeCodecBuild(conf *Config, frontend cl.Options) bool {
 }
 
 func linuxSizeCodecBuild(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
-	return !conf.disableSizeSpecialization && conf.Target == "" && conf.Goos == "linux" &&
+	return conf.Target == "" && conf.Goos == "linux" &&
 		(conf.Goarch == "amd64" || conf.Goarch == "arm64") &&
 		len(target.ExtraFiles) == 0 && conf.LinkOptions.ExternalLinker == "" &&
 		conf.LinkOptions.ExternalLinkerFlags == "" && sizeCodecBuild(conf, frontend)
@@ -35,7 +35,7 @@ func linuxSizeCodecBuild(conf *Config, target crosscompile.Export, frontend cl.O
 // Hosted targets use the same closed-link size checks as WASI. Require the
 // size-link flags under which link-time pruning has been validated.
 func hostedValueFormatSupport(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
-	if conf.disableSizeSpecialization || (conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
+	if (conf.Mode != ModeBuild && conf.Mode != ModeRun && conf.Mode != ModeTest) ||
 		conf.OptLevel != optlevel.Oz || conf.BuildMode != BuildModeExe ||
 		conf.ltoMode() != lto.Full || !conf.deadcodeDropEnabled() || conf.goGlobalDCEEnabled() ||
 		conf.LinkOptions.ExternalLinker != "" || len(target.ExtraFiles) != 0 ||

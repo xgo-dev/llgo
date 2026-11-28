@@ -17,19 +17,13 @@ import (
 // CHECK-LABEL: define i64 @"{{.*}}.UseClosure"(){{.*}} {
 // CHECK: [[UC_X:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
 // CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[UC_X]], i8 0, i64 8, i1 false)
-// CHECK-NEXT: [[UC_ENV:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK-NEXT: [[UC_X_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr [[UC_ENV]], i32 0, i32 0
-// CHECK-NEXT: store ptr [[UC_X]], ptr [[UC_X_SLOT]]
-// CHECK-NEXT: [[UC_CLOSURE:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"{{.*}}.UseClosure$1", ptr undef }, ptr [[UC_ENV]], 1
+// CHECK-NEXT: [[UC_CLOSURE:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"{{.*}}.UseClosure$1", ptr undef }, ptr [[UC_X]], 1
 // CHECK-NEXT: ret i64 ptrtoint (ptr @"{{.*}}.UseClosure$1" to i64)
-// ARM64-LABEL: define void @"{{.*}}.UseClosure$1"(ptr swiftself
-// AMD64-LABEL: define void @"{{.*}}.UseClosure$1"(ptr nest
-// CHECK: [[UC_ENV_VALUE:%[0-9]+]] = load { ptr }, ptr %{{[0-9]+}}
-// CHECK-NEXT: [[UC_X_PTR:%[0-9]+]] = extractvalue { ptr } [[UC_ENV_VALUE]], 0
-// CHECK-NEXT: [[UC_OLD_X:%[0-9]+]] = load i64, ptr [[UC_X_PTR]]
+// ARM64-LABEL: define void @"{{.*}}.UseClosure$1"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define void @"{{.*}}.UseClosure$1"(ptr nest %0){{.*}} {
+// CHECK: [[UC_OLD_X:%[0-9]+]] = load i64, ptr %0
 // CHECK-NEXT: [[UC_NEW_X:%[0-9]+]] = add i64 [[UC_OLD_X]], 1
-// CHECK-NEXT: [[UC_X_PTR_AGAIN:%[0-9]+]] = extractvalue { ptr } [[UC_ENV_VALUE]], 0
-// CHECK-NEXT: store i64 [[UC_NEW_X]], ptr [[UC_X_PTR_AGAIN]]
+// CHECK-NEXT: store i64 [[UC_NEW_X]], ptr %0
 // CHECK-NEXT: ret void
 // CHECK-LABEL: define i64 @"{{.*}}.UseFunc"(){{.*}} {
 // CHECK: ret i64 ptrtoint (ptr @"{{.*}}.UseFunc$1" to i64)

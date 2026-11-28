@@ -93,9 +93,9 @@ func makeWithFree(base int) Fn {
 // CHECK: ret i32 [[CB_RESULT]]
 
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// Immediately called bound methods keep their environments on the stack.
+// Immediately called bound interface methods keep their environments on the stack;
+// pointer-receiver bound methods transport the receiver directly in the closure env.
 // CHECK: [[IFACE_METHOD_ENV:%.*]] = alloca { %"{{.*}}iface" }, align 8
-// CHECK: [[METHOD_ENV:%.*]] = alloca { ptr }, align 8
 // A closure without free variables carries a null environment.
 // CHECK: [[NO_FREE:%.*]] = call %main.Fn @main.makeNoFree()
 // CHECK: [[WITH_FREE:%.*]] = call %main.Fn @main.makeWithFree(i64 3)
@@ -111,15 +111,14 @@ func makeWithFree(base int) Fn {
 // ARM64: call i64 [[WITH_FREE_CODE]](ptr swiftself [[WITH_FREE_ENV]], i64 2)
 // AMD64: call i64 [[WITH_FREE_CODE]](ptr nest [[WITH_FREE_ENV]], i64 2)
 // CHECK: call i64 @main.globalAdd(i64 1, i64 2)
-// A bound pointer method stores the receiver in the closure environment.
+// A bound pointer method passes the receiver directly in the closure environment.
 // CHECK: [[S:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocAtomicU"(i64 8)
 // CHECK-NEXT: call void @llvm.memset.p0.i64(ptr [[S]], i8 0, i64 8, i1 false)
 // CHECK-NEXT: [[S_FIELD:%[0-9]+]] = getelementptr inbounds nuw %main.S, ptr [[S]], i32 0, i32 0
 // CHECK-NEXT: store i64 5, ptr [[S_FIELD]]
-// CHECK: call void @llvm.memset.p0.i64(ptr [[METHOD_ENV]], i8 0, i64 8, i1 false)
-// CHECK: [[METHOD_ENV_SLOT:%.*]] = getelementptr inbounds nuw { ptr }, ptr [[METHOD_ENV]], i32 0, i32 0
-// CHECK: store ptr [[S]], ptr [[METHOD_ENV_SLOT]]
-// CHECK: [[METHOD_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*S).Add$bound", ptr undef }, ptr [[METHOD_ENV]], 1
+// CHECK: [[S_NIL:%.*]] = icmp eq ptr [[S]], null
+// CHECK-NEXT: [[S_ENV:%.*]] = select i1 [[S_NIL]], ptr @"__llgo.directClosureNilEnv$", ptr [[S]]
+// CHECK-NEXT: [[METHOD_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.(*S).Add$bound", ptr undef }, ptr [[S_ENV]], 1
 // CHECK: [[METHOD_CALL_ENV:%.*]] = extractvalue { ptr, ptr } [[METHOD_FN]], 1
 // CHECK: [[METHOD_CODE_RAW:%.*]] = extractvalue { ptr, ptr } [[METHOD_FN]], 0
 // CHECK: [[METHOD_CODE:%.*]] = call ptr asm "", "=r,0"(ptr [[METHOD_CODE_RAW]])
@@ -178,9 +177,9 @@ func makeWithFree(base int) Fn {
 
 // ARM64-LABEL: define i64 @"main.(*S).Add$bound"(ptr swiftself %0, i64 %1){{.*}} {
 // AMD64-LABEL: define i64 @"main.(*S).Add$bound"(ptr nest %0, i64 %1){{.*}} {
-// CHECK: [[BOUND_ENV:%[0-9]+]] = load { ptr }, ptr %0
-// CHECK-NEXT: [[BOUND_RECEIVER:%[0-9]+]] = extractvalue { ptr } [[BOUND_ENV]], 0
-// CHECK-NEXT: [[BOUND_RESULT:%[0-9]+]] = call i64 @"main.(*S).Add"(ptr [[BOUND_RECEIVER]], i64 %1)
+// CHECK: [[BOUND_IS_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[BOUND_RECV:%[0-9]+]] = select i1 [[BOUND_IS_NIL]], ptr null, ptr %0
+// CHECK-NEXT: [[BOUND_RESULT:%[0-9]+]] = call i64 @"main.(*S).Add"(ptr [[BOUND_RECV]], i64 %1)
 // CHECK: ret i64 [[BOUND_RESULT]]
 
 // CHECK-LABEL: define i64 @"main.(*S).Add$thunk"(ptr %0, i64 %1){{.*}} {

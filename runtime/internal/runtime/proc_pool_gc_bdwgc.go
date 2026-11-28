@@ -1,0 +1,36 @@
+//go:build llgo && !nogc && !wasm && !baremetal
+
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package runtime
+
+import (
+	"unsafe"
+
+	c "github.com/xgo-dev/llgo/runtime/internal/clite"
+	"github.com/xgo-dev/llgo/runtime/internal/clite/bdwgc"
+)
+
+//llgo:cdecl
+type mPoolBlockingFunc func(unsafe.Pointer) unsafe.Pointer
+
+// mPoolDoBlocking parks an idle pooled thread outside BDWGC's active thread set
+// so stop-the-world collections neither signal the idle thread nor scan frames
+// below the park call.
+func mPoolDoBlocking(fn mPoolBlockingFunc, arg unsafe.Pointer) {
+	bdwgc.DoBlocking(bdwgc.BlockingFunc(fn), c.Pointer(arg))
+}

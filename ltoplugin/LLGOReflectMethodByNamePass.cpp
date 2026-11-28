@@ -47,6 +47,8 @@ static constexpr char RuntimeStringCatSuffix[] =
     "runtime/internal/runtime.StringCat";
 static constexpr char RuntimeStringCatBufferSuffix[] =
     "runtime/internal/runtime.StringCatBuffer";
+static constexpr char RuntimeStringConcatName[] =
+    "github.com/xgo-dev/llgo/runtime/internal/runtime.StringConcat";
 static constexpr char RuntimeStringSliceSuffix[] =
     "runtime/internal/runtime.StringSlice";
 static constexpr char RuntimeStringSlice2Suffix[] =
@@ -89,7 +91,7 @@ std::optional<std::string> readConstantString(Value *Ptr, Value *Len,
     return std::nullopt;
 
   auto *GV = dyn_cast<GlobalVariable>(Base->stripPointerCasts());
-  if (!GV || !GV->hasInitializer())
+  if (!GV || !GV->isConstant() || !GV->hasDefinitiveInitializer())
     return std::nullopt;
 
   auto *Data = dyn_cast<ConstantDataArray>(GV->getInitializer());
@@ -886,6 +888,155 @@ bool collectStringSetFromLocalSlots(LoadInst *PtrLoad, LoadInst *LenLoad,
   return true;
 }
 
+struct ConcatSlot {
+  Value *StringOrPointer = nullptr;
+  Value *Length = nullptr;
+};
+
+// Audit every use and record each whole String or exact field store once.
+// The reader checks the complete representation after all stores are known.
+bool collectStringConcatSlots(AllocaInst *Base, StructType *ElemTy,
+                              CallBase *At, const DataLayout &DL,
+                              MutableArrayRef<ConcatSlot> Slots) {
+  uint64_t TableSize = DL.getTypeAllocSize(Base->getAllocatedType());
+  uint64_t ElemSize = DL.getTypeAllocSize(ElemTy);
+  uint64_t LenOffset = DL.getStructLayout(ElemTy)->getElementOffset(1);
+  SmallVector<Value *, 16> Work{Base};
+  SmallPtrSet<Value *, 32> Seen;
+  SmallVector<StoreInst *, 16> Stores;
+  MemSetInst *Initializer = nullptr;
+  while (!Work.empty()) {
+    Value *V = Work.pop_back_val();
+    if (!Seen.insert(V).second)
+      continue;
+    for (Use &Operand : V->uses()) {
+      User *U = Operand.getUser();
+      // Unknown bundles can capture pointers and affect memory before/after
+      // the callee. Checking the callee alone does not prove this use safe.
+      if (auto *Call = dyn_cast<CallBase>(U); Call && Call->hasOperandBundles())
+        return false;
+      if (auto *Store = dyn_cast<StoreInst>(U)) {
+        int64_t Offset = 0;
+        Value *StoreBase = GetPointerBaseWithConstantOffset(
+            Store->getPointerOperand(), Offset, DL);
+        Value *Stored = Store->getValueOperand();
+        if (!Store->isSimple() ||
+            Operand.getOperandNo() != StoreInst::getPointerOperandIndex() ||
+            StoreBase != Base || Offset < 0 ||
+            static_cast<uint64_t>(Offset) >= TableSize)
+          return false;
+        auto &Slot = Slots[static_cast<uint64_t>(Offset) / ElemSize];
+        uint64_t FieldOffset = static_cast<uint64_t>(Offset) % ElemSize;
+        Type *Ty = Stored->getType();
+        if (FieldOffset == 0) {
+          if (Ty != ElemTy && Ty != ElemTy->getElementType(0))
+            return false;
+        } else if (FieldOffset != LenOffset || Ty != ElemTy->getElementType(1)) {
+          return false;
+        }
+        Value *&RecordedValue =
+            FieldOffset == 0 ? Slot.StringOrPointer : Slot.Length;
+        if (RecordedValue)
+          return false;
+        RecordedValue = Stored;
+        Stores.push_back(Store);
+        continue;
+      }
+      if (isa<GEPOperator>(U) || isa<BitCastOperator>(U) ||
+          isa<AddrSpaceCastOperator>(U)) {
+        Work.push_back(U);
+        continue;
+      }
+      if (auto *Set = dyn_cast<MemSetInst>(U)) {
+        auto *Byte = dyn_cast<ConstantInt>(Set->getValue());
+        auto *Size = dyn_cast<ConstantInt>(Set->getLength());
+        if (&Operand != &Set->getRawDestUse() || Initializer ||
+            Set->isVolatile() || !Byte || !Byte->isZero() || !Size ||
+            Size->getValue() != TableSize ||
+            !isByteOffsetFrom(Set->getDest(), Base, 0, DL))
+          return false;
+        Initializer = Set;
+        continue;
+      }
+      if (auto *Lifetime = dyn_cast<LifetimeIntrinsic>(U);
+          Lifetime && &Operand == &Lifetime->getArgOperandUse(0))
+        continue;
+      // Only the data argument borrows the table. Other arguments or ABI
+      // forms must not inherit that guarantee from the callee's identity.
+      if (U == At && &Operand == &At->getArgOperandUse(0))
+        continue;
+      return false;
+    }
+  }
+  DominatorTree DT(*Base->getFunction());
+  for (StoreInst *Store : Stores) {
+    if (!DT.dominates(Store, At) ||
+        (Initializer && !DT.dominates(Initializer, Store)))
+      return false;
+  }
+  return true;
+}
+
+// The compiler passes the start of one fixed array and its exact element count.
+// Recover only that shape; unknown aliases or writes keep reflection generic.
+bool collectStringSetFromStringConcat(CallBase *CB, const DataLayout &DL,
+                                      SmallVectorImpl<std::string> &Names,
+                                      unsigned Depth) {
+  Function *Callee = CB ? CB->getCalledFunction() : nullptr;
+  if (!Callee || Callee->getName() != RuntimeStringConcatName ||
+      CB->arg_size() != 3 ||
+      !CB->getArgOperand(0)->getType()->isPointerTy() ||
+      !CB->getArgOperand(2)->getType()->isPointerTy())
+    return false;
+  auto *Count = dyn_cast<ConstantInt>(CB->getArgOperand(1));
+  if (!Count || (Count->getBitWidth() != 32 && Count->getBitWidth() != 64) ||
+      Count->getBitWidth() != DL.getPointerSizeInBits() || Count->isNegative() ||
+      Count->isZero() || Count->getZExtValue() > MaxConstantGEPChoices)
+    return false;
+  auto *Base = dyn_cast<AllocaInst>(CB->getArgOperand(0)->stripPointerCasts());
+  if (!Base || Base->isArrayAllocation())
+    return false;
+  auto *ArrayTy = dyn_cast<ArrayType>(Base->getAllocatedType());
+  if (!ArrayTy || ArrayTy->getNumElements() != Count->getZExtValue())
+    return false;
+  auto *ElemTy = dyn_cast<StructType>(ArrayTy->getElementType());
+  if (!ElemTy || ElemTy->getNumElements() != 2 ||
+      ElemTy->getElementType(0) != CB->getArgOperand(0)->getType() ||
+      ElemTy->getElementType(1) != CB->getArgOperand(1)->getType())
+    return false;
+
+  SmallVector<ConcatSlot, 16> Slots(ArrayTy->getNumElements());
+  if (!collectStringConcatSlots(Base, ElemTy, CB, DL, Slots))
+    return false;
+
+  SmallVector<std::string, 4> Prefixes;
+  Prefixes.push_back("");
+  for (const ConcatSlot &Slot : Slots) {
+    if (!Slot.StringOrPointer)
+      return false;
+    SmallVector<std::string, 4> Parts;
+    if (Slot.StringOrPointer->getType() == ElemTy) {
+      if (Slot.Length ||
+          !collectStringSetFromStringValue(Slot.StringOrPointer, DL, Parts,
+                                           Depth + 1))
+        return false;
+    } else if (!Slot.Length ||
+               !collectStringSet(Slot.StringOrPointer, Slot.Length, DL, Parts,
+                                  Depth + 1)) {
+      return false;
+    }
+    SmallVector<std::string, 4> Combined;
+    if (!addConcatenatedNames(Combined, Prefixes, Parts))
+      return false;
+    Prefixes = std::move(Combined);
+  }
+  for (const std::string &Name : Prefixes) {
+    if (!addName(Names, Name))
+      return false;
+  }
+  return !Prefixes.empty();
+}
+
 bool collectStringSetFromFunctionStringArg(Value *Ptr, Value *Len,
                                            const DataLayout &DL,
                                            SmallVectorImpl<std::string> &Names,
@@ -999,6 +1150,8 @@ bool collectStringSetFromStringValue(Value *StringValue, const DataLayout &DL,
 
   if (auto *CB = dyn_cast<CallBase>(StringValue)) {
     if (collectStringSetFromStringSlice(CB, DL, Names, Depth))
+      return true;
+    if (collectStringSetFromStringConcat(CB, DL, Names, Depth))
       return true;
     if (collectStringSetFromStringCat(CB, DL, Names, Depth))
       return true;
@@ -1265,10 +1418,10 @@ std::optional<StaticItabSlot> resolveStaticItabSlot(Value *Pointer,
 }
 
 std::optional<uint64_t> checkedLoadOffset(CallBase *CheckedLoad) {
-  if (!CheckedLoad || CheckedLoad->arg_size() < 2)
+  if (!isTypeCheckedLoad(CheckedLoad) || CheckedLoad->arg_size() < 2)
     return std::nullopt;
   auto *Offset = dyn_cast<ConstantInt>(CheckedLoad->getArgOperand(1));
-  if (!Offset || Offset->isNegative())
+  if (!Offset || Offset->isNegative() || Offset->getValue().getActiveBits() > 64)
     return std::nullopt;
   return Offset->getZExtValue();
 }

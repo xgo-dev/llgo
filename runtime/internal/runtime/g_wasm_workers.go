@@ -27,6 +27,19 @@ func setg(gp *g) {
 	worker.m.curg = gp
 }
 
+// ThreadDeferSlot returns the current goroutine's defer chain slot.
+// Scheduler system-stack work on WebAssembly workers runs with getg() == nil
+// and cannot install Go defer frames (panicking via AssertNilDeref would
+// recursively dereference nil g inside Panic). Fail fast instead.
+func ThreadDeferSlot() **Defer {
+	gp := getg()
+	if gp == nil {
+		fatal("runtime: defer without a current goroutine")
+		return nil
+	}
+	return (**Defer)(unsafe.Add(unsafe.Pointer(gp), unsafe.Offsetof(gp.defer_)))
+}
+
 func currentWasmWorker() *wasmWorker {
 	return (*wasmWorker)(wasmworkers.Current())
 }

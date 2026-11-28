@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -56,7 +57,11 @@ func main() { `+tt.body+` }
 			ctx := &context{buildConf: &Config{}}
 			init := osPkg.Func(darwinExecutableCwdInitializer)
 			blockCount := len(init.Blocks)
-			configureDarwinExecutableCwd(ctx, osPkg, []*ssa.Function{mainPkg.Func("init"), mainPkg.Func("main")},
+			blocks := init.Blocks
+			init.Blocks = nil
+			result := rta.Analyze([]*ssa.Function{mainPkg.Func("init"), mainPkg.Func("main")}, false)
+			init.Blocks = blocks
+			configureDarwinExecutableCwd(ctx, osPkg, result,
 				func(name string) bool { return name == tt.root })
 			if len(init.Blocks) != blockCount {
 				t.Fatal("startup body changed in the shared package")

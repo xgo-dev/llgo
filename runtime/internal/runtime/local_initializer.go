@@ -31,6 +31,7 @@ const (
 // in the current owner. Recursive access observes partial initialization; a
 // recovered failure remains failed and re-panics on every later access.
 func EnsureLocalInitializer(state *uint8, failureCache *uintptr, initialize func()) {
+	markTouchedLocal()
 	ensureLocalInitializer(state, nil, failureCache, initialize)
 }
 
