@@ -36,6 +36,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/goescape"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"golang.org/x/tools/go/ssa"
 
@@ -1141,25 +1142,45 @@ func isGlobal(v *types.Var) bool {
 	return scope != nil && scope.Parent() == types.Universe
 }
 
-func (p *context) debugRef(b llssa.Builder, v *ssa.DebugRef) {
-	object := v.Object()
-	variable, ok := object.(*types.Var)
-	if !ok {
-		// Not a local variable.
-		return
-	}
-	if variable.IsField() {
-		// skip *ssa.FieldAddr
-		return
-	}
-	if isGlobal(variable) {
-		// avoid generate local variable debug info of global variable in function
-		return
+func (p *context) debugRefVariable(ref *ssa.DebugRef) *types.Var {
+	variable, _ := ref.Object().(*types.Var)
+	if variable == nil || variable.IsField() || isGlobal(variable) {
+		return nil
 	}
 	if p.debugAllocObjects[variable] {
 		// The variable already has a declaration tied to its real storage.
 		// At any optimization level, a value DebugRef for an aggregate would
 		// replace it with a snapshot instead of tracking later memory writes.
+		return nil
+	}
+	return variable
+}
+
+// needsDebugValue protects source variables before executable lowering omits
+// their values. Optimized builds may still discard these debug-only uses.
+func (p *context) needsDebugValue(v ssa.Value) bool {
+	if !p.options.DebugSymbols || p.prog.Target().OptLevel != optlevel.O0 {
+		return false
+	}
+	refs := v.Referrers()
+	if refs == nil {
+		return false
+	}
+	for _, use := range *refs {
+		ref, ok := use.(*ssa.DebugRef)
+		if !ok || ref.IsAddr || ref.Parent().Origin() != nil {
+			continue
+		}
+		if variable := p.debugRefVariable(ref); variable != nil && variable.Name() != "_" {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *context) debugRef(b llssa.Builder, v *ssa.DebugRef) {
+	variable := p.debugRefVariable(v)
+	if variable == nil {
 		return
 	}
 	if stable, ok := p.debugStableParams[variable]; ok {

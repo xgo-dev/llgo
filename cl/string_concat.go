@@ -76,7 +76,7 @@ func (p *context) prepareStringConcatPlans(fn *ssa.Function) {
 
 // Each group is a contiguous subtree in SSA evaluation order. A new addition
 // can absorb the preceding groups only while their results feed it exclusively.
-// A full group stays materialized and can be an operand of the next group.
+// Full groups and needed debug values stay materialized for the next group.
 func (p *context) planStringConcatRun(run []*ssa.BinOp) {
 	if len(run) < 2 {
 		return
@@ -85,8 +85,9 @@ func (p *context) planStringConcatRun(run []*ssa.BinOp) {
 	for i, add := range run {
 		for len(ends) > 1 {
 			start, end := ends[len(ends)-2], ends[len(ends)-1]
+			previous := run[end-1]
 			// The subtree run[start:i+1] has one more operand than additions.
-			if i-start+2 > maxStringConcatParts || singleNonDebugReferrer(run[end-1]) != add {
+			if i-start+2 > maxStringConcatParts || singleNonDebugReferrer(previous) != add || p.needsDebugValue(previous) {
 				break
 			}
 			ends = ends[:len(ends)-1]

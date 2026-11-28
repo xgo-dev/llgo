@@ -14,6 +14,7 @@ import (
 	llabi "github.com/xgo-dev/llgo/internal/abi"
 	"github.com/xgo-dev/llgo/internal/cabi"
 	"github.com/xgo-dev/llgo/internal/filecheck"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llvm"
 	"golang.org/x/tools/go/ssa"
@@ -275,7 +276,12 @@ func crossBlockLeaf(a, b, c, d string, branch bool) string { x := a+b; if branch
 func TestStringConcatDebugRefs(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "concat.go", `package concatdebug
-func join(a, b, c string) string { x := a+b; return x+c }
+func join(a, b, c string) string { prefix := a+b; return prefix+c }
+func tail(a, b, c, d string) string { tailPrefix := a+b; return tailPrefix+c+d }
+func groups(a, b, c, d, e string) string { chunk := a+b+c; return chunk+d+e }
+func root(a, b, c string) string { result := a+b+c; return result }
+func expression(a, b, c string) string { return a+b+c }
+func reassigned(seed, b, c string) string { seed = seed+b; return seed+c }
 `, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -286,29 +292,58 @@ func join(a, b, c string) string { x := a+b; return x+c }
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := lastStringAdd(pkg.Func("join"))
-	intermediate := root.X.(*ssa.BinOp)
-	hasDebugRef := false
-	for _, ref := range *intermediate.Referrers() {
-		if _, ok := ref.(*ssa.DebugRef); ok {
-			hasDebugRef = true
-		}
-	}
-	if !hasDebugRef {
-		t.Fatal("fixture must have a DebugRef to the eliminated intermediate")
-	}
-	prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64"})
-	defer prog.Dispose()
-	compiled, _, err := newPackageEx(prog, nil, nil, nil, pkg, files, nil, false, Options{Debug: true, DebugSymbols: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := llvm.VerifyModule(compiled.Module(), llvm.ReturnStatusAction); err != nil {
-		t.Fatal(err)
-	}
-	body := llvmFunction(t, compiled.String(), "concatdebug.join")
-	if strings.Count(body, "runtime/internal/runtime.StringConcat") != 1 || strings.Contains(body, "runtime/internal/runtime.StringCat") {
-		t.Fatalf("debug lowering rematerialized an eliminated concat:\n%s", body)
+	for _, tc := range []struct {
+		name    string
+		level   optlevel.Level
+		symbols bool
+	}{
+		{"O0", optlevel.O0, true},
+		{"Os", optlevel.Os, true},
+		{"O2", optlevel.O2, true},
+		{"O0/no-symbols", optlevel.O0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := newLLSSAProgForTarget(t, &llssa.Target{GOOS: "linux", GOARCH: "amd64", OptLevel: tc.level})
+			defer prog.Dispose()
+			compiled, _, err := newPackageEx(prog, nil, nil, nil, pkg, files, nil, false,
+				Options{Debug: tc.symbols, DebugSymbols: tc.symbols})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := llvm.VerifyModule(compiled.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+			ir := compiled.String()
+			preserve := tc.level == optlevel.O0 && tc.symbols
+			if preserve {
+				for _, variable := range []string{"prefix", "tailPrefix", "chunk"} {
+					assertDebugRecords(t, ir, `name: "`+variable+`"`, false, true)
+				}
+				assertDebugHomeStores(t, ir, llvmFunction(t, ir, "concatdebug.reassigned"), `name: "seed", arg: 1`, 2)
+			}
+			if tc.symbols {
+				assertDebugRecords(t, ir, `name: "result"`, false, true)
+			}
+			for _, fn := range []struct {
+				name           string
+				concat, binary int // Calls when intermediate debug values are preserved.
+			}{
+				{"join", 0, 2}, {"tail", 1, 1}, {"groups", 2, 0},
+				{"root", 1, 0}, {"expression", 1, 0}, {"reassigned", 0, 2},
+			} {
+				body := llvmFunction(t, ir, "concatdebug."+fn.name)
+				concat := strings.Count(body, "runtime/internal/runtime.StringConcat")
+				binary := strings.Count(body, "runtime/internal/runtime.StringCat")
+				wantConcat, wantBinary := 1, 0
+				if preserve {
+					wantConcat, wantBinary = fn.concat, fn.binary
+				}
+				if concat != wantConcat || binary != wantBinary {
+					t.Errorf("%s: concat/binary calls = %d/%d, want %d/%d:\n%s",
+						fn.name, concat, binary, wantConcat, wantBinary, body)
+				}
+			}
+		})
 	}
 }
 
