@@ -90,19 +90,23 @@ func syncRuntimePoolLocalSet(handle, local unsafe.Pointer) {
 	if meta.id < poolFastSlotLimit {
 		id := int(meta.id)
 		if id >= len(locals.fast) {
-			newCap := id + 1
-			if newCap < 8 {
-				newCap = 8
+			if id < cap(locals.fast) {
+				locals.fast = locals.fast[:id+1]
+			} else {
+				newCap := id + 1
+				if newCap < 8 {
+					newCap = 8
+				}
+				if cap(locals.fast)*2 > newCap {
+					newCap = cap(locals.fast) * 2
+				}
+				if newCap > poolFastSlotLimit {
+					newCap = poolFastSlotLimit
+				}
+				grown := make([]poolLocalEntry, id+1, newCap)
+				copy(grown, locals.fast)
+				locals.fast = grown
 			}
-			if cap(locals.fast)*2 > newCap {
-				newCap = cap(locals.fast) * 2
-			}
-			if newCap > poolFastSlotLimit {
-				newCap = poolFastSlotLimit
-			}
-			grown := make([]poolLocalEntry, id+1, newCap)
-			copy(grown, locals.fast)
-			locals.fast = grown
 		}
 		locals.fast[id] = poolLocalEntry{victim: meta.victim, local: local}
 		return
