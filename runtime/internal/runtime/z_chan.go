@@ -46,7 +46,7 @@ type Chan struct {
 	sendq chanWaitq
 	recvq chanWaitq
 
-	// Lock-free exponential-backoff spin cooldown word (Darwin fast-path
+	// Lock-free exponential-backoff spin cooldown word (address-wait fast-path
 	// parkFast). Placed after the mutex-protected queue headers to keep
 	// sleeping-waiter backoff writes away from recvReady/mutex hot fields.
 	spinCooldown uint32
@@ -392,9 +392,10 @@ func (w *chanWaiter) wait() waitStatus {
 }
 
 // finish keeps the signal locked through ready on the mutex/cond backend. On
-// the lock-free fast path (non-synctest Darwin os_sync_wait_on_address), readyFast
-// uses a 4-state atomic handshake (sigPending/sigSleeping -> sigWaking -> sigDone)
-// so the waiter never reuses or destroys its signal until readyFast completes.
+// the lock-free fast path (non-synctest Darwin/Linux/Windows address-wait),
+// readyFast uses a 4-state atomic handshake (sigPending/sigSleeping ->
+// sigWaking -> sigDone) so the waiter never reuses or destroys its signal until
+// readyFast completes.
 func (w *chanWaiter) finish(status waitStatus) {
 	if w.sel != nil {
 		if w.sel.fastWait {

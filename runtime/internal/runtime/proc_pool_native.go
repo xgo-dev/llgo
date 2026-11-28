@@ -26,9 +26,9 @@ import (
 )
 
 // mPoolSlot holds per-worker parking state. On backends where sig.useFast() is
-// true (Darwin macOS 14.4+), assignment uses the lock-free sig.resetFast /
-// parkIdleFast / readyFast handshake without touching hasWork; portable
-// backends synchronize work handoff via hasWork under sig.lock().
+// true (Darwin macOS 14.4+, Linux, Windows), assignment uses the lock-free
+// sig.resetFast / parkIdleFast / readyFast handshake without touching hasWork;
+// portable backends synchronize work handoff via hasWork under sig.lock().
 type mPoolSlot struct {
 	next    *runtimeContext
 	sig     chanSignal

@@ -183,10 +183,44 @@ int llgo_win_cond_timedwait(llgo_condition_variable *condition,
     return error == llgo_error_timeout ? llgo_timedout : (int)error;
 }
 
+typedef struct {
+    volatile unsigned int *address;
+    unsigned int value;
+    int error;
+} llgo_wait_uint32_call;
+
+static void *llgo_wait_uint32_inactive_cb(void *raw)
+{
+    llgo_wait_uint32_call *call = (llgo_wait_uint32_call *)raw;
+    call->error = WaitOnAddress(
+        call->address, &call->value, sizeof(call->value), LLGO_INFINITE)
+        ? 0 : (int)GetLastError();
+    return 0;
+}
+
 int llgo_win_wait_uint32(volatile unsigned int *address,
                          unsigned int value)
 {
-    if (WaitOnAddress(address, &value, sizeof(value), LLGO_INFINITE))
-        return 0;
-    return (int)GetLastError();
+    llgo_wait_uint32_call call = {address, value, 0};
+    /* Match llgo_cond_wait: keep MSVC ARM64 active for LLDB Go-frame unwinding. */
+#if defined(LLGO_USE_BDWGC) && !(defined(_MSC_VER) && defined(_M_ARM64))
+    GC_do_blocking(llgo_wait_uint32_inactive_cb, &call);
+#else
+    llgo_wait_uint32_inactive_cb(&call);
+#endif
+    return call.error;
+}
+
+/* Match llgo_win_cond_wait_inactive: detached idle worker threads carry no Go
+ * frames, so park them outside BDWGC's active set on every Windows ABI. */
+int llgo_win_wait_uint32_inactive(volatile unsigned int *address,
+                                  unsigned int value)
+{
+    llgo_wait_uint32_call call = {address, value, 0};
+#if defined(LLGO_USE_BDWGC)
+    GC_do_blocking(llgo_wait_uint32_inactive_cb, &call);
+#else
+    llgo_wait_uint32_inactive_cb(&call);
+#endif
+    return call.error;
 }

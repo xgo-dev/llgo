@@ -1,4 +1,4 @@
-//go:build !darwin && (!llgo || !wasm || (wasip1 && llgo.wasi_threads))
+//go:build !darwin && !(linux && !baremetal) && !windows && (!llgo || !wasm || (wasip1 && llgo.wasi_threads))
 
 package runtime
 
