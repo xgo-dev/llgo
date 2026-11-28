@@ -23,6 +23,9 @@ func effectiveGoWork(dir string, cmdEnv commandEnv, buildFlags []string) string 
 		if f == "-gowork=off" {
 			return "off"
 		}
+		if f == "-gowork=auto" {
+			break
+		}
 		if strings.HasPrefix(f, "-gowork=") {
 			return strings.TrimPrefix(f, "-gowork=")
 		}
@@ -34,6 +37,9 @@ func effectiveGoWork(dir string, cmdEnv commandEnv, buildFlags []string) string 
 				if f == "-gowork=off" {
 					return "off"
 				}
+				if f == "-gowork=auto" {
+					break
+				}
 				if strings.HasPrefix(f, "-gowork=") {
 					return strings.TrimPrefix(f, "-gowork=")
 				}
@@ -41,7 +47,10 @@ func effectiveGoWork(dir string, cmdEnv commandEnv, buildFlags []string) string 
 		}
 	}
 	gowork := commandEnvLookup(cmdEnv, "GOWORK")
-	if gowork != "" {
+	if gowork == "off" {
+		return "off"
+	}
+	if gowork != "" && gowork != "auto" {
 		return gowork
 	}
 	if dir == "" {
@@ -105,11 +114,54 @@ func recordEffectiveGoWork(h io.Writer, dir string, cmdEnv commandEnv, buildFlag
 	fmt.Fprintf(h, "workmissing=%s\x00", work)
 }
 
+// recordEffectiveGoMod records the content digest of the effective go.mod file.
+func recordEffectiveGoMod(h io.Writer, dir string, modFile string, overlay map[string][]byte) {
+	if modFile == "" {
+		if dir == "" {
+			dir, _ = os.Getwd()
+		}
+		cur := filepath.Clean(dir)
+		for {
+			cand := filepath.Join(cur, "go.mod")
+			if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+				modFile = cand
+				break
+			}
+			parent := filepath.Dir(cur)
+			if parent == cur {
+				break
+			}
+			cur = parent
+		}
+	}
+	if modFile == "" {
+		fmt.Fprintf(h, "mod=none\x00")
+		return
+	}
+	modFile = filepath.Clean(modFile)
+	if overlay != nil {
+		if data, ok := overlay[modFile]; ok {
+			fmt.Fprintf(h, "modcontent=%s:%s\x00", modFile, digestBytes(data))
+			return
+		}
+	}
+	if data, err := os.ReadFile(modFile); err == nil {
+		fmt.Fprintf(h, "modcontent=%s:%s\x00", modFile, digestBytes(data))
+		return
+	}
+	if fi, err := os.Stat(modFile); err == nil {
+		fmt.Fprintf(h, "modstat=%s:%d:%d\x00", modFile, fi.Size(), fi.ModTime().UnixNano())
+		return
+	}
+	fmt.Fprintf(h, "modmissing=%s\x00", modFile)
+}
+
 // isolateNestedModuleWorkspace disables implicit parent go.work discovery when
 // building inside a standalone nested Go module that is not listed in that
 // workspace's use directives. Explicit GOWORK settings are always respected.
 func isolateNestedModuleWorkspace(dir string, environ []string) []string {
-	if (commandEnv{environ: environ}).lookup("GOWORK") != "" {
+	gowork := (commandEnv{environ: environ}).lookup("GOWORK")
+	if gowork != "" && gowork != "auto" {
 		return environ
 	}
 	absDir, err := filepath.Abs(dir)

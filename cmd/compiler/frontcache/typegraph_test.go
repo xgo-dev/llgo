@@ -567,3 +567,46 @@ func G[T comparable](x []T) {}
 		t.Fatalf("import G: %v", err)
 	}
 }
+
+func TestTypeGraphInstantiatedNamedReusesGenericPrototype(t *testing.T) {
+	const source = `package p
+
+type Box[T any] struct {
+	Val T
+}
+`
+	prog, pkg, index := fixture(t, source, true)
+	boxType := pkg.Pkg.Scope().Lookup("Box").Type().(*types.Named)
+
+	boxInt, err := types.Instantiate(nil, boxType, []types.Type{types.Typ[types.Int]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	graph := NewTypeGraph(index, prog.Fset)
+	boxIntID := graph.Add(boxInt)
+
+	data, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded TypeGraph
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh := types.NewPackage(pkg.Pkg.Path(), pkg.Pkg.Name())
+	importer := &TypeImporter{
+		Graph:    &decoded,
+		Existing: index,
+		Packages: map[string]*types.Package{fresh.Path(): fresh},
+	}
+	imported, err := importer.Import(boxIntID)
+	if err != nil {
+		t.Fatalf("import Box[int]: %v", err)
+	}
+
+	if !types.Identical(imported, boxInt) {
+		t.Fatalf("imported Box[int] (%p) not identical to original Box[int] (%p)", imported, boxInt)
+	}
+}

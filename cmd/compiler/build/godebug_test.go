@@ -437,3 +437,53 @@ func TestDefaultGODEBUGExplicitGOWORKInvalidation(t *testing.T) {
 	}
 	godebugAssertProgram(t, conf2.OutFile, "false false")
 }
+
+func TestDefaultGODEBUGAutoGOWORKAndGoModContentInvalidation(t *testing.T) {
+	root := godebugFixture(t)
+	modFile := filepath.Join(root, "go.mod")
+	writeFile(t, modFile, "module example.com/debugauto\ngo 1.27.0\ngodebug randseednop=0\n")
+	writeFile(t, filepath.Join(root, "main.go"), godebugMainSource)
+
+	// 1. Invalidate go.mod content while preserving size and modtime
+	fi, err := os.Stat(modFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := godebugConfig(ModeBuild)
+	conf.OutFile = filepath.Join(t.TempDir(), "app"+defaultAppExt(conf))
+	if _, err := Build(Invocation{Dir: root, Config: conf}); err != nil {
+		t.Fatal(err)
+	}
+	godebugAssertProgram(t, conf.OutFile, "true true")
+
+	// Change randseednop=0 to randseednop=1 (same length!) and restore mtime
+	writeFile(t, modFile, "module example.com/debugauto\ngo 1.27.0\ngodebug randseednop=1\n")
+	_ = os.Chtimes(modFile, fi.ModTime(), fi.ModTime())
+
+	conf2 := godebugConfig(ModeBuild)
+	conf2.OutFile = filepath.Join(t.TempDir(), "app2"+defaultAppExt(conf2))
+	if _, err := Build(Invocation{Dir: root, Config: conf2}); err != nil {
+		t.Fatal(err)
+	}
+	godebugAssertProgram(t, conf2.OutFile, "false false")
+
+	// 2. GOWORK=auto should discover go.work upward from current directory
+	t.Setenv("GOWORK", "auto")
+	workFile := filepath.Join(root, "go.work")
+	writeFile(t, workFile, "go 1.27.0\nuse .\ngodebug randseednop=0\n")
+
+	conf3 := godebugConfig(ModeBuild)
+	conf3.OutFile = filepath.Join(t.TempDir(), "app3"+defaultAppExt(conf3))
+	if _, err := Build(Invocation{Dir: root, Config: conf3}); err != nil {
+		t.Fatal(err)
+	}
+	godebugAssertProgram(t, conf3.OutFile, "true true")
+
+	writeFile(t, workFile, "go 1.27.0\nuse .\ngodebug randseednop=1\n")
+	conf4 := godebugConfig(ModeBuild)
+	conf4.OutFile = filepath.Join(t.TempDir(), "app4"+defaultAppExt(conf4))
+	if _, err := Build(Invocation{Dir: root, Config: conf4}); err != nil {
+		t.Fatal(err)
+	}
+	godebugAssertProgram(t, conf4.OutFile, "false false")
+}

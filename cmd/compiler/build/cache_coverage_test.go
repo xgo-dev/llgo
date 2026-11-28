@@ -449,7 +449,7 @@ func TestExportSidecarLazyDepAndCollectHelpers(t *testing.T) {
 		t.Fatalf("write dep export meta: %v", err)
 	}
 	// Clear in-memory exportMeta so the dependent's writeExportMetaSidecar must load it lazily.
-	depPkg.exportMeta = nil
+	depPkg.setExportMeta(nil)
 	ctx.pkgByID[depPkg.ID] = depPkg
 
 	callerFile, err := parser.ParseFile(fset, "caller.go", "package caller\nfunc Use() int { return 1 }\n", 0)

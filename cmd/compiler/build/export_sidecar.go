@@ -61,7 +61,7 @@ func (c *context) writeExportMetaSidecar(path string, pkg *aPackage) error {
 	if pkg == nil || pkg.SSA == nil || pkg.Package == nil {
 		return nil
 	}
-	meta := pkg.exportMeta
+	meta := pkg.getExportMeta()
 	if meta == nil {
 		importedEsc := make(map[string]*pkgmeta.EscapeSummary)
 		for _, dep := range pkg.Imports {
@@ -72,11 +72,12 @@ func (c *context) writeExportMetaSidecar(path string, pkg *aPackage) error {
 			if depPkg == nil {
 				continue
 			}
-			em := depPkg.exportMeta
+			em := depPkg.getExportMeta()
 			if em == nil && depPkg.CacheHit && depPkg.Fingerprint != "" {
 				depPaths := c.ensureCacheManager().PackagePaths(c.targetTriple(), depPkg.PkgPath, depPkg.Fingerprint)
 				if loaded, err := c.readExportMetaSidecar(depPaths.Export); err == nil {
 					em = loaded
+					depPkg.setExportMeta(loaded)
 				}
 			}
 			if em != nil {
@@ -84,7 +85,7 @@ func (c *context) writeExportMetaSidecar(path string, pkg *aPackage) error {
 			}
 		}
 		meta = pkgmeta.BuildPackageMeta(pkg.SSA, nil, importedEsc, pkgmeta.DefaultBudget)
-		pkg.exportMeta = meta
+		pkg.setExportMeta(meta)
 	}
 	if meta == nil {
 		return nil

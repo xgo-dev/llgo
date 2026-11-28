@@ -209,11 +209,17 @@ func (p *TypeImporter) isParameterized(id int) bool {
 			defer func() { visiting[curr] = false }()
 
 			n := &p.Graph.Nodes[curr]
-			if n.Kind == "parameter" || len(n.TypeParams) > 0 || len(n.RecvParams) > 0 {
+			if n.Kind == "parameter" {
 				p.paramNodes[curr] = true
 				return true
 			}
-			if n.Elem >= 0 && check(n.Elem) {
+			if n.Kind == "func" {
+				if len(n.TypeParams) > 0 || len(n.RecvParams) > 0 {
+					p.paramNodes[curr] = true
+					return true
+				}
+			}
+			if n.Elem >= 0 && n.Kind != "named" && n.Kind != "alias" && check(n.Elem) {
 				p.paramNodes[curr] = true
 				return true
 			}

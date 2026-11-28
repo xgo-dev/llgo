@@ -40,7 +40,7 @@ func defaultGODEBUGCachePath(cfg *packages.Config, goroot string, roots []*packa
 	for _, name := range []string{"GOOS", "GOARCH", "GOEXPERIMENT", "GOFLAGS", "GOWORK", "GOENV", "GO111MODULE", "GOTOOLCHAIN", "LLGO_TEST_GODEBUG_METADATA"} {
 		fmt.Fprintf(h, "%s=%s\x00", name, commandEnvLookup(cmdEnv, name))
 	}
-	fmt.Fprintf(h, "dirmod=%s\x00", findUpwardFileStat(cfg.Dir, "go.mod"))
+	recordEffectiveGoMod(h, cfg.Dir, "", cfg.Overlay)
 	recordEffectiveGoWork(h, cfg.Dir, cmdEnv, cfg.BuildFlags, cfg.Overlay)
 	// Extract exact //go:debug directives from already-parsed entry syntax so
 	// ordinary code edits hit the cache while //go:debug or go.mod edits miss.
@@ -58,13 +58,7 @@ func defaultGODEBUGCachePath(cfg *packages.Config, goroot string, roots []*packa
 		fmt.Fprintf(h, "pkg=%s\x00pdir=%s\x00", pkg.ID, pkg.Dir)
 		if pkg.Module != nil {
 			fmt.Fprintf(h, "modver=%s\x00", pkg.Module.GoVersion)
-			if pkg.Module.GoMod != "" {
-				if data, ok := cfg.Overlay[pkg.Module.GoMod]; ok {
-					fmt.Fprintf(h, "modov=%s:%s\x00", pkg.Module.GoMod, digestBytes(data))
-				} else if fi, err := os.Stat(pkg.Module.GoMod); err == nil {
-					fmt.Fprintf(h, "modst=%s:%d:%d\x00", pkg.Module.GoMod, fi.Size(), fi.ModTime().UnixNano())
-				}
-			}
+			recordEffectiveGoMod(h, pkg.Dir, pkg.Module.GoMod, cfg.Overlay)
 		}
 		recordEffectiveGoWork(h, pkg.Dir, cmdEnv, cfg.BuildFlags, cfg.Overlay)
 		var debugDirectives []string

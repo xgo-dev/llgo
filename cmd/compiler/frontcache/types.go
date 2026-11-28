@@ -368,10 +368,8 @@ func hasTypeParam(typ types.Type) bool {
 		case *types.TypeParam:
 			return true
 		case *types.Named:
-			if tp := t.TypeParams(); tp != nil && tp.Len() > 0 {
-				if ta := t.TypeArgs(); ta == nil || ta.Len() == 0 {
-					return true
-				}
+			if t.Origin() == t && t.TypeParams() != nil && t.TypeParams().Len() > 0 && (t.TypeArgs() == nil || t.TypeArgs().Len() == 0) {
+				return false
 			}
 			if ta := t.TypeArgs(); ta != nil {
 				for i := 0; i < ta.Len(); i++ {
@@ -380,7 +378,7 @@ func hasTypeParam(typ types.Type) bool {
 					}
 				}
 			}
-			return visit(t.Underlying())
+			return false
 		case *types.Pointer:
 			return visit(t.Elem())
 		case *types.Slice:

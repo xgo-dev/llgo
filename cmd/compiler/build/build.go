@@ -4468,7 +4468,20 @@ type aPackage struct {
 	Manifest       string               // manifest text content
 	CacheHit       bool                 // whether cache was hit
 	frontendOpaque *frontendExport      // validated body-independent archive contract
+	exportMetaMu   sync.RWMutex
 	exportMeta     *pkgmeta.PackageMeta // binary compiler summary sidecar
+}
+
+func (p *aPackage) getExportMeta() *pkgmeta.PackageMeta {
+	p.exportMetaMu.RLock()
+	defer p.exportMetaMu.RUnlock()
+	return p.exportMeta
+}
+
+func (p *aPackage) setExportMeta(meta *pkgmeta.PackageMeta) {
+	p.exportMetaMu.Lock()
+	defer p.exportMetaMu.Unlock()
+	p.exportMeta = meta
 }
 
 func (p *aPackage) appendTemporaryObjFiles(files ...string) {
