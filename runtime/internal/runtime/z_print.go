@@ -22,15 +22,12 @@ import (
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 )
 
-func boolCStr(v bool) *c.Char {
-	if v {
-		return c.Str("true")
-	}
-	return c.Str("false")
-}
-
 func PrintBool(v bool) {
-	c.Fputs(boolCStr(v), c.Stderr)
+	text := "false"
+	if v {
+		text = "true"
+	}
+	printScalarBytes(unsafe.Pointer(unsafe.StringData(text)), uint32(len(text)))
 }
 
 func PrintUint(v uint64) {
@@ -64,7 +61,7 @@ func printDecimal(v uint64, negative bool) {
 		i--
 		*(*byte)(unsafe.Add(buf, i)) = '-'
 	}
-	c.Fwrite(unsafe.Add(buf, i), 1, uintptr(21-i), c.Stderr)
+	printScalarBytes(unsafe.Add(buf, i), 21-i)
 }
 
 func PrintFloat(v float64) {

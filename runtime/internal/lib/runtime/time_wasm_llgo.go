@@ -17,13 +17,17 @@ import (
 var (
 	timerSchedulerHeap []*timerState
 	timerSchedulerMap  wordmap.Map[unsafe.Pointer, *timerState]
+	timerHooksReady    bool
 )
 
 //go:linkname registerWasmTimerHooks github.com/xgo-dev/llgo/runtime/internal/runtime.RegisterWasmTimerHooks
 func registerWasmTimerHooks(poll func(), wait func() (uint64, bool))
 
-func init() {
-	registerWasmTimerHooks(wasmPollTimers, wasmTimerWait)
+func ensureWasmTimerHooks() {
+	if !timerHooksReady {
+		registerWasmTimerHooks(wasmPollTimers, wasmTimerWait)
+		timerHooksReady = true
+	}
 }
 
 func startRuntimeTimer(r *runtimeTimer) {
@@ -33,6 +37,7 @@ func startRuntimeTimer(r *runtimeTimer) {
 	if r == nil {
 		return
 	}
+	ensureWasmTimerHooks()
 	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	if st == nil {
 		st = &timerState{r: r, heapIndex: -1}
@@ -77,6 +82,7 @@ func resetRuntimeTimer(r *runtimeTimer, when, period int64, update func()) bool 
 	if r == nil {
 		return false
 	}
+	ensureWasmTimerHooks()
 	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	wasActive := st != nil && st.active
 	if st == nil {

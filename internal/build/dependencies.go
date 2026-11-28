@@ -17,6 +17,7 @@
 package build
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -92,4 +93,18 @@ func linkedPackageClosure(ctx *context, root *packages.Package, built []*aPackag
 		}
 	}
 	return order
+}
+
+func mainLinkPackages(ctx *context, root *packages.Package, built []*aPackage) []Package {
+	if ctx.emscriptenDirectMain {
+		// A dependency of the preloaded runtime can itself have polls and Go
+		// frames. It should only require the runtime if the executable imports it.
+		imports := linkedPackageClosure(ctx, root, nil)
+		if !slices.ContainsFunc(imports, func(pkg Package) bool {
+			return pkg.NeedRt || pkg.NeedPyInit
+		}) {
+			return imports
+		}
+	}
+	return linkedPackageClosure(ctx, root, built)
 }

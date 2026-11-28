@@ -9,7 +9,7 @@
 // until its roots are gone. The collector can then wait or skip a cycle without
 // holding this mutex across Go allocation or TLS setup.
 static pthread_mutex_t world_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t world_changed = PTHREAD_COND_INITIALIZER;
+static _Atomic uint64_t world_change;
 static _Atomic uint32_t world_epoch;
 // A C call that cannot rendezvous aborts this collection instead of sweeping
 // a running stack. This is a deadline, not a periodic mutator wakeup.
@@ -43,9 +43,24 @@ static void world_unlock(void) {
     __builtin_trap();
 }
 
-static void world_wait(void) {
-  if (pthread_cond_wait(&world_changed, &world_mutex) != 0)
-    __builtin_trap();
+// Save the generation while holding the mutex. A transition between unlock
+// and atomic wait then changes the expected value instead of losing a wakeup.
+static int world_wait_for(int64_t timeout) {
+  uint64_t change = atomic_load_explicit(&world_change, memory_order_relaxed);
+  world_unlock();
+  int status = __builtin_wasm_memory_atomic_wait64((long long *)&world_change,
+                                                   change, timeout);
+  world_lock();
+  return status;
+}
+
+enum { WASM_ATOMIC_WAIT_TIMED_OUT = 2 };
+
+static void world_wait(void) { (void)world_wait_for(-1); }
+
+static void world_signal(void) {
+  atomic_fetch_add_explicit(&world_change, 1, memory_order_relaxed);
+  __builtin_wasm_memory_atomic_notify((int *)&world_change, INT32_MAX);
 }
 
 // These waits only access pthread state. Publish the suspended Go caller's
@@ -61,8 +76,8 @@ static void world_begin_wait(uintptr_t chain, uintptr_t bottom, uintptr_t top) {
     __builtin_trap();
   world_is_blocked = 1;
   world_blocked++;
-  if ((world_epoch & 1) && pthread_cond_broadcast(&world_changed) != 0)
-    __builtin_trap();
+  if (world_epoch & 1)
+    world_signal();
   world_unlock();
 }
 
@@ -83,9 +98,8 @@ static void world_end_wait(void) {
   world_blocked--;
   world_is_blocked = 0;
   world_resuming--;
-  if (notify && world_resuming == 0 &&
-      pthread_cond_broadcast(&world_changed) != 0)
-    __builtin_trap();
+  if (notify && world_resuming == 0)
+    world_signal();
   world_unlock();
 }
 
@@ -211,8 +225,7 @@ void llgo_wasi_gc_leave_end(void) {
     __builtin_trap();
   world_is_registered = 0;
   world_registered--;
-  if (pthread_cond_broadcast(&world_changed) != 0)
-    __builtin_trap();
+  world_signal();
   world_unlock();
 }
 
@@ -244,15 +257,13 @@ void llgo_wasi_gc_park(uintptr_t chain, uintptr_t bottom, uintptr_t top) {
     if (world_seen_epoch != epoch) {
       world_seen_epoch = epoch;
       world_stopped++;
-      if (pthread_cond_broadcast(&world_changed) != 0)
-        __builtin_trap();
+      world_signal();
     }
     while (world_epoch == epoch)
       world_wait();
   }
   world_resuming--;
-  if (pthread_cond_broadcast(&world_changed) != 0)
-    __builtin_trap();
+  world_signal();
   world_unlock();
 }
 
@@ -271,27 +282,27 @@ int llgo_wasi_gc_stop(void) {
   world_stopped = 0;
   world_epoch++;
 
-  struct timespec deadline;
-  if (clock_gettime(CLOCK_REALTIME, &deadline) != 0)
-    __builtin_trap();
-  deadline.tv_nsec += LLGO_WASI_GC_STOP_TIMEOUT_NS;
-  if (deadline.tv_nsec >= 1000000000) {
-    deadline.tv_sec++;
-    deadline.tv_nsec -= 1000000000;
-  }
+  int64_t deadline = 0;
   while (world_stopped + world_blocked <
          world_registered - (uint32_t)world_is_registered) {
-    int status = pthread_cond_timedwait(&world_changed, &world_mutex,
-                                        &deadline);
-    if (status == ETIMEDOUT) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+      __builtin_trap();
+    int64_t now = (int64_t)ts.tv_sec * 1000000000 + ts.tv_nsec;
+    if (deadline == 0)
+      deadline = now + LLGO_WASI_GC_STOP_TIMEOUT_NS;
+    int64_t remaining = deadline - now;
+    if (remaining <= 0 ||
+        world_wait_for(remaining) == WASM_ATOMIC_WAIT_TIMED_OUT) {
+      // A simultaneous final park can satisfy the condition at the deadline.
+      if (world_stopped + world_blocked >=
+          world_registered - (uint32_t)world_is_registered)
+        break;
       world_epoch++;
-      if (pthread_cond_broadcast(&world_changed) != 0)
-        __builtin_trap();
+      world_signal();
       world_unlock();
       return 0;
     }
-    if (status != 0)
-      __builtin_trap();
   }
   world_unlock();
   return 1;
@@ -302,7 +313,6 @@ void llgo_wasi_gc_resume(void) {
   if (!(world_epoch & 1) || !pthread_equal(world_owner, pthread_self()))
     __builtin_trap();
   world_epoch++;
-  if (pthread_cond_broadcast(&world_changed) != 0)
-    __builtin_trap();
+  world_signal();
   world_unlock();
 }

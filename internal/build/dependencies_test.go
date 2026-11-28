@@ -107,3 +107,35 @@ func TestLinkedPackageClosureSkipsUnbuiltRuntime(t *testing.T) {
 		t.Fatalf("C-only link includes unbuilt runtime: %v", got)
 	}
 }
+
+func TestEmscriptenSchedulerRuntimeFreeLinkPackages(t *testing.T) {
+	root := &packages.Package{ID: "root", PkgPath: "root", ExportFile: "root.a"}
+	dep := &packages.Package{ID: "dep", PkgPath: "dep", ExportFile: "dep.a"}
+	runtimePkg := &packages.Package{ID: llssa.PkgRuntime, PkgPath: llssa.PkgRuntime, ExportFile: "runtime.a",
+		Imports: map[string]*packages.Package{"dep": dep}}
+	rootBuilt := &aPackage{Package: root, ArchiveFile: "root.a"}
+	depBuilt := &aPackage{Package: dep, ArchiveFile: "dep.a"}
+	depBuilt.NeedRt = true
+	runtimeBuilt := &aPackage{Package: runtimePkg, ArchiveFile: "runtime.a"}
+	ctx := &context{emscriptenDirectMain: true, pkgs: map[*packages.Package]Package{
+		root: rootBuilt, dep: depBuilt, runtimePkg: runtimeBuilt,
+	}}
+	built := []*aPackage{rootBuilt, depBuilt, runtimeBuilt}
+	if got := mainLinkPackages(ctx, root, built); !reflect.DeepEqual(got, []Package{rootBuilt}) {
+		t.Fatalf("preloaded runtime dependency made a C-only entry require Go: %v", got)
+	}
+	root.Imports = map[string]*packages.Package{"dep": dep}
+	if got := mainLinkPackages(ctx, root, built); !reflect.DeepEqual(got, []Package{depBuilt, rootBuilt, runtimeBuilt}) {
+		t.Fatalf("link dropped the Go runtime required by an application import: %v", got)
+	}
+}
+
+func TestLinkedPackageClosureUsesPreparedOutput(t *testing.T) {
+	metadata := &packages.Package{ID: "p"}
+	prepared := &aPackage{Package: &packages.Package{ID: "p", ExportFile: "llgo.backend"}}
+	ctx := &context{pkgByID: map[string]Package{"p": prepared}}
+	got := linkedPackageClosure(ctx, metadata, nil)
+	if len(got) != 1 || got[0] != prepared {
+		t.Fatalf("metadata-only load dropped the prepared package: %v", got)
+	}
+}

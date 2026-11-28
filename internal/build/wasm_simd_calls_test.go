@@ -147,7 +147,7 @@ func TestEmscriptenSIMDCallBridgeMode(t *testing.T) {
 			if tc.memory64 {
 				ctx.crossCompile.WasmProfile = crosscompile.WasmProfileJ64
 			}
-			if got := needsEmscriptenSIMDCallBridge(ctx); got != tc.bridge {
+			if got := usesEmscriptenJSSjLj(ctx); got != tc.bridge {
 				t.Fatalf("bridge = %v, want %v", got, tc.bridge)
 			}
 		})

@@ -20,7 +20,7 @@ import (
 )
 
 func wasiGuardedStaticData(conf *Config, target crosscompile.Export, frontend cl.Options) bool {
-	return sizeCodecBuild(conf, frontend) && wasiSizePruningConfig(conf, target, frontend)
+	return !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontend) && wasiSizePruningConfig(conf, target, frontend)
 }
 
 // Select unused initializers at the final link. Each package archive defines
@@ -88,7 +88,11 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			}
 		}
 	}
-	if len(candidates) == 0 && darwinOS == nil {
+	var environment *ssa.Package
+	if wasi || native || embedded {
+		environment = environmentSyscallPackage(ctx.progSSA)
+	}
+	if len(candidates) == 0 && environment == nil && darwinOS == nil && !wasi {
 		return
 	}
 	assembly := ctx.sizePruningRoots
@@ -154,6 +158,9 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		return
 	}
 	unused, reachable := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, false)
+	if environment != nil {
+		configureReadOnlyEnvironment(ctx, environment, reachable, isSymbolRoot)
+	}
 
 	if plan := ctx.stdout; plan != nil && (len(plan.calls) != 0 || len(plan.builtinCalls) != 0) &&
 		slices.ContainsFunc(standardFiles, func(file cl.OptionalInitializer) bool {
@@ -211,6 +218,15 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	}) {
 		for _, group := range standardFiles {
 			delete(unused, group.Global)
+		}
+	}
+	if wasi {
+		if environment != nil {
+			configureWASISyscallState(ctx, environment, roots, slices.Collect(maps.Values(unused)), isSymbolRoot)
+		}
+		ctx.wasiOmitArgs = canOmitWASIArgs(ctx, reachable, assembly, isSymbolRoot)
+		if ctx.wasiOmitArgs && (conf.Verbose || conf.PrintCommands) {
+			fmt.Fprintln(os.Stderr, "llgo: omit unobserved WASI arguments")
 		}
 	}
 	var dataCount, errorCount, interfaceCount, callbackCount, mapCount, filesCount int

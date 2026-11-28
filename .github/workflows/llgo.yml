@@ -837,6 +837,9 @@ jobs:
         run: go test ./cmd/internal/gdb -run '^TestGDBIntegration$' -count=1 -v
 
   cross-compile:
+    permissions:
+      contents: read
+      id-token: write
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
     # Allow the threaded-runtime, LTO and size-build suites to finish on a cold cache.
@@ -963,8 +966,27 @@ jobs:
       - name: Test WASI size-build LTO regressions (Wasmer)
         shell: bash
         run: |
+          set -euo pipefail
           python3 -m unittest discover -s test/sizebuild -p '*_test.py'
-          python3 test/sizebuild/runtest.py --target=wasi
+          cover_dir="$RUNNER_TEMP/llgo-wasi-size-cover"
+          mkdir -p "$cover_dir"
+          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \
+            -o "$cover_dir/llgo" ./cmd/llgo
+          GOCOVERDIR="$cover_dir" python3 test/sizebuild/runtest.py --target=wasi --llgo "$cover_dir/llgo"
+          go tool covdata textfmt -i="$cover_dir" -o=coverage-dev-wasi-size.txt \
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
+
+      - name: Upload WASI size coverage to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          use_pypi: true
+          version: "11.3.1"
+          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          files: coverage-dev-wasi-size.txt
+          flags: dev-lto-wasi
+          disable_search: true
 
   windows-gnu-cross:
     if: needs.prepare.outputs.run_code_ci == 'true'
@@ -1084,6 +1106,9 @@ jobs:
           fail_ci_if_error: true
 
   wasm-runtime:
+    permissions:
+      contents: read
+      id-token: write
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
     name: wasm-runtime (${{ matrix.suite }})
@@ -1255,8 +1280,29 @@ jobs:
           LLGO_BUILD_CACHE: "1"
           CHROME: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: |
+          set -euo pipefail
           node --test test/wasm/optimization/asyncify-exports.test.mjs
           python3 test/wasm/optimization/test.py --browser
+          cover_dir="$RUNNER_TEMP/llgo-wasm-size-cover"
+          mkdir -p "$cover_dir"
+          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \
+            -o "$cover_dir/llgo" ./cmd/llgo
+          GOCOVERDIR="$cover_dir" python3 test/sizebuild/runtest.py --target=emscripten --browser --llgo "$cover_dir/llgo"
+          go tool covdata textfmt -i="$cover_dir" -o=coverage-dev-emscripten-size.txt \
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
+
+      - name: Upload Emscripten size coverage to Codecov
+        if: matrix.suite == 'optimization'
+        continue-on-error: true
+        uses: codecov/codecov-action@v7
+        with:
+          use_pypi: true
+          version: "11.3.1"
+          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          files: coverage-dev-emscripten-size.txt
+          flags: dev-lto-emscripten
+          disable_search: true
 
       - name: Build standard runtime for wasm
         if: matrix.suite == 'runtime'
@@ -1346,12 +1392,14 @@ jobs:
         run: |
           llgo_dev="$RUNNER_TEMP/llgo-map-metadata"
           go build -tags=dev -o "$llgo_dev" ./cmd/llgo
+          "$LLGO" run -Oz ./internal/build/testdata/wasm-fmt-literal-callers check-stdout
+          "$LLGO" run -target wasi -emulator -O2 ./internal/build/testdata/wasm-fmt-literal-callers check-stdout
           for target in wasi emscripten emscripten-memory64; do
             (cd runtime && "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m ./internal/wordmap)
             "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m \
               ./test/std/fmt
-            "$LLGO" run -target "$target" -emulator -O2 \
-              ./internal/build/testdata/wasm-fmt-literal-callers
+            "$LLGO" run -target "$target" -emulator -Oz \
+              ./internal/build/testdata/wasm-fmt-literal-callers check-stdout
             "$LLGO" run -target "$target" -emulator -tags=llgo.wasm.debugger \
               ./internal/build/testdata/wasm-fmt-literal-debugger
             "$llgo_dev" run -target "$target" -emulator -deadcodedrop -Oz \

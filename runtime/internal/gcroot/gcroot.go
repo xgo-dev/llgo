@@ -244,6 +244,10 @@ func Visit(visitor func(uintptr)) {
 	if visitor == nil {
 		return
 	}
+	if WASISelectableMutators && !WASIConcurrentMutators() {
+		visitChain(CurrentChain(), visitor)
+		return
+	}
 	lockRegistry()
 	active := (*Context)(unsafe.Pointer(activeContext))
 	for ctx := contexts; ctx != nil; ctx = ctx.next {

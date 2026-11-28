@@ -25,6 +25,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -135,6 +136,8 @@ type OutFmtDetails struct {
 	Zip   string // ZIP/DFU output file path (.zip)
 
 	WasmManifest string // Final Wasm artifact manifest
+
+	omitEmscriptenBrowserHost bool
 
 	wasmSizeNames    map[uint32]string // Function indexes from the final module before stripping
 	wasmSizeNamesErr error             // Optional name metadata parse failure
@@ -730,6 +733,13 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if hostedCompactPCLNProfile(conf) {
 		export.BuildTags = append(slices.Clone(export.BuildTags), hostedCompactPCLNTag)
 	}
+	if emscriptenSchedulerProofProfile(conf, &export) {
+		export.BuildTags = append(slices.Clone(export.BuildTags), emscriptenSchedulerProofTag)
+	}
+	if wasiMutatorProfile(conf, export, wasmGC) {
+		export.BuildTags = append(slices.Clone(export.BuildTags), wasiMutatorSelectionTag)
+		export.CCFLAGS = append(slices.Clone(export.CCFLAGS), "-DLLGO_WASI_MUTATOR_SELECTION")
+	}
 	applyWindowsAMD64StackReserve(conf, &export)
 	export.LDFLAGS = append(export.LDFLAGS, wasmFinalLinkFlags(conf, &export)...)
 	export.LDFLAGS = append(export.LDFLAGS, goJSLoaderLinkFlags(conf, &export)...)
@@ -904,6 +914,22 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, fmt.Errorf("parse Go package flags: %w", err)
 	}
 	commands.environ = sourceGo.apply(commands.environ)
+	var fsSnapshot []byte
+	if export.WasmProvider == crosscompile.WasmProviderEmscripten && !wasmWorkers.Enabled() &&
+		len(conf.SourceOverlay) == 0 && conf.DebugArtifactMode == DebugArtifactNone &&
+		conf.LinkOptions.ExternalLinkerFlags == "" && commands.lookup("LDFLAGS") == "" && commands.lookup("EMCC_CFLAGS") == "" &&
+		prepareValueFormatSupport(conf, export, frontendOptions) {
+		fsSource := filepath.Join(sourcePatchGOROOT, "src", "syscall", "fs_js.go")
+		if conf.Overlay[fsSource] == nil {
+			if source, err := os.ReadFile(fsSource); err == nil {
+				fsSnapshot = rewriteWasmFSInitializers(source)
+			}
+		}
+		if fsSnapshot != nil {
+			export.BuildTags = append(export.BuildTags, wasmFSSnapshotTag)
+			cfg.BuildFlags = appendWasmFSSnapshotTag(cfg.BuildFlags)
+		}
+	}
 	var llgoFiles map[string][]string
 	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
 	sourceTargetTags := slices.Clone(export.BuildTags)
@@ -929,6 +955,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		targetTags:     sourceTargetTags,
 		builtinFormats: !conf.disableSizeSpecialization && prepareValueFormatSupport(conf, export, frontendOptions),
 		deferErrorType: !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontendOptions),
+		fsSnapshot:     fsSnapshot,
 		cgoEnabled:     &sourceCgoEnabled,
 	})
 	if err != nil {
@@ -1183,7 +1210,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		}
 		if ctx.valueFormatPlan != nil || len(ctx.jsonCodecPackages) != 0 {
 			// Resolve the rewrite before collecting initializer and feature usage.
-			configureWasmRuntimeFree(ctx)
+			configureRuntimeFree(ctx)
 			asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, true)
 			formatInputs = configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 			configureCodecInits(ctx, formatInputs)
@@ -1222,11 +1249,13 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	allPkgs := append([]*aPackage{}, pkgs...)
 	if !preparedInitializers {
-		configureWasmRuntimeFree(ctx)
+		configureRuntimeFree(ctx)
 		asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, wasiGuardedStaticData(conf, export, frontendOptions))
 		formatInputs = configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 	}
 	configureOptionalInitializers(ctx, sourcePatchGOROOT, formatInputs)
+	ctx.probeEmscriptenScheduler = canProbeEmscriptenScheduler(ctx, formatInputs)
+	ctx.probeWASIMutator = canProbeWASIMutator(ctx, formatInputs)
 	configureWasiReleaseDCE(ctx, asmRoots)
 	if ctx.frontend != nil {
 		if err := ctx.frontend.certify(); err != nil {
@@ -1528,6 +1557,7 @@ func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, 
 		if err := executeMainLink(linkCtx, plan, verbose); err != nil {
 			return err
 		}
+		link.outFmts.omitEmscriptenBrowserHost = linkCtx.omitEmscriptenBrowserHost
 		if err := finalizeRuntimePCLN(linkCtx, link.outFmts, verbose); err != nil {
 			return err
 		}
@@ -1642,23 +1672,34 @@ func goCompatibleWasmRunner(conf *Config) string {
 }
 
 func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
-	return &context{
-		prog:                  ctx.prog,
-		mode:                  ctx.mode,
-		buildConf:             ctx.buildConf,
-		crossCompile:          ctx.crossCompile,
-		commands:              ctx.commands,
-		pclnExternal:          plan.pclnExternal,
+	target := ctx.crossCompile
+	if ctx.emscriptenDirectMain {
+		configureEmscriptenDirectLink(&target)
+	}
+	link := &context{
+		prog:         ctx.prog,
+		mode:         ctx.mode,
+		buildConf:    ctx.buildConf,
+		crossCompile: target,
+		commands:     ctx.commands,
+		pclnExternal: plan.pclnExternal,
+
+		wasmRuntimeFree:       ctx.wasmRuntimeFree,
 		wasmClosedProgram:     ctx.wasmClosedProgram,
 		embeddedClosedProgram: ctx.embeddedClosedProgram,
 		nativeClosedProgram:   ctx.nativeClosedProgram,
 		sizePruningRoots:      ctx.sizePruningRoots,
-		frontendOptions:       cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
-		linkRuntimeSites:      &plan.runtimeSites,
-		stripDarwinLTOLocals:  plan.stripDarwinLTOLocals,
-		darwinHiddenGlobals:   plan.darwinHiddenGlobals,
-		goVersion:             ctx.goVersion,
+
+		frontendOptions:      cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
+		linkRuntimeSites:     &plan.runtimeSites,
+		stripDarwinLTOLocals: plan.stripDarwinLTOLocals,
+		darwinHiddenGlobals:  plan.darwinHiddenGlobals,
+		goVersion:            ctx.goVersion,
 	}
+	if ctx.emscriptenDirectMain && plan.emscriptenUseLibcAllocator {
+		configureEmscriptenLibcLink(link)
+	}
+	return link
 }
 
 func namedTargetUsesEmulatorPath(conf *Config) bool {
@@ -1800,6 +1841,8 @@ func DefaultBuildTags() string {
 	return "llgo,math_big_pure_go,purego"
 }
 
+const emscriptenAsyncifyExportsJS = "emscripten-asyncify-exports.js"
+
 func configureWasmWorkers(conf *Config, export *crosscompile.Export) (wasmworkers.Config, error) {
 	config, err := wasmworkers.Parse(os.Getenv(llgoWasmWorkers))
 	if err != nil {
@@ -1813,14 +1856,15 @@ func configureWasmWorkers(conf *Config, export *crosscompile.Export) (wasmworker
 	// or non-Emscripten provider does not require Asyncify control exports.
 	if conf.Goos == "js" && conf.Goarch == "wasm" && slices.Contains(export.LDFLAGS, "-sASYNCIFY=1") {
 		export.LDFLAGS = append(export.LDFLAGS,
-			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", "emscripten-asyncify-exports.js"),
+			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", emscriptenAsyncifyExportsJS),
 		)
 	}
 	if conf.Goos == "js" && export.WasmProvider == crosscompile.WasmProviderEmscripten {
 		export.LDFLAGS = append(export.LDFLAGS,
-			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", "wasm_fs.js"),
+			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", wasmFSScriptName),
 			"--js-library", filepath.Join(env.LLGoROOT(), "internal", "wasmworkers", "browser_fs.js"),
-			"-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=$llgoBrowserFS",
+			"--js-library", filepath.Join(env.LLGoROOT(), "internal", "wasmworkers", "browser_fs_snapshot.js"),
+			emscriptenBrowserFSRoot,
 		)
 	}
 	if !config.Enabled() {
@@ -2032,8 +2076,12 @@ type context struct {
 	codecInitDrops       map[string]bool
 	initializerGuardsOff []string
 	wasmRuntimeFree      bool
+	emscriptenDirectMain bool
+	wasiOmitArgs         bool
 	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
 	sizePruningRoots     []string
+
+	omitEmscriptenBrowserHost bool // runtime-free link excludes the Go filesystem bridge
 
 	embeddedClosedProgram bool
 	nativeClosedProgram   bool
@@ -2090,7 +2138,12 @@ type context struct {
 	linkRuntimeSites *bool
 
 	// effectiveLinkArgs records the actual driver invocation for the Wasm manifest.
-	effectiveLinkArgs []string
+	effectiveLinkArgs        []string
+	wasmJSMinifier           string
+	skipEmscriptenMinifier   bool
+	probeEmscriptenScheduler bool
+	probeWASIMutator         bool
+	linkDiagnostics          io.Writer
 
 	buildTrace *buildTracer
 
@@ -2715,6 +2768,7 @@ type mainLinkPlan struct {
 	runtimeSites         bool
 	outputPath           string
 	linkInputs           []string
+	directWasmInputs     []string
 	linkArgs             []string
 	pclnExternal         *pclnmap.Data
 	embeddedPCLN         *pclnmap.Data
@@ -2722,6 +2776,10 @@ type mainLinkPlan struct {
 	entryTarget          llssa.Target
 	stripDarwinLTOLocals bool
 	darwinHiddenGlobals  []string
+
+	emscriptenUseLibcAllocator bool
+	directWasmAllocator        bool
+	wasiMutatorSelection       string
 }
 
 // mainLinkPreparation separates shared package inspection from entry-module
@@ -2739,6 +2797,9 @@ type mainLinkPreparation struct {
 	gen                  genConfig
 	stripDarwinLTOLocals bool
 	darwinHiddenGlobals  []string
+
+	emscriptenUseLibcAllocator bool
+	emscriptenCollectorArchive string
 }
 
 func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPath string, verbose bool) error {
@@ -2772,7 +2833,8 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	var linkArgs []string
 	var rtLinkInputs []string
 	var rtLinkArgs []string
-	linkedOrder := linkedPackageClosure(ctx, pkg, pkgs)
+	var collectorArchive string
+	linkedOrder := mainLinkPackages(ctx, pkg, pkgs)
 
 	// packages.Visit with a post callback yields dependencies before importers.
 	// Reverse that order so static archives are linked after the objects that use them.
@@ -2784,6 +2846,9 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 			rtLinkArgs = append(rtLinkArgs, aPkg.LinkArgs...)
 			if aPkg.ArchiveFile != "" {
 				rtLinkInputs = append(rtLinkInputs, aPkg.ArchiveFile)
+				if ctx.emscriptenDirectMain && p.PkgPath == llssa.PkgRuntime+"/tinygogc" {
+					collectorArchive = aPkg.ArchiveFile
+				}
 			}
 			continue
 		}
@@ -2823,7 +2888,8 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	needRuntime = needRuntime || len(cExports) != 0
 
 	// Only link runtime objects when needed (or for host builds where runtime is always required).
-	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
+	linkRuntime := needRuntime || needPyInit || ctx.buildConf.Target == ""
+	if linkRuntime {
 		linkArgs = append(linkArgs, rtLinkArgs...)
 		archiveInputs = append(archiveInputs, rtLinkInputs...)
 	}
@@ -2857,7 +2923,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	})
 	gen := genConfig{
 		defaultGODEBUG: ctx.defaultGODEBUG[pkg.ID],
-		rtInit:         needRuntime && !ctx.wasmRuntimeFree,
+		rtInit:         needRuntime && !ctx.wasmRuntimeFree && !ctx.emscriptenDirectMain,
 		pyInit:         needPyInit,
 		abiInit:        needAbiInit,
 		packageInits:   packageInits,
@@ -2886,6 +2952,9 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 		gen:                  gen,
 		stripDarwinLTOLocals: darwinSymbols.stripLTOLocals,
 		darwinHiddenGlobals:  darwinSymbols.hiddenGlobals,
+
+		emscriptenUseLibcAllocator: ctx.emscriptenDirectMain && !linkRuntime,
+		emscriptenCollectorArchive: collectorArchive,
 	}, nil
 }
 
@@ -2912,8 +2981,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		trimMethods := canPruneWasmTypeMetadata(ctx) || ctx.embeddedClosedProgram || ctx.nativeClosedProgram
 		var roots []string
 		if ctx.buildConf.wasiReleaseDCE || ctx.embeddedClosedProgram || ctx.nativeClosedProgram {
-			// Entry thunks are generated outside package compilation. Record
-			// their references, including WASI worker entry calls.
+			// Entry thunks are generated outside package compilation.
 			roots = appendModuleDeclarationRoots(slices.Clone(ctx.sizePruningRoots), entryPkg.LPkg.Module())
 		}
 		if ctx.nativeClosedProgram && (ctx.buildConf.Verbose || ctx.buildConf.PrintCommands) {
@@ -2944,6 +3012,28 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	}
 	linkInputs = append(linkInputs, extraObjFiles...)
 	linkInputs = append(linkInputs, preparation.archiveInputs...)
+	var directWasmInputs []string
+	directWasmAllocator := ctx.emscriptenDirectMain && !preparation.emscriptenUseLibcAllocator &&
+		needsWasmFinalization(ctx.buildConf) && preparation.emscriptenCollectorArchive != ""
+	if ctx.probeEmscriptenScheduler {
+		normal, direct, err := buildEmscriptenDispatch(ctx, entryPkg.ExportFile)
+		if err != nil {
+			return nil, err
+		}
+		directWasmInputs = slices.Concat([]string{entryObjFile, direct}, linkInputs[1:])
+		linkInputs = slices.Concat([]string{entryObjFile, normal}, linkInputs[1:])
+	} else if directWasmAllocator {
+		directWasmInputs = slices.DeleteFunc(slices.Clone(linkInputs), func(input string) bool {
+			return input == preparation.emscriptenCollectorArchive
+		})
+	}
+	var wasiMutatorSelection string
+	if ctx.probeWASIMutator {
+		wasiMutatorSelection, err = buildWASIMutatorSelection(ctx, entryPkg.ExportFile)
+		if err != nil {
+			return nil, err
+		}
+	}
 	ctx.stripDarwinLTOLocals = preparation.stripDarwinLTOLocals
 	ctx.darwinHiddenGlobals = preparation.darwinHiddenGlobals
 
@@ -2951,6 +3041,7 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		runtimeSites:         shouldEmitRuntimeSites(ctx),
 		outputPath:           outputPath,
 		linkInputs:           linkInputs,
+		directWasmInputs:     directWasmInputs,
 		linkArgs:             preparation.linkArgs,
 		pclnExternal:         ctx.pclnExternal,
 		embeddedPCLN:         ctx.pclnEmbedded,
@@ -2958,6 +3049,10 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 		entryTarget:          *ctx.prog.Target(),
 		stripDarwinLTOLocals: preparation.stripDarwinLTOLocals,
 		darwinHiddenGlobals:  preparation.darwinHiddenGlobals,
+
+		emscriptenUseLibcAllocator: preparation.emscriptenUseLibcAllocator,
+		directWasmAllocator:        directWasmAllocator,
+		wasiMutatorSelection:       wasiMutatorSelection,
 	}, nil
 }
 
@@ -2966,11 +3061,15 @@ func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 		return errors.New("missing main link plan")
 	}
 	driverOut := emscriptenDriverOutput(ctx.buildConf, plan.outputPath)
+	if ctx.omitEmscriptenBrowserHost && filepath.Base(driverOut) == wasmFSScriptName {
+		return fmt.Errorf("output %s collides with the browser host sidecar", driverOut)
+	}
 	linkOutput, err := prepareWasmLinkOutput(ctx.buildConf, &ctx.crossCompile, driverOut)
 	if err != nil {
 		return err
 	}
 	defer cleanupWasmLinkOutput(linkOutput, driverOut)
+	configureEmscriptenESMHost(ctx, driverOut)
 	if err := linkObjFiles(ctx, linkOutput, plan.linkInputs, plan.linkArgs, verbose); err != nil {
 		return err
 	}
@@ -3306,6 +3405,9 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 	}
 
 	cmd := ctx.linker()
+	if ctx.linkDiagnostics != nil {
+		cmd.Stderr = ctx.linkDiagnostics
+	}
 	ltoObjectArgs, err := darwinLTOObjectArgs(ctx, app, cmd, buildArgs)
 	if err != nil {
 		return fmt.Errorf("retain Darwin LTO debug object: %w", err)
@@ -3315,10 +3417,7 @@ func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose
 
 	buildArgs = append(buildArgs, defaultWASIHeapArgs(ctx, cmd, buildArgs)...)
 	cmd.Verbose = printCmds
-	if needsWasmFinalization(ctx.buildConf) {
-		ctx.effectiveLinkArgs = cmd.LinkArguments(buildArgs...)
-	}
-	if err := cmd.Link(buildArgs...); err != nil {
+	if err := linkWithOptionalClosure(ctx, cmd, linkOutput, buildArgs); err != nil {
 		if len(ltoObjectArgs) != 0 {
 			_ = os.RemoveAll(filepath.Dir(ltoObjectArgs[len(ltoObjectArgs)-1]))
 		}
@@ -3756,6 +3855,10 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 		return nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
 	}
 	options := ctx.frontendOptions
+	if isEmscriptenRuntimeFreeEntry(ctx, pkg) {
+		options.ShadowStack = false
+		options.DisableSafepoints = true
+	}
 	options.DeclarationsOnly = aPkg.frontendOpaque != nil
 	// Hosted //export entries use final-link wrappers to register foreign caller threads
 	// with the collector; Windows shared libraries also initialize lazily.
@@ -3769,6 +3872,14 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
 		aPkg.SSA, syntax, embedMap, needMeta, options)
 	check(err)
+	if pkgPath == "syscall" {
+		for _, guard := range []string{mutableEnvironmentGuard, wasiEnvironmentNeededGuard, wasiPathStateGuard} {
+			if !ret.Module().NamedGlobal(guard).IsNil() {
+				cl.DefineInitializerGuard(ret, guard, true)
+			}
+		}
+	}
+
 	if pkgPath == "os" {
 		for _, guard := range []string{darwinExecutableCwdGuard, stdoutPollInitGuard} {
 			if !ret.Module().NamedGlobal(guard).IsNil() {
@@ -3889,6 +4000,7 @@ func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
 	}
 	mod.SetDataLayout(ctx.prog.DataLayout())
 	mod.SetTarget(ctx.prog.Target().Spec().Triple)
+	limitEmscriptenSetjmpInlining(ctx, mod)
 	pbo := gllvm.NewPassBuilderOptions()
 	defer pbo.Dispose()
 	if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {

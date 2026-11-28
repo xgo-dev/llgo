@@ -145,6 +145,10 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, "link failed")
 			os.Exit(8)
 		}
+		if symbol, ok := strings.CutPrefix(mode, "undefined:"); ok {
+			fmt.Fprintln(os.Stderr, "undefined symbol:", symbol)
+			os.Exit(8)
+		}
 		if mode == "missing-output" {
 			os.Exit(0)
 		}
@@ -158,6 +162,17 @@ func TestMain(m *testing.M) {
 		if output == "" {
 			fmt.Fprintln(os.Stderr, "missing -o")
 			os.Exit(9)
+		}
+		if mode == "reject-direct-wasm" && slices.Contains(os.Args, "-sERROR_ON_UNDEFINED_SYMBOLS=1") {
+			if err := os.WriteFile(filepath.Join(filepath.Dir(output), "failed-probe.js"), nil, 0o666); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(10)
+			}
+			fmt.Fprintln(os.Stderr, "undefined symbol:", emscriptenSchedulerMarker)
+			os.Exit(8)
+		}
+		if mode == "reject-direct-wasm" {
+			mode = "write-wasm"
 		}
 		payload := "linked"
 		if mode == "write-wasm" {

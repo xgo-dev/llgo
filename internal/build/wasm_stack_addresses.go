@@ -1,6 +1,13 @@
 package build
 
-import "github.com/xgo-dev/llvm"
+import (
+	"strings"
+
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llvm"
+)
 
 // localizeWasmStackAddresses runs after LLVM's main optimization pipeline.
 // SjLj lowering can turn entry-block slot addresses into catch-pad PHIs, then
@@ -11,16 +18,9 @@ func localizeWasmStackAddresses(goarch string, mod llvm.Module) int {
 	if goarch != "wasm" {
 		return 0
 	}
-	setjmp := mod.NamedFunction("setjmp")
-	if setjmp.IsNil() {
+	functions := wasmSetjmpFunctions(mod.NamedFunction("setjmp"))
+	if len(functions) == 0 {
 		return 0
-	}
-	functions := make(map[llvm.Value]bool)
-	for use := setjmp.FirstUse(); !use.IsNil(); use = use.NextUse() {
-		call := use.User().IsACallInst()
-		if !call.IsNil() && call.CalledValue() == setjmp {
-			functions[call.InstructionParent().Parent()] = true
-		}
 	}
 	b := mod.Context().NewBuilder()
 	defer b.Dispose()
@@ -59,4 +59,53 @@ func localizeWasmStackAddresses(goarch string, mod llvm.Module) int {
 		}
 	}
 	return moved
+}
+
+func wasmSetjmpFunctions(setjmp llvm.Value) map[llvm.Value]bool {
+	if setjmp.IsNil() {
+		return nil
+	}
+	functions := make(map[llvm.Value]bool)
+	for use := setjmp.FirstUse(); !use.IsNil(); use = use.NextUse() {
+		call := use.User().IsACallInst()
+		if !call.IsNil() && call.CalledValue() == setjmp {
+			functions[call.InstructionParent().Parent()] = true
+		}
+	}
+	return functions
+}
+
+// Emscripten's JavaScript SjLj lowering adds a setjmp-table check to calls
+// that can longjmp. Inlining into a frame with setjmp can turn a single
+// check into many. Keep the call boundaries for the full-LTO size profile.
+func limitEmscriptenSetjmpInlining(ctx *context, mod llvm.Module) {
+	if ctx.crossCompile.WasmProvider != crosscompile.WasmProviderEmscripten ||
+		ctx.buildConf.OptLevel != optlevel.Oz || ctx.buildConf.ltoMode() != lto.Full ||
+		ctx.buildConf.DebugArtifactMode != DebugArtifactNone {
+		return
+	}
+	setjmp := mod.NamedFunction("setjmp")
+	functions := wasmSetjmpFunctions(setjmp)
+	if len(functions) == 0 || !usesEmscriptenJSSjLj(ctx) {
+		return
+	}
+	const functionAttrs = -1 // LLVMAttributeFunctionIndex
+	noInline := mod.Context().CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0)
+	alwaysInline := llvm.AttributeKindID("alwaysinline")
+	for fn := range functions {
+		for block := fn.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
+			for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+				if inst.IsACallInst().IsNil() {
+					continue
+				}
+				callee := inst.CalledValue()
+				if callee == setjmp || strings.HasPrefix(callee.Name(), "llvm.") ||
+					!inst.GetCallSiteEnumAttribute(functionAttrs, alwaysInline).IsNil() ||
+					(!callee.IsAFunction().IsNil() && !callee.GetEnumFunctionAttribute(alwaysInline).IsNil()) {
+					continue
+				}
+				inst.AddCallSiteAttribute(functionAttrs, noInline)
+			}
+		}
+	}
 }

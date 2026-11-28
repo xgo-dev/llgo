@@ -60,5 +60,10 @@ func defaultWASIHeapArgs(ctx *context, linker *clang.Cmd, args []string) []strin
 	if size := ctx.crossCompile.WASIInitialMemory; size != 0 {
 		return []string{"-Wl,--initial-memory=" + strconv.FormatUint(size, 10)}
 	}
+	if useMinimalWASIStartup(ctx) {
+		// The CRT and Go entry no longer copy argv or initialize a Go heap.
+		// Keep libc's exported allocator available with WASI memory growth.
+		return nil
+	}
 	return []string{defaultWASIHeapFlag}
 }
