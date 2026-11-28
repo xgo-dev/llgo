@@ -1429,16 +1429,32 @@ type cacheKey struct {
 	extra uintptr
 }
 
-// The funcLookupCache caches FuncOf lookups.
-// FuncOf does not share the common lookupCache since cacheKey is not
-// sufficient to represent functions unambiguously.
-var funcLookupCache struct {
-	sync.Mutex // Guards stores (but not loads) on m.
-
-	// m is a map[uint32][]*rtype keyed by the hash calculated in FuncOf.
-	// Elements of m are append-only and thus safe for concurrent reading.
-	m sync.Map
+// Function signatures and their closure descriptors use separate hash buckets.
+// Hold the associated lock while looking up or publishing a descriptor.
+type signatureLookupCache struct {
+	sync.Mutex
+	byHash map[uint32][]*abi.Type
 }
+
+func (c *signatureLookupCache) lookup(t *abi.Type) *abi.Type {
+	for _, cached := range c.byHash[t.Hash] {
+		if haveIdenticalUnderlyingType(t, cached, true) {
+			return cached
+		}
+	}
+	return nil
+}
+
+func (c *signatureLookupCache) store(hash uint32, t *abi.Type) *abi.Type {
+	if c.byHash == nil {
+		c.byHash = make(map[uint32][]*abi.Type)
+	}
+	c.byHash[hash] = append(c.byHash[hash], t)
+	return t
+}
+
+// FuncOf and closureOf intern different descriptor kinds.
+var funcLookupCache, closureLookupCache signatureLookupCache
 
 // FuncOf returns the function type with the given argument and result types.
 // For example if k represents int and e represents string,
@@ -1491,22 +1507,8 @@ func FuncOf(in, out []Type, variadic bool) Type {
 	funcLookupCache.Lock()
 	defer funcLookupCache.Unlock()
 
-	// Look in cache.
-	if ts, ok := funcLookupCache.m.Load(hash); ok {
-		for _, t := range ts.([]*abi.Type) {
-			if haveIdenticalUnderlyingType(&ft.Type, t, true) {
-				return toRType(t)
-			}
-		}
-	}
-
-	addToCache := func(tt *abi.Type) Type {
-		var rts []*abi.Type
-		if rti, ok := funcLookupCache.m.Load(hash); ok {
-			rts = rti.([]*abi.Type)
-		}
-		funcLookupCache.m.Store(hash, append(rts, tt))
-		return toType(tt)
+	if cached := funcLookupCache.lookup(&ft.Type); cached != nil {
+		return toRType(cached)
 	}
 
 	str := funcStr(ft)
@@ -1515,14 +1517,14 @@ func FuncOf(in, out []Type, variadic bool) Type {
 			tt = alias.Public
 		}
 		if haveIdenticalUnderlyingType(&ft.Type, tt, true) {
-			return addToCache(tt)
+			return toType(funcLookupCache.store(hash, tt))
 		}
 	}
 
 	// Populate the remaining fields of ft and store in cache.
 	ft.Str_ = str
 	ft.PtrToThis_ = nil
-	return addToCache(&ft.Type)
+	return toType(funcLookupCache.store(hash, &ft.Type))
 }
 
 func stringFor(t *abi.Type) string {
@@ -2361,15 +2363,7 @@ const (
 	pointerAlign = uint8(unsafe.Alignof(uintptr(0)))
 )
 
-var closureLookupCache struct {
-	sync.Mutex // Guards stores (but not loads) on m.
-
-	// m is a map[uint32][]*rtype keyed by the hash calculated in FuncOf.
-	// Elements of m are append-only and thus safe for concurrent reading.
-	m sync.Map
-}
-
-// Struct returns a struct type.
+// closureOf returns the canonical closure descriptor for ftyp.
 func closureOf(ftyp *abi.FuncType) *abi.Type {
 	if ftyp.HasName() {
 		namedFuncTypes.Lock()
@@ -2433,30 +2427,16 @@ func closureOf(ftyp *abi.FuncType) *abi.Type {
 	closureLookupCache.Lock()
 	defer closureLookupCache.Unlock()
 
-	// Look in cache.
-	if ts, ok := closureLookupCache.m.Load(hash); ok {
-		for _, t := range ts.([]*abi.Type) {
-			if haveIdenticalUnderlyingType(&st.Type, t, true) {
-				return t
-			}
-		}
-	}
-
-	addToCache := func(tt *abi.Type) *abi.Type {
-		var rts []*abi.Type
-		if rti, ok := closureLookupCache.m.Load(hash); ok {
-			rts = rti.([]*abi.Type)
-		}
-		closureLookupCache.m.Store(hash, append(rts, tt))
-		return tt
+	if cached := closureLookupCache.lookup(&st.Type); cached != nil {
+		return cached
 	}
 
 	for _, tt := range typesByString(str) {
 		if haveIdenticalUnderlyingType(&st.Type, tt, true) {
-			return addToCache(tt)
+			return closureLookupCache.store(hash, tt)
 		}
 	}
-	return addToCache(&st.Type)
+	return closureLookupCache.store(hash, &st.Type)
 }
 
 func structStr(fields []abi.StructField) string {
