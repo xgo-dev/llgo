@@ -46,6 +46,7 @@ func configureWASIPathState(ctx *context, p *ssa.Package, roots []*ssa.Function,
 			return nil
 		}
 	}
+	var operands [8]*ssa.Value
 	for fn := range result.Reachable {
 		if fn == init {
 			continue
@@ -55,7 +56,7 @@ func configureWASIPathState(ctx *context, p *ssa.Package, roots []*ssa.Function,
 				if _, debug := inst.(*ssa.DebugRef); debug {
 					continue
 				}
-				for _, operand := range inst.Operands(nil) {
+				for _, operand := range inst.Operands(operands[:0]) {
 					if (*operand == cwd || *operand == preopens) &&
 						(mayReflect || hasCallPath(result.CallGraph, roots, fn, nil)) {
 						return nil

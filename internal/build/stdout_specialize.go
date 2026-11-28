@@ -91,7 +91,7 @@ func (p *stdoutPlan) recordBuiltin(plan *fmtspecialize.ValuePlan) {
 }
 
 func (p *stdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalInitializer, files []cl.OptionalInitializer,
-	roots []*ssa.Function, keepFileWriter bool, analyze func(bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph)) map[*ssa.Global]cl.OptionalInitializer {
+	roots []*ssa.Function, keepFileWriter bool, analyze func(bool, ...*ssa.Function) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph)) map[*ssa.Global]cl.OptionalInitializer {
 	for _, file := range files {
 		if _, ok := candidates[file.Global]; !ok {
 			return unused
@@ -110,7 +110,13 @@ func (p *stdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalIn
 		return unused
 	}
 	p.rewrite(writer)
-	updated, graph := analyze(writer == p.descriptor)
+	var alternate []*ssa.Function
+	if writer == p.descriptor && p.file != nil && len(p.builtinCalls) == 0 {
+		// Either choice only replaces direct calls. Include both writer bodies
+		// in the proof, but check for poll.Write paths from real roots only.
+		alternate = append(alternate, p.file)
+	}
+	updated, graph := analyze(writer == p.descriptor, alternate...)
 	// A second writer is useful only when the link can drop the general
 	// descriptor write path. File writes elsewhere should share that path.
 	if writer == p.descriptor && hasCallPath(graph, roots, p.pollWrite, nil) {
@@ -120,7 +126,9 @@ func (p *stdoutPlan) specialize(unused, candidates map[*ssa.Global]cl.OptionalIn
 			return unused
 		}
 		p.rewrite(writer)
-		updated, _ = analyze(false)
+		if len(alternate) == 0 {
+			updated, _ = analyze(false)
+		}
 	}
 	for _, file := range files {
 		if _, ok := updated[file.Global]; !ok {

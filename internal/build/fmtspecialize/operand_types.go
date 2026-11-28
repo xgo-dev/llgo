@@ -5,7 +5,6 @@ import (
 	"slices"
 
 	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 func (plan *ValuePlan) recordBuiltin(call *ssa.Call, fn *ssa.Function, constantFormat bool) bool {
@@ -40,7 +39,7 @@ func (plan *ValuePlan) resolveBuiltinCalls(roots []*ssa.Function) {
 	if len(plan.pending) == 0 {
 		return
 	}
-	incoming := directParameterInputs(plan.callee.Prog, roots)
+	incoming := directParameterInputs(plan.entryFunctions, roots)
 	for _, rewrite := range plan.pending {
 		// A scalar rewrite may already have replaced the original call.
 		callee := rewrite.call.Common().StaticCallee()
@@ -111,10 +110,9 @@ func builtinValueKinds(value ssa.Value, inputs map[*ssa.Parameter][]ssa.Value, s
 // Only ordinary private functions in the executable with exclusively direct
 // uses can receive parameter facts. Entry roots and address-taken functions
 // can be called without an SSA call whose operands are available to inspect.
-func directParameterInputs(prog *ssa.Program, roots []*ssa.Function) map[*ssa.Parameter][]ssa.Value {
-	functions := ssautil.AllFunctions(prog)
+func directParameterInputs(functions, roots []*ssa.Function) map[*ssa.Parameter][]ssa.Value {
 	incoming := make(map[*ssa.Function][]*ssa.CallCommon)
-	for fn := range functions {
+	for _, fn := range functions {
 		if fn.Pkg == nil || fn.Pkg.Pkg.Name() != "main" || fn.Parent() != nil ||
 			fn.Object() == nil || fn.Object().Exported() || fn.Signature.Recv() != nil ||
 			fn.TypeParams().Len() != 0 || len(fn.TypeArgs()) != 0 {
@@ -131,7 +129,7 @@ func directParameterInputs(prog *ssa.Program, roots []*ssa.Function) map[*ssa.Pa
 		delete(incoming, root)
 	}
 	var operands [8]*ssa.Value
-	for fn := range functions {
+	for _, fn := range functions {
 		for _, block := range fn.Blocks {
 			for _, instruction := range block.Instrs {
 				var common *ssa.CallCommon
