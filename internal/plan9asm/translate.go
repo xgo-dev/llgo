@@ -42,6 +42,8 @@ type TranslateOptions struct {
 	GOARM          string
 	GOAMD64        string
 	GOARM64        string
+	// SourceGoVersion selects SDK-specific assembler behavior, including Windows/386 TLS.
+	SourceGoVersion string
 	// Environment is the compiler invocation's selected source-tool environment.
 	Environment []string
 	// ToolTags is the actual selected Go SDK's resolved feature-tag snapshot.
@@ -103,6 +105,14 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 	}
 	if pkg.Types == nil || pkg.Types.Scope() == nil {
 		return nil, fmt.Errorf("%s: missing types (needed for asm signatures)", pkg.PkgPath)
+	}
+	if goos == "windows" && goarch == "386" && (opt.GOROOT != "" || opt.SourceGoVersion == "") {
+		opt.GOROOT = assemblySourceRoot(opt.GOROOT)
+		version, err := AssemblySDKVersion(opt.GOROOT)
+		if err != nil {
+			return nil, fmt.Errorf("read selected SDK version: %w", err)
+		}
+		opt.SourceGoVersion = version
 	}
 	src, err := PreprocessSourceForPkg(pkg, sfile, src, goos, goarch, opt)
 	if err != nil {
@@ -169,6 +179,7 @@ func TranslateSourceModuleForPkgWithOptions(pkg *packages.Package, sfile string,
 		return fs, ok
 	}
 	moduleOptions := extplan9asm.GoModuleOptions{
+		SourceGoVersion:    opt.SourceGoVersion,
 		SourcePreprocessed: true,
 		FileName:           sfile,
 		GOOS:               goos,

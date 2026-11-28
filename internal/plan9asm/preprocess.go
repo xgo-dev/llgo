@@ -9,6 +9,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	goversion "go/version"
 	"io"
 	"os"
 	"path/filepath"
@@ -30,6 +31,16 @@ const (
 )
 
 var errDeletedAssemblyOverlay = errors.New("assembly source deleted by overlay")
+
+func assemblySourceRoot(selected string) string {
+	if selected != "" {
+		return selected
+	}
+	if root := os.Getenv("GOROOT"); root != "" {
+		return root
+	}
+	return runtime.GOROOT()
+}
 
 // PreprocessSourceForPkg returns the actual expanded bytes used by translation,
 // routing, signature inspection and cache fingerprints. Includes always search
@@ -57,13 +68,7 @@ func PreprocessSourceForPkg(pkg *packages.Package, sfile string, src []byte, goo
 	if err != nil {
 		return nil, err
 	}
-	root := opt.GOROOT
-	if root == "" {
-		// Compatibility for direct callers. The build driver supplies its
-		// resolved source SDK explicitly, not the launcher's environment.
-		root = runtime.GOROOT()
-	}
-	root, err = filepath.Abs(root)
+	root, err := filepath.Abs(assemblySourceRoot(opt.GOROOT))
 	if err != nil {
 		return nil, err
 	}
@@ -146,14 +151,13 @@ func PreprocessSourceForPkg(pkg *packages.Package, sfile string, src []byte, goo
 		}
 		return "", nil, fmt.Errorf("active include %q not found in package or selected GOROOT", name)
 	}
-	version, err := assemblySDKVersion(root)
+	version, err := AssemblySDKVersion(root)
 	if err != nil {
 		return nil, fmt.Errorf("read selected SDK version: %w", err)
 	}
 	env["GOOS"], env["GOARCH"] = goos, goarch
 	env["GOVERSION"] = version
-	minor, _ := strconv.Atoi(strings.Split(strings.TrimPrefix(env["GOVERSION"], "go1."), ".")[0])
-	if goarch == "arm64" && minor < 23 {
+	if goarch == "arm64" && goversion.Compare(SDKReleaseVersion(version), "go1.23") < 0 {
 		// The build driver normalizes its default to v8.0, but older SDKs
 		// never defined GOARM64 assembler macros, even for an explicit CPU.
 		env["GOARM64"] = ""

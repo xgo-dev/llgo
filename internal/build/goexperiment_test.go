@@ -454,6 +454,10 @@ func runGoConfigHelper(mode string) {
 		json.NewEncoder(os.Stdout).Encode(sourceGoConfig{GOROOT: os.Getenv("LLGO_TEST_SOURCE_GOROOT"), GOVERSION: "go1.27.0"})
 	case "selected-root", "invalid-goflags":
 		cfg := sourceGoConfig{GOROOT: runtime.GOROOT(), GOVERSION: runtime.Version()}
+		// The launcher and the selected source SDK may differ.
+		if mode == "selected-root" {
+			cfg.GOVERSION = "go1.20.14"
+		}
 		if mode == "invalid-goflags" {
 			cfg.GOFLAGS = "'-modfile=unterminated"
 		}
@@ -462,7 +466,11 @@ func runGoConfigHelper(mode string) {
 }
 
 func TestSourceGoConfigErrors(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "bin")
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "VERSION"), []byte("go1.20.14\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -509,6 +517,9 @@ func TestSourceGoToolTagsUseResolvedCompiler(t *testing.T) {
 	commands := experimentCommands(t, "")
 	commands.environ = withEnv(commands.environ, "LLGO_TEST_GO_CONFIG_HELPER=selected-root")
 	cfg := mustResolveSourceGo(t, commands, "")
+	if cfg.GOVERSION != runtime.Version() {
+		t.Fatalf("selected SDK version = %q, want %q", cfg.GOVERSION, runtime.Version())
+	}
 	if !slices.Contains(cfg.toolTags, "goexperiment.jsonv2") {
 		t.Fatalf("lost selected Go 1.27 default experiment: %v", cfg.toolTags)
 	}
@@ -520,5 +531,32 @@ func TestSourceGoToolTagsUseResolvedCompiler(t *testing.T) {
 	output, err := commands.configure(exec.Command(filepath.Join(cfg.GOROOT, "bin", goExe), "list", "encoding/json/v2", "encoding/json/jsontext")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("selected JSON packages unavailable: %v\n%s", err, output)
+	}
+}
+
+func TestDevelopmentSDKReleaseSelection(t *testing.T) {
+	for _, tc := range []struct {
+		raw, want     string
+		wantToolchain string
+	}{
+		{"devel go1.27-abcd Mon Nov 28", "go1.27", ""},
+		{"go1.24.0 X:boringcrypto", "go1.24.0", ""},
+		{"go1.27rc1", "go1.27rc1", "go1.27rc1"},
+	} {
+		cfg := sourceGoConfig{GOVERSION: tc.raw}
+		if got := cfg.releaseVersion(); got != tc.want {
+			t.Fatalf("%q => %q, want %q", tc.raw, got, tc.want)
+		}
+		for _, v := range []string{tc.raw, cfg.releaseVersion()} {
+			tags, err := releaseTagsForGoVersion(v)
+			if err != nil || len(tags) < 24 {
+				t.Fatalf("release tags for %q: %v, %v", v, tags, err)
+			}
+		}
+		env := withResolvedGoToolchain(nil, cfg.GOVERSION)
+		gotToolchain := (commandEnv{environ: env}).lookup("GOTOOLCHAIN")
+		if gotToolchain != tc.wantToolchain {
+			t.Fatalf("GOTOOLCHAIN for %q = %q, want %q", tc.raw, gotToolchain, tc.wantToolchain)
+		}
 	}
 }

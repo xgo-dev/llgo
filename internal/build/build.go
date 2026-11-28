@@ -873,7 +873,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, err
 	}
-	sourcePatchGOROOT, sourcePatchGoVersion := sourceGo.GOROOT, sourceGo.GOVERSION
+	sourcePatchGOROOT, sourceReleaseGoVersion := sourceGo.GOROOT, sourceGo.releaseVersion()
 	conf.GOEXPERIMENT = sourceGo.GOEXPERIMENT
 	if conf.sourceGoVersion == "" {
 		conf.sourceGoExperiment = sourceGo.originalExperiment
@@ -887,7 +887,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		})
 	}
 	cfg.Env = sourceGo.apply(cfg.Env)
-	cfg.Env = cgoMetadataEnvironment(cfg.Env, sourceGo.GOVERSION, export.Toolchain.TargetTriple)
+	cfg.Env = cgoMetadataEnvironment(cfg.Env, sourceReleaseGoVersion, export.Toolchain.TargetTriple)
 	if err := applyPackageLoadFlags(cfg, sourceGo.GOFLAGS); err != nil {
 		return nil, fmt.Errorf("parse Go package flags: %w", err)
 	}
@@ -897,7 +897,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
 		goos:       conf.Goos,
 		goarch:     conf.Goarch,
-		goversion:  sourcePatchGoVersion,
+		goversion:  sourceReleaseGoVersion,
 		toolTags:   sourceGo.toolTags,
 		buildFlags: cfg.BuildFlags,
 		targetTags: export.BuildTags,
@@ -906,7 +906,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, err
 	}
-	conf.Overlay, err = runtimeSourceOverlay(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchGoVersion)
+	conf.Overlay, err = runtimeSourceOverlay(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourceReleaseGoVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -926,7 +926,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		})
 	}
 
-	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourcePatchGoVersion, mode: conf.Mode})
+	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourceGo.GOVERSION, mode: conf.Mode})
 	if typeLoader != nil {
 		dedup.SetImportTypes(typeLoader.load)
 	}
@@ -996,7 +996,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
 	altCfg := runtimePackageConfig(cfg, env.LLGoRuntimeDir())
 	// The runtime submodule may otherwise select a different toolchain from its go.mod.
-	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourcePatchGoVersion)
+	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourceGo.GOVERSION)
 	loadAltSpan := buildTrace.startCoordinator("load runtime packages", map[string]any{
 		"packages": slices.Clone(altPkgPaths),
 	})
@@ -1064,7 +1064,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		staticByteArrays: altByteArrays,
 		cTransformer:     cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
 		buildTrace:       buildTrace,
-		goVersion:        sourcePatchGoVersion,
+		goVersion:        sourceGo.GOVERSION,
 		defaultGODEBUG:   defaultGODEBUG,
 		nativeAsmObjects: make(map[llgoFileHashKey]string),
 		plan9AsmSources:  &sync.Map{},
@@ -1093,7 +1093,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	// default runtime globals must be registered before packages are built
 	// The generated program must report the GOROOT whose standard library is
 	// being compiled, which may differ from the toolchain used to build llgo.
-	addDefaultRuntimeGlobals(conf, sourcePatchGOROOT, sourcePatchGoVersion)
+	addDefaultRuntimeGlobals(conf, sourcePatchGOROOT, sourceGo.GOVERSION)
 	pkgs, pkgEntries, err := registerSSAPkgs(ctx, initial, verbose)
 	if err != nil {
 		return nil, err

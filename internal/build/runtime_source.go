@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
 )
 
 // Runtime source reuse is deliberately a small allowlist. The destinations are
@@ -45,6 +47,9 @@ func runtimeSourceOverlay(base map[string][]byte, runtimeDir, goroot, goVersion 
 	src, fset, file, err := load("utf8.go")
 	if err != nil {
 		return nil, err
+	}
+	if rel := llplan9asm.SDKReleaseVersion(goVersion); rel != "" {
+		goVersion = rel
 	}
 	indexType := "int"
 	if version.Compare(goVersion, "go1.27") >= 0 {

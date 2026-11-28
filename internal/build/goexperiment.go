@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+
+	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
 )
 
 // sourceGoConfig records the toolchain and effective feature tags used to select
@@ -49,6 +51,10 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 	}
 	if cfg.GOROOT == "" || cfg.GOVERSION == "" {
 		return cfg, fmt.Errorf("Go source configuration is missing GOROOT or GOVERSION")
+	}
+	cfg.GOVERSION, err = llplan9asm.AssemblySDKVersion(cfg.GOROOT)
+	if err != nil {
+		return cfg, fmt.Errorf("read selected SDK version: %w", err)
 	}
 	cfg.originalExperiment = cfg.GOEXPERIMENT
 	// An empty environment value makes cmd/go consult GOENV again. A comma
@@ -98,6 +104,8 @@ func sourceGoConfigError(action string, err error) error {
 	}
 	return fmt.Errorf("%s: %w", action, err)
 }
+
+func (cfg sourceGoConfig) releaseVersion() string { return llplan9asm.SDKReleaseVersion(cfg.GOVERSION) }
 
 func (cfg sourceGoConfig) apply(environ []string) []string {
 	environ = withEnv(withResolvedGoToolchain(environ, cfg.GOVERSION),

@@ -132,13 +132,14 @@ func AuditRuntimeSources(conf RuntimeAuditConfig) (*RuntimeOwnership, error) {
 	slices.Sort(tags)
 	flags = []string{"-tags=" + strings.Join(slices.Compact(tags), ",")}
 	cgoEnabled := source.CGO_ENABLED == "1"
+	sourceReleaseGoVersion := source.releaseVersion()
 	report, err := auditRuntimeSources(conf.RuntimeDir, source.GOROOT, sourcePatchBuildContext{
-		goos: conf.GOOS, goarch: conf.GOARCH, goversion: source.GOVERSION,
+		goos: conf.GOOS, goarch: conf.GOARCH, goversion: sourceReleaseGoVersion,
 		buildFlags: flags, toolTags: source.toolTags, cgoEnabled: &cgoEnabled})
 	if err != nil {
 		return nil, err
 	}
-	report.ABI, err = auditRuntimeABI(conf.RuntimeDir, source.GOROOT, source.GOVERSION, target)
+	report.ABI, err = auditRuntimeABI(conf.RuntimeDir, source.GOROOT, sourceReleaseGoVersion, target)
 	return report, err
 }
 

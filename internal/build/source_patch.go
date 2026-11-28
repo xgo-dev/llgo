@@ -8,6 +8,7 @@ import (
 	"go/build"
 	"go/parser"
 	"go/token"
+	"go/version"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -491,7 +493,10 @@ func splitSourcePatchBuildTags(s string) []string {
 }
 
 func releaseTagsForGoVersion(goVersion string) ([]string, error) {
-	goVersion = strings.TrimPrefix(goVersion, "go")
+	if rel := llplan9asm.SDKReleaseVersion(goVersion); rel != "" {
+		goVersion = rel
+	}
+	goVersion = strings.TrimPrefix(version.Lang(goVersion), "go")
 	parts := strings.Split(goVersion, ".")
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("unsupported Go version %q", goVersion)

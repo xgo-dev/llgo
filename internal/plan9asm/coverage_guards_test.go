@@ -64,7 +64,7 @@ func TestPreprocessAndSDKVersionGuards(t *testing.T) {
 		t.Fatal("expected error reading directory as assembly file")
 	}
 
-	// assemblySDKVersion with zbootstrap.go containing non-GenDecl (func) and non-ValueSpec (type) before const version.
+	// AssemblySDKVersion with zbootstrap.go containing non-GenDecl (func) and non-ValueSpec (type) before const version.
 	fakeSDK := t.TempDir()
 	zbDir := filepath.Join(fakeSDK, "src", "internal", "buildcfg")
 	if err := os.MkdirAll(zbDir, 0o700); err != nil {
@@ -74,8 +74,8 @@ func TestPreprocessAndSDKVersionGuards(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(zbDir, "zbootstrap.go"), []byte(zbSrc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if ver, err := assemblySDKVersion(fakeSDK); err != nil || ver != "go1.27.0" {
-		t.Fatalf("assemblySDKVersion(zbootstrap) = %q, %v", ver, err)
+	if ver, err := AssemblySDKVersion(fakeSDK); err != nil || ver != "go1.27.0" {
+		t.Fatalf("AssemblySDKVersion(zbootstrap) = %q, %v", ver, err)
 	}
 
 	// assemblyExperimentDefines with non-VAR decl and non-ValueSpec in pkgspecial.go.
@@ -325,5 +325,19 @@ func TestAMD64FrameTranslateAndNativeTailErrorGuards(t *testing.T) {
 	varTailPkg := mustTestPackage(t, "example.com/vartail", "package vartail\nfunc Enter(args ...uintptr)\n")
 	if _, _, err := nativeTailSignatures(varTailPkg, []byte("TEXT ·Enter(SB), NOSPLIT|NOFRAME, $0-24\nJMP (R0)\n"), ResolveSymFunc("example.com/vartail"), "linux", "arm64"); err == nil || !strings.Contains(err.Error(), "variadic") {
 		t.Fatalf("nativeTailSignatures(variadic) err = %v, want variadic error", err)
+	}
+}
+
+func TestSDKVersionFile(t *testing.T) {
+	root := t.TempDir()
+	for _, v := range []string{"", "not-a-version", "go1.20.14-", "go1.24.0 X:boringcrypto", "go1.20.14", "devel go1.20-1234567"} {
+		if err := os.WriteFile(filepath.Join(root, "VERSION"), []byte(v+"\ntime stamp\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := AssemblySDKVersion(root)
+		valid := v == "go1.24.0 X:boringcrypto" || v == "go1.20.14" || v == "devel go1.20-1234567"
+		if (err == nil) != valid || valid && got != v {
+			t.Fatalf("version %q: %q, %v", v, got, err)
+		}
 	}
 }

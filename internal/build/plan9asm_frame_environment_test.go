@@ -20,6 +20,9 @@ func TestPlan9AsmFrameSourceEnvironment(t *testing.T) {
 					sourceGoExperiment: cfg.originalExperiment},
 			}
 			opt := plan9asmTranslateOptions(ctx)
+			if cfg.GOVERSION == "" || opt.SourceGoVersion != cfg.GOVERSION {
+				t.Fatalf("assembly source SDK = %q, want %q", opt.SourceGoVersion, cfg.GOVERSION)
+			}
 			observed := commandEnv{environ: opt.Environment}
 			if observed.lookup("GOEXPERIMENT") != experiment || commands.lookup("GOEXPERIMENT") != cfg.GOEXPERIMENT {
 				t.Fatal("frame capture must retain the original source profile without mutating the canonical cache profile")

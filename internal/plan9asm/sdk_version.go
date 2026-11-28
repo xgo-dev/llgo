@@ -6,20 +6,22 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"go/version"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
+// AssemblySDKVersion reads the version of the source tree at root.
 // Official archives carry VERSION. Distribution SDKs can omit that file but
 // still carry cmd/dist's generated buildcfg source. Read only the selected SDK;
 // neither the launcher's runtime nor a Go executable on PATH identifies it.
-func assemblySDKVersion(root string) (string, error) {
+func AssemblySDKVersion(root string) (string, error) {
 	data, err := readAssemblyFile(nil, filepath.Join(root, "VERSION"))
 	if err == nil {
-		return strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0]), nil
+		line, _, _ := strings.Cut(string(data), "\n")
+		return checkedSDKVersion(strings.TrimSpace(line))
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return "", err
@@ -59,7 +61,7 @@ func assemblySDKVersion(root string) (string, error) {
 					return "", fmt.Errorf("selected SDK buildcfg version is not a string literal")
 				}
 				selected, err = strconv.Unquote(literal.Value)
-				if err != nil || !version.IsValid(selected) {
+				if err != nil {
 					return "", fmt.Errorf("invalid selected SDK buildcfg version %q", selected)
 				}
 			}
@@ -68,5 +70,26 @@ func assemblySDKVersion(root string) (string, error) {
 	if selected == "" {
 		return "", fmt.Errorf("selected SDK buildcfg source has no version constant")
 	}
-	return selected, nil
+	return checkedSDKVersion(selected)
+}
+
+var sdkVersion = regexp.MustCompile(`^(go1\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)|(beta|rc)(0|[1-9][0-9]*))?)(-[^[:space:]]+)?( X:[a-zA-Z0-9_]+(,[a-zA-Z0-9_]+)*)?$`)
+
+// SDKReleaseVersion returns the comparable Go version of a source SDK.
+// Callers keep the original build identity for cache keys and tool selection.
+func SDKReleaseVersion(v string) string {
+	if strings.HasPrefix(v, "devel ") {
+		v, _, _ = strings.Cut(strings.TrimPrefix(v, "devel "), " ")
+	}
+	if m := sdkVersion.FindStringSubmatch(v); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+func checkedSDKVersion(v string) (string, error) {
+	if SDKReleaseVersion(v) == "" {
+		return "", fmt.Errorf("invalid selected SDK version %q", v)
+	}
+	return v, nil
 }

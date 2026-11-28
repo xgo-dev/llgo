@@ -433,3 +433,77 @@ func TestExtraAsmSigsAndDeclMap(t *testing.T) {
 		}
 	}
 }
+
+func TestWindows386TLSUsesSelectedSDK(t *testing.T) {
+	pkg := mustTestPackage(t, "example.com/tls", "package tls\nfunc Slot() uint32\n")
+	src := []byte("TEXT ·Slot(SB),NOSPLIT,$0-4\n MOVL TLS, AX\n MOVL AX, ret+0(FP)\n RET\n")
+	for _, tc := range []struct {
+		name     string
+		envRoot  string
+		opt      TranslateOptions
+		wantTLSG bool
+		wantFS20 bool
+	}{
+		{
+			name:     "explicit-goroot-overrides-stale-version",
+			opt:      TranslateOptions{SourcePreprocessed: true, SourceGoVersion: "go1.27.3"},
+			envRoot:  "go1.20.14",
+			wantTLSG: false,
+			wantFS20: true,
+		},
+		{
+			name:     "explicit-go1.20-without-goroot",
+			opt:      TranslateOptions{SourcePreprocessed: true, SourceGoVersion: "go1.20.14"},
+			wantTLSG: false,
+			wantFS20: true,
+		},
+		{
+			name:     "explicit-go1.21-not-clobbered-by-env-goroot",
+			envRoot:  "go1.20.14",
+			opt:      TranslateOptions{SourcePreprocessed: true, SourceGoVersion: "go1.21.0"},
+			wantTLSG: true,
+			wantFS20: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opt := tc.opt
+			if tc.name == "explicit-goroot-overrides-stale-version" {
+				opt.GOROOT = t.TempDir()
+				if err := os.WriteFile(filepath.Join(opt.GOROOT, "VERSION"), []byte(tc.envRoot+"\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			} else if tc.envRoot != "" {
+				root := t.TempDir()
+				if err := os.WriteFile(filepath.Join(root, "VERSION"), []byte(tc.envRoot+"\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("GOROOT", root)
+			}
+			tr, err := TranslateSourceModuleForPkgWithOptions(pkg, "slot_386.s", src, "windows", "386", opt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tr.Module.Dispose()
+			ir := tr.Module.String()
+			if strings.Contains(ir, "runtime.tls_g") != tc.wantTLSG || !strings.Contains(ir, "addrspace(257)") || strings.Contains(ir, "i64 0, 20") != tc.wantFS20 {
+				t.Fatalf("incorrect TLS lookup for %s:\n%s", tc.name, ir)
+			}
+		})
+	}
+}
+
+func TestWindows386TLSUsesEnvironmentGOROOT(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "VERSION"), []byte("devel go1.20-abc123\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOROOT", root)
+	pkg := mustTestPackage(t, "example.org/tls", "package tls\nfunc Slot() uint32")
+	tr, err := TranslateSourceForPkgWithOptions(pkg, "slot.s", []byte("TEXT ·Slot(SB),4,$0-4\nMOVL TLS,AX\nMOVL AX,ret+0(FP)\nRET"), "windows", "386", TranslateOptions{SourcePreprocessed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(tr.LLVMIR, "runtime.tls_g") || !strings.Contains(tr.LLVMIR, "i64 0, 20") {
+		t.Fatal(tr.LLVMIR)
+	}
+}

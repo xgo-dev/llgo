@@ -20,8 +20,9 @@ func plan9asmTranslateOptions(ctx *context) llplan9asm.TranslateOptions {
 	opt := llplan9asm.TranslateOptions{
 		GOROOT: ctx.commands.lookup("GOROOT"), Overlay: conf.Overlay,
 		GO386: conf.GO386, GOARM: conf.GOARM, GOAMD64: conf.GOAMD64, GOARM64: conf.GOARM64,
-		ToolTags:    conf.toolTags,
-		Environment: ctx.commands.environ,
+		SourceGoVersion: conf.sourceGoVersion,
+		ToolTags:        conf.toolTags,
+		Environment:     ctx.commands.environ,
 	}
 	if conf.sourceGoVersion != "" {
 		opt.Environment = withEnv(opt.Environment, "GOEXPERIMENT="+conf.sourceGoExperiment)
