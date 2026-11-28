@@ -75,6 +75,7 @@ func configureUnusedGlobalInits(ctx *context, asmRoots *linkPruningInputs) {
 		slices.Sort(asmRoots.roots)
 		ctx.sizePruningRoots = slices.Compact(asmRoots.roots)
 	}
+	configureValueFormats(ctx, asmRoots)
 	// A one-name go:linkname is an export annotation, with no alias entry in
 	// Program. Preserve those declarations as well as two-name link aliases.
 	inspect := func(pkg *types.Package, files []*ast.File) {
