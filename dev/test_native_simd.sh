@@ -62,11 +62,9 @@ for profile in O0-off O2-off O2-thin O2-full; do
     "$LLGO" test "${flags[@]}" -c -o "$binary" "$package"
     "$binary" -test.v -test.count=1 -test.timeout=2m
     if [[ "$suite" == arch ]]; then
-      # On Linux Rosetta, establish YMM support with AVX advertised, then
-      # repeat the by-value call with both CPUID and Go's predicates masked.
-      selection=$(ROSETTA_ADVERTISE_AVX=1 "$binary" -test.v -test.run='^TestSIMD(FMVOutlineCallers|512FixedRegisterCall)$')
+      selection=$("$binary" -test.v -test.run='^TestSIMD(FMVOutlineCallers|512FixedRegisterCall)$')
       if [[ "$selection" == *"--- PASS: TestSIMDFMVOutlineCallers ("* ]]; then
-        ROSETTA_ADVERTISE_AVX=0 GODEBUG=cpu.all=off LLGO_TEST_MASKED_YMM=1 "$binary" -test.v -test.run='^TestSIMDFMVOutlineCallers$'
+        GODEBUG=cpu.all=off LLGO_TEST_MASKED_YMM=1 "$binary" -test.v -test.run='^TestSIMDFMVOutlineCallers$'
       fi
       if [[ "$selection" == *"--- PASS: TestSIMD512FixedRegisterCall/taken"* ]]; then
         GODEBUG=cpu.all=off LLGO_TEST_MASKED_ZMM=1 "$binary" -test.v -test.run='^TestSIMD512FixedRegisterCall$'
