@@ -1,19 +1,17 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <linux/futex.h>
+#include <linux/types.h>
 #include <stdint.h>
 #include <sys/syscall.h>
-#include <time.h>
 #include <unistd.h>
 
 #define LLGO_LINUX_MAX_WAIT_NANOS UINT64_C(86400000000000)
 
-#if defined(SYS_futex_time64) && !defined(SYS_futex)
-#define LLGO_SYS_FUTEX SYS_futex_time64
-#elif defined(SYS_futex_time64) && defined(_TIME_BITS) && _TIME_BITS == 64
-#define LLGO_SYS_FUTEX SYS_futex_time64
-#else
+#ifdef SYS_futex
 #define LLGO_SYS_FUTEX SYS_futex
+#else
+#define LLGO_SYS_FUTEX SYS_futex_time64
 #endif
 
 int llgo_linux_wait_uint32(uint32_t *addr, uint32_t value)
@@ -31,12 +29,28 @@ int llgo_linux_wait_uint32_timeout(uint32_t *addr, uint32_t value, uint64_t time
         return ETIMEDOUT;
     if (timeout_ns > LLGO_LINUX_MAX_WAIT_NANOS)
         timeout_ns = LLGO_LINUX_MAX_WAIT_NANOS;
-    struct timespec ts;
-    ts.tv_sec = (time_t)(timeout_ns / 1000000000ULL);
-    ts.tv_nsec = (long)(timeout_ns % 1000000000ULL);
+    uint64_t sec = timeout_ns / UINT64_C(1000000000);
+    uint64_t nsec = timeout_ns % UINT64_C(1000000000);
     int saved_errno = errno;
-    long result = syscall(LLGO_SYS_FUTEX, addr, FUTEX_WAIT_PRIVATE, value, &ts, 0, 0);
-    int error = result < 0 ? errno : 0;
+    int error;
+
+    // The syscall ABI is independent of libc's time_t and struct timespec.
+#ifdef SYS_futex_time64
+    struct { int64_t sec, nsec; } time64 = { (int64_t)sec, (int64_t)nsec };
+    long result = syscall(SYS_futex_time64, addr, FUTEX_WAIT_PRIVATE, value, &time64, 0, 0);
+    error = result < 0 ? errno : 0;
+#ifdef SYS_futex
+    if (error == ENOSYS)
+#endif
+#endif
+#ifdef SYS_futex
+    {
+        // The one-day cap keeps sec representable even on 32-bit kernels.
+        struct { __kernel_long_t sec, nsec; } legacy = { (__kernel_long_t)sec, (__kernel_long_t)nsec };
+        long result = syscall(SYS_futex, addr, FUTEX_WAIT_PRIVATE, value, &legacy, 0, 0);
+        error = result < 0 ? errno : 0;
+    }
+#endif
     errno = saved_errno;
     return error;
 }

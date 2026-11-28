@@ -24,6 +24,7 @@ func linuxWaitErrnoRetryable(err c.Int) c.Int
 
 // WaitUint32 atomically checks addr and sleeps while it contains value.
 // The caller rechecks after wakeups, signals, or a mismatched value.
+// The return value is zero on success or the syscall errno.
 func WaitUint32(addr *uint32, value uint32) c.Int {
 	return linuxWaitUint32(addr, value)
 }
@@ -31,6 +32,7 @@ func WaitUint32(addr *uint32, value uint32) c.Int {
 // WaitUint32Timeout sleeps while *addr == value for up to timeoutNs nanoseconds
 // (measured against CLOCK_MONOTONIC via FUTEX_WAIT_PRIVATE). Callers must
 // always re-read *addr after WaitUint32Timeout returns.
+// The return value is zero on success or the syscall errno.
 func WaitUint32Timeout(addr *uint32, value uint32, timeoutNs uint64) c.Int {
 	return linuxWaitUint32Timeout(addr, value, timeoutNs)
 }
