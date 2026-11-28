@@ -108,7 +108,7 @@ In `-Oz -deadcodedrop -lto=full` builds, the compiler can lower direct
 integers, booleans, strings, pointers, arrays, slices, structs and string-keyed
 maps. Custom marshalers, dynamic inputs and other reachable codec operations
 retain the standard encoder. The verbose diagnostic is
-`specialize statically typed JSON encoding`.
+`llgo: specialize statically typed JSON codec`.
 When the entry has no other JSON uses and the JSON initializers only build
 private state, the compiler omits those calls from the executable's startup.
 Explicit blank imports and other JSON consumers retain initialization. The

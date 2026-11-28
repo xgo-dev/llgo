@@ -963,6 +963,11 @@ jobs:
           go build -tags=dev -o "$RUNNER_TEMP/llgo-dev" ./cmd/llgo
           LLGO="$RUNNER_TEMP/llgo-dev" python3 dev/test_wasm_wasi_lto.py
 
+      - uses: actions/setup-node@v7
+        with:
+          # The allocator and stdout hosts instantiate modules with standard Wasm EH.
+          node-version: "26"
+
       - name: Test WASI size-build LTO regressions (Wasmer)
         shell: bash
         run: |
