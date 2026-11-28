@@ -2778,7 +2778,10 @@ func (p *context) callExInstr(b llvmgen.Builder, act llvmgen.DoAction, callInstr
 			}
 			p.importInlineBody(cv)
 		}
-		if _, ok := p.simdOperation(cv); ok && act != llvmgen.Call {
+		if _, ok := p.simdOperation(cv); ok {
+			if act == llvmgen.Call && p.goPkg != cv.Pkg {
+				return p.simdCall(b, cv, call.Args)
+			}
 			fn := p.compileValue(b, cv)
 			ret = p.emitDo(b, act, call, ds, mayRecover, fn, llvmgen.Builder.Call, p.compileValues(b, args, kind)...)
 			return
