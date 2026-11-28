@@ -84,6 +84,14 @@ const (
 	moduleMapZeroName           = "__llgo.map.zero"
 	directClosureNilEnvName     = "__llgo.directClosureNilEnv$"
 	runtimeZeroSizedAllocSymbol = "zeroSizedAlloc"
+
+	// Keep runtimeMemProfileShardsSym and runtimeMemProfileShardsAlign in sync
+	// with memProfileShardsData and memProfileShard's 256-byte stride
+	// (memProfileNumBuckets*8 + padding*8) in
+	// runtime/internal/runtime/memprofile_atomic_native.go; update both when
+	// renaming the global or changing the shard stride.
+	runtimeMemProfileShardsSym   = PkgRuntime + ".memProfileShardsData"
+	runtimeMemProfileShardsAlign = 256
 )
 
 func (p Package) directClosureNilEnv() Expr {
@@ -249,6 +257,9 @@ func (p Package) doNewVarEx(name string, t Type, threadLocal bool) Global {
 	gbl := llvm.AddGlobal(p.mod, typ, name)
 	gbl.SetThreadLocal(threadLocal)
 	alignment := int(p.Prog.AlignOf(elem))
+	if !threadLocal && name == runtimeMemProfileShardsSym && alignment < runtimeMemProfileShardsAlign {
+		alignment = runtimeMemProfileShardsAlign
+	}
 	gbl.SetAlignment(alignment)
 	ret := &aGlobal{Expr: Expr{gbl, t}, prog: p.Prog}
 	p.vars[name] = ret
