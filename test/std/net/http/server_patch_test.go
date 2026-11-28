@@ -775,6 +775,9 @@ func TestServerIdleClearsHandlerReadDeadlineAndHandlesPartialPrefix(t *testing.T
 }
 
 func TestClientTransportRejectsUnsolicitedBufferedBytes(t *testing.T) {
+	if runtime.Compiler != "llgo" {
+		t.Skip("requires the LLGo HTTP/1.1 connection reuse guard")
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)

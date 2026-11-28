@@ -655,6 +655,14 @@ func (c *conn) serve(ctx context.Context) {
 	c.serveHTTP1(ctx, cancelCtx, false, time.Time{})
 }
 
+func requestBodyLimitReached(w *response) bool {
+	// Go 1.27.4 changed requestBodyLimitHit from bool to atomic.Bool.
+	if flag, ok := any(&w.requestBodyLimitHit).(*bool); ok {
+		return *flag
+	}
+	return any(&w.requestBodyLimitHit).(*atomic.Bool).Load()
+}
+
 func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, resumed bool, resumedIdleDeadline time.Time) {
 	var inFlightResponse *response
 	handedOff := false
@@ -801,7 +809,7 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 		w.finishRequest()
 		c.rwc.SetWriteDeadline(time.Time{})
 		if !w.shouldReuseConnection() {
-			if w.requestBodyLimitHit || w.closedRequestBodyEarly() {
+			if requestBodyLimitReached(w) || w.closedRequestBodyEarly() {
 				c.closeWriteAndWait()
 			}
 			return
