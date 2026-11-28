@@ -195,6 +195,7 @@ func runGoroutine(mp *m) (unsafe.Pointer, *runtimeContext) {
 func finishRetiredM(ctx *runtimeContext) {
 	mp := &ctx.platform.m
 	pp := &ctx.platform.p
+	clearMediumAllocCache(mp)
 	mPoolDestroySlot(&ctx.platform.pool)
 	setpstatus(pp, _Pdead)
 	pp.m = nil
