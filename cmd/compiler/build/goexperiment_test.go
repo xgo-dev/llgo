@@ -169,6 +169,34 @@ func TestResolveSourceGoUsesInvocationDir(t *testing.T) {
 	}
 }
 
+func TestResolveSourceGoRelativeGOENV(t *testing.T) {
+	buildDir := t.TempDir()
+	envFile := filepath.Join(buildDir, "go.env")
+	if err := os.WriteFile(envFile, []byte("GOFLAGS=-trimpath\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	commands := commandEnv{dir: buildDir, environ: withEnv(os.Environ(), "GOENV=go.env")}
+	cfg1, err := resolveSourceGoConfig(commands, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cfg1.GOFLAGS, "-trimpath") {
+		t.Fatalf("expected -trimpath, got %q", cfg1.GOFLAGS)
+	}
+
+	// Modify relative go.env in buildDir to GOFLAGS=-mod=readonly
+	if err := os.WriteFile(envFile, []byte("GOFLAGS=-mod=readonly\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := resolveSourceGoConfig(commands, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cfg2.GOFLAGS, "-mod=readonly") {
+		t.Fatalf("expected -mod=readonly after modifying relative GOENV, got %q", cfg2.GOFLAGS)
+	}
+}
+
 func TestSourceGoToolTagsInheritBuildEnvironment(t *testing.T) {
 	for _, mode := range []string{"module-on", "module-off", "goflags-modfile", "buildflags-modfile", "workspace"} {
 		t.Run(mode, func(t *testing.T) {

@@ -580,6 +580,49 @@ func TestDefaultGODEBUGGOENVFileInvalidation(t *testing.T) {
 	if key1 == key2 {
 		t.Fatalf("modifying GOENV content must invalidate cache key: key1=%q, key2=%q", key1, key2)
 	}
+
+	// Relative GOENV resolved against cfg.Dir (different from process working directory)
+	relDir := filepath.Join(t.TempDir(), "relroot")
+	if err := os.MkdirAll(relDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(relDir, "go.mod"), "module example.com/debugrel\ngo 1.27.0\n")
+	writeFile(t, filepath.Join(relDir, "main.go"), "package main\nfunc main() {}\n")
+	relEnvFile := filepath.Join(relDir, "go.env")
+	writeFile(t, relEnvFile, "GOFIPS140=off\n")
+
+	relCfg := &packages.Config{Dir: relDir, Env: withEnv(os.Environ(), "GOENV=go.env")}
+	relPkg := []*packages.Package{{ID: "example.com/debugrel", Name: "main"}}
+	rkey1 := defaultGODEBUGCachePath(relCfg, runtime.GOROOT(), relPkg, nil)
+	if rkey1 == "" {
+		t.Fatal("expected non-empty cache key for relative GOENV")
+	}
+
+	defaults1, err := resolveDefaultGODEBUG(relCfg, runtime.GOROOT(), relPkg, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(defaults1["example.com/debugrel"], "fips140=on") {
+		t.Fatalf("expected off, got %q", defaults1["example.com/debugrel"])
+	}
+
+	// Modify relative go.env in relDir to GOFIPS140=latest
+	writeFile(t, relEnvFile, "GOFIPS140=latest\n")
+	rkey2 := defaultGODEBUGCachePath(relCfg, runtime.GOROOT(), relPkg, nil)
+	if rkey2 == "" {
+		t.Fatal("expected non-empty cache key for relative GOENV")
+	}
+	if rkey1 == rkey2 {
+		t.Fatalf("modifying relative GOENV must invalidate cache key: rkey1=%q, rkey2=%q", rkey1, rkey2)
+	}
+
+	defaults2, err := resolveDefaultGODEBUG(relCfg, runtime.GOROOT(), relPkg, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(defaults2["example.com/debugrel"], "fips140=on") {
+		t.Fatalf("expected fips140=on after modifying relative GOENV, got %q", defaults2["example.com/debugrel"])
+	}
 }
 
 func TestDefaultGODEBUGTestDirectivesWarmBuild(t *testing.T) {

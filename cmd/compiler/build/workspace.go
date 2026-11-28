@@ -172,6 +172,15 @@ func recordEffectiveGoEnv(h io.Writer, cmdEnv commandEnv, overlay map[string][]b
 		fmt.Fprintf(h, "goenv=none\x00")
 		return
 	}
+	if !filepath.IsAbs(goenv) {
+		base := cmdEnv.dir
+		if base == "" {
+			base, _ = os.Getwd()
+		}
+		if base != "" {
+			goenv = filepath.Join(base, goenv)
+		}
+	}
 	goenv = filepath.Clean(goenv)
 	if overlay != nil {
 		if data, ok := overlay[goenv]; ok {
