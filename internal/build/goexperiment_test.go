@@ -452,11 +452,16 @@ func runGoConfigHelper(mode string) {
 		fmt.Println(`{"GOROOT":"test-root"}`)
 	case "list-failure":
 		json.NewEncoder(os.Stdout).Encode(sourceGoConfig{GOROOT: os.Getenv("LLGO_TEST_SOURCE_GOROOT"), GOVERSION: "go1.27.0"})
-	case "selected-root", "invalid-goflags":
+	case "selected-root", "invalid-goflags", "distro-experiment":
 		cfg := sourceGoConfig{GOROOT: runtime.GOROOT(), GOVERSION: runtime.Version()}
 		// The launcher and the selected source SDK may differ.
 		if mode == "selected-root" {
 			cfg.GOVERSION = "go1.20.14"
+		}
+		if mode == "distro-experiment" {
+			// Distro toolchains (e.g. Fedora) report an X: experiment suffix in
+			// `go env GOVERSION` even when GOROOT/VERSION contains the plain release.
+			cfg.GOVERSION = "go1.26.11 X:strictfipsruntime"
 		}
 		if mode == "invalid-goflags" {
 			cfg.GOFLAGS = "'-modfile=unterminated"
@@ -558,5 +563,24 @@ func TestDevelopmentSDKReleaseSelection(t *testing.T) {
 		if gotToolchain != tc.wantToolchain {
 			t.Fatalf("GOTOOLCHAIN for %q = %q, want %q", tc.raw, gotToolchain, tc.wantToolchain)
 		}
+	}
+}
+
+func TestDistroExperimentLauncherDoesNotForceGOTOOLCHAIN(t *testing.T) {
+	bin := t.TempDir()
+	writeBuildTestTool(t, bin, "go")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	commands := experimentCommands(t, "")
+	commands.environ = withEnv(commands.environ, "LLGO_TEST_GO_CONFIG_HELPER=distro-experiment")
+	cfg := mustResolveSourceGo(t, commands, "")
+	if cfg.GOVERSION != runtime.Version() {
+		t.Fatalf("selected SDK version = %q, want %q", cfg.GOVERSION, runtime.Version())
+	}
+	if got := cfg.resolvedToolchainVersion(); got != "" {
+		t.Fatalf("resolvedToolchainVersion() = %q, want empty for non-standard distro launcher", got)
+	}
+	applied := cfg.apply([]string{"PATH=/usr/bin"})
+	if got := (commandEnv{environ: applied}).lookup("GOTOOLCHAIN"); got != "" {
+		t.Fatalf("apply() set GOTOOLCHAIN=%q for non-standard distro launcher, want unset", got)
 	}
 }

@@ -996,7 +996,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
 	altCfg := runtimePackageConfig(cfg, env.LLGoRuntimeDir())
 	// The runtime submodule may otherwise select a different toolchain from its go.mod.
-	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourceGo.GOVERSION)
+	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourceGo.resolvedToolchainVersion())
 	loadAltSpan := buildTrace.startCoordinator("load runtime packages", map[string]any{
 		"packages": slices.Clone(altPkgPaths),
 	})

@@ -3,6 +3,7 @@ package build
 import (
 	"encoding/json"
 	"fmt"
+	"go/version"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -30,7 +31,13 @@ type sourceGoConfig struct {
 	GOCACHE      string
 	// Preserve the actual SDK setting separately from its canonical cache key.
 	originalExperiment string
-	toolTags           []string
+	// True when `go env GOVERSION` reported a non-standard distro/experiment/devel
+	// build (for example Fedora's "go1.26.11 X:strictfipsruntime"). In that case
+	// setting GOTOOLCHAIN from GOROOT/VERSION ("go1.26.11") would make cmd/go
+	// download a different upstream toolchain whose GOROOT does not match
+	// sourcePatchGOROOT.
+	nonStandardLauncher bool
+	toolTags            []string
 }
 
 func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ...string) (sourceGoConfig, error) {
@@ -52,6 +59,7 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 	if cfg.GOROOT == "" || cfg.GOVERSION == "" {
 		return cfg, fmt.Errorf("Go source configuration is missing GOROOT or GOVERSION")
 	}
+	cfg.nonStandardLauncher = !version.IsValid(cfg.GOVERSION)
 	cfg.GOVERSION, err = llplan9asm.AssemblySDKVersion(cfg.GOROOT)
 	if err != nil {
 		return cfg, fmt.Errorf("read selected SDK version: %w", err)
@@ -64,7 +72,7 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 	if resolvedExperiment == "" {
 		resolvedExperiment = ","
 	}
-	commands.environ = withResolvedGoToolchain(commands.environ, cfg.GOVERSION)
+	commands.environ = withResolvedGoToolchain(commands.environ, cfg.resolvedToolchainVersion())
 	commands.environ = withEnv(commands.environ, "GOROOT="+cfg.GOROOT, "GOEXPERIMENT="+resolvedExperiment)
 	// Query the resolved compiler while preserving the invocation's module,
 	// workspace, and GOFLAGS settings. The launcher on PATH may be a different
@@ -107,8 +115,15 @@ func sourceGoConfigError(action string, err error) error {
 
 func (cfg sourceGoConfig) releaseVersion() string { return llplan9asm.SDKReleaseVersion(cfg.GOVERSION) }
 
+func (cfg sourceGoConfig) resolvedToolchainVersion() string {
+	if cfg.nonStandardLauncher {
+		return ""
+	}
+	return cfg.GOVERSION
+}
+
 func (cfg sourceGoConfig) apply(environ []string) []string {
-	environ = withEnv(withResolvedGoToolchain(environ, cfg.GOVERSION),
+	environ = withEnv(withResolvedGoToolchain(environ, cfg.resolvedToolchainVersion()),
 		"GOROOT="+cfg.GOROOT,
 		"GOEXPERIMENT="+cfg.GOEXPERIMENT,
 		"CGO_ENABLED="+cfg.CGO_ENABLED,
