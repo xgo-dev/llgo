@@ -168,32 +168,47 @@ func TestCPUInitializationTargetHooks(t *testing.T) {
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatal(err)
 			}
-			initialized := false
-			for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
-				if strings.HasPrefix(fn.Name(), "internal/cpu.init") && strings.Contains(fn.String(), "internal/cpu.Initialize") {
-					initialized = strings.Contains(fn.String(), "CPUEnvironment")
+			definition := func(name string) llvm.Value {
+				t.Helper()
+				fn := mod.NamedFunction(name)
+				if fn.IsNil() || fn.IsDeclaration() {
+					t.Fatalf("missing CPU hook definition %s", name)
 				}
+				return fn
 			}
-			if !initialized {
-				t.Fatal("CPU initialization does not apply process overrides")
-			}
-			var bridge string
-			switch target.os {
-			case "darwin":
-				bridge = "internal/cpu.sysctlbynameInt32"
-			case "windows":
-				bridge = "internal/cpu.isProcessorFeaturePresent"
-			case "linux":
-				if target.arch == "arm64" {
-					if !strings.Contains(mod.NamedFunction("internal/cpu.llgoPrepareCPU").String(), "@getauxval") {
-						t.Fatal("missing AT_HWCAP initialization")
+			prepare := definition("internal/cpu.llgoPrepareCPU")
+			const prepareCall = `call void @"internal/cpu.llgoPrepareCPU"()`
+			var initBody string
+			for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+				if strings.HasPrefix(fn.Name(), "internal/cpu.init") {
+					if body := fn.String(); strings.Contains(body, prepareCall) {
+						initBody = body
+						break
 					}
 				}
 			}
-			if bridge != "" {
-				fn := mod.NamedFunction(bridge)
-				if fn.IsNil() || fn.IsDeclaration() {
-					t.Fatalf("CPU bridge %s depends on public runtime", bridge)
+			if initBody == "" {
+				t.Fatalf("internal/cpu package initialization is missing %s", prepareCall)
+			}
+			assertInOrder(t, initBody, prepareCall,
+				`@"github.com/xgo-dev/llgo/runtime/internal/runtime.CPUEnvironment"(`,
+				`@"internal/cpu.llgoInitializeCPU"(`)
+
+			initialize := definition("internal/cpu.llgoInitializeCPU").String()
+			if target.arch == "amd64" {
+				assertInOrder(t, initialize, `call void @"internal/cpu.doinit"()`,
+					`ptr @"internal/cpu.X86"`, `call void @"internal/cpu.processOptions"(`)
+			} else {
+				assertInOrder(t, initialize, `call void @"internal/cpu.Initialize"(`)
+			}
+			switch target.os {
+			case "darwin":
+				definition("internal/cpu.sysctlbynameInt32")
+			case "windows":
+				definition("internal/cpu.isProcessorFeaturePresent")
+			case "linux":
+				if target.arch == "arm64" {
+					assertInOrder(t, prepare.String(), "call i64 @getauxval(i64 16)", `ptr @"internal/cpu.HWCap"`)
 				}
 			}
 		})

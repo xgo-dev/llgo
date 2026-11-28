@@ -129,12 +129,19 @@ argument rules still apply.
 A Go guard such as `if archsimd.X86.AVX512()` skips the guarded call when
 the effective query is false. If the program reaches an unconditional wide
 call, its caller must have hardware and OS support for the register width.
-For example, with `GOAMD64=v1` and `GODEBUG=cpu.all=off`, a baseline caller
-can still pass a value in ZMM registers on a machine with AVX-512F and OS
-support for ZMM state. A private adapter marshals the value at the call site.
-On a machine without that support, executing the transfer can fault. A scalar
-branch that skips it can run on the lower baseline. Each explicit SIMD
-operation in the callee retains its own feature requirements.
+The runtime records the OS-enabled YMM and ZMM widths before applying Go's
+feature overrides. For example, with `GOAMD64=v1` and `GODEBUG=cpu.all=off`,
+a caller can still use the fixed ZMM ABI on an AVX-512F machine with ZMM
+state enabled. A body with sufficient width calls the original entry directly.
+At a narrower call site, LLGo passes the vector bits in 128-bit pieces to an
+internal function. It packs the arguments into wide registers, calls the same
+entry through the supplied function pointer and splits the returned vectors.
+Direct calls and function values in different packages share a helper when
+their lowered signatures, calling conventions and retained call attributes
+match. Ordinary linking coalesces the helper even with LTO disabled. A
+capturing closure supplies its own context on each call.
+The wide transfer executes only when control reaches that call. On hardware
+without the required register support it can raise an illegal instruction.
 `TestSIMD512FixedRegisterCall` exercises both branches. The Sapphire Rapids
 SDE run also checks all 16 transferred lanes with Go's optional CPU features
 disabled.
@@ -177,8 +184,16 @@ the 256-bit family. Grouped permutations and saturating packing operate within
 
 The AMD64 implementation includes compression and expansion, vector and scalar
 funnel shifts, truth tables, widening products, cryptographic rounds and scaled
-floating-point operations. Instruction-specific leaves check the effective CPU
-predicate before loading their vector operands from caller-owned storage.
+floating-point operations. An explicit x86 instruction executes when control
+reaches it. A source guard such as `archsimd.X86.SHA()` can skip it on a CPU
+that lacks the instruction. The instruction function takes and returns vectors
+by value using XMM, YMM or ZMM registers, including on Win64. LLVM can inline
+it into a caller with compatible target features. Go functions use the
+platform ABI for their declared signatures.
+
+For SHA-1 rounds and scaled rounding, a constant selector produces a leaf
+with the immediate encoded in its instruction. A runtime selector uses a
+shared leaf that switches on the selector bits.
 `GODEBUG=simd=512` selects the 512-bit portable representation when eligible.
 
 On Linux/amd64, run the Sapphire Rapids instruction tests with Intel SDE:
@@ -326,10 +341,9 @@ the original Go display name. These are FMV-specific identity rules; LLGo's
 general runtime inline-frame representation remains separate from GoALLC's
 GoObj inline-tree format.
 
-A private adapter that calls a Go function preserves the frame chain back
-to the original call site. Go's stack walker skips the adapter when counting
-callers, so two calls to the same callback from different source lines keep
-their distinct line numbers under `runtime.CallersFrames`.
+The selected body calls wide Go functions and function values at their source
+call sites. Two calls to the same callback from different lines retain their
+distinct caller PCs under `runtime.CallersFrames`.
 
 Package archives contain a dedicated metadata object with post-backend function
 identities, wrapper flags, and PC-line records. Both fresh and cached archives
@@ -460,7 +474,7 @@ commands above and Wasmer 7.5.0.
 
 On native amd64, compare predictable and deterministic random selectors with
 the same binary. The noinline kernel retains dynamic selectors; its AVX2 guard
-exercises FMV, while `cpu.all=off` selects the baseline implementation.
+exercises FMV. With `cpu.all=off`, the AVX2 query is false.
 
 ```sh
 GOAMD64=v1 GOEXPERIMENT=simd llgo test -O2 -c -o /tmp/simd-half.test ./test/simd
@@ -485,8 +499,9 @@ go test ./cl ./ssa ./internal/build -run '^(TestSIMD|TestCPUInitialization|TestE
 Generic LLVM legalization handles baseline operations. CPU-guarded leaves
 carry the features required by instruction-specific operations. The amd64
 assembly check uses `GOAMD64=v1` and rejects AVX instructions in baseline
-functions. The native gate exercises AVX512 paths on capable hosts and the
-guard tests exercise scalar branches on lower baselines.
+functions. The Linux O2 portable integer-add test also checks for YMM and ZMM
+adds in the respective Midway implementations. The native gate exercises
+AVX512 paths on capable hosts and scalar branches on lower baselines.
 For emulated AVX512 execution, run `dev/test_simd_amd64_sde.sh` on Linux/amd64.
 
 Reference boundaries:
@@ -518,13 +533,13 @@ Independent extensions keep their effective Go branches. Where a selected
 body needs an instruction beyond its target features, the guarded operation
 can execute in a private outlined leaf. For example, `SHA256TwoRounds`
 already runs in a private function compiled with SHA support. Its caller
-keeps the Go guard and runtime safety check. These checks alone create no
-SHA version of the caller. A guarded FMA lowered to an instruction in the
+keeps the Go guard. A guarded FMA lowered to an instruction in the
 caller can still specialize that function.
 
-A scalar function can isolate a wide call in the same way. Transfer into the
-leaf occurs at the original operation, so scalar exits, faults and observable
-effects keep their order.
+A function with a scalar signature can select a body with enough register
+width for a wide call. Its source guards and scalar exits keep their original
+order. An outlined instruction also uses a register signature compatible
+with its calling body.
 
 Guard recognition uses direct official CPU queries, including negated early
 exits. Saved booleans and predicate-returning helpers retain ordinary Go

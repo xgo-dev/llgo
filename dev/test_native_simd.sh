@@ -44,7 +44,7 @@ for profile in O0-off O2-off O2-thin O2-full; do
   echo "SIMD: amd64 $profile"
   for suite in arch portable; do
     package=./test/simd
-    filter='^TestSIMD(FMV|Bridge|Extend|Narrow|Resize|Horizontal|Interleave|ConversionResize|PairShuffle|ScalarPermute|ConcatShift|ClearAVX|512|256)'
+    filter='^TestSIMD(FMV|X86|Bridge|Extend|Narrow|Resize|Horizontal|Interleave|ConversionResize|PairShuffle|ScalarPermute|ConcatShift|ClearAVX|512|256)'
     settings=(cpu.avx2=off cpu.avx=off cpu.fma=off cpu.all=off)
     if [[ "$suite" == portable ]]; then
       package+=/portable
@@ -62,9 +62,12 @@ for profile in O0-off O2-off O2-thin O2-full; do
     "$LLGO" test "${flags[@]}" -c -o "$binary" "$package"
     "$binary" -test.v -test.count=1 -test.timeout=2m
     if [[ "$suite" == arch ]]; then
-      selection=$("$binary" -test.v -test.run='^TestSIMD(FMVOutlineCallers|512FixedRegisterCall)$')
+      selection=$("$binary" -test.v -test.run='^TestSIMD(FMVOutlineCallers|512FixedRegisterCall|512AESRound)$')
       if [[ "$selection" == *"--- PASS: TestSIMDFMVOutlineCallers ("* ]]; then
-        GODEBUG=cpu.all=off LLGO_TEST_MASKED_YMM=1 "$binary" -test.v -test.run='^TestSIMDFMVOutlineCallers$'
+        GODEBUG=cpu.all=off LLGO_TEST_MASKED_YMM=1 "$binary" -test.v -test.run='^TestSIMD(FMVOutlineCallers|256FixedRegisterIndirect)$'
+      fi
+      if [[ "$selection" == *"--- PASS: TestSIMD512AESRound ("* ]]; then
+        GODEBUG=cpu.all=off LLGO_TEST_MASKED_AES=1 "$binary" -test.v -test.run='^TestSIMD512AESRound$'
       fi
       if [[ "$selection" == *"--- PASS: TestSIMD512FixedRegisterCall/taken"* ]]; then
         GODEBUG=cpu.all=off LLGO_TEST_MASKED_ZMM=1 "$binary" -test.v -test.run='^TestSIMD512FixedRegisterCall$'

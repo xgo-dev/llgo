@@ -15,22 +15,20 @@ type outlineKey struct {
 	signature llvm.Type
 }
 
-type outlineSite struct {
+type guardedIntrinsic struct {
 	call     llvm.Value
-	width    int
 	required uint64
 }
 
-// A narrower baseline body contains every site that later variants could
-// need to outline. Check this view before committing any IR transformation.
-func (a *wideABI) validateOutlines(fn llvm.Value, baseline string, queries map[llvm.Value]uint64, enabled uint64) error {
-	floor := a.registerFloor(fn, baseline)
-	for _, s := range a.outlineSites(fn, floor, queries, enabled) {
+// Check every guarded intrinsic before mutating any public definition.
+// A wider body may outline an intrinsic that the baseline lowers in place.
+func (a *wideABI) validateOutlines(fn llvm.Value, queries map[llvm.Value]uint64, enabled uint64) error {
+	for _, s := range a.guardedIntrinsics(fn, queries, enabled) {
 		call := s.call
 		if hasOutlineBundles(call) {
 			return fmt.Errorf("SIMD FMV cannot outline call with an operand bundle in %s", fn.Name())
 		}
-		if !call.IsACallInst().IsNil() && call.TailCallKind() == llvm.TailCallKindMustTail {
+		if call.TailCallKind() == llvm.TailCallKindMustTail {
 			return fmt.Errorf("SIMD FMV cannot outline musttail call in %s", fn.Name())
 		}
 	}
@@ -39,58 +37,52 @@ func (a *wideABI) validateOutlines(fn llvm.Value, baseline string, queries map[l
 
 func (a *wideABI) outlineBody(fn llvm.Value, baseline string, queries map[llvm.Value]uint64, enabled uint64) {
 	floor := a.registerFloor(fn, baseline)
-	for _, s := range a.outlineSites(fn, floor, queries, enabled) {
-		a.outlineCall(s.call, floor, s.width, s.required)
+	for _, s := range a.guardedIntrinsics(fn, queries, enabled) {
+		// Leave the generic intrinsic in place if the private call would
+		// need wider registers for its arguments or result.
+		if a.signature(s.call.CalledFunctionType()) <= floor {
+			a.outlineIntrinsic(s.call, s.required)
+		}
 	}
 }
 
-func (a *wideABI) outlineSites(fn llvm.Value, floor int, queries map[llvm.Value]uint64, enabled uint64) []outlineSite {
+func (a *wideABI) guardedIntrinsics(fn llvm.Value, queries map[llvm.Value]uint64, enabled uint64) []guardedIntrinsic {
 	facts := blockGuards(fn, queries)
-	// An invoke result may need a new normal edge. Visit the original sites once.
-	var sites []outlineSite
+	var sites []guardedIntrinsic
 	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		if facts[bb] == 0 {
+			continue
+		}
 		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
-			if w := a.callWidth(i); w > floor {
-				sites = append(sites, outlineSite{call: i, width: w})
+			// The arithmetic intrinsics eligible for ISA outlining are calls.
+			// LLVM does not allow them as invoke targets.
+			if i.IsACallInst().IsNil() {
 				continue
 			}
-			c := directGuardCallee(i)
+			c := i.CalledValue().IsAFunction()
 			if c.IsNil() || c.IntrinsicID() == 0 {
 				continue
 			}
 			req := a.intrinsicGuards(i, c)
 			if req&^enabled != 0 && req&^(facts[bb]|enabled) == 0 {
-				sites = append(sites, outlineSite{call: i, required: req})
+				sites = append(sites, guardedIntrinsic{call: i, required: req})
 			}
 		}
 	}
 	return sites
 }
 
-// A vector mask must cross a target-feature boundary as its scalar bits. LLVM
-// may otherwise allocate it in a vector register on one side and a mask
-// register on the other. A wide value uses a local slot only when the caller
-// cannot use its register ABI.
-func (a *wideABI) outlineType(t llvm.Type, floor int) llvm.Type {
-	ctx := a.mod.Context()
-	if t.TypeKind() == llvm.VectorTypeKind && t.ElementType() == ctx.Int1Type() {
-		return ctx.IntType(t.VectorSize())
-	}
-	if a.valueWidth(t) > floor {
-		return llvm.PointerType(ctx.Int8Type(), 0)
+// A vector mask crosses an ISA boundary as its scalar bits: the two targets
+// can otherwise choose different register classes for the same mask.
+func outlineType(t llvm.Type) llvm.Type {
+	if t.TypeKind() == llvm.VectorTypeKind && t.ElementType() == t.Context().Int1Type() {
+		return t.Context().IntType(t.VectorSize())
 	}
 	return t
 }
 
-func outlineSlot(b llvm.Builder, fn llvm.Value, site llvm.Value, t llvm.Type) llvm.Value {
-	b.SetInsertPointBefore(fn.EntryBasicBlock().FirstInstruction())
-	slot := b.CreateAlloca(t, "")
-	b.SetInsertPointBefore(site)
-	return slot
-}
-
 // Pure overloaded intrinsics have the same ABI and semantics at every use.
-// Other calls retain their original attributes and an indirect target, if any.
+// Per-site wrappers retain immediate operands and call-site attributes.
 func reusableOperation(c llvm.Value) bool {
 	if c.IsNil() {
 		return false
@@ -103,25 +95,19 @@ func reusableOperation(c llvm.Value) bool {
 	return false
 }
 
-func (a *wideABI) outlineCall(inst llvm.Value, floor, width int, required uint64) {
+func (a *wideABI) outlineIntrinsic(inst llvm.Value, required uint64) {
 	ctx := a.mod.Context()
 	b := ctx.NewBuilder()
 	defer b.Dispose()
 	caller := inst.InstructionParent().Parent()
 	b.SetInsertPointBefore(inst)
 	result := inst.Type()
-	ret := a.outlineType(result, floor)
-	out := llvm.Value{}
+	ret := outlineType(result)
 	var args []llvm.Value
-	if ret != result && ret.TypeKind() == llvm.PointerTypeKind {
-		out = outlineSlot(b, caller, inst, result)
-		args = append(args, out)
-		ret = ctx.VoidType()
-	}
 	callee := inst.CalledValue()
 	// An intrinsic immediate is part of its opcode. Preserve constants in
 	// per-site wrappers, including immediate and metadata operands.
-	share := required != 0 && reusableOperation(callee) && !hasOutlineAttrs(inst)
+	share := reusableOperation(callee) && !hasOutlineAttrs(inst)
 	operands := make([]int, inst.ArgOperandsCount())
 	for i := range operands {
 		v := inst.Operand(i)
@@ -130,21 +116,10 @@ func (a *wideABI) outlineCall(inst llvm.Value, floor, width int, required uint64
 			continue
 		}
 		operands[i] = len(args)
-		t := a.outlineType(v.Type(), floor)
-		if t != v.Type() {
-			if t.TypeKind() == llvm.PointerTypeKind {
-				slot := outlineSlot(b, caller, inst, v.Type())
-				b.CreateStore(v, slot)
-				v = slot
-			} else {
-				v = b.CreateBitCast(v, t, "")
-			}
+		if t := outlineType(v.Type()); t != v.Type() {
+			v = b.CreateBitCast(v, t, "")
 		}
 		args = append(args, v)
-	}
-	indirect := callee.IsAConstant().IsNil()
-	if indirect {
-		args = append(args, callee)
 	}
 	ts := make([]llvm.Type, len(args))
 	for i, v := range args {
@@ -164,17 +139,8 @@ func (a *wideABI) outlineCall(inst llvm.Value, floor, width int, required uint64
 		leaf = llvm.AddFunction(a.mod, name, ft)
 		leaf.SetLinkage(llvm.InternalLinkage)
 		leaf.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
-		if callee.IsAFunction().IsNil() || callee.IntrinsicID() == 0 {
-			// A Go callee can inspect its callers before a wide result is
-			// copied back. Keep the original call-site PC on the frame
-			// chain and mark the adapter for logical traceback elision.
-			leaf.AddTargetDependentFunctionAttr("frame-pointer", "non-leaf")
-			markOutlineWrapper(a.mod, leaf)
-		}
-		profile{width: max(width, a.signature(ft)), isa: required}.attributes(leaf)
-		if a.signature(ft) != 0 {
-			a.abi.applyWideCallingConvention(leaf)
-		}
+		profile{width: a.signature(ft), isa: required}.attributes(leaf)
+		a.abi.applyWideCallingConvention(leaf)
 		if share {
 			if a.outlines == nil {
 				a.outlines = map[outlineKey]llvm.Value{}
@@ -192,28 +158,13 @@ func (a *wideABI) outlineCall(inst llvm.Value, floor, width int, required uint64
 			t := original.Type()
 			v := leaf.Param(index)
 			if v.Type() != t {
-				if v.Type().TypeKind() == llvm.PointerTypeKind {
-					v = b.CreateLoad(t, v, "")
-				} else {
-					v = b.CreateBitCast(v, t, "")
-				}
+				v = b.CreateBitCast(v, t, "")
 			}
 			innerArgs = append(innerArgs, v)
 		}
-		target := callee
-		if indirect {
-			target = leaf.Param(len(args) - 1)
-		}
-		call := b.CreateCall(inst.CalledFunctionType(), target, innerArgs, "")
-		call.SetInstructionCallConv(inst.InstructionCallConv())
+		call := b.CreateCall(inst.CalledFunctionType(), callee, innerArgs, "")
 		copyOutlineCallAttrs(inst, call)
-		if width != 0 {
-			a.abi.applyWideCallingConvention(call)
-		}
 		switch {
-		case !out.IsNil():
-			b.CreateStore(call, leaf.Param(0))
-			b.CreateRetVoid()
 		case result.TypeKind() == llvm.VoidTypeKind:
 			b.CreateRetVoid()
 		case ret != result:
@@ -223,59 +174,14 @@ func (a *wideABI) outlineCall(inst llvm.Value, floor, width int, required uint64
 		}
 	}
 	b.SetInsertPointBefore(inst)
-	var replacement llvm.Value
-	if !inst.IsAInvokeInst().IsNil() {
-		normal := inst.Successor(0)
-		resume := normal
-		if !out.IsNil() || ret != result {
-			resume = ctx.AddBasicBlock(caller, "fmv.return")
-			moveOutlinePHIs(normal, inst.InstructionParent(), resume, b)
-		}
-		b.SetInsertPointBefore(inst)
-		replacement = b.CreateInvoke(ft, leaf, args, resume, inst.Successor(1), "")
-		replacement.SetInstructionCallConv(leaf.FunctionCallConv())
-		replacement.InstructionSetDebugLoc(inst.InstructionDebugLoc())
-		if resume != normal {
-			b.SetInsertPointAtEnd(resume)
-			if !out.IsNil() {
-				replacement = b.CreateLoad(result, out, "")
-			} else {
-				replacement = b.CreateBitCast(replacement, result, "")
-			}
-			b.CreateBr(normal)
-		}
-	} else {
-		replacement = b.CreateCall(ft, leaf, args, "")
-		replacement.SetInstructionCallConv(leaf.FunctionCallConv())
-		replacement.InstructionSetDebugLoc(inst.InstructionDebugLoc())
-		if !out.IsNil() {
-			replacement = b.CreateLoad(result, out, "")
-		} else if ret != result {
-			replacement = b.CreateBitCast(replacement, result, "")
-		}
+	replacement := b.CreateCall(ft, leaf, args, "")
+	replacement.SetInstructionCallConv(leaf.FunctionCallConv())
+	replacement.InstructionSetDebugLoc(inst.InstructionDebugLoc())
+	if ret != result {
+		replacement = b.CreateBitCast(replacement, result, "")
 	}
 	if result.TypeKind() != llvm.VoidTypeKind {
 		inst.ReplaceAllUsesWith(replacement)
 	}
 	inst.EraseFromParentAsInstruction()
-}
-
-// Change the incoming edge of each PHI when a wide invoke result is loaded
-// in a private normal-return block. The exceptional edge never observes it.
-func moveOutlinePHIs(block, from, to llvm.BasicBlock, b llvm.Builder) {
-	for phi := block.FirstInstruction(); !phi.IsNil() && !phi.IsAPHINode().IsNil(); {
-		next := llvm.NextInstruction(phi)
-		b.SetInsertPointBefore(phi)
-		p := b.CreatePHI(phi.Type(), "")
-		for i := 0; i < phi.IncomingCount(); i++ {
-			pred := phi.IncomingBlock(i)
-			if pred == from {
-				pred = to
-			}
-			p.AddIncoming([]llvm.Value{phi.IncomingValue(i)}, []llvm.BasicBlock{pred})
-		}
-		phi.ReplaceAllUsesWith(p)
-		phi.EraseFromParentAsInstruction()
-		phi = next
-	}
 }

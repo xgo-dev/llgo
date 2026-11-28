@@ -16,6 +16,21 @@ type sourceInfo struct {
 	usedIDs   map[uint64]bool
 }
 
+// The Go callback must see the original caller and its call-site PC. Keep the
+// physical frame unwindable and let the normal Go stack walker elide it.
+func (a *wideABI) markAdapterFrame(fn llvm.Value) {
+	ctx := a.mod.Context()
+	fn.AddTargetDependentFunctionAttr("frame-pointer", "non-leaf")
+	if a.abi == x86Win64 {
+		fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("uwtable"), 2))
+	}
+	num := func(n uint64) llvm.Metadata { return llvm.ConstInt(ctx.Int32Type(), n, false).AsMetadata() }
+	name := ctx.MDString(fn.Name())
+	a.mod.AddNamedMetadataOperand("llgo.funcinfo", ctx.MDNode([]llvm.Metadata{
+		num(funcinfo.MetadataFlagsVersion), name, name, ctx.MDString(""), num(0), num(0), num(uint64(funcinfo.RecordFlagWrapper)),
+	}))
+}
+
 // Runtime tables intentionally use strings, so LLVM's generic function clone
 // cannot update them. Keep these layouts in sync with ssa/funcinfo.go:
 // funcinfo = {version, symbol, Go name, file, line, column[, flags]}
@@ -114,15 +129,4 @@ func (s *sourceInfo) clone(fn, variant llvm.Value) {
 			inst.SetOperand(inst.OperandsCount()-1, cloned)
 		}
 	}
-}
-
-// Use the v2 llgo.funcinfo wrapper flag from ssa/funcinfo.go. The physical
-// adapter has no Go source frame; its caller already retains its PC-line site.
-func markOutlineWrapper(mod llvm.Module, fn llvm.Value) {
-	ctx := mod.Context()
-	num := func(n uint64) llvm.Metadata { return llvm.ConstInt(ctx.Int32Type(), n, false).AsMetadata() }
-	name := ctx.MDString(fn.Name())
-	mod.AddNamedMetadataOperand("llgo.funcinfo", ctx.MDNode([]llvm.Metadata{
-		num(funcinfo.MetadataFlagsVersion), name, name, ctx.MDString(""), num(0), num(0), num(uint64(funcinfo.RecordFlagWrapper)),
-	}))
 }

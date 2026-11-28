@@ -2,12 +2,20 @@ package llvmfmv
 
 import "github.com/xgo-dev/llvm"
 
+// OS-enabled register state is detected before applying CPU feature overrides.
+// These bits select bodies that can issue direct wide calls and never imply a Go predicate.
+const (
+	machineYMM = 1 << 17
+	machineZMM = 1 << 18
+)
+
 var x86RegisterLevels = []struct {
 	bits      int
 	witnesses uint64
+	machine   uint64
 }{
-	{256, ymmPredicates},
-	{512, zmmPredicates},
+	{256, ymmPredicates, machineYMM | machineZMM},
+	{512, zmmPredicates, machineZMM},
 }
 
 // A single guarded instruction family can keep its hot loop in one body.
@@ -49,16 +57,25 @@ func machineFeatures(fn llvm.Value, baseline string) uint64 {
 func (a *wideABI) planFunction(fn, view llvm.Value, baseline string, contexts map[llvm.BasicBlock]uint64) functionPlan {
 	floor := a.registerFloor(fn, baseline)
 	var widths [2]bool // YMM, ZMM
+	var calls [2]bool  // prefer direct wide calls even with Go predicates disabled
 	var isa uint64
 	for bb := view.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 		facts := contexts[bb]
 		for i := bb.FirstInstruction(); !i.IsNil(); i = llvm.NextInstruction(i) {
 			op := a.operation(i, directGuardCallee(i))
-			if op.width == 512 {
+			switch op.width {
+			case 512:
 				widths[1] = true
-			}
-			if op.width == 256 || op.width == 512 && a.callWidth(i) == 0 {
+				if a.callWidth(i) != 0 {
+					calls[1] = true
+				} else {
+					widths[0] = true // Generic operations can benefit from YMMs too.
+				}
+			case 256:
 				widths[0] = true
+				if a.callWidth(i) != 0 {
+					calls[0] = true
+				}
 			}
 			isa |= op.isa & facts
 			// AVX authorizes the YMM carrier. Packed integer arithmetic also
@@ -83,7 +100,12 @@ func (a *wideABI) planFunction(fn, view llvm.Value, baseline string, contexts ma
 		}
 		for i, level := range x86RegisterLevels {
 			if widths[i] && level.bits > max(floor, isaWidth(bits)) {
-				plan.versions = append(plan.versions, localVersion{profile{level.bits, bits}, level.witnesses})
+				witnesses := level.witnesses
+				if calls[i] {
+					witnesses |= level.machine
+					plan.adapt = true
+				}
+				plan.versions = append(plan.versions, localVersion{profile{level.bits, bits}, witnesses})
 			}
 		}
 	}

@@ -28,6 +28,12 @@ func (abi x86ABI) queryReceiver(param llvm.Type) bool {
 		(abi == x86Win64 && param.TypeKind() == llvm.IntegerTypeKind && param.IntTypeWidth() == 32)
 }
 
+// SetX86VectorCallConvention gives a compiler-generated vector instruction
+// function the platform register convention, including XMM arguments on Win64.
+func SetX86VectorCallConvention(mod llvm.Module, fn llvm.Value) {
+	x86ABIFor(mod).applyWideCallingConvention(fn)
+}
+
 // Keep wide definitions, declarations and calls through function values in sync.
 func (abi x86ABI) applyWideCallingConvention(v llvm.Value) {
 	if abi == x86Win64 {

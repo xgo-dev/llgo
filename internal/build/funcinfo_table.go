@@ -821,7 +821,9 @@ func (s siteSectionInfo) push(format siteObjectFormat, anchor string) string {
 		// the '$m' subsection suffix used for lexicographic merging.
 		return ".pushsection " + s.coff + "$$m,\"dr\",associative," + anchor
 	default:
-		return ".pushsection " + s.elf + ",\"awo\",@progbits," + anchor
+		// Inherit the containing function's section group, if any, so COMDAT
+		// selection discards the entry record together with its code.
+		return ".pushsection " + s.elf + ",\"awo?\",@progbits," + anchor
 	}
 }
 
