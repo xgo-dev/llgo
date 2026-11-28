@@ -11,6 +11,24 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+func TestMaxRecoverStackValueSize(t *testing.T) {
+	for _, tc := range []struct {
+		goarch  string
+		ptrSize int
+		want    uint64
+	}{
+		{"amd64", 8, MaxNativeRecoverStackValueSize},
+		{"arm64", 8, MaxNativeRecoverStackValueSize},
+		{"386", 4, MaxSSAValueSize(4)},
+		{"wasm", 4, MaxSSAValueSize(4)},
+		{"riscv64", 8, MaxSSAValueSize(8)},
+	} {
+		if got := MaxRecoverStackValueSize(tc.goarch, tc.ptrSize); got != tc.want {
+			t.Errorf("MaxRecoverStackValueSize(%q, %d) = %d, want %d", tc.goarch, tc.ptrSize, got, tc.want)
+		}
+	}
+}
+
 func TestShouldLowerArrayCopy(t *testing.T) {
 	for _, tc := range []struct {
 		length, ptrSize int

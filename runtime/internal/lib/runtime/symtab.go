@@ -553,10 +553,7 @@ func applyFuncInfo(sym *pcSymbol, rawFunction string) {
 			sym.file = file
 		}
 	}
-	line := int(rec.line)
-	if GOOS == "windows" {
-		line = int(rec.line & runtimeFuncInfoLineMask)
-	}
+	line := int(rec.line & runtimeFuncInfoLineMask)
 	if rec.line != 0 {
 		sym.startLine = int(rec.line)
 		if sym.line == 0 {
@@ -1554,12 +1551,8 @@ func pcSymbolForFuncInfoIndex(pc, entry uintptr, funcIndex uint32) (pcSymbol, bo
 	}
 	var scratch runtimeFuncInfoRecord
 	fn := funcInfoAt(uintptr(funcIndex)-1, &scratch)
-	line := int(fn.line)
-	startLine := line
-	if GOOS == "windows" {
-		line = int(fn.line & runtimeFuncInfoLineMask)
-		startLine = int(fn.line)
-	}
+	line := int(fn.line & runtimeFuncInfoLineMask)
+	startLine := int(fn.line)
 	return pcSymbol{
 		pc:        pc,
 		entry:     entry,
@@ -1697,10 +1690,7 @@ func initRuntimePCLineFramesOnce() {
 				fc.function = publicFunctionName(funcInfoJoinName(fn.symbolPkg, fn.symbolName))
 			}
 			fc.file = funcInfoJoinFile(fn.fileRoot, fn.fileName)
-			fc.line = int(fn.line)
-			if GOOS == "windows" {
-				fc.line = int(fn.line & runtimeFuncInfoLineMask)
-			}
+			fc.line = int(fn.line & runtimeFuncInfoLineMask)
 			fc.resolved = true
 		}
 		entry := fc.entry
@@ -1724,10 +1714,7 @@ func initRuntimePCLineFramesOnce() {
 		if line == 0 {
 			line = fc.line
 		}
-		startLine := fc.line
-		if GOOS == "windows" {
-			startLine = int(fn.line)
-		}
+		startLine := int(fn.line)
 		*(*runtimePCLineFrame)(unsafe.Add(frameBase, uintptr(nframes)*frameSize)) = runtimePCLineFrame{
 			pc:        pc,
 			sequence:  i,
@@ -2232,12 +2219,7 @@ func (ci *Frames) Next() (frame Frame, more bool) {
 		}
 		sym := frameSymbol(pc)
 		sym.pc = pc
-		if GOOS == "windows" {
-			// Win64 keeps the wrapper marker in the high bit of the private
-			// start-line field while walking. Public Frames expose only the Go
-			// source line, matching the standard runtime API.
-			sym.startLine = int(uint32(sym.startLine) & runtimeFuncInfoLineMask)
-		}
+		sym.startLine = int(uint32(sym.startLine) & runtimeFuncInfoLineMask)
 		if !sym.ok {
 			ci.frames = append(ci.frames, Frame{
 				PC:        pc,

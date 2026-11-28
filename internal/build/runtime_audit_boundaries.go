@@ -109,12 +109,16 @@ var runtimeNativeOwners = []runtimeNativeOwner{
 	{"C.__llgo_funcinfo_layout", "Compiler-generated native pclntab record layout", "internal/build/funcinfo_table.go"},
 	{"C.llgo_wasm_debug_capture_pcs", "LLGo opt-in browser suspended-PC bridge", "runtime/internal/wasmdebugpc/_wrap/capture.c"},
 	{
-		`C.getenv C.getpagesize C.gettimeofday C.pipe2 C.poll C.rand C.srand C.syscall C.write C.getentropy
+		`C.getenv C.getauxval C.getpagesize C.gettimeofday C.pipe2 C.poll C.rand C.srand C.syscall C.write C.getentropy
 C.clock_gettime_nsec_np`,
 		"target libc / platform SDK",
 		``,
 	},
-	{"stdcall.GetSystemDirectoryA", "Windows kernel32; stdcall on 386, native Windows ABI on amd64/arm64", ""},
+	{
+		`stdcall.GetSystemDirectoryA stdcall.IsProcessorFeaturePresent`,
+		"Windows kernel32; stdcall on 386, native Windows ABI on amd64/arm64",
+		``,
+	},
 	{"C.__sigsetjmp C.sigsetjmp C.siglongjmp", "target libc; returns-twice and target SigjmpBuf layout", "ssa/eh.go"},
 	{
 		`C.setjmp C.longjmp`,
@@ -131,12 +135,18 @@ C.llgo_cgo_setresgid C.llgo_cgo_setgroups`,
 		"LLGo packed C argument and libc credential bridges",
 		`runtime/internal/lib/runtime/_wrap/libcall.c`,
 	},
+	{"C.llgo_cpu_has_aes", "LLGo x86 CPUID AES-NI/SSE2 probe", "runtime/internal/runtime/_wrap/cpuid_x86.c"},
 	{
 		`C.llgo_cpu_profile_drain C.llgo_cpu_profile_refresh_signal C.llgo_cpu_profile_start
 C.llgo_cpu_profile_stop C.llgo_cpu_profile_update_signal`,
 		"LLGo platform profiler",
 		`runtime/internal/lib/runtime/_wrap/profile.c
 runtime/internal/lib/runtime/_wrap/profile_windows.c`,
+	},
+	{
+		`C.llgo_bind_channel_address_wait C.llgo_channel_address_wait C.llgo_channel_address_wake`,
+		"LLGo Darwin channel address-wait bridge",
+		`runtime/internal/runtime/_wrap/chan_sync_darwin.c`,
 	},
 	{"C.llgo_debugtrap", "LLGo platform debug trap", "runtime/internal/lib/runtime/_wrap/debugtrap.c"},
 	{
@@ -145,7 +155,7 @@ runtime/internal/lib/runtime/_wrap/profile_windows.c`,
 		`runtime/internal/lib/runtime/_wrap/dynunwind.c`,
 	},
 	{"C.llgo_fault_capture_done C.llgo_install_fault_handler", "LLGo POSIX fault bridge", "runtime/internal/lib/runtime/_wrap/fault.c"},
-	{"C.llgo_framepointer", "LLGo frame-pointer intrinsic bridge", "runtime/internal/runtime/_wrap/fp.c"},
+	{"C.llgo_framepointer C.llgo_scrub_stack", "LLGo frame-pointer and stack-scrub runtime bridges", "runtime/internal/runtime/_wrap/fp.c"},
 	{"C.llgo_gc_stack_top", "LLGo linear-memory GC", "runtime/internal/runtime/tinygogc/_wrap/gc_wasm.c"},
 	{
 		`C.llgo_getpagesize C.llgo_iocp_associate C.llgo_iocp_create C.llgo_iocp_get C.llgo_nanotime
@@ -164,8 +174,8 @@ C.llgo_windows_fault_pcbuf`,
 	{
 		`C.llgo_maxprocs`,
 		"LLGo platform CPU query",
-		`runtime/internal/lib/runtime/_wrap/runtime.c
-runtime/internal/lib/runtime/_wrap/runtime_windows.c`,
+		`runtime/internal/runtime/_wrap/maxprocs_unix.c
+runtime/internal/runtime/_wrap/maxprocs_windows.c`,
 	},
 	{
 		`C.llgo_mem_readable`,

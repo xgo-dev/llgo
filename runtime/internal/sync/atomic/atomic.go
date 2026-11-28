@@ -31,6 +31,13 @@ type valtype interface {
 // llgo:link Add llgo.atomicAdd
 func Add[T valtype](ptr *T, v T) T { return v }
 
+// AddRelaxed performs a monotonic atomic add without synchronization or
+// ordering guarantees. It is intended for independent runtime counters such as
+// allocation accounting; it must not be used to publish other memory accesses.
+//
+// llgo:link AddRelaxed llgo.atomicAddRelaxed
+func AddRelaxed[T valtype](ptr *T, v T) T { return v }
+
 // llgo:link Sub llgo.atomicSub
 func Sub[T valtype](ptr *T, v T) T { return v }
 

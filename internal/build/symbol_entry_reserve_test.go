@@ -87,7 +87,7 @@ func TestSharedSymbolEntryReservation(t *testing.T) {
 	analysis := pclnpost.ExternalAnalysis{TextStart: 0x1000, TextEnd: 0x2000,
 		EntrySites: []pclnpost.ExternalSite{{PCOffset: 16}}}
 	packed, changed, err := sizeSymbolEntryReserve(source, analysis, true)
-	if err != nil || !changed || !strings.Contains(packed, "[256 x i8]") {
+	if err != nil || !changed || !strings.Contains(packed, "[512 x i8]") {
 		t.Fatalf("pack shared reservation: %s, %v, %v", packed, changed, err)
 	}
 	if next, changed, err := sizeSymbolEntryReserve(packed, analysis, false); err != nil || changed || next != packed {

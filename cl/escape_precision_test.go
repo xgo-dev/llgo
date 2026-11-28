@@ -39,17 +39,26 @@ func snapshotSlices(a,b []byte)bool{s:=string(a);b[0]++;return s==string(b)}
 			if body := llvmFunction(t, ir, "precision.immutable"); strings.Contains(body, "runtime.AllocZ") || strings.Count(body, "runtime.AllocAtomicU\"(") != 1 {
 				t.Errorf("immutable variable has separate heap storage:\n%s", body)
 			}
+			hasHiddenEnv := target.GOARCH != "wasm"
 			for _, name := range []string{"nested", "nestedTwo"} {
 				body := llvmFunction(t, ir, "precision."+name)
-				if strings.Contains(body, "runtime.AllocZ") || strings.Contains(body, "runtime.AllocAtomicU\"(") || strings.Count(body, "runtime.AllocU\"(") != 1 {
-					t.Errorf("%s has separate captured-pointer cells:\n%s", name, body)
+				wantAllocU := 1
+				if name == "nested" && hasHiddenEnv {
+					wantAllocU = 0
+				}
+				if strings.Contains(body, "runtime.AllocZ") || strings.Contains(body, "runtime.AllocAtomicU\"(") || strings.Count(body, "runtime.AllocU\"(") != wantAllocU {
+					t.Errorf("%s has unexpected captured-pointer allocations (want AllocU=%d):\n%s", name, wantAllocU, body)
 				}
 			}
-			if body := llvmFunction(t, ir, "precision.nestedMutable"); strings.Count(body, "runtime.AllocU\"(") != 1 || strings.Count(body, "runtime.AllocZ\"(") != 1 {
+			wantMutableAllocU := 1
+			if hasHiddenEnv {
+				wantMutableAllocU = 0
+			}
+			if body := llvmFunction(t, ir, "precision.nestedMutable"); strings.Count(body, "runtime.AllocU\"(") != wantMutableAllocU || strings.Count(body, "runtime.AllocZ\"(") != 1 {
 				t.Errorf("nested reassignment lost shared pointer cell:\n%s", body)
 			}
 			for _, name := range []string{"mutable", "repeated"} {
-				if body := llvmFunction(t, ir, "precision."+name); !strings.Contains(body, "runtime.AllocAtomicU\"(") || !strings.Contains(body, "runtime.AllocU\"(") {
+				if body := llvmFunction(t, ir, "precision."+name); !strings.Contains(body, "runtime.AllocAtomicU\"(") || strings.Count(body, "runtime.AllocU\"(") != wantMutableAllocU {
 					t.Errorf("%s capture lost shared storage:\n%s", name, body)
 				}
 			}

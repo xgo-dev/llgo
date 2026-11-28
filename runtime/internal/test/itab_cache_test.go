@@ -159,3 +159,80 @@ func TestItabTableConcurrentGrowth(t *testing.T) {
 		t.Fatal("growth lost the stable itab")
 	}
 }
+
+type itabNonImplValue struct{}
+
+type itabNamedScalar int
+
+type itabOtherValue struct{}
+
+func (itabOtherValue) Other() int { return 7 }
+
+type itabExtraInterface interface {
+	Probe() int
+	Extra() int
+}
+
+func TestItabTableNegativeCacheAndImplements(t *testing.T) {
+	inter := abi.TypeFor[itabCacheInterface]().InterfaceType()
+	extraInter := abi.TypeFor[itabExtraInterface]().InterfaceType()
+	emptyType := abi.TypeFor[any]()
+	implType := abi.TypeFor[itabCacheValue]()
+	nonImplType := abi.TypeFor[itabNonImplValue]()
+	namedScalarType := abi.TypeFor[itabNamedScalar]()
+	otherType := abi.TypeFor[itabOtherValue]()
+
+	var m0, m1 runtime.MemStats
+	runtime.ReadMemStats(&m0)
+	if rt.Implements(&inter.Type, namedScalarType) {
+		t.Fatal("Implements returned true for named scalar with zero methods")
+	}
+	if rt.Implements(&extraInter.Type, implType) {
+		t.Fatal("Implements returned true for concrete type with fewer methods than interface")
+	}
+	runtime.ReadMemStats(&m1)
+	if m1.Mallocs != m0.Mallocs {
+		t.Fatalf("Implements allocated %d times for impossible method-count checks, want 0", m1.Mallocs-m0.Mallocs)
+	}
+
+	neg1 := rt.NewItab(inter, nonImplType)
+	if neg1 == nil {
+		t.Fatal("NewItab returned nil for non-implementing type")
+	}
+	view := (*itabPrefix)(unsafe.Pointer(neg1))
+	if view.inter != inter || view.typ != nonImplType || view.fun[0] != 0 {
+		t.Fatalf("unexpected negative itab: inter=%p typ=%p fun=%x", view.inter, view.typ, view.fun[0])
+	}
+	if neg2 := rt.NewItab(inter, nonImplType); neg2 != neg1 {
+		t.Fatal("NewItab did not cache negative itab entry")
+	}
+	if neg3 := rt.NewItab(extraInter, implType); neg3 == nil || (*itabPrefix)(unsafe.Pointer(neg3)).fun[0] != 0 {
+		t.Fatal("partial implementation must produce a negative itab")
+	} else if rt.NewItab(extraInter, implType) != neg3 {
+		t.Fatal("partial implementation negative itab was not cached")
+	}
+
+	if !rt.Implements(&inter.Type, implType) {
+		t.Fatal("Implements returned false for implementing concrete type")
+	}
+	if rt.Implements(&inter.Type, otherType) {
+		t.Fatal("Implements returned true for concrete type with mismatched method")
+	}
+	if neg4 := rt.NewItab(inter, otherType); neg4 == nil || (*itabPrefix)(unsafe.Pointer(neg4)).fun[0] != 0 {
+		t.Fatal("mismatched concrete type must produce a cached negative itab")
+	} else if rt.NewItab(inter, otherType) != neg4 {
+		t.Fatal("mismatched concrete type negative itab was not cached")
+	}
+	if rt.Implements(&inter.Type, nonImplType) {
+		t.Fatal("Implements returned true for non-implementing concrete type")
+	}
+	if !rt.Implements(emptyType, nonImplType) {
+		t.Fatal("Implements returned false for empty interface")
+	}
+	if !rt.Implements(&inter.Type, &extraInter.Type) {
+		t.Fatal("Implements returned false for superset interface")
+	}
+	if rt.Implements(&extraInter.Type, &inter.Type) {
+		t.Fatal("Implements returned true for subset interface")
+	}
+}

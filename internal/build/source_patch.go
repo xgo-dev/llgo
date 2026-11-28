@@ -632,11 +632,11 @@ func collectUnusedImportSpans(tokFile *token.File, file *ast.File) []sourcePatch
 		keptCount := 0
 		for _, spec := range gen.Specs {
 			imp := spec.(*ast.ImportSpec)
-			if imp.Name != nil && imp.Name.Name == "_" {
+			if imp.Name != nil && (imp.Name.Name == "_" || imp.Name.Name == ".") {
 				keptCount++
 				continue
 			}
-			if astutil.UsesImport(file, strings.Trim(imp.Path.Value, `"`)) {
+			if sourcePatchUsesImport(file, imp) {
 				keptCount++
 				continue
 			}
@@ -654,6 +654,54 @@ func collectUnusedImportSpans(tokFile *token.File, file *ast.File) []sourcePatch
 		}
 	}
 	return spans
+}
+
+func sourcePatchUsesImport(file *ast.File, imp *ast.ImportSpec) bool {
+	path := strings.Trim(imp.Path.Value, `"`)
+	if imp.Name == nil {
+		if altName, ok := versionedImportDefaultName(path); ok && fileUsesPackageIdent(file, altName) {
+			return true
+		}
+	} else if fileUsesPackageIdent(file, imp.Name.Name) {
+		return true
+	}
+	return astutil.UsesImport(file, path)
+}
+
+func versionedImportDefaultName(path string) (string, bool) {
+	slash := strings.LastIndexByte(path, '/')
+	if slash <= 0 || slash+2 > len(path) || path[slash+1] != 'v' {
+		return "", false
+	}
+	for i := slash + 2; i < len(path); i++ {
+		if path[i] < '0' || path[i] > '9' {
+			return "", false
+		}
+	}
+	prefix := path[:slash]
+	if prev := strings.LastIndexByte(prefix, '/'); prev >= 0 {
+		prefix = prefix[prev+1:]
+	}
+	return prefix, prefix != ""
+}
+
+func fileUsesPackageIdent(file *ast.File, name string) bool {
+	used := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		if used {
+			return false
+		}
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := sel.X.(*ast.Ident); ok && id.Name == name && id.Obj == nil {
+			used = true
+			return false
+		}
+		return true
+	})
+	return used
 }
 
 func nodeAndCommentsSpans(tokFile *token.File, node ast.Node) []sourcePatchSpan {

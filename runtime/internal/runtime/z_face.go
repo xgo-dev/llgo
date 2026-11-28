@@ -206,7 +206,9 @@ func addItab(i *Itab) *Itab {
 	return i
 }
 
-// NewItab returns a new itab.
+// NewItab returns a cached or newly constructed itab for (inter, typ).
+// If typ does not implement inter, the returned itab has fun[0] == 0 and that
+// negative entry is cached in itabTable; callers must check fun[0].
 func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	if typ == nil {
 		return nil
@@ -214,10 +216,51 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	if i := findItab(inter, typ); i != nil {
 		return i
 	}
-	n := len(inter.Methods)
-	if n == 0 {
-		return nil
+	return newItabSlow(inter, typ)
+}
+
+func itabMethodHash(name string, typ *abi.FuncType) uintptr {
+	h := uintptr(unsafe.Pointer(typ))
+	h ^= h >> 16
+	for i := 0; i < len(name); i++ {
+		h = h*16777619 ^ uintptr(name[i])
 	}
+	return h ^ (h >> 16)
+}
+
+func buildItabMethodIndex(mthds []abi.Method) (unsafe.Pointer, []uint32, uintptr) {
+	cap := 1
+	for cap < len(mthds)*2 {
+		cap <<= 1
+	}
+	bytes := uintptr(cap) * unsafe.Sizeof(uint32(0))
+	raw := AllocRoot(bytes)
+	c.Memset(raw, 0, bytes)
+	mask := uintptr(cap - 1)
+	slots := unsafe.Slice((*uint32)(raw), cap)
+	for idx := range mthds {
+		pos := itabMethodHash(mthds[idx].Name_, mthds[idx].Mtyp_) & mask
+		for slots[pos] != 0 {
+			pos = (pos + 1) & mask
+		}
+		slots[pos] = uint32(idx + 1)
+	}
+	return raw, slots, mask
+}
+
+//go:noinline
+func newItabSlow(inter *InterfaceType, typ *Type) *Itab {
+	u := typ.Uncommon()
+	if u == nil || int(u.Mcount) < len(inter.Methods) {
+		ptr := AllocU(itabHdrSize + pointerSize)
+		ret := (*itab)(ptr)
+		ret.inter = inter
+		ret._type = typ
+		ret.hash = typ.Hash
+		ret.fun[0] = 0
+		return addItab(ret)
+	}
+	n := len(inter.Methods)
 	size := itabHdrSize + uintptr(n)*pointerSize
 	ptr := AllocU(size)
 
@@ -226,44 +269,82 @@ func NewItab(inter *InterfaceType, typ *Type) *Itab {
 	ret._type = typ
 	ret.hash = typ.Hash
 
-	// Use Go uintptr slots in the variable tail, including on J32 where
-	// C pointer arrays have four-byte elements.
-	data := unsafe.Add(ptr, itabHdrSize)
-	if matchConcreteMethods(inter.Methods, typ.Uncommon(), data) == n {
-		return addItab(ret)
-	}
-	ret.fun[0] = 0
-	return ret
-}
-
-// matchConcreteMethods scans the two sorted method tables and returns the
-// index of the first missing method, or len(want) on success. An itab caller
-// supplies its variable-size function table to fill during the scan.
-func matchConcreteMethods(want []abi.Imethod, have *abi.UncommonType, slots unsafe.Pointer) int {
-	if have == nil || len(want) == 0 {
-		return 0
-	}
-	i := 0
-	for j := 0; j < int(have.Mcount); j++ {
-		im := &want[i]
-		m := have.Method(j)
-		if m.Name_ != im.Name_ || m.Mtyp_ != im.Typ_ {
-			continue
-		}
-		if slots != nil {
-			fn := m.Ifn_
-			if fn == nil {
-				// The method exists even if DCE removed its body.
-				fn = abi.Text(c.Func(unreachableMethod))
+	// Locate the variable tail in bytes, then index it as Go uintptr slots.
+	// On J32 C pointer arrays have four-byte elements while itab function
+	// slots follow Go's eight-byte word model.
+	data := c.Advance(ptr, int(itabHdrSize))
+	// inter.Methods follows go/types interface order (exported, name, pkg),
+	// whereas u.Methods() follows go/types.MethodSet order (Id: pkg.name for
+	// unexported methods) and abi.FullName canonicalizes main to "main".
+	// Start each search from the rolling cursor j (allocation-free O(n+m) for
+	// aligned methods). On the first successful wrap-around with remaining
+	// methods, switch to a temporary open-addressed index so alternating
+	// multi-package unexported method sets also stay O(n+m).
+	mthds := u.Methods()
+	j := 0
+	var indexRaw unsafe.Pointer
+	var indexSlots []uint32
+	var indexMask uintptr
+	for i, m := range inter.Methods {
+		imName := m.Name_
+		var fn abi.Text
+		matched := false
+		if indexSlots != nil {
+			pos := itabMethodHash(imName, m.Typ_) & indexMask
+			for {
+				entry := indexSlots[pos]
+				if entry == 0 {
+					break
+				}
+				cand := &mthds[entry-1]
+				if cand.Name_ == imName && cand.Mtyp_ == m.Typ_ {
+					fn = cand.Ifn_
+					matched = true
+					break
+				}
+				pos = (pos + 1) & indexMask
 			}
-			*(*uintptr)(unsafe.Add(slots, uintptr(i)*pointerSize)) = uintptr(fn)
+		} else {
+			start := j
+			for ; j < len(mthds); j++ {
+				if mthds[j].Name_ == imName && mthds[j].Mtyp_ == m.Typ_ {
+					fn = mthds[j].Ifn_
+					matched = true
+					j++
+					break
+				}
+			}
+			if !matched {
+				for k := 0; k < start; k++ {
+					if mthds[k].Name_ == imName && mthds[k].Mtyp_ == m.Typ_ {
+						fn = mthds[k].Ifn_
+						matched = true
+						j = k + 1
+						if i+1 < len(inter.Methods) {
+							indexRaw, indexSlots, indexMask = buildItabMethodIndex(mthds)
+						}
+						break
+					}
+				}
+			}
 		}
-		i++
-		if i == len(want) {
+		if !matched {
+			ret.fun[0] = 0
 			break
 		}
+		if fn == nil {
+			// matched but no function pointer (e.g. stripped/unreachable after DCE);
+			// keep itab entry with a placeholder so the itab stays intact
+			// and only panics on call, not at assertion time.
+			fn = abi.Text(c.Func(unreachableMethod))
+		}
+		slot := unsafe.Add(data, uintptr(i)*unsafe.Sizeof(uintptr(0)))
+		*(*uintptr)(slot) = uintptr(fn)
 	}
-	return i
+	if indexRaw != nil {
+		FreeRoot(indexRaw)
+	}
+	return addItab(ret)
 }
 
 // unreachableMethod matches Go's runtime.unreachableMethod: method entries
@@ -376,8 +457,18 @@ func interfaceImplementation(T, V *abi.Type) (missing *abi.Imethod, ok bool) {
 		return nil, true
 	}
 
-	// Both kinds of method tables are ordered by the method's Go identity.
-	// A simultaneous scan finds all matches in linear time.
+	// The same algorithm applies in both cases, but the
+	// method tables for an interface type and a concrete type
+	// are different, so the code is duplicated.
+	// In both cases the algorithm is a linear scan over the two
+	// lists - T's methods and V's methods - simultaneously.
+	// Since method tables are stored in a unique sorted order
+	// (alphabetical, with no duplicate method names), the scan
+	// through V's methods must hit a match for each of T's
+	// methods along the way, or else V does not implement T.
+	// This lets us run the scan in overall linear time instead of
+	// the quadratic time  a naive search would require.
+	// See also ../runtime/iface.go.
 	if V.Kind() == abi.Interface {
 		v := (*abi.InterfaceType)(unsafe.Pointer(V))
 		i := 0
@@ -393,15 +484,39 @@ func interfaceImplementation(T, V *abi.Type) (missing *abi.Imethod, ok bool) {
 		return &t.Methods[i], false
 	}
 
-	i := matchConcreteMethods(t.Methods, V.Uncommon(), nil)
-	if i == len(t.Methods) {
-		return nil, true
+	v := V.Uncommon()
+	if v == nil {
+		return &t.Methods[0], false
+	}
+	i := 0
+	for j := 0; j < int(v.Mcount); j++ {
+		tm := &t.Methods[i]
+		vm := v.Method(j)
+		if vm.Name_ == tm.Name_ && vm.Mtyp_ == tm.Typ_ {
+			if i++; i >= len(t.Methods) {
+				return nil, true
+			}
+		}
 	}
 	return &t.Methods[i], false
 }
 
 // Implements reports whether the type V implements the interface type T.
 func Implements(T, V *abi.Type) bool {
+	if T == nil || V == nil || T.Kind() != abi.Interface {
+		return false
+	}
+	t := (*abi.InterfaceType)(unsafe.Pointer(T))
+	if len(t.Methods) == 0 {
+		return true
+	}
+	if V.Kind() != abi.Interface {
+		u := V.Uncommon()
+		if u == nil || int(u.Mcount) < len(t.Methods) {
+			return false
+		}
+		return NewItab(t, V).fun[0] != 0
+	}
 	_, ok := interfaceImplementation(T, V)
 	return ok
 }

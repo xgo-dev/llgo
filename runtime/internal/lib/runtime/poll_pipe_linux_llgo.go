@@ -8,6 +8,9 @@ import (
 	_ "unsafe"
 )
 
+// EAGAIN (== EWOULDBLOCK on Linux).
+const pollEAGAIN = 11
+
 //go:linkname c_pipe2 C.pipe2
 func c_pipe2(fds *[2]c.Int, flags c.Int) c.Int
 

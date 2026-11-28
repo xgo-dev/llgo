@@ -612,10 +612,7 @@ func (b Builder) BinOpEx(op token.Token, x, y Expr, heap bool) Expr {
 		switch kind {
 		case vkString:
 			if op == token.ADD {
-				if !heap {
-					return Expr{b.InlineCall(b.Pkg.rtFunc("StringCatBuffer"), x, y, b.stringStackBuffer()).impl, x.Type}
-				}
-				return Expr{b.InlineCall(b.Pkg.rtFunc("StringCat"), x, y).impl, x.Type}
+				return b.stringCat(x, y, x.Type, !heap)
 			}
 		case vkComplex:
 			xr, xi := b.impl.CreateExtractValue(x.impl, 0, ""), b.impl.CreateExtractValue(x.impl, 1, "")
@@ -1567,21 +1564,34 @@ func (b Builder) MakeClosureEx(fn Expr, bindings []Expr, heap bool) Expr {
 	sig := fn.raw.Type.(*types.Signature)
 	data := prog.Nil(prog.VoidPtr()).impl
 	if entry := b.Pkg.FuncOf(fn.impl.Name()); entry != nil && entry.NeedsEnv() {
-		tctx := prog.Elem(entry.EnvType())
-		rawCtx := tctx.raw.Type.Underlying().(*types.Struct)
-		if len(bindings) != rawCtx.NumFields() {
-			panic("ssa: closure environment binding count mismatch")
-		}
-		if prog.SizeOf(tctx) == 0 {
-			// A required environment must remain distinguishable from a no-env
-			// entry. Heap zero-sized allocations use the module-wide non-nil
-			// sentinel.
-			data = b.Alloc(tctx, true).impl
-		} else if !heap {
-			data = b.Alloc(tctx, false).impl
-			b.aggregateInit(data, tctx, llvmFields(bindings, rawCtx, b)...)
+		if entry.DirectEnv() {
+			if len(bindings) != 1 {
+				panic("ssa: direct closure environment requires exactly one binding")
+			}
+			val := b.Convert(prog.VoidPtr(), bindings[0]).impl
+			if entry.DirectEnvNullable() {
+				sentinel := b.Pkg.directClosureNilEnv().impl
+				isNil := llvm.CreateICmp(b.impl, llvm.IntEQ, val, llvm.ConstNull(val.Type()))
+				val = llvm.CreateSelect(b.impl, isNil, sentinel, val)
+			}
+			data = val
 		} else {
-			data = b.aggregateAllocU(tctx, llvmFields(bindings, rawCtx, b)...)
+			tctx := prog.Elem(entry.EnvType())
+			rawCtx := tctx.raw.Type.Underlying().(*types.Struct)
+			if len(bindings) != rawCtx.NumFields() {
+				panic("ssa: closure environment binding count mismatch")
+			}
+			if prog.SizeOf(tctx) == 0 {
+				// A required environment must remain distinguishable from a no-env
+				// entry. Heap zero-sized allocations use the module-wide non-nil
+				// sentinel.
+				data = b.Alloc(tctx, true).impl
+			} else if !heap {
+				data = b.Alloc(tctx, false).impl
+				b.aggregateInit(data, tctx, llvmFields(bindings, rawCtx, b)...)
+			} else {
+				data = b.aggregateAllocU(tctx, llvmFields(bindings, rawCtx, b)...)
+			}
 		}
 	} else if len(bindings) != 0 {
 		panic("ssa: closure bindings supplied to a no-env function")
@@ -2082,15 +2092,7 @@ func (b Builder) BuiltinCall(fn string, args ...Expr) (ret Expr) {
 		}
 	case "append":
 		if len(args) == 2 && args[0].kind == vkSlice {
-			dst, src := args[0], args[1]
-			switch src.kind {
-			case vkSlice:
-				return b.appendSlice(dst, b.SliceData(src), b.SliceLen(src), b.Prog.SizeOf(b.Prog.Elem(src.Type)))
-			case vkString:
-				return b.appendSlice(dst, b.StringData(src), b.StringLen(src), b.Prog.SizeOf(b.Prog.Byte()))
-			default:
-				return b.appendSlice(dst, src, b.Prog.Val(1), b.Prog.SizeOf(src.Type))
-			}
+			return b.AppendSlice(args[0], args[1], b.PanicSite)
 		}
 	case "copy":
 		if len(args) == 2 && args[0].kind == vkSlice && (args[1].kind == vkSlice || args[1].kind == vkString) {

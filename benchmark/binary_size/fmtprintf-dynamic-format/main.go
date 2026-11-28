@@ -11,5 +11,9 @@ func printValue(format string, value float64) {
 }
 
 func main() {
-	printValue(os.Args[1], 42.125)
+	format := "%.2f\n"
+	if len(os.Args) > 1 {
+		format = os.Args[1]
+	}
+	printValue(format, 42.125)
 }

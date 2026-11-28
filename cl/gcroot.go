@@ -34,9 +34,13 @@ func (p *context) prepareGCRoots(fn *ssa.Function, hasClosureContext bool) {
 	}
 
 	planned := gcrootplan.Plan(fn, func(value ssa.Value) bool {
-		switch value.(type) {
+		switch v := value.(type) {
 		case *ssa.FreeVar:
 			return false
+		case *ssa.BinOp:
+			if p.concatPlans.omits(v) {
+				return false
+			}
 		}
 		if call, ok := value.(*ssa.Call); ok {
 			if callee, ok := call.Call.Value.(*ssa.Function); ok {

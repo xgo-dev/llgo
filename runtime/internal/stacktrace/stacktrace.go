@@ -27,6 +27,12 @@ func Attach(node unsafe.Pointer)
 //go:linkname Unregister C.llgo_traceback_unregister
 func Unregister(node unsafe.Pointer)
 
+//go:linkname Detach C.llgo_traceback_detach
+func Detach(node unsafe.Pointer)
+
+//go:linkname ReleaseThread C.llgo_traceback_release_thread
+func ReleaseThread()
+
 //go:linkname SetState C.llgo_traceback_state
 func SetState(node unsafe.Pointer, state uint32)
 

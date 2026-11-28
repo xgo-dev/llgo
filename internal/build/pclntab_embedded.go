@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
@@ -99,6 +100,7 @@ func pruneEmbeddedPCLN(ctx *context, plan *mainLinkPlan, output string, verbose 
 		analyze = func(path string) (pclnpost.ExternalAnalysis, error) { return analyzeWasmPCLN(path, *plan.embeddedPCLN) }
 	}
 	var relinkObjects string
+	published := false
 	previousObjects := ctx.darwinLTOObjectDirectory
 	err := pruneEmbeddedPCLNWith(plan, output, verbose, embeddedPCLNLinker{
 		analyze: analyze,
@@ -116,9 +118,13 @@ func pruneEmbeddedPCLN(ctx *context, plan *mainLinkPlan, output string, verbose 
 			}
 			return linkObjFiles(ctx, candidate, inputs, plan.linkArgs, verbose)
 		},
-		publish: replaceFile,
+		publish: func(candidate, dest string) error {
+			err := replaceFile(candidate, dest)
+			published = err == nil
+			return err
+		},
 	})
-	if err != nil && relinkObjects != "" {
+	if !published && relinkObjects != "" {
 		_ = os.RemoveAll(relinkObjects)
 	} else if relinkObjects != "" {
 		if previousObjects != "" && previousObjects != relinkObjects {
@@ -185,9 +191,22 @@ func pruneEmbeddedPCLNWith(plan *mainLinkPlan, output string, verbose bool, link
 	if err != nil {
 		return fmt.Errorf("verify compact embedded pclntab: %w", err)
 	}
+	// A shared Mach-O reservation is packed for size. If relinking moves
+	// code across a bucket or changes liveness, the first image still has
+	// its complete catalog. Keep it only when its reservation fits.
+	keepFirst := func() bool {
+		if !strings.Contains(plan.entryIR, `section "__DATA,__llgo_fie,`) {
+			return false
+		}
+		_, tooSmall, err := sizeSymbolEntryReserve(plan.entryIR, analysis, false)
+		return err == nil && !tooSmall
+	}
 	if _, growAgain, err := sizeSymbolEntryReserve(entryIR, final, false); err != nil {
 		return err
 	} else if growAgain {
+		if keepFirst() {
+			return nil
+		}
 		return fmt.Errorf("linked text outgrew the symbol entry reservation")
 	}
 	// Recompute from the original catalog: using only the pruned catalog here
@@ -197,6 +216,9 @@ func pruneEmbeddedPCLNWith(plan *mainLinkPlan, output string, verbose bool, link
 		return err
 	}
 	if !reflect.DeepEqual(pruned.Table, verified.Table) || !reflect.DeepEqual(pruned.SymbolIndex, verified.SymbolIndex) {
+		if keepFirst() {
+			return nil
+		}
 		return fmt.Errorf("embedded pclntab liveness changed during metadata relink")
 	}
 	if err := linker.publish(candidate, output); err != nil {

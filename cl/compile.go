@@ -36,6 +36,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/genmethod"
 	"github.com/xgo-dev/llgo/internal/goembed"
 	"github.com/xgo-dev/llgo/internal/goescape"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/typepatch"
 	"golang.org/x/tools/go/ssa"
 
@@ -196,6 +197,7 @@ type context struct {
 	skips                map[string]none
 	loaded               map[*types.Package]*pkgInfo // loaded packages
 	bvals                map[ssa.Value]llssa.Expr    // block values
+	concatPlans          stringConcatPlans
 	methodNilDerefChecks map[*ssa.UnOp]none
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	nilCheckBlock        *ssa.BasicBlock
@@ -234,6 +236,7 @@ type context struct {
 	options              Options
 	recoverSlots         map[*ssa.Alloc]none
 	implicitDeferResults []llssa.Expr
+	skipRunDefers        map[*ssa.BasicBlock]bool
 
 	patches          Patches
 	blkInfos         []blocks.Info
@@ -532,6 +535,105 @@ func (p *context) makeClosureCtx(fn *ssa.Function, pkg *types.Package, vars []*s
 	return types.NewParam(token.NoPos, pkg, "$env", t)
 }
 
+func (p *context) makeDirectClosureEnv(fn *ssa.Function, pkg *types.Package, v *ssa.FreeVar) *types.Var {
+	oldGoFn := p.goFn
+	p.goFn = fn
+	defer func() {
+		p.goFn = oldGoFn
+	}()
+
+	typ := v.Type()
+	if p.options.EscapeAnalysis.CaptureByValue(v) {
+		typ = types.Unalias(typ).Underlying().(*types.Pointer).Elem()
+	}
+	return types.NewParam(token.NoPos, pkg, "$env", p.patchType(typ))
+}
+
+func isDirectClosurePointerType(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	switch u := types.Unalias(t).Underlying().(type) {
+	case *types.Pointer, *types.Map, *types.Chan:
+		return true
+	case *types.Basic:
+		return u.Kind() == types.UnsafePointer
+	}
+	return false
+}
+
+// canUseDirectSinglePtrClosureEnv reports whether a closure with a single
+// pointer-typed capture can pass that pointer directly in the closure's
+// hidden environment slot instead of allocating a pointer-sized wrapper
+// struct. Nullable captures encode nil with the shared non-nil sentinel so
+// closure.env != nil continues to distinguish env-bearing entries from no-env
+// functions (including native callback conversions and reflection).
+func (p *context) canUseDirectSinglePtrClosureEnv(f *ssa.Function) bool {
+	if f == nil || len(f.FreeVars) != 1 || p.canElideZeroSizedClosureEnv(f) {
+		return false
+	}
+	if p.prog == nil || !p.prog.HasHiddenClosureEnv() {
+		return false
+	}
+	fv := f.FreeVars[0]
+	oldGoFn := p.goFn
+	p.goFn = f
+	defer func() {
+		p.goFn = oldGoFn
+	}()
+	typ := fv.Type()
+	if p.options.EscapeAnalysis.CaptureByValue(fv) {
+		ptr, ok := types.Unalias(typ).Underlying().(*types.Pointer)
+		if !ok || !p.directCaptureByValueUsesValid(fv) {
+			return false
+		}
+		typ = ptr.Elem()
+	}
+	return isDirectClosurePointerType(p.patchType(typ))
+}
+
+func (p *context) directCaptureByValueUsesValid(fv *ssa.FreeVar) bool {
+	refs, ok := nonDebugReferrers(fv)
+	if !ok {
+		return false
+	}
+	for _, ref := range refs {
+		switch use := ref.(type) {
+		case *ssa.UnOp:
+			if use.Op != token.MUL || use.X != fv {
+				return false
+			}
+		case *ssa.MakeClosure:
+			inner, ok := use.Fn.(*ssa.Function)
+			if !ok {
+				return false
+			}
+			for i, binding := range use.Bindings {
+				if binding != fv {
+					continue
+				}
+				if i >= len(inner.FreeVars) || !p.options.EscapeAnalysis.CaptureByValue(inner.FreeVars[i]) {
+					return false
+				}
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (p *context) isDirectCaptureByValueFreeVar(fv *ssa.FreeVar) bool {
+	return fv != nil && p.fn != nil && p.fn.DirectEnv() && fv.Parent() == p.goFn && p.options.EscapeAnalysis.CaptureByValue(fv)
+}
+
+func (p *context) directClosureEnvNullable(f *ssa.Function) bool {
+	// Source closures capturing a mutable variable by address receive a
+	// non-nil lexical cell pointer; bound wrappers and CaptureByValue pointer
+	// captures may hold nil at runtime and use the shared non-nil sentinel.
+	return f.Synthetic != "" || p.options.EscapeAnalysis.CaptureByValue(f.FreeVars[0])
+}
+
 // canElideZeroSizedClosureEnv reports whether a source closure can recreate
 // all of its captured variables from the module's zero-sized sentinel. Go SSA
 // represents a lexical capture as a pointer to the captured variable. Captured
@@ -709,10 +811,15 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		fullName := declarationFuncName(llssa.PathOf(pkgTypes), decl, f.Object(), f.Signature.Recv())
 		hasExplicitEnv = p.prog.HasClosureEnvDirective(p.goProg.Fset, fullName, decl.Pos())
 	}
+	directFreeVarEnv := !elideFreeVarEnv && !hasExplicitEnv && p.canUseDirectSinglePtrClosureEnv(f)
+	directFreeVarNullable := directFreeVarEnv && p.directClosureEnvNullable(f)
 	hasCtx := hasFreeVars && !elideFreeVarEnv || hasExplicitEnv
 	var ctx *types.Var
 	if elideFreeVarEnv {
 		dbgInstrln("==> NewZeroSizedClosure", name, "type:", sig)
+	} else if directFreeVarEnv {
+		dbgInstrln("==> NewDirectClosure", name, "type:", sig)
+		ctx = p.makeDirectClosureEnv(f, pkgTypes, f.FreeVars[0])
 	} else if hasFreeVars {
 		dbgInstrln("==> NewClosure", name, "type:", sig)
 		ctx = p.makeClosureCtx(f, pkgTypes, f.FreeVars)
@@ -723,7 +830,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 		dbgInstrln("==> NewFunc", name, "type:", sig.Recv(), sig, "ftype:", ftype)
 	}
 	if fn != nil {
-		if fn.NeedsEnv() != hasCtx {
+		if fn.NeedsEnv() != hasCtx || fn.DirectEnv() != directFreeVarEnv || fn.DirectEnvNullable() != directFreeVarNullable {
 			panic("conflicting closure environment ABI for " + name)
 		}
 		if fn.HasBody() {
@@ -746,7 +853,11 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			}
 		}
 		if hasCtx {
-			fn = pkg.NewEnvFunc(name, sig, cc, ctx, p.needsLinkOnce(f))
+			if directFreeVarEnv {
+				fn = pkg.NewDirectEnvFunc(name, sig, cc, ctx, directFreeVarNullable, p.needsLinkOnce(f))
+			} else {
+				fn = pkg.NewEnvFunc(name, sig, cc, ctx, p.needsLinkOnce(f))
+			}
 		} else {
 			fn = pkg.NewFuncEx(name, sig, cc, false, p.needsLinkOnce(f))
 		}
@@ -857,7 +968,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			oldRecvNilDerefChecks := p.recvNilDerefChecks
 			oldLocalityFunction := p.locality.function
 			oldRecoverSlots, oldImplicitDeferResults := p.recoverSlots, p.implicitDeferResults
+			oldSkipRunDefers := p.skipRunDefers
 			oldGCRoots, oldGCClosureRoot := p.gcRoots, p.gcClosureRoot
+			oldConcatPlans := p.concatPlans
 			oldSafepointEntry, oldSafepoints := p.safepointEntry, p.safepoints
 			p.fn = fn
 			p.goFn = f
@@ -865,6 +978,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			p.callerFrameMark = llssa.Nil
 			p.locality.function = localityFunction{}
 			p.state = state // restore pkgState when compiling funcBody
+			p.skipRunDefers = nil
 			if f.Recover != nil {
 				p.recoverSlots = make(map[*ssa.Alloc]none)
 			} else {
@@ -876,7 +990,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 				p.locality.function = oldLocalityFunction
 				p.recoverSlots = oldRecoverSlots
 				p.implicitDeferResults = oldImplicitDeferResults
+				p.skipRunDefers = oldSkipRunDefers
 				p.gcRoots, p.gcClosureRoot = oldGCRoots, oldGCClosureRoot
+				p.concatPlans = oldConcatPlans
 				p.safepointEntry, p.safepoints = oldSafepointEntry, oldSafepoints
 			}()
 			p.phis = nil
@@ -903,6 +1019,7 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 			p.bvals = make(map[ssa.Value]llssa.Expr)
 			p.mapLitLoops = collectLargeMapLits(f)
 			p.applyMapLitPlans(p.mapLitLoops)
+			p.prepareStringConcatPlans(f)
 			p.methodNilDerefChecks, p.recvNilDerefChecks = collectMethodNilDerefChecks(f, p.options.ReceiverNilChecks)
 			p.prepareCooperativeSafepoints(f, isCgo)
 			p.prepareGCRoots(f, hasCtx)
@@ -919,6 +1036,9 @@ func (p *context) compileFuncDecl(pkg llssa.Package, f *ssa.Function) (llssa.Fun
 				}
 			}
 			p.blkInfos = blocks.Infos(f.Blocks)
+			if !isCgo {
+				p.prepareLazyDeferInit(f)
+			}
 			i := 0
 			for {
 				block := f.Blocks[i]
@@ -1137,25 +1257,45 @@ func isGlobal(v *types.Var) bool {
 	return scope != nil && scope.Parent() == types.Universe
 }
 
-func (p *context) debugRef(b llssa.Builder, v *ssa.DebugRef) {
-	object := v.Object()
-	variable, ok := object.(*types.Var)
-	if !ok {
-		// Not a local variable.
-		return
-	}
-	if variable.IsField() {
-		// skip *ssa.FieldAddr
-		return
-	}
-	if isGlobal(variable) {
-		// avoid generate local variable debug info of global variable in function
-		return
+func (p *context) debugRefVariable(ref *ssa.DebugRef) *types.Var {
+	variable, _ := ref.Object().(*types.Var)
+	if variable == nil || variable.IsField() || isGlobal(variable) {
+		return nil
 	}
 	if p.debugAllocObjects[variable] {
 		// The variable already has a declaration tied to its real storage.
 		// At any optimization level, a value DebugRef for an aggregate would
 		// replace it with a snapshot instead of tracking later memory writes.
+		return nil
+	}
+	return variable
+}
+
+// needsDebugValue protects source variables before executable lowering omits
+// their values. Optimized builds may still discard these debug-only uses.
+func (p *context) needsDebugValue(v ssa.Value) bool {
+	if !p.options.DebugSymbols || p.prog.Target().OptLevel != optlevel.O0 {
+		return false
+	}
+	refs := v.Referrers()
+	if refs == nil {
+		return false
+	}
+	for _, use := range *refs {
+		ref, ok := use.(*ssa.DebugRef)
+		if !ok || ref.IsAddr || ref.Parent().Origin() != nil {
+			continue
+		}
+		if variable := p.debugRefVariable(ref); variable != nil && variable.Name() != "_" {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *context) debugRef(b llssa.Builder, v *ssa.DebugRef) {
+	variable := p.debugRefVariable(v)
+	if variable == nil {
 		return
 	}
 	if stable, ok := p.debugStableParams[variable]; ok {
@@ -1182,6 +1322,10 @@ func (p *context) debugRef(b llssa.Builder, v *ssa.DebugRef) {
 	scope := variable.Parent()
 	diScope := b.DIScope(p.fn, scope)
 	if v.IsAddr {
+		if fv, ok := v.X.(*ssa.FreeVar); ok && p.isDirectCaptureByValueFreeVar(fv) {
+			b.DIValue(variable, value, dbgVar, diScope, pos, b.Func.Block(v.Block().Index))
+			return
+		}
 		b.DIDeclare(variable, value, dbgVar, diScope, pos, b.Func.Block(v.Block().Index))
 	} else {
 		b.DIValue(variable, value, dbgVar, diScope, pos, b.Func.Block(v.Block().Index))
@@ -1734,6 +1878,14 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			b.DeferStackDrain()
 		}
 	case *ssa.BinOp:
+		if parts, planned := p.concatPlans[v]; planned {
+			if parts == nil {
+				return
+			}
+			useStackBuffer := p.stackStorage(v) && concatMayFitStackBuffer(parts)
+			ret = b.StringConcat(p.compileValues(b, parts, 0), p.type_(v.Type(), llssa.GoDecl), useStackBuffer)
+			break
+		}
 		if value, ok := foldConstComparison(v); ok {
 			ret = p.prog.BoolVal(value)
 			break
@@ -1793,6 +1945,10 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.UnOp:
 		pointerNilChecked := false
 		if v.Op == token.MUL {
+			if fv, ok := v.X.(*ssa.FreeVar); ok && p.isDirectCaptureByValueFreeVar(fv) {
+				ret = p.fn.DirectEnvValue(b)
+				break
+			}
 			if pos, ok := p.recvNilDerefChecks[v]; ok {
 				p.recordPanicSite(b, pos)
 				return p.compileCheckedDeref(b, v)
@@ -1932,24 +2088,20 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 			hoistToEntry = inLoop
 		}
 		heap := !p.stackStorage(v)
-		if !heap && p.recoverSlots != nil {
-			// SjLj restores the entry stack pointer. Recover-visible slots
-			// must survive that reset, including in package initializers.
-			hoistToEntry = true
-		}
 		if heap && uintptrEscapesBackingArray(v) {
 			// The pragma gives uintptr arguments pointer lifetime semantics.
 			// Pending go/defer calls retain their pointees through this array.
 			ret = b.AllocZ(p.prog.IntVal(p.prog.SizeOf(elem), p.prog.Uintptr()))
 			ret.Type = p.prog.Pointer(elem)
+		} else if !heap && p.recoverSlots != nil {
+			// SjLj restores the entry stack pointer. Recover-visible slots
+			// must survive that reset, including in package initializers.
+			ret = b.AllocRecover(elem)
 		} else {
 			ret = b.AllocEx(elem, heap, hoistToEntry)
 		}
 		p.debugAlloc(b, v, ret)
 		p.markRecoverSlot(v, heap)
-		if p.isRecoverSlotAddr(v) {
-			b.Store(ret, p.prog.Zero(elem)).SetVolatile(true)
-		}
 	case *ssa.IndexAddr:
 		vx := v.X
 		if _, ok := p.isVArgs(vx); ok { // varargs: this is a varargs index
@@ -2051,6 +2203,12 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.MakeSlice:
 		t := p.type_(v.Type(), llssa.GoDecl)
 		nLen := p.compileValue(b, v.Len)
+		// Only dynamic-length *ssa.MakeSlice uses MakeSliceRounded; constant-length
+		// make([]T, k) lowers to an array Alloc whose capacity equals k.
+		if freshNilAppendAllocation(v) {
+			ret = b.MakeSliceRounded(t, nLen)
+			break
+		}
 		nCap := p.compileValue(b, v.Cap)
 		ret = b.MakeSliceEx(t, nLen, nCap, !p.stackStorage(v))
 	case *ssa.MakeMap:
@@ -2066,13 +2224,17 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 		var bindings []llssa.Expr
 		goFn, _ := v.Fn.(*ssa.Function)
 		if !p.canElideZeroSizedClosureEnv(goFn) {
-			bindings = p.compileValues(b, v.Bindings, 0)
-			if goFn != nil {
-				for i, freeVar := range goFn.FreeVars {
-					if p.options.EscapeAnalysis.CaptureByValue(freeVar) {
-						bindings[i] = b.Load(bindings[i])
+			bindings = make([]llssa.Expr, len(v.Bindings))
+			for i, binding := range v.Bindings {
+				if goFn != nil && i < len(goFn.FreeVars) && p.options.EscapeAnalysis.CaptureByValue(goFn.FreeVars[i]) {
+					if fv, ok := binding.(*ssa.FreeVar); ok && p.isDirectCaptureByValueFreeVar(fv) {
+						bindings[i] = p.fn.DirectEnvValue(b)
+						continue
 					}
+					bindings[i] = b.Load(p.compileValue(b, binding))
+					continue
 				}
+				bindings[i] = p.compileValue(b, binding)
 			}
 		}
 		ret = b.MakeClosureEx(fn, bindings, !p.stackStorage(v))
@@ -2681,6 +2843,9 @@ func (p *context) compileInstr(b llssa.Builder, instr ssa.Instruction) {
 		p.checkMethodCallReceiver(b, &v.Call)
 		p.call(b, llssa.Go, &v.Call)
 	case *ssa.RunDefers:
+		if p.skipRunDefers[v.Block()] {
+			return
+		}
 		p.recordPanicLocation(b, p.deferRunPos(v.Pos()))
 		p.emitPCLineLabel(b, p.deferRunPos(v.Pos()))
 		b.RunDefers()
@@ -2790,6 +2955,9 @@ func (p *context) compileValue(b llssa.Builder, v ssa.Value) llssa.Expr {
 				if p.canElideZeroSizedClosureEnv(fn) {
 					return p.elidedZeroSizedFreeVar(b, v)
 				}
+				if p.isDirectCaptureByValueFreeVar(v) {
+					return p.fn.DirectEnvValue(b)
+				}
 				if p.options.EscapeAnalysis.CaptureByValue(v) {
 					return b.FieldAddr(p.fn.Env(), idx)
 				}
@@ -2835,6 +3003,129 @@ func isBlankFieldStore(addr ssa.Value) bool {
 }
 
 const rangeOverFuncYieldSynthetic = "range-over-func yield"
+
+// prepareLazyDeferInit moves conditional defer-frame setup from the entry block
+// to the nearest common non-loop dominator dom of all defer-producing blocks
+// whenever at least one RunDefers block is unreachable from dom (so fast-path
+// returns bypass ThreadDeferSlot and setjmp). Unreachable RunDefers blocks are
+// recorded in p.skipRunDefers so compileInstr emits nothing for them; because
+// no path from any defer registration can reach those blocks, no defer can be
+// active when they execute.
+func (p *context) prepareLazyDeferInit(f *ssa.Function) {
+	if f == nil || f.Recover == nil || len(f.Blocks) <= 1 || p.functionHasExplicitStackDeferInAnon(f) {
+		return
+	}
+	var deferBlocks, runDeferBlocks []*ssa.BasicBlock
+	for _, blk := range f.Blocks {
+		if blk.Index != 0 && blk.Idom() == nil {
+			continue
+		}
+		hasDefer := false
+		hasRunDefers := false
+		for _, instr := range blk.Instrs {
+			switch v := instr.(type) {
+			case *ssa.Defer:
+				if v.DeferStack == nil {
+					hasDefer = true
+				}
+			case *ssa.Call:
+				if p.rangeFuncCallNeedsDeferDrain(&v.Call) {
+					hasDefer = true
+				} else if bi, ok := v.Call.Value.(*ssa.Builtin); ok && bi.Name() == "ssa:deferstack" {
+					hasDefer = true
+				}
+			case *ssa.RunDefers:
+				hasRunDefers = true
+			}
+		}
+		if hasDefer {
+			deferBlocks = append(deferBlocks, blk)
+		}
+		if hasRunDefers {
+			runDeferBlocks = append(runDeferBlocks, blk)
+		}
+	}
+	if len(deferBlocks) == 0 || len(runDeferBlocks) == 0 {
+		return
+	}
+	dom := deferBlocks[0]
+	for _, blk := range deferBlocks[1:] {
+		dom = nearestCommonDominator(dom, blk)
+	}
+	reachable := make([]bool, len(f.Blocks))
+	queue := make([]*ssa.BasicBlock, 0, len(f.Blocks))
+	for dom != nil && dom.Index != 0 {
+		if p.blkInfos[dom.Index].Kind == llssa.DeferInLoop {
+			dom = dom.Idom()
+			continue
+		}
+		fillReachableBlocks(dom, reachable, queue)
+		needHoist := false
+		for _, rblk := range runDeferBlocks {
+			if reachable[rblk.Index] && !dom.Dominates(rblk) {
+				needHoist = true
+				break
+			}
+		}
+		if !needHoist {
+			break
+		}
+		dom = dom.Idom()
+	}
+	if dom == nil || dom.Index == 0 {
+		return
+	}
+	hasSkipped := false
+	for _, rblk := range runDeferBlocks {
+		if !reachable[rblk.Index] {
+			hasSkipped = true
+			break
+		}
+	}
+	if !hasSkipped {
+		return
+	}
+	p.fn.SetDeferInitBlock(p.fn.Block(dom.Index))
+	for _, rblk := range runDeferBlocks {
+		if !reachable[rblk.Index] {
+			if p.skipRunDefers == nil {
+				p.skipRunDefers = make(map[*ssa.BasicBlock]bool)
+			}
+			p.skipRunDefers[rblk] = true
+		}
+	}
+}
+
+func nearestCommonDominator(a, b *ssa.BasicBlock) *ssa.BasicBlock {
+	for a != nil && b != nil && a != b {
+		if a.Dominates(b) {
+			return a
+		}
+		if b.Dominates(a) {
+			return b
+		}
+		a = a.Idom()
+	}
+	if a == b {
+		return a
+	}
+	return nil
+}
+
+func fillReachableBlocks(start *ssa.BasicBlock, seen []bool, queue []*ssa.BasicBlock) {
+	clear(seen)
+	queue = append(queue[:0], start)
+	seen[start.Index] = true
+	for head := 0; head < len(queue); head++ {
+		cur := queue[head]
+		for _, succ := range cur.Succs {
+			if !seen[succ.Index] {
+				seen[succ.Index] = true
+				queue = append(queue, succ)
+			}
+		}
+	}
+}
 
 func (p *context) rangeFuncCallNeedsDeferDrain(call *ssa.CallCommon) bool {
 	for _, arg := range call.Args {

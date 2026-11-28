@@ -52,19 +52,37 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/thread"
 )
 
+//go:linkname runtimeMarkTouchedLocal github.com/xgo-dev/llgo/runtime/internal/runtime.MarkTouchedLocal
+func runtimeMarkTouchedLocal()
+
 type Handle[T any] struct {
 	key        thread.Key
 	destructor func(*T)
+	reusable   bool
 }
 
 // Alloc creates a handle backed by the host thread-local storage API.
+// Threads that install a slot on this handle are not recycled into the runtime
+// worker pool so native TLS destructors run when the goroutine exits and
+// subsequent goroutines never observe stale slot values.
 func Alloc[T any](destructor func(*T)) Handle[T] {
+	return allocHandle[T](destructor, false)
+}
+
+// AllocReusable creates a handle backed by the host thread-local storage API
+// for per-OS-thread caches (such as sync.Pool) whose slots may safely persist
+// across goroutines executing on a recycled pooled OS thread.
+func AllocReusable[T any](destructor func(*T)) Handle[T] {
+	return allocHandle[T](destructor, true)
+}
+
+func allocHandle[T any](destructor func(*T), reusable bool) Handle[T] {
 	var key thread.Key
 	if ret := key.Create(thread.KeyDestructor(slotDestructor[T])); ret != 0 {
 		diagnostic.Error("tls: thread-local key creation failed ", ret)
 		panic("tls: failed to create thread local storage key")
 	}
-	return Handle[T]{key: key, destructor: destructor}
+	return Handle[T]{key: key, destructor: destructor, reusable: reusable}
 }
 
 // Get returns the value stored in the current thread's slot.
@@ -111,6 +129,9 @@ func (h Handle[T]) ensureSlot() *slot[T] {
 		freeSlot(mem)
 		diagnostic.Error("tls: thread-local value installation failed ", ret)
 		panic("tls: failed to set thread local storage value")
+	}
+	if !h.reusable {
+		runtimeMarkTouchedLocal()
 	}
 	return s
 }

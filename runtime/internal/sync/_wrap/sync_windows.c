@@ -125,6 +125,21 @@ int llgo_win_cond_wait(llgo_condition_variable *condition,
     return llgo_cond_wait(condition, lock, LLGO_INFINITE);
 }
 
+/* Idle runtime worker threads carry no Go frames for LLDB to unwind, so
+ * always park them outside BDWGC's active thread set (including on MSVC ARM64)
+ * to avoid suspending idle threads inside ntdll wait frames during STW GC. */
+int llgo_win_cond_wait_inactive(llgo_condition_variable *condition,
+                                llgo_srwlock *lock)
+{
+    llgo_cond_wait_call call = {condition, lock, LLGO_INFINITE, 0};
+#if defined(LLGO_USE_BDWGC)
+    GC_do_blocking(llgo_cond_wait_inactive, &call);
+#else
+    llgo_cond_wait_inactive(&call);
+#endif
+    return call.error;
+}
+
 typedef struct {
     llgo_time_t sec;
     long nsec;

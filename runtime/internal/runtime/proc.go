@@ -99,6 +99,7 @@ func freeRuntimeContext(ctx *runtimeContext) {
 		return
 	}
 	root := ctx.root
+	freeSelectCache(&ctx.g)
 	leaveSynctest(&ctx.g)
 	unregisterTraceback(&ctx.g)
 	ctx.root = nil
@@ -133,7 +134,6 @@ func releaseGAndCheckDeadlock() {
 	remaining, mainExited := releaseG()
 	if remaining == 0 && mainExited {
 		fatal("no goroutines (main called runtime.Goexit) - deadlock!")
-		c.Exit(2)
 	}
 }
 
@@ -156,4 +156,27 @@ func GStateForTesting() (count uint64, mainExited bool) {
 func NumGoroutine() int {
 	count, _ := gState()
 	return int(count)
+}
+
+// LockOSThread records an explicit OS thread lock on the current goroutine.
+// Hosted backends already bind each goroutine to one OS thread; tracking the
+// lock count ensures a goroutine that exits without unlocking terminates its
+// OS thread rather than returning it to the worker pool.
+//
+//go:noinline
+func LockOSThread() {
+	if gp := getg(); gp != nil {
+		gp.lockedOSThread++
+	}
+}
+
+// UnlockOSThread releases one LockOSThread count on the current goroutine.
+// Matching Go's runtime.UnlockOSThread (where lockedExt == 0 returns without
+// throwing), unlocking an unlocked goroutine is a no-op.
+//
+//go:noinline
+func UnlockOSThread() {
+	if gp := getg(); gp != nil && gp.lockedOSThread > 0 {
+		gp.lockedOSThread--
+	}
 }

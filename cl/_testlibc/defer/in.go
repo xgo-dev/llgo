@@ -30,10 +30,11 @@ func printf(format *int8, __llgo_va_list ...any) int32
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: [[GO_DEFER_DATA:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
 // CHECK: [[COND:%.*]] = call i1 @main.f(%"{{.*}}String" { ptr [[HELLO]], i64 5 })
-// CHECK: [[PREV_DEFER:%.*]] = call ptr @"{{.*}}GetThreadDefer"()
+// CHECK: [[DEFER_SLOT:%.*]] = call ptr @"{{.*}}ThreadDeferSlot"()
+// CHECK-NEXT: [[PREV_DEFER:%.*]] = load ptr, ptr [[DEFER_SLOT]]
 // CHECK: [[FRAME:%.*]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[PREV_DEFER]], ptr {{%.*}}
-// CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[FRAME]])
+// CHECK: store ptr [[FRAME]], ptr [[DEFER_SLOT]]
 // CHECK: [[FLAGS:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 1
 // CHECK: [[HEAD:%.*]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[FRAME]], i32 0, i32 5
 // True branch: copy the Go string to stable C storage and keep format+argument.

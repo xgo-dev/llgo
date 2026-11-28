@@ -571,6 +571,27 @@ func (b Builder) MakeSliceEx(t Type, len, cap Expr, heap bool) (ret Expr) {
 	return b.makeSlice(t, len, cap, heap, -1)
 }
 
+// MakeSliceRounded allocates backing storage for append([]T(nil), make([]T, n)...),
+// rounding capacity up to the allocator's size class on the common natural-alignment
+// path while falling back to standard MakeSlice for 64-on-32 lengths, over-aligned
+// elements, or zero-sized elements.
+func (b Builder) MakeSliceRounded(t Type, length Expr) (ret Expr) {
+	prog := b.Prog
+	telem := prog.Index(t)
+	if prog.SizeOf(length.Type) > prog.SizeOf(prog.Int()) ||
+		prog.AlignOf(telem) > uint64(prog.GoWordSize()) ||
+		prog.SizeOf(telem) == 0 {
+		return b.makeSlice(t, length, length, true, -1)
+	}
+	length = b.FitIntSize(length)
+	ret = b.InlineCall(b.Pkg.rtFunc("MakeSliceRounded"),
+		length,
+		prog.IntVal(prog.SizeOf(telem), prog.Int()),
+		prog.BoolVal(prog.abi.HasPointers(telem.raw.Type)))
+	ret.Type = t
+	return
+}
+
 // MakeSliceStackCapacity preserves runtime length checks while using a
 // statically bounded backing array whose lifetime was proved by the frontend.
 func (b Builder) MakeSliceStackCapacity(t Type, len, cap Expr, capacity int64) Expr {
@@ -1329,15 +1350,18 @@ func (b Builder) chanOp(s *SelectState) Expr {
 
 // -----------------------------------------------------------------------------
 
-// AppendFreshSliceToNil forwards a fresh, exclusively used slice whose length
-// equals its capacity. The caller must give its backing array result lifetime.
+// AppendFreshSliceToNil forwards a fresh, exclusively used slice (preserving
+// its capacity, which may exceed length when allocated via MakeSliceRounded).
+// The caller must give its backing array result lifetime.
 // An empty append preserves nil, unlike make of a zero-length slice.
 func (b Builder) AppendFreshSliceToNil(t Type, fresh Expr) Expr {
 	length := b.SliceLen(fresh)
+	capacity := b.SliceCap(fresh)
 	data := b.SliceData(fresh)
 	empty := llvm.CreateICmp(b.impl, llvm.IntEQ, length.impl, b.Prog.Zero(length.Type).impl)
 	data.impl = llvm.CreateSelect(b.impl, empty, b.Prog.Nil(data.Type).impl, data.impl)
-	ret := b.unsafeSlice(data, length.impl, length.impl)
+	capVal := llvm.CreateSelect(b.impl, empty, b.Prog.Zero(capacity.Type).impl, capacity.impl)
+	ret := b.unsafeSlice(data, length.impl, capVal)
 	ret.Type = t
 	return ret
 }
@@ -1363,8 +1387,36 @@ func (b Builder) copySlice(dst, src Expr) Expr {
 	return copied
 }
 
-// appendSlice selects aligned storage only for element types that need it.
-func (b Builder) appendSlice(src, data, count Expr, size uint64) Expr {
+// AppendSlice appends src to dst. When dst is not statically zero-capacity, it
+// lowers the spare-capacity path inline with llvm.memmove and calls onGrow
+// (when non-nil) immediately before falling back to runtime.SliceAppend on
+// growth or overflow.
+func (b Builder) AppendSlice(dst, src Expr, onGrow func(Builder)) Expr {
+	switch src.kind {
+	case vkSlice:
+		return b.appendSlice(dst, b.SliceData(src), b.SliceLen(src), b.Prog.SizeOf(b.Prog.Elem(src.Type)), onGrow)
+	case vkString:
+		return b.appendSlice(dst, b.StringData(src), b.StringLen(src), b.Prog.SizeOf(b.Prog.Byte()), onGrow)
+	default:
+		return b.appendSlice(dst, src, b.Prog.Val(1), b.Prog.SizeOf(src.Type), onGrow)
+	}
+}
+
+func hasZeroConstantCap(src Expr) bool {
+	if src.impl.IsNull() {
+		return true
+	}
+	if !src.impl.IsAConstantStruct().IsNil() && src.impl.OperandsCount() == 3 {
+		capVal := src.impl.Operand(2)
+		return !capVal.IsAConstantInt().IsNil() && capVal.ZExtValue() == 0
+	}
+	return false
+}
+
+func (b Builder) appendSliceCall(src, data, count Expr, size uint64, onGrow func(Builder)) Expr {
+	if onGrow != nil {
+		onGrow(b)
+	}
 	elem := b.Prog.Elem(src.Type)
 	args := []Expr{src, data, count, b.Prog.Val(int(size))}
 	fn := "SliceAppend"
@@ -1375,13 +1427,68 @@ func (b Builder) appendSlice(src, data, count Expr, size uint64) Expr {
 	args = append(args, b.Prog.BoolVal(b.Prog.abi.HasPointers(elem.raw.Type)))
 	result := b.InlineCall(b.Pkg.rtFunc(RuntimeSymbol(fn, "SliceAppend", "SliceAppendAligned")), args...)
 	result.Type = src.Type
-	if b.Prog.hasWasmABIPadding(elem.ll) {
+	return result
+}
+
+// appendSlice emits a general spare-capacity fast path using llvm.memmove and
+// falls back to runtime.SliceAppend[Aligned] on growth or overflow.
+func (b Builder) appendSlice(src, data, count Expr, size uint64, onGrow func(Builder)) Expr {
+	prog := b.Prog
+	elem := prog.Elem(src.Type)
+	var result Expr
+	if !count.impl.IsAConstantInt().IsNil() && count.impl.ZExtValue() == 0 {
+		result = src
+	} else if hasZeroConstantCap(src) {
+		result = b.appendSliceCall(src, data, count, size, onGrow)
+	} else {
+		length, capacity := b.SliceLen(src), b.SliceCap(src)
+		room := b.BinOp(token.SUB, capacity, length)
+		// Unsigned comparison proves both count >= 0 and length+count <= capacity
+		// without signed overflow (valid slices satisfy 0 <= length <= capacity).
+		fits := llvm.CreateICmp(b.impl, llvm.IntULE, count.impl, room.impl)
+		fits = b.impl.CreateIntrinsic(prog.Bool().ll, llvm.LookupIntrinsicID("llvm.expect"), []llvm.Value{
+			fits, prog.BoolVal(true).impl,
+		}, "")
+		cur := b.impl.GetInsertBlock()
+		blocks := b.Func.MakeBlocks(3)
+		blocks[0].first.MoveAfter(cur)
+		blocks[1].first.MoveAfter(blocks[0].first)
+		blocks[2].first.MoveAfter(blocks[1].first)
+		b.If(Expr{fits, prog.Bool()}, blocks[0], blocks[1])
+
+		b.SetBlockEx(blocks[2], AtEnd, false)
+		phi := b.Phi(src.Type)
+		phi.AddIncoming(b, blocks[:2], func(i int, block BasicBlock) Expr {
+			b.SetBlockEx(block, AtEnd, false)
+			if i == 1 {
+				grown := b.appendSliceCall(src, data, count, size, onGrow)
+				b.Jump(blocks[2])
+				return grown
+			}
+			if size > 0 {
+				base := b.SliceData(src)
+				byteCount := count
+				if size != 1 {
+					byteCount = b.BinOp(token.MUL, count, prog.IntVal(size, prog.Int()))
+				}
+				b.memmove(b.Advance(base, length), data, b.physicalPointerIndex(byteCount), prog.BoolVal(false))
+			}
+			next := b.BinOp(token.ADD, length, count)
+			out := Expr{b.impl.CreateInsertValue(src.impl, next.impl, 1, ""), src.Type}
+			b.Jump(blocks[2])
+			return out
+		})
+		b.SetBlockEx(blocks[2], AtEnd, false)
+		b.blk.last = blocks[2].last
+		result = phi.Expr
+	}
+	if prog.hasWasmABIPadding(elem.ll) {
 		// Growth copies the old prefix too. With spare capacity only the
 		// appended elements were written, and the prefix may still alias C.
 		length, out := b.SliceLen(result).impl, b.SliceData(result).impl
 		relocated := llvm.CreateICmp(b.impl, llvm.IntNE, out, b.SliceData(src).impl)
 		start := llvm.CreateSelect(b.impl, relocated, llvm.ConstNull(length.Type()), b.SliceLen(src).impl)
-		index := llvm.CreateTrunc(b.impl, start, b.Prog.tyInt32())
+		index := llvm.CreateTrunc(b.impl, start, prog.tyInt32())
 		addr := llvm.CreateInBoundsGEP(b.impl, elem.ll, out, []llvm.Value{index})
 		written := b.impl.CreateSub(length, start, "")
 		b.clearWasmCopiedHeaders(elem.ll, addr, data.impl, written)

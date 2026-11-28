@@ -35,8 +35,8 @@ func sizeSymbolEntryReserve(ir string, analysis pclnpost.ExternalAnalysis, packS
 			return "", false, err
 		}
 		if packShared && strings.Contains(line, `section "__DATA,__llgo_fie,`) {
-			// Allow for text alignment changes during relinking.
-			need = (need + 255) &^ uint64(255)
+			// Leave a full 256-byte margin even for an already aligned table.
+			need = (need + 256 + 255) &^ uint64(255)
 		} else if capacity >= need {
 			return ir, false, nil
 		} else {

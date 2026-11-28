@@ -114,6 +114,7 @@ func LocalPackage(cacheSlot *uintptr, size, align uintptr) unsafe.Pointer {
 	if align == 0 || align&(align-1) != 0 {
 		panic("runtime: invalid local package alignment")
 	}
+	markTouchedLocal()
 	data := newLocalBlock(cacheSlot, size, align)
 	localBlockHeader(data).next = ctx.blocks
 	ctx.blocks = data

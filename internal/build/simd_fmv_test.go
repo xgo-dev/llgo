@@ -24,7 +24,7 @@ func assembly(x archsimd.Float32x4) archsimd.Float32x4
 
 //go:noinline
 func guarded(x, y archsimd.Float32x4) archsimd.Float32x4 {
- if archsimd.X86.AVX2() { return assembly(local(x, kernel.Compute(x, y))) }
+ if archsimd.X86.AVX2() { return assembly(local(x.Add(y), kernel.Compute(x, y))) }
  return x.Sub(y)
 }
 func main() {}
@@ -63,6 +63,47 @@ func TestSIMDFMVLLVM(t *testing.T) {
 	})
 }
 
+// Independent guards decide how many times the same baseline kernel runs.
+func TestSIMDGuardedNarrowHelperSharesCode(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module fmvtest\n\ngo 1.27\n")
+	var src strings.Builder
+	src.WriteString(`package main
+import "simd/archsimd"
+//go:noinline
+func kernel(p *[4]int32) {
+ x := archsimd.LoadInt32x4Array(p)
+ x.Add(x).StoreArray(p)
+}
+//go:noinline
+func root(p *[4]int32) {
+ if !archsimd.X86.AVX() { return }
+`)
+	guards := []string{"FMA", "SHA", "AVXAES", "VAES", "AVXVNNI", "AVX512", "AVX512VBMI2", "AVX512GFNI", "AVX512VNNI", "AVX512BITALG"}
+	for _, guard := range guards {
+		src.WriteString("if archsimd.X86." + guard + "() { kernel(p) }\n")
+	}
+	src.WriteString("}\nfunc main() { var p [4]int32; root(&p) }\n")
+	writeFile(t, filepath.Join(dir, "main.go"), src.String())
+	conf := NewDefaultConf(ModeGen)
+	conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = "linux", "amd64", "v1", "simd"
+	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pkgs[0].LPkg.Prog.Dispose()
+	mod := pkgs[0].LPkg.Module()
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if strings.HasPrefix(fn.Name(), "main.kernel.__llgo_fmv_") || strings.HasPrefix(fn.Name(), "main.root.__llgo_fmv_") {
+			t.Fatalf("unexpected specialization %s", fn.Name())
+		}
+	}
+	root := mod.NamedFunction("main.root").String()
+	if got := strings.Count(root, "call void @main.kernel("); got != len(guards) {
+		t.Fatalf("expected %d conditional calls to the shared kernel, got %d:\n%s", len(guards), got, root)
+	}
+}
+
 func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 	conf := NewDefaultConf(ModeGen)
 	conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = goos, "amd64", baseline, "simd"
@@ -85,11 +126,11 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 			t.Fatalf("baseline feature generated redundant versions:\n%s", mod.String())
 		}
 	} else {
-		suffix = ".__llgo_fmv_avx2"
-		if !strings.Contains(mod.String(), `linkageName: "main.guarded.__llgo_fmv_avx2"`) {
+		suffix = ".__llgo_fmv_guard_avx2"
+		if !strings.Contains(mod.String(), `linkageName: "main.guarded.__llgo_fmv_guard_avx2"`) {
 			t.Fatal("specialized debug subprogram lost its linker identity")
 		}
-		baselineBody := mod.NamedFunction("main.guarded.__llgo_fmv_baseline").String()
+		baselineBody := mod.NamedFunction("main.guarded.__llgo_fmv_guard_base").String()
 		if goos == "windows" {
 			for _, name := range []string{"main.guarded", "main.guarded.__llgo_fmv_resolve"} {
 				fn := mod.NamedFunction(name)
@@ -100,15 +141,15 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 		}
 		fast = mod.NamedFunction("main.guarded" + suffix).String()
 		if !strings.Contains(guard, "musttail call") || !strings.Contains(guard, "load atomic ptr") ||
-			strings.Contains(guard, "X86Features.AVX2") || strings.Contains(baselineBody, "X86Features.AVX2") || !strings.Contains(baselineBody, "fsub") {
+			strings.Contains(guard, "X86Features.AVX2") || !strings.Contains(baselineBody, "fsub") {
 			t.Fatalf("invalid dispatch or baseline:\n%s\n%s", guard, baselineBody)
 		}
 	}
 	if strings.Contains(fast, "X86Features.AVX2") || strings.Contains(fast, "fsub") ||
-		!strings.Contains(fast, "main.local"+suffix) || !strings.Contains(fast, "fmvtest/kernel.Compute"+suffix) {
+		!strings.Contains(fast, "@main.local(") || !strings.Contains(fast, "fmvtest/kernel.Compute\"(") {
 		t.Fatalf("invalid specialization:\n%s", fast)
 	}
-	if !strings.Contains(fast, "@fmv.externalAssembly(") || !mod.NamedFunction("fmv.externalAssembly.__llgo_fmv_avx2").IsNil() {
+	if !strings.Contains(fast, "@fmv.externalAssembly(") || !mod.NamedFunction("fmv.externalAssembly.__llgo_fmv_guard_avx2").IsNil() {
 		t.Fatal("bodyless assembly declaration must keep its baseline entry")
 	}
 	kernels, err := Build(Invocation{Args: []string{"./kernel"}, Config: conf, Dir: dir})
@@ -116,9 +157,9 @@ func testSIMDFMVLLVM(t *testing.T, goos, baseline string, levels ...string) {
 		t.Fatal(err)
 	}
 	defer kernels[0].LPkg.Prog.Dispose()
-	kernel := kernels[0].LPkg.Module().NamedFunction("fmvtest/kernel.Compute" + suffix)
+	kernel := kernels[0].LPkg.Module().NamedFunction("fmvtest/kernel.Compute")
 	if kernel.IsNil() || kernel.BasicBlocksCount() == 0 {
-		t.Fatal("cross-package specialized definition missing")
+		t.Fatal("ordinary cross-package definition missing")
 	}
 	simdCodegenVariants(t, levels, pkgs, func(t *testing.T, mod llvm.Module, asm string) {
 		if goos == "linux" && baseline == "v1" {
@@ -174,6 +215,81 @@ func simdCodegenVariants(t *testing.T, levels []string, pkgs []*aPackage, check 
 				defer asm.Dispose()
 				check(t, mod, string(asm.Bytes()))
 			}
+		})
+	}
+}
+
+// Exercise the real archsimd lowerings as well as the version planner. Adding
+// an independent extension must not duplicate the kernel for each subset.
+func TestSIMDIndependentInstructionFamilies(t *testing.T) {
+	dir, err := filepath.Abs("testdata/fmv-independent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conf := NewDefaultConf(ModeGen)
+	conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = "linux", "amd64", "v1", "simd"
+	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pkgs[0].LPkg.Prog.Dispose()
+	mod := pkgs[0].LPkg.Module()
+	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	var bodies int
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+		if strings.HasPrefix(fn.Name(), "main.kernel.__llgo_fmv_guard_") {
+			bodies++
+		}
+	}
+	// Of the common ISA levels, only FMA is used behind its own guard.
+	// At most three register widths can pair with its two states.
+	if bodies > 6 || mod.NamedFunction("main.kernel.__llgo_fmv_guard_fma").IsNil() ||
+		mod.NamedFunction("main.kernel.__llgo_fmv_guard_zmm").IsNil() {
+		t.Fatalf("expected FMA and ZMM implementations within six bodies, got %d", bodies)
+	}
+}
+
+func TestSIMDLeafOwnsInstructionFeature(t *testing.T) {
+	dir, err := filepath.Abs("testdata/fmv-feature-leaf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, goos := range []string{"linux", "windows"} {
+		t.Run(goos, func(t *testing.T) {
+			conf := NewDefaultConf(ModeGen)
+			conf.Goos, conf.Goarch, conf.GOAMD64, conf.GOEXPERIMENT = goos, "amd64", "v1", "simd"
+			pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pkgs[0].LPkg.Prog.Dispose()
+			mod := pkgs[0].LPkg.Module()
+			if !mod.NamedGlobal("main.shaKernel.__llgo_fmv_slot").IsNil() {
+				t.Fatal("leaf-owned SHA instruction introduced a caller dispatcher")
+			}
+			caller := mod.NamedFunction("main.shaKernel").String()
+			for _, want := range []string{"X86Features.SHA", "SIMDRequireX86Features", "call void @__llgo_simd_sha256rnds2_"} {
+				if !strings.Contains(caller, want) {
+					t.Fatalf("SHA caller lost %s:\n%s", want, caller)
+				}
+			}
+			if goos == "linux" {
+				// On SysV, MulAdd lowers to an FMA intrinsic in the caller.
+				fast := mod.NamedFunction("main.fmaKernel.__llgo_fmv_guard_fma")
+				if fast.IsNil() || !strings.Contains(fast.String(), "call <4 x float> @llvm.fma.") {
+					t.Fatal("local FMA instruction lost its caller specialization")
+				}
+			}
+			simdCodegenVariants(t, []string{"O2"}, pkgs, func(t *testing.T, _ llvm.Module, asm string) {
+				if !strings.Contains(asm, "\tsha256rnds2") {
+					t.Fatal("missing SHA instruction in optimized code")
+				}
+				if goos == "linux" && !strings.Contains(asm, "\tvfmadd") {
+					t.Fatal("missing FMA instruction in optimized code")
+				}
+			})
 		})
 	}
 }

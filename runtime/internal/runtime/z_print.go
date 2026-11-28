@@ -68,11 +68,18 @@ func printDecimal(v uint64, negative bool) {
 }
 
 func PrintFloat(v float64) {
-	c.Fputs(c.AllocaCStr(formatFloat(v)), c.Stderr)
+	buf := (*floatBuffer)(c.Alloca(unsafe.Sizeof(floatBuffer{})))
+	n := formatFloat(buf, v, false)
+	c.Fwrite(unsafe.Pointer(buf), 1, uintptr(n), c.Stderr)
 }
 
 func PrintComplex(v complex128) {
-	c.Fputs(c.AllocaCStr(formatComplex(v)), c.Stderr)
+	buf := c.Alloca(2*unsafe.Sizeof(floatBuffer{}) + 3)
+	*(*byte)(buf) = '('
+	i := 1 + formatFloat((*floatBuffer)(unsafe.Add(buf, 1)), real(v), false)
+	i += formatFloat((*floatBuffer)(unsafe.Add(buf, i)), imag(v), true)
+	*(*[2]byte)(unsafe.Add(buf, i)) = [2]byte{'i', ')'}
+	c.Fwrite(buf, 1, uintptr(i+2), c.Stderr)
 }
 
 func PrintHex(v uint64) {

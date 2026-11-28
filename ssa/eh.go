@@ -70,18 +70,22 @@ func (p Program) tyStackrestore() *types.Signature {
 	return p.stackRestoreTy
 }
 
+func applySigjmpBufAlignment(prog Program, ptr llvm.Value) {
+	if prog.target.effectiveGOOS() == "windows" {
+		// UCRT jmp_buf uses up to 16-byte alignment on supported Windows
+		// architectures. CreateArrayAlloca otherwise inherits byte alignment
+		// from its i8 element.
+		ptr.SetAlignment(16)
+	}
+}
+
 func (b Builder) AllocaSigjmpBuf() Expr {
 	prog := b.Prog
 	sigjmpBufTy := prog.rtType("SigjmpBuf") // Get type from runtime (target architecture)
 	n := prog.SizeOf(sigjmpBufTy)           // Get size for target architecture
 	size := prog.IntVal(n, prog.Uintptr())
 	ret := b.Alloca(size)
-	if prog.target.effectiveGOOS() == "windows" {
-		// UCRT jmp_buf uses up to 16-byte alignment on supported Windows
-		// architectures. CreateArrayAlloca otherwise inherits byte alignment
-		// from its i8 element.
-		ret.impl.SetAlignment(16)
-	}
+	applySigjmpBufAlignment(prog, ret.impl)
 	return ret
 }
 
@@ -241,6 +245,27 @@ func (b Builder) cLongjmp(jb, retval Expr) {
 
 // -----------------------------------------------------------------------------
 
+func (b Builder) allocaDeferSigjmpBuf(hoistToEntry bool) Expr {
+	if !hoistToEntry {
+		return b.AllocaSigjmpBuf()
+	}
+	prog := b.Prog
+	sigjmpBufTy := prog.rtType("SigjmpBuf")
+	n := prog.SizeOf(sigjmpBufTy)
+	size := prog.IntVal(n, prog.Uintptr())
+	ab := b.Func.entryAllocaBuilder()
+	ptr := llvm.CreateArrayAlloca(ab, prog.tyInt8(), size.impl)
+	applySigjmpBufAlignment(prog, ptr)
+	return Expr{ptr, prog.VoidPtr()}
+}
+
+func (p Function) deferInitTarget() BasicBlock {
+	if p.deferInitBlk != nil {
+		return p.deferInitBlk
+	}
+	return p.blks[0]
+}
+
 func (p Function) deferInitBuilder(from Builder) (b Builder, next BasicBlock) {
 	b = p.NewBuilder()
 	// NewBuilder supplies a line-zero function location for generated code;
@@ -248,14 +273,17 @@ func (p Function) deferInitBuilder(from Builder) (b Builder, next BasicBlock) {
 	if loc := from.diLocation; p.diFunc != nil && !loc.Scope.IsNil() {
 		b.setDebugLocation(loc)
 	}
-	next = b.setBlockMoveLast(p.blks[0])
-	p.blks[0].last = next.last
+	target := p.deferInitTarget()
+	b.blk = target
+	next = b.setBlockMoveLast(target)
+	target.last = next.last
 	return
 }
 
 type aDefer struct {
 	nextBit     int        // next defer bit
 	data        Expr       // pointer to runtime.Defer
+	slot        Expr       // pointer to current goroutine's defer chain head (**runtime.Defer)
 	bitsPtr     Expr       // pointer to defer bits
 	rethPtr     Expr       // native block address or wasm Rethrow selector
 	rundPtr     Expr       // native block address or wasm RunDefers selector
@@ -313,6 +341,17 @@ const (
 	deferArgs
 )
 
+func isTerminatorInst(v llvm.Value) bool {
+	if v.IsNil() {
+		return false
+	}
+	switch v.InstructionOpcode() {
+	case llvm.Ret, llvm.Br, llvm.Switch, llvm.IndirectBr, llvm.Invoke, llvm.Resume, llvm.Unreachable, llvm.CallBr:
+		return true
+	}
+	return false
+}
+
 func (b Builder) getDefer(kind DoAction) *aDefer {
 	if b.Func.recov == nil {
 		// b.Func.recov maybe nil in ssa.NaiveForm
@@ -321,6 +360,11 @@ func (b Builder) getDefer(kind DoAction) *aDefer {
 	self := b.Func
 	if self.defer_ == nil {
 		// TODO(xsw): check if in pkg.init
+		target := self.deferInitTarget()
+		if kind != DeferAlways && target != self.blks[0] && b.blk == target &&
+			!isTerminatorInst(b.blk.last.LastInstruction()) {
+			return b.getDeferInCurrentBlock()
+		}
 		var next, panicBlk BasicBlock
 		if kind != DeferAlways {
 			b, next = self.deferInitBuilder(b)
@@ -367,6 +411,8 @@ func (b Builder) getDeferInCurrentBlock() *aDefer {
 
 	// Range-over-func yield bodies need an addressable defer stack in the
 	// current block so the synthetic frame can push into its enclosing owner.
+	// getDefer also routes anchored non-entry defer initialization here when
+	// the builder is already emitting the designated defer-init block.
 	logicalBlk := b.blk
 	blks := self.MakeBlocks(4)
 	procBlk, rethrowBlk, next, panicBlk := blks[0], blks[1], blks[2], blks[3]
@@ -391,8 +437,10 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	self := b.Func
 	prog := b.Prog
 	zero := prog.Val(uintptr(0))
-	link := b.Call(b.Pkg.rtFunc("GetThreadDefer"))
-	jb := b.AllocaSigjmpBuf()
+	slot := b.Call(b.Pkg.rtFunc("ThreadDeferSlot"))
+	link := b.Load(slot)
+	hoistSlot := b.impl.GetInsertBlock() != self.impl.FirstBasicBlock()
+	jb := b.allocaDeferSigjmpBuf(hoistSlot)
 	// Wasm Reth selector 0 is reserved for procBlk; Rund selector 0 is
 	// rethrowBlk. Native targets store the corresponding block addresses.
 	initialReth := deferTarget{index: 0, block: procBlk}
@@ -403,11 +451,15 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 	} else {
 		// The thread chain borrows this frame until endDefer unlinks it.
 		// Managed fields are registered in the caller's typed root frame.
-		ptr = b.AllocaT(prog.Defer()).impl
+		if hoistSlot {
+			ptr = b.uninitializedStackSlot(prog.Defer()).impl
+		} else {
+			ptr = b.AllocaT(prog.Defer()).impl
+		}
 		b.aggregateInit(ptr, prog.Defer(), fields...)
 	}
 	deferData := Expr{ptr, prog.DeferPtr()}
-	b.Call(b.Pkg.rtFunc("SetThreadDefer"), deferData)
+	b.Store(slot, deferData)
 	if prog.GCRootsEnabled() {
 		b.Call(b.Pkg.rtFunc("SetDeferGCRoot"), deferData, b.currentGCRootChain())
 	}
@@ -430,6 +482,7 @@ func (b Builder) initDeferState(procBlk, rethrowBlk BasicBlock) (*aDefer, Expr, 
 
 	self.defer_ = &aDefer{
 		data:        deferData,
+		slot:        slot,
 		bitsPtr:     bitsPtr,
 		rethPtr:     rethPtr,
 		rundPtr:     rundPtr,
@@ -921,7 +974,7 @@ func (p Function) endDefer(b Builder) {
 		}
 	}
 	link := b.getField(b.Load(self.data), deferLink)
-	b.Call(b.Pkg.rtFunc("SetThreadDefer"), link)
+	b.Store(self.slot, link)
 	b.jumpDeferTarget(rundPtr, rundTargets)
 
 	b.SetBlockEx(panicBlk, AtEnd, false) // panicBlk: exec runDefers and rethrow

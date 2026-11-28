@@ -14,9 +14,19 @@ This document records the phase-one design from
 - `env == nil` means that the physical entry has no env parameter. A source
   closure whose captures are all zero-sized is reclassified as a no-env entry;
   it recreates their permitted shared non-nil address from the module sentinel.
-  Other required environments never use nil. A nil pointer receiver method
-  value is represented by an allocated environment cell, and an interface
-  method value captures the complete interface state.
+  Other required environments never use nil, preserving `env != nil` for
+  explicit-context dispatch, native C callback rejection, and reflection.
+- On hidden-env targets (`nest` and `swiftself`), a closure or bound method
+  wrapper with a single pointer-shaped capture (`*T`, `map`, `chan`,
+  `unsafe.Pointer`, or a single lexical cell address) transports that pointer
+  directly in `env` without allocating a pointer-sized wrapper struct. When a
+  direct capture may be `nil` at runtime (immutable pointer captures and bound
+  pointer-receiver method values), `MakeClosure` encodes `nil` using a shared
+  non-nil sentinel global (`__llgo.directClosureNilEnv$`) and the entry decodes
+  it back to `nil`, preserving the non-nil `env` invariant without heap
+  allocation. On explicit-env targets, single-pointer captures continue to use
+  an allocated wrapper cell; interface method values always capture the
+  complete interface state.
 - A statically known call uses the entry's `NeedsEnv` property. An
   explicit-context dynamic funcval call (including WebAssembly) branches once
   on `env != nil` and emits two exact LLVM call edges: `fn(args...)` and

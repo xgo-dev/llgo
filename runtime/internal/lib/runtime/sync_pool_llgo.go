@@ -21,7 +21,7 @@ var poolLocals tls.Handle[*poolLocalTable]
 //go:linkname syncRuntimePoolLocalAlloc sync.runtime_poolLocalAlloc
 func syncRuntimePoolLocalAlloc(victim *unsafe.Pointer) unsafe.Pointer {
 	poolLocalOnce.Do(func() {
-		poolLocals = tls.Alloc[*poolLocalTable](func(locals **poolLocalTable) {
+		poolLocals = tls.AllocReusable[*poolLocalTable](func(locals **poolLocalTable) {
 			if *locals != nil {
 				(*locals).Range(func(victimField, local unsafe.Pointer) {
 					atomic.StorePointer((*unsafe.Pointer)(victimField), local)

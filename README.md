@@ -479,7 +479,7 @@ EOF
 sudo yum install -y llgo
 ```
 
-For source builds and mise/Pixi, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For source builds and Pixi, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Go environment
 
