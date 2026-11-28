@@ -11,6 +11,7 @@ package http
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -22,6 +23,7 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,9 +44,10 @@ import (
 // channel handoffs to every keep-alive request.
 //
 // For pooled plaintext socket HTTP/1.1 connections (non-ClientConn, non-TLS,
-// non-Expect-100-continue, no write-side httptrace hooks, and known request
-// bodies <= 64 KiB via Request.outgoingLength() that cannot deadlock against
-// kernel TCP send buffers), keep persistConn in synchronous mode (pc.writech == nil):
+// non-Expect-100-continue, no write-side httptrace hooks, and bodyless or
+// known in-memory request bodies <= 64 KiB via Request.outgoingLength() that
+// cannot block reading or deadlock against kernel TCP send buffers), keep
+// persistConn in synchronous mode (pc.writech == nil):
 //   - Write the request and read response headers directly on the caller's
 //     goroutine with zero channel hops and zero extra OS threads.
 //   - Attach request context cancellation via context.AfterFunc (zero goroutines
@@ -53,12 +56,51 @@ import (
 //     userspace pending window (~1-2ms, zero syscalls on hot keep-alive reuse)
 //     so server-initiated idle closes/EOF/RST are detected promptly.
 //   - Lazily promote to standard readLoop+writeLoop on demand for Expect: 100-
-//     continue, unknown-length/chunked or >64 KiB request bodies, or requests
+//     continue, streaming/unknown-length or >64 KiB request bodies, or requests
 //     with write-side httptrace hooks (WroteHeaders/WroteRequest/100-continue).
 
 // errSyncClosedEarly is local to the patch so it compiles across all Go 1.27.x
 // point releases (upstream net/http added errClosedEarly in a 1.27 point release).
 var errSyncClosedEarly = errors.New("net/http: response body closed early")
+
+type nopPlainReader struct{}
+
+func (nopPlainReader) Read([]byte) (int, error) { return 0, io.EOF }
+
+var (
+	nopCloserType         = reflect.TypeOf(io.NopCloser(nopPlainReader{}))
+	nopCloserWriterToType = reflect.TypeOf(io.NopCloser((*bytes.Reader)(nil)))
+)
+
+// isInMemoryRequestBody reports whether body is empty or a standard in-memory
+// reader (*bytes.Buffer, *bytes.Reader, *strings.Reader wrapped by io.NopCloser
+// and/or readTrackingBody). Streaming readers with a known Content-Length stay
+// on the async path so an early final response from the server is not blocked
+// behind a stalled Request.Body.Read.
+func isInMemoryRequestBody(body io.ReadCloser) bool {
+	if body == nil || body == NoBody {
+		return true
+	}
+	if rt, ok := body.(*readTrackingBody); ok {
+		body = rt.ReadCloser
+		if body == nil || body == NoBody {
+			return true
+		}
+	}
+	rv := reflect.ValueOf(body)
+	if !rv.IsValid() {
+		return true
+	}
+	if t := rv.Type(); t == nopCloserWriterToType || t == nopCloserType {
+		if inner, ok := rv.Field(0).Interface().(io.Reader); ok {
+			switch inner.(type) {
+			case *bytes.Buffer, *bytes.Reader, *strings.Reader:
+				return true
+			}
+		}
+	}
+	return false
+}
 
 const (
 	clientIdleShardCount  = 16
@@ -477,11 +519,6 @@ func (pc *persistConn) mapSyncRoundTripError(req *transportRequest, startBytesWr
 }
 
 func (pc *persistConn) readResponseSync(treq *transportRequest, trace *httptrace.ClientTrace) (resp *Response, err error) {
-	if trace != nil && trace.GotFirstResponseByte != nil {
-		if peek, err := pc.br.Peek(1); err == nil && len(peek) == 1 {
-			trace.GotFirstResponseByte()
-		}
-	}
 	for {
 		resp, err = ReadResponse(pc.br, treq.Request)
 		if err != nil {
@@ -571,7 +608,19 @@ func (pc *persistConn) roundTripSync(req *transportRequest) (*Response, error) {
 	if respHeaderTO > 0 {
 		pc.conn.SetReadDeadline(time.Now().Add(respHeaderTO))
 	}
-	resp, err := pc.readResponseSync(req, req.trace)
+	// Match upstream readLoop: only a failure on the initial 1-byte peek is
+	// classified as transportReadFromServerError (retryable on a reused conn).
+	// Subsequent ReadResponse / Got1xxResponse errors stay terminal.
+	var resp *Response
+	_, err = pc.br.Peek(1)
+	if err == nil {
+		if req.trace != nil && req.trace.GotFirstResponseByte != nil {
+			req.trace.GotFirstResponseByte()
+		}
+		resp, err = pc.readResponseSync(req, req.trace)
+	} else if !(respHeaderTO > 0 && os.IsTimeout(err) && pc.canceled() == nil) {
+		err = transportReadFromServerError{err}
+	}
 	if respHeaderTO > 0 {
 		pc.conn.SetReadDeadline(time.Time{})
 	}
@@ -583,8 +632,6 @@ func (pc *persistConn) roundTripSync(req *transportRequest) (*Response, error) {
 		}
 		if pc.readLimit <= 0 {
 			err = fmt.Errorf("net/http: server response headers exceeded %d bytes; aborted", pc.maxHeaderResponseSize())
-		} else {
-			err = transportReadFromServerError{err}
 		}
 		pc.close(err)
 		return nil, pc.mapSyncRoundTripError(req, startBytesWritten, err)
@@ -615,8 +662,17 @@ func (pc *persistConn) roundTripSync(req *transportRequest) (*Response, error) {
 		earlyCloseFn: func() error {
 			stopCancel()
 			req.cancel(errRequestDone)
-			if alive && resp.ContentLength <= maxPostCloseReadBytes && maybeDrainBody(origBody) {
-				pc.syncPutIdleConn(req)
+			if alive && resp.ContentLength <= maxPostCloseReadBytes {
+				// Return immediately to the caller of Body.Close (matching
+				// upstream readLoop, which unblocks eofc before maybeDrainBody)
+				// and finish draining or closing the connection asynchronously.
+				go func() {
+					if maybeDrainBody(origBody) && !pc.sawEOF {
+						pc.syncPutIdleConn(req)
+					} else {
+						pc.close(errSyncClosedEarly)
+					}
+				}()
 			} else {
 				pc.close(errSyncClosedEarly)
 			}
@@ -661,6 +717,7 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 		outLen := req.Request.outgoingLength()
 		needAsync := (req.ProtoAtLeast(1, 1) && req.Body != nil && req.expectsContinue()) ||
 			outLen < 0 || outLen > clientIdleMaxSyncBody ||
+			!isInMemoryRequestBody(req.Body) ||
 			(req.trace != nil && (req.trace.WroteHeaders != nil || req.trace.WroteRequest != nil || req.trace.Wait100Continue != nil || req.trace.Got100Continue != nil))
 		if !needAsync {
 			return pc.roundTripSync(req)

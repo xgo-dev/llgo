@@ -5,10 +5,13 @@ package http_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
 	"os"
 	"runtime"
 	"strings"
@@ -843,5 +846,190 @@ func TestClientSyncTransportRejectsUnsolicitedBufferedBytes(t *testing.T) {
 	}
 	if got := accepted.Load(); got < 2 {
 		t.Fatalf("expected second request to open a new connection, accepted=%d", got)
+	}
+}
+
+type blockingBodyReader struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *blockingBodyReader) Read(p []byte) (int, error) {
+	<-b.closed
+	return 0, errors.New("body closed")
+}
+
+func (b *blockingBodyReader) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
+
+func TestClientSyncTransportEarlyRejectSmallStreamingPost(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		br := bufio.NewReader(conn)
+		// Read request headers only, then immediately reject with 413 + Connection: close.
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil || line == "\r\n" {
+				break
+			}
+		}
+		_, _ = io.WriteString(conn, "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+	}()
+
+	tr := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr, Timeout: 2 * time.Second}
+
+	body := &blockingBodyReader{closed: make(chan struct{})}
+	defer body.Close()
+	req, err := http.NewRequest("POST", "http://"+ln.Addr().String()+"/upload", body)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.ContentLength = 8
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("streaming POST early 413 failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+}
+
+func TestClientSyncTransportGot1xxErrorTerminalOnReusedConn(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	var requests atomic.Int32
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				br := bufio.NewReader(c)
+				for {
+					req, err := http.ReadRequest(br)
+					if err != nil {
+						return
+					}
+					io.Copy(io.Discard, req.Body)
+					req.Body.Close()
+					n := requests.Add(1)
+					switch n {
+					case 1:
+						// Warm the keep-alive connection.
+						_, _ = io.WriteString(c, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nwarm")
+					case 2:
+						// Send 103 Early Hints followed by 200 on the reused conn.
+						_, _ = io.WriteString(c, "HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+						return
+					default:
+						// If the client erroneously retried on a new connection, return 200.
+						_, _ = io.WriteString(c, "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nretried")
+						return
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	tr := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr}
+	url := "http://" + ln.Addr().String() + "/"
+
+	r1, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("warm GET: %v", err)
+	}
+	io.Copy(io.Discard, r1.Body)
+	r1.Body.Close()
+
+	sentinel := errors.New("stop on 103")
+	ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
+		Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+			if code == 103 {
+				return sentinel
+			}
+			return nil
+		},
+	})
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext: %v", err)
+	}
+	r2, err := client.Do(req)
+	if err == nil {
+		r2.Body.Close()
+		t.Fatalf("expected sentinel error from Got1xxResponse, got status %d (requests=%d)", r2.StatusCode, requests.Load())
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want errors.Is(_, sentinel)", err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("requests = %d, want 2 (no retry after Got1xxResponse error)", got)
+	}
+}
+
+func TestClientSyncTransportEarlyBodyCloseReturnsPromptly(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	releaseBody := make(chan struct{})
+	defer close(releaseBody)
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		br := bufio.NewReader(conn)
+		if _, err := http.ReadRequest(br); err != nil {
+			return
+		}
+		// Flush response headers with Content-Length: 8 but withhold body bytes
+		// until after the client closes Response.Body.
+		_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\n")
+		<-releaseBody
+	}()
+
+	tr := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Get("http://" + ln.Addr().String() + "/delayed-body")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	start := time.Now()
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("Body.Close: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 20*time.Millisecond {
+		t.Fatalf("early Response.Body.Close blocked for %v (want < 20ms)", elapsed)
 	}
 }
