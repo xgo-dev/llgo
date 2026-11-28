@@ -45,20 +45,20 @@ def main():
             runtime_stem = Path(directory) / f"{profile}-runtime"
             run([llgo, "build", "-target", target, "-O0",
                  "-debug-artifact=embedded", "-o", str(runtime_stem.with_suffix(".mjs")),
-                 "./internal/browserdebug/testdata/runtime"], env)
+                 "./cmd/compiler/browserdebug/testdata/runtime"], env)
             env["LLGO_BROWSER_DEBUG_RUNTIME_ARTIFACT"] = str(runtime_stem.with_suffix(".wasm"))
             for mode in ("embedded", "external"):
                 stem = Path(directory) / f"{profile}-{mode}"
                 run([llgo, "build", "-target", target, "-O0",
                      f"-debug-artifact={mode}", "-o", str(stem.with_suffix(".mjs")),
-                     "./internal/build/testdata/wasm-debug"], env)
+                     "./cmd/compiler/build/testdata/wasm-debug"], env)
                 env["LLGO_BROWSER_DEBUG_ARTIFACT"] = str(stem.with_suffix(".wasm"))
                 test = ["go", "test", "-count=1", "-timeout=3m", "-v"]
                 if coverage_dir:
                     test += ["-covermode=atomic",
-                             "-coverpkg=./cmd/internal/browser,./internal/browserdebug,./internal/wasmdebug,./internal/debugabi",
+                             "-coverpkg=./cmd/internal/browser,./cmd/compiler/browserdebug,./cmd/compiler/wasmdebug,./cmd/compiler/debugabi",
                              f"-coverprofile={coverage_dir / f'{profile}-{mode}.out'}"]
-                run(test + ["./internal/browserdebug", "./cmd/internal/browser"], env)
+                run(test + ["./cmd/compiler/browserdebug", "./cmd/internal/browser"], env)
             for workers, optimization in ((1, "-O0"), (2, "-O0"), (4, "-O0"), (2, "-Os")):
                 mode = "external" if workers == 4 else "embedded"
                 variant = f"{profile}-goroutines-{workers}" + ("-optimized" if optimization == "-Os" else "")

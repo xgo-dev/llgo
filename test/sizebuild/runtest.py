@@ -36,7 +36,7 @@ def runtime_free_cache_probe(llgo, wasmer, directory, env):
     for fixture in ("wasm-runtime-free", "wasm-runtime-required", "wasm-runtime-free"):
         module = directory / f"{fixture}.wasm"
         log = command([str(llgo), "build", "-compiler-verbose", "-target=wasi", "-debug-artifact=none",
-                       "-o", str(module), f"./internal/build/testdata/{fixture}"], env)
+                       "-o", str(module), f"./cmd/compiler/build/testdata/{fixture}"], env)
         minimal = fixture == "wasm-runtime-free"
         if (marker in log) != minimal:
             raise RuntimeError(f"{fixture}: incorrect runtime policy\n{log}")
@@ -127,9 +127,9 @@ def main():
                  ("full", "fmtprintf"), ("full", "goexit-defer"),
                  ("thin", "goexit-defer"), ("full", "threaded-gc"))
         probes = {
-            "goexit-defer": ("./internal/build/testdata/wasm-wasi-goexit-defer",
+            "goexit-defer": ("./cmd/compiler/build/testdata/wasm-wasi-goexit-defer",
                              "wasi worker defer ok"),
-            "threaded-gc": ("./internal/build/testdata/wasm-wasi-threaded-gc",
+            "threaded-gc": ("./cmd/compiler/build/testdata/wasm-wasi-threaded-gc",
                             "wasi threaded gc ok"),
         }
         for mode, sample in cases:

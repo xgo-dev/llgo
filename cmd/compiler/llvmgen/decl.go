@@ -1,0 +1,884 @@
+/*
+ * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package llvmgen
+
+import (
+	"fmt"
+	"github.com/xgo-dev/llgo/types"
+	"strconv"
+	"strings"
+
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmattr"
+	"github.com/xgo-dev/llvm"
+)
+
+// -----------------------------------------------------------------------------
+
+const (
+	NameValist = "__llgo_va_list"
+)
+
+func VArg() *types.Var {
+	return types.NewParam(0, nil, NameValist, types.NewSlice(tyAny))
+}
+
+func HasNameValist(sig *types.Signature) bool {
+	if sig.Variadic() {
+		if params := sig.Params(); params.At(params.Len()-1).Name() == NameValist {
+			return true
+		}
+	}
+	return false
+}
+
+// -----------------------------------------------------------------------------
+
+type aNamedConst struct {
+}
+
+// A NamedConst is a Member of a Package representing a package-level
+// named constant.
+//
+// Pos() returns the position of the declaring ast.ValueSpec.Names[*]
+// identifier.
+//
+// NB: a NamedConst is not a Value; it contains a constant Value, which
+// it augments with the name and position of its 'const' declaration.
+type NamedConst = *aNamedConst
+
+/*
+// NewConst creates a new named constant.
+func (p Package) NewConst(name string, val constant.Value) NamedConst {
+	return &aNamedConst{}
+}
+*/
+
+// -----------------------------------------------------------------------------
+
+type aGlobal struct {
+	Expr
+	isZeroSizedAlias bool
+	prog             Program
+}
+
+// A Global is a named Value holding the address of a package-level
+// variable.
+type Global = *aGlobal
+
+const (
+	moduleZeroName              = "__llgo.moduleZeroSizedAlloc$"
+	moduleMapZeroName           = "__llgo.map.zero"
+	directClosureNilEnvName     = "__llgo.directClosureNilEnv$"
+	runtimeZeroSizedAllocSymbol = "zeroSizedAlloc"
+
+	// Keep runtimeMemProfileShardsSym and runtimeMemProfileShardsAlign in sync
+	// with memProfileShardsData and memProfileShard's 256-byte stride
+	// (memProfileNumBuckets*8 + padding*8) in
+	// runtime/internal/runtime/memprofile_atomic_native.go; update both when
+	// renaming the global or changing the shard stride.
+	runtimeMemProfileShardsSym   = PkgRuntime + ".memProfileShardsData"
+	runtimeMemProfileShardsAlign = 256
+)
+
+func (p Package) directClosureNilEnv() Expr {
+	sentinel := p.mod.NamedGlobal(directClosureNilEnvName)
+	if sentinel.IsNil() {
+		byteTy := p.Prog.Byte()
+		sentinel = llvm.AddGlobal(p.mod, byteTy.ll, directClosureNilEnvName)
+		sentinel.SetInitializer(llvm.ConstNull(byteTy.ll))
+		// Keep a distinct non-unnamed_addr ODR global so its address can never
+		// collide with user pointers, zerobase, or another package's sentinel.
+		p.setODRLinkage(sentinel, llvm.WeakODRLinkage)
+		sentinel.SetAlignment(1)
+	}
+	return Expr{sentinel, p.Prog.VoidPtr()}
+}
+
+func (p Package) moduleZeroSizedAlloc(elem Type) Expr {
+	name := moduleZeroName
+	alignment := p.Prog.AlignOf(elem)
+	if alignment > uint64(p.Prog.GoWordSize()) {
+		// A distinct ODR identity prevents another module with only ordinary
+		// zero-sized objects from supplying an under-aligned sentinel.
+		name += fmt.Sprintf("align%d", alignment)
+	}
+	zerobase := p.mod.NamedGlobal(name)
+	if zerobase.IsNil() {
+		byteTy := p.Prog.Byte()
+		zerobase = llvm.AddGlobal(p.mod, byteTy.ll, name)
+		zerobase.SetInitializer(llvm.ConstNull(byteTy.ll))
+		if p.Prog.target.effectiveGOOS() == "windows" {
+			// COFF aliases remain attached to their defining section. If the
+			// shared sentinel is COMDAT-folded, lld-link can discard the section
+			// behind an externally visible zero-sized global alias while another
+			// object still relocates against that alias. A module-local sentinel
+			// preserves the permitted Go semantics for zero-sized addresses and
+			// keeps every alias in a retained section.
+			zerobase.SetLinkage(llvm.PrivateLinkage)
+		} else {
+			p.setODRLinkage(zerobase, llvm.LinkOnceODRLinkage)
+		}
+		zerobase.SetUnnamedAddr(true)
+	}
+	if alignment > uint64(p.Prog.GoWordSize()) {
+		zerobase.SetAlignment(int(alignment))
+	}
+	return Expr{zerobase, p.Prog.Pointer(elem)}
+}
+
+// mapZeroAddr returns the address of a module-local symbol containing at
+// least size zero bytes. The Go compiler passes an equivalent package-local
+// symbol to mapaccess1_fat and mapaccess2_fat for elements larger than
+// runtime.zeroVal.
+func (p Package) mapZeroAddr(size uint64, alignment int) Expr {
+	if size >= 1<<31 {
+		panic(fmt.Sprintf("map elem too big %d", size))
+	}
+	zero := p.mod.NamedGlobal(moduleMapZeroName)
+	if !zero.IsNil() && zero.GlobalValueType().ArrayLength() >= int(size) {
+		if zero.Alignment() < alignment {
+			zero.SetAlignment(alignment)
+		}
+		return Expr{zero, p.Prog.VoidPtr()}
+	}
+
+	oldAlignment := 0
+	if !zero.IsNil() {
+		oldAlignment = zero.Alignment()
+	}
+	typ := llvm.ArrayType(p.Prog.tyInt8(), int(size))
+	next := llvm.AddGlobal(p.mod, typ, "")
+	next.SetInitializer(llvm.ConstNull(typ))
+	next.SetLinkage(llvm.PrivateLinkage)
+	if alignment < oldAlignment {
+		alignment = oldAlignment
+	}
+	next.SetAlignment(alignment)
+	if !zero.IsNil() {
+		zero.ReplaceAllUsesWith(next)
+		zero.EraseFromParentAsGlobal()
+	}
+	next.SetName(moduleMapZeroName)
+	return Expr{next, p.Prog.VoidPtr()}
+}
+
+// setODRLinkage gives multiply emitted definitions the section-group metadata
+// required by COFF. On ELF and Mach-O, LLVM's weak/linkonce linkage is enough;
+// on COFF, omitting COMDAT leaves every object with a separately named weak
+// fallback and lld-link rejects the otherwise identical definitions.
+func (p Package) setODRLinkage(value llvm.Value, linkage llvm.Linkage) {
+	value.SetLinkage(linkage)
+	if p.Prog.target.effectiveGOOS() != "windows" {
+		return
+	}
+	comdat := p.mod.Comdat(value.Name())
+	comdat.SetSelectionKind(llvm.AnyComdatSelectionKind)
+	value.SetComdat(comdat)
+}
+
+func (p Package) ownsGlobal(name string) bool {
+	if p.path == "" {
+		return true
+	}
+	return strings.HasPrefix(name, p.path+".")
+}
+
+// NewVar creates a new global variable.
+func (p Package) NewVar(name string, typ types.Type, cc CallConv) Global {
+	if v, ok := p.vars[name]; ok {
+		return v
+	}
+	t := p.Prog.Type(typ, cc)
+	return p.doNewVar(name, t)
+}
+
+// NewVarEx creates a new global variable.
+func (p Package) NewVarEx(name string, t Type) Global {
+	if v, ok := p.vars[name]; ok {
+		return v
+	}
+	return p.doNewVar(name, t)
+}
+
+// NewThreadLocalVar creates a native TLS variable. Unlike NewVar, it keeps
+// independent storage for zero-sized values instead of using the module-wide
+// zero-sized allocation sentinel.
+func (p Package) NewThreadLocalVar(name string, typ types.Type, cc CallConv) Global {
+	if v, ok := p.vars[name]; ok {
+		v.impl.SetThreadLocal(true)
+		return v
+	}
+	t := p.Prog.Type(typ, cc)
+	return p.doNewVarEx(name, t, true)
+}
+
+func (p Package) doNewVar(name string, t Type) Global {
+	return p.doNewVarEx(name, t, false)
+}
+
+func (p Package) doNewVarEx(name string, t Type, threadLocal bool) Global {
+	elem := p.Prog.Elem(t)
+	typ := p.Prog.storageType(elem)
+	if !threadLocal && p.Prog.td.TypeAllocSize(typ) == 0 {
+		var rt *types.Package
+		if p.Prog.rt != nil || p.Prog.rtget != nil {
+			rt = p.Prog.runtime()
+		}
+		if rt != nil {
+			// Do not redirect the runtime's own zero-sized allocation sentinel.
+			zeroName := FullName(rt, runtimeZeroSizedAllocSymbol)
+			if name != zeroName && p.ownsGlobal(name) {
+				zero := p.moduleZeroSizedAlloc(p.Prog.Elem(t))
+				alias := llvm.AddAlias(p.mod, typ, 0, zero.impl, name)
+				alias.SetLinkage(llvm.ExternalLinkage)
+				// The returned Global intentionally points at the shared
+				// sentinel; the alias above preserves this package variable's
+				// symbol for external references.
+				ret := &aGlobal{Expr: zero, isZeroSizedAlias: true, prog: p.Prog}
+				p.vars[name] = ret
+				return ret
+			}
+		}
+	}
+	gbl := llvm.AddGlobal(p.mod, typ, name)
+	gbl.SetThreadLocal(threadLocal)
+	alignment := int(p.Prog.AlignOf(elem))
+	if !threadLocal && name == runtimeMemProfileShardsSym && alignment < runtimeMemProfileShardsAlign {
+		alignment = runtimeMemProfileShardsAlign
+	}
+	gbl.SetAlignment(alignment)
+	ret := &aGlobal{Expr: Expr{gbl, t}, prog: p.Prog}
+	p.vars[name] = ret
+	return ret
+}
+
+// VarOf returns a global variable by name.
+func (p Package) VarOf(name string) Global {
+	return p.vars[name]
+}
+
+// ReplaceVarWith replaces a non-alias global with an existing value, removing
+// the original global and its attached debug information. It returns false if
+// a previous lowering pass already removed the variable.
+func (p Package) ReplaceVarWith(name string, replacement Expr) bool {
+	global := p.vars[name]
+	if global == nil {
+		return false
+	}
+	if global.isZeroSizedAlias {
+		panic("ReplaceVarWith: cannot replace a shared zero-sized alias")
+	}
+	global.impl.ReplaceAllUsesWith(replacement.impl)
+	global.impl.EraseFromParentAsGlobal()
+	delete(p.glbDbgVars, global.Expr)
+	delete(p.vars, name)
+	return true
+}
+
+// Init initializes the global variable with the given value.
+func (g Global) Init(v Expr) {
+	// Zero-sized globals alias the shared moduleZeroName sentinel, which already has
+	// a null initializer under LinkOnceODRLinkage and must not be mutated.
+	if g.isZeroSizedAlias {
+		return
+	}
+	elem := g.prog.Elem(g.Type)
+	g.impl.SetInitializer(g.prog.toStorageConstant(elem, v.impl))
+	g.excludePointerFreeGlobal()
+}
+
+func (g Global) InitNil() {
+	// Zero-sized globals alias the shared moduleZeroName sentinel, which already has
+	// a null initializer under LinkOnceODRLinkage and must not be mutated.
+	if g.isZeroSizedAlias {
+		return
+	}
+	g.impl.SetInitializer(llvm.ConstNull(g.impl.GlobalValueType()))
+	g.excludePointerFreeGlobal()
+}
+
+func (g Global) ReplaceAllUsesWith(v Expr) {
+	g.impl.ReplaceAllUsesWith(v.impl)
+}
+
+// -----------------------------------------------------------------------------
+
+// Function represents the parameters, results, and code of a function
+// or method.
+//
+// If Blocks is nil, this indicates an external function for which no
+// Go source code is available.  In this case, FreeVars, Locals, and
+// Params are nil too.  Clients performing whole-program analysis must
+// handle external functions specially.
+//
+// Blocks contains the function's control-flow graph (CFG).
+// Blocks[0] is the function entry point; block order is not otherwise
+// semantically significant, though it may affect the readability of
+// the disassembly.
+// To iterate over the blocks in dominance order, use DomPreorder().
+//
+// Recover is an optional second entry point to which control resumes
+// after a recovered panic.  The Recover block may contain only a return
+// statement, preceded by a load of the function's named return
+// parameters, if any.
+//
+// A nested function (Parent()!=nil) that refers to one or more
+// lexically enclosing local variables ("free variables") has FreeVars.
+// Such functions cannot be called directly but require a
+// value created by MakeClosure which, via its Bindings, supplies
+// values for these parameters.
+//
+// If the function is a method (Signature.Recv() != nil) then the first
+// element of Params is the receiver parameter.
+//
+// A Go package may declare many functions called "init".
+// For each one, Object().Name() returns "init" but Name() returns
+// "init#1", etc, in declaration order.
+//
+// Pos() returns the declaring ast.FuncLit.Type.Func or the position
+// of the ast.FuncDecl.Name, if the function was explicit in the
+// source.  Synthetic wrappers, for which Synthetic != "", may share
+// the same position as the function they wrap.
+// Syntax.Pos() always returns the position of the declaring "func" token.
+//
+// Type() returns the function's Signature.
+//
+// A generic function is a function or method that has uninstantiated type
+// parameters (TypeParams() != nil). Consider a hypothetical generic
+// method, (*Map[K,V]).Get. It may be instantiated with all ground
+// (non-parameterized) types as (*Map[string,int]).Get or with
+// parameterized types as (*Map[string,U]).Get, where U is a type parameter.
+// In both instantiations, Origin() refers to the instantiated generic
+// method, (*Map[K,V]).Get, TypeParams() refers to the parameters [K,V] of
+// the generic method. TypeArgs() refers to [string,U] or [string,int],
+// respectively, and is nil in the generic method.
+type aFunction struct {
+	Expr
+	Pkg  Package
+	Prog Program
+
+	blks []BasicBlock
+
+	defer_           *aDefer
+	deferInitBlk     BasicBlock
+	recoverToken     Expr
+	pendingLoopCases []loopDeferCase
+	nextDeferID      uintptr
+	recov            BasicBlock
+
+	params            []Type
+	freeVars          Expr
+	env               Type
+	envDirect         bool
+	envDirectNullable bool
+	directEnvVal      Expr
+	hasVArg           bool
+
+	fakeUses   []llvm.Value
+	fakeUseSet map[llvm.Value]struct{}
+
+	wasmABIResults []llvm.Value
+
+	gcRootFrame    Expr
+	gcRootPrev     Expr
+	gcRootSlots    []Expr
+	gcStackObjects []gcStackObject
+
+	instantiated bool
+	coalesce     bool
+
+	diFunc DIFunction
+
+	// allocaBuilder is a single reusable builder used to reserve local stack
+	// slots in the entry block. It is created lazily on the first local Alloc
+	// and disposed in EndBuild. Reusing one builder keeps local allocation
+	// O(N) across a function's N locals; allocating (and disposing) a fresh
+	// builder per Alloc regressed cmplxdivide.go (see issue #2611).
+	//
+	// Deterministic cleanup relies on EndBuild being reached exactly once per
+	// function. If a build path panics before EndBuild the builder is leaked,
+	// but codegen panics abort the process, so the leak is bounded. Do not
+	// rely on this field surviving past EndBuild.
+	allocaBuilder     llvm.Builder
+	escapeStackBytes  uint64
+	wasmHeaderScratch llvm.Value
+}
+
+// Function represents a function or method.
+type Function = *aFunction
+
+// NewFunc creates a new function.
+func (p Package) NewFunc(name string, sig *types.Signature, cc CallConv) Function {
+	return p.NewFuncEx(name, sig, cc, false, false)
+}
+
+// NewFuncEx creates a new function.
+func (p Package) NewFuncEx(name string, sig *types.Signature, cc CallConv, hasFreeVars bool, instantiated bool) Function {
+	if hasFreeVars {
+		panic("ssa: NewFuncEx cannot represent an environment; use NewEnvFunc")
+	}
+	return p.newFunc(name, sig, cc, nil, false, false, instantiated)
+}
+
+// NewEnvFunc creates a function whose Go signature is sig and whose physical
+// LLVM entry has an additional compiler-owned environment parameter.
+func (p Package) NewEnvFunc(
+	name string, sig *types.Signature, cc CallConv, env *types.Var, instantiated bool,
+) Function {
+	if env == nil {
+		panic("ssa: nil closure environment")
+	}
+	return p.newFunc(name, sig, cc, env, false, false, instantiated)
+}
+
+// NewDirectEnvFunc creates a function whose single pointer-typed captured value
+// is transported directly in the closure's environment slot without allocating
+// a wrapper struct. When nullable is true, nil captures are encoded with the
+// shared non-nil sentinel so closure.env != nil stays invariant across all
+// env-bearing entries.
+func (p Package) NewDirectEnvFunc(
+	name string, sig *types.Signature, cc CallConv, env *types.Var, nullable bool, instantiated bool,
+) Function {
+	if env == nil {
+		panic("ssa: nil direct closure environment")
+	}
+	return p.newFunc(name, sig, cc, env, true, nullable, instantiated)
+}
+
+func (p Package) newFunc(
+	name string, sig *types.Signature, cc CallConv, env *types.Var, directEnv bool, directEnvNullable bool, instantiated bool,
+) Function {
+	isLLVMName := strings.HasPrefix(name, "llvm.")
+	var cached Function
+	if v, ok := p.fns[name]; ok {
+		if v.NeedsEnv() != (env != nil) || v.DirectEnv() != directEnv || v.DirectEnvNullable() != directEnvNullable {
+			panic("ssa: conflicting closure environment ABI for " + name)
+		}
+		if !isLLVMName || v.impl.IntrinsicID() == 0 {
+			// An ordinary import or linkname alias may have declared the
+			// symbol before an on-demand shared definition is requested.
+			if instantiated {
+				v.instantiated = true
+				if len(v.blks) > 0 {
+					p.setODRLinkage(v.impl, llvm.LinkOnceAnyLinkage)
+				}
+			}
+			return v
+		}
+		cached = v
+	}
+	t := p.Prog.FuncDecl(sig, cc)
+	entrySig := t.raw.Type.(*types.Signature)
+	var envType Type
+	if env != nil {
+		envType = p.Prog.Type(env.Type(), GoDecl)
+		if directEnv && envType.ll.TypeKind() != llvm.PointerTypeKind {
+			panic("ssa: direct closure environment must lower to a pointer")
+		}
+		rawEnv := types.NewParam(env.Pos(), env.Pkg(), env.Name(), envType.raw.Type)
+		entrySig = FuncAddCtx(rawEnv, entrySig)
+		entry := Type(&aType{p.Prog.toLLVMFuncBackground(entrySig, cc), t.raw, vkFuncDecl})
+		if isNativeCallConv(cc) {
+			entry = p.Prog.withNativeStorage(p.Prog.markNativeCallConv(entry, cc))
+		}
+		t = entry
+	}
+	dbgInstrln("NewFunc", name, t.raw.Type, "needsEnv:", envType != nil)
+	if isLLVMName {
+		fn := p.mod.NamedFunction(name)
+		if !fn.IsNil() && fn.IntrinsicID() != 0 {
+			// LLVM's intrinsic builder bypasses p.fns. Keep its canonical symbol
+			// and attributes: AddFunction would rename it to e.g. llvm.trap.1.
+			var conflict string
+			switch {
+			case cc != CDecl:
+				conflict = "calling convention must be CDecl"
+			case env != nil:
+				conflict = "closure environment"
+			case instantiated:
+				conflict = "instantiation"
+			case fn.GlobalValueType().C != t.ll.C:
+				conflict = "function type"
+			case fn.FunctionCallConv() != llvm.CCallConv:
+				conflict = "LLVM calling convention must be C"
+			}
+			if conflict != "" {
+				panic("ssa: conflicting LLVM intrinsic declaration for " + name + ": " + conflict)
+			}
+			if cached != nil {
+				return cached
+			}
+			ret := newFunction(fn, t, p, p.Prog, nil, false, false, false)
+			p.fns[name] = ret
+			return ret
+		}
+	}
+	llvmName := name
+	if cc == Stdcall {
+		llvmName = p.Prog.stdcallSymbolName(name)
+	}
+	fn := llvm.AddFunction(p.mod, llvmName, t.ll)
+	if isNativeCallConv(cc) {
+		p.Prog.nativeIntegerAttrs(entrySig, t.ll, fn.AddAttributeAtIndex)
+	}
+	llvmattr.ApplyAllocatorFunction(p.Prog.ctx, fn)
+	if cc == Stdcall {
+		fn.SetFunctionCallConv(p.Prog.stdcallCallConv())
+	}
+	if envType != nil {
+		p.Prog.markClosureEnvFunction(fn, 0)
+	}
+	if target := p.Prog.Target(); target.GOOS == "windows" && (target.GOARCH == "amd64" || target.GOARCH == "arm64") {
+		// Hardware faults and other-thread snapshots can interrupt any
+		// instruction, even in a function LLVM proves nounwind. Win64 frame
+		// registers are not linked records; RtlVirtualUnwind needs .pdata.
+		fn.AddFunctionAttr(p.Prog.ctx.CreateEnumAttribute(llvm.AttributeKindID("uwtable"), 2))
+	}
+	if cc == GoDecl {
+		fn.AddFunctionAttr(p.nullPointerIsValidAttr)
+		// Keep frame pointers so the runtime can walk real stacks (FP chain)
+		// for Callers/panic tracebacks instead of shadow-stack bookkeeping.
+		// Only where that unwinder exists: on embedded targets the attribute
+		// is pure cost, and the changed stack layout can retain stale slots
+		// under the conservative GC (observed on ESP32-C3).
+		if p.Prog.NeedsFramePointer() {
+			fn.AddFunctionAttr(p.framePointerAttr)
+		}
+	}
+	if p.isPreservedName(name) {
+		p.markLLVMUsed(fn)
+	}
+	ret := newFunction(fn, t, p, p.Prog, envType, directEnv, directEnvNullable, instantiated)
+	p.fns[name] = ret
+	return ret
+}
+
+// FuncOf returns a function by name.
+func (p Package) FuncOf(name string) Function {
+	return p.fns[name]
+}
+
+func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type, envDirect bool, envDirectNullable bool, instantiated bool) Function {
+	params, hasVArg := newParams(t, prog)
+	return &aFunction{
+		Expr:              Expr{fn, t},
+		Pkg:               pkg,
+		Prog:              prog,
+		params:            params,
+		env:               env,
+		envDirect:         envDirect,
+		envDirectNullable: envDirectNullable,
+		instantiated:      instantiated,
+		hasVArg:           hasVArg,
+		fakeUses:          make([]llvm.Value, 0, 4),
+		fakeUseSet:        make(map[llvm.Value]struct{}),
+	}
+}
+
+func newParams(fn Type, prog Program) (params []Type, hasVArg bool) {
+	sig := fn.raw.Type.(*types.Signature)
+	in := sig.Params()
+	if n := in.Len(); n > 0 {
+		if hasVArg = HasNameValist(sig); hasVArg {
+			n--
+		}
+		params = make([]Type, n)
+		bg := GoDecl
+		if prog.isNativeStorage(fn) {
+			bg = CDecl
+		}
+		for i := 0; i < n; i++ {
+			params[i] = prog.Type(in.At(i).Type(), bg)
+		}
+	}
+	return
+}
+
+// Name returns the function's name.
+func (p Function) Name() string {
+	return p.impl.Name()
+}
+
+// Coalesce lets this definition share a COFF section group with equivalent
+// linkonce entries. Preserve its linkage so externally visible entries remain
+// available even when no function in this module references them.
+func (p Function) Coalesce() {
+	p.coalesce = true
+	if len(p.blks) > 0 {
+		p.Pkg.setODRLinkage(p.impl, p.impl.Linkage())
+	}
+}
+
+// Params returns the function's ith parameter.
+func (p Function) Param(i int) Expr {
+	physical := i
+	if p.env != nil {
+		physical++
+	}
+	return Expr{p.impl.Param(physical), p.params[i]}
+}
+
+// NeedsEnv reports whether the physical function entry takes a compiler-owned
+// closure environment parameter.
+func (p Function) NeedsEnv() bool {
+	return p.env != nil
+}
+
+// DirectEnv reports whether the closure environment parameter carries the sole
+// captured pointer directly instead of pointing to a boxed environment struct.
+func (p Function) DirectEnv() bool {
+	return p.envDirect
+}
+
+// DirectEnvNullable reports whether a direct closure environment encodes nil
+// captures with the shared non-nil sentinel so closure.env != nil stays
+// invariant across all env-bearing entries.
+func (p Function) DirectEnvNullable() bool {
+	return p.envDirectNullable
+}
+
+// DirectEnvValue returns the decoded single captured pointer for a direct
+// closure environment. For nullable captures, the sentinel check is emitted
+// once in the function's entry block and reused.
+func (p Function) DirectEnvValue(b Builder) Expr {
+	if !p.envDirect {
+		panic("ssa: function does not have a direct closure environment")
+	}
+	if !p.envDirectNullable {
+		return p.Env()
+	}
+	if p.directEnvVal.IsNil() {
+		emit := func() Expr {
+			raw := p.Env()
+			sentinel := p.Pkg.directClosureNilEnv()
+			isNil := llvm.CreateICmp(b.impl, llvm.IntEQ, raw.impl, sentinel.impl)
+			decoded := llvm.CreateSelect(b.impl, isNil, llvm.ConstNull(raw.impl.Type()), raw.impl)
+			return Expr{decoded, raw.Type}
+		}
+		if cur := b.impl.GetInsertBlock(); cur != p.blks[0].first {
+			blk := *b.blk
+			blk.last = cur
+			b.SetBlockEx(p.blks[0], AtStart, false)
+			p.directEnvVal = emit()
+			b.SetBlockEx(&blk, AtEnd, false)
+		} else {
+			p.directEnvVal = emit()
+		}
+	}
+	return p.directEnvVal
+}
+
+// EnvType returns the physical closure environment pointer type, or nil.
+func (p Function) EnvType() Type {
+	return p.env
+}
+
+// Env returns the physical closure environment parameter.
+func (p Function) Env() Expr {
+	if p.env == nil {
+		panic("ssa: function has no closure environment")
+	}
+	return Expr{p.impl.Param(0), p.env}
+}
+
+func (p Function) closureCtx(b Builder) Expr {
+	if p.freeVars.IsNil() {
+		if p.env == nil {
+			panic("ssa: function has no free variables")
+		}
+		ptr := p.Env()
+		if b.blk.Index() != 0 {
+			blk := *b.blk
+			// A synthetic branch can be ahead of the logical block's tail.
+			blk.last = b.impl.GetInsertBlock()
+			b.SetBlockEx(p.blks[0], AtStart, false)
+			p.freeVars = b.Load(ptr)
+			b.SetBlockEx(&blk, AtEnd, false)
+		} else {
+			p.freeVars = b.Load(ptr)
+		}
+	}
+	return p.freeVars
+}
+
+// FreeVar returns the function's ith free variable.
+func (p Function) FreeVar(b Builder, i int) Expr {
+	if p.envDirect {
+		if i != 0 {
+			panic("ssa: direct closure environment only supports index 0")
+		}
+		return p.DirectEnvValue(b)
+	}
+	ctx := p.closureCtx(b)
+	return b.getField(ctx, i)
+}
+
+// entryAllocaBuilder returns a builder positioned to reserve a local stack
+// slot in the entry block. The llvm.Builder itself is created once per function
+// and cached — allocating (and disposing) a fresh builder per Alloc was the
+// compile-time regression fixed here (issue #2611). Its insertion point is
+// re-resolved on every call to point before the entry block's first
+// instruction, so each CreateAlloca inserts immediately before it and locals
+// accumulate as a contiguous run at the top of the entry block.
+//
+// Re-resolving is required for correctness, not just tidiness: anchoring once
+// against an empty entry block (SetInsertPointAtEnd) would leave the cursor
+// tracking the growing end of that block, so a later Alloc — reached while
+// compiling a non-entry block after the entry block already has a terminator —
+// would insert its alloca after the terminator and produce an invalid block
+// with no terminator (issue #2611 follow-up). Re-resolving keeps the anchor at
+// the top of the block regardless of what the main builder has appended.
+func (p Function) entryAllocaBuilder() llvm.Builder {
+	if p.allocaBuilder.C == nil {
+		p.allocaBuilder = p.Prog.ctx.NewBuilder()
+	}
+	entry := p.impl.FirstBasicBlock()
+	if first := entry.FirstInstruction(); !first.IsNil() {
+		p.allocaBuilder.SetInsertPointBefore(first)
+	} else {
+		p.allocaBuilder.SetInsertPointAtEnd(entry)
+	}
+	return p.allocaBuilder
+}
+
+// disposeAllocaBuilder releases the reusable entry-block alloca builder if one
+// was created. Safe to call when no local Alloc happened.
+func (p Function) disposeAllocaBuilder() {
+	if p.allocaBuilder.C != nil {
+		p.allocaBuilder.Dispose()
+		p.allocaBuilder = llvm.Builder{}
+	}
+}
+
+// NewBuilder creates a new Builder for the function.
+func (p Function) NewBuilder() Builder {
+	prog := p.Prog
+	b := prog.ctx.NewBuilder()
+	// TODO(xsw): Finalize may cause panic, so comment it.
+	// b.Finalize()
+	ret := &aBuilder{
+		impl:         b,
+		Func:         p,
+		Pkg:          p.Pkg,
+		Prog:         prog,
+		diScopeCache: make(map[*types.Scope]DIScope),
+	}
+	if p.diFunc != nil {
+		// Synthetic builders emit calls too. LLVM requires a location for
+		// inlinable calls in a function with debug info; line zero denotes
+		// compiler-generated code without inventing a source position.
+		ret.setDebugLocation(llvm.DebugLoc{Scope: p.diFunc.ll})
+	}
+	return ret
+}
+
+// HasBody reports whether the function has a body.
+func (p Function) HasBody() bool {
+	return len(p.blks) > 0
+}
+
+// MakeBody creates nblk basic blocks for the function, and creates
+// a new Builder associated to #0 block.
+func (p Function) MakeBody(nblk int) Builder {
+	p.MakeBlocks(nblk)
+	b := p.NewBuilder()
+	b.SetBlock(p.blks[0])
+	return b
+}
+
+// MakeBlocks creates nblk basic blocks for the function.
+func (p Function) MakeBlocks(nblk int) []BasicBlock {
+	n := len(p.blks)
+	if n == 0 {
+		p.blks = make([]BasicBlock, 0, nblk)
+	}
+	for i := 0; i < nblk; i++ {
+		p.addBlock(n + i)
+	}
+	return p.blks[n:]
+}
+
+func (p Function) addBlock(idx int) BasicBlock {
+	if len(p.blks) == 0 {
+		if p.instantiated {
+			p.Pkg.setODRLinkage(p.impl, llvm.LinkOnceAnyLinkage)
+		} else if p.coalesce {
+			p.Pkg.setODRLinkage(p.impl, p.impl.Linkage())
+		}
+	}
+	label := "_llgo_" + strconv.Itoa(idx)
+	blk := p.Prog.ctx.AddBasicBlock(p.impl, label)
+	ret := &aBasicBlock{blk, blk, p, idx}
+	p.blks = append(p.blks, ret)
+	return ret
+}
+
+// MakeBlock creates a new basic block for the function.
+func (p Function) MakeBlock() BasicBlock {
+	return p.addBlock(len(p.blks))
+}
+
+// Block returns the ith basic block of the function.
+func (p Function) Block(idx int) BasicBlock {
+	return p.blks[idx]
+}
+
+// SetRecover sets the recover block for the function.
+func (p Function) SetRecover(blk BasicBlock) {
+	p.recov = blk
+}
+
+// SetDeferInitBlock sets the dominating block where lazy defer state
+// initialization is anchored instead of the function entry block.
+func (p Function) SetDeferInitBlock(blk BasicBlock) {
+	p.deferInitBlk = blk
+}
+
+// -----------------------------------------------------------------------------
+
+type inlineAttr int
+
+const (
+	NoInline inlineAttr = iota
+	AlwaysInline
+	InlineHint
+)
+
+func (p Function) Inline(inline inlineAttr) {
+	inlineAttrName := map[inlineAttr]string{
+		NoInline:     "noinline",
+		AlwaysInline: "alwaysinline",
+		InlineHint:   "inlinehint",
+	}[inline]
+	inlineAttr := p.Pkg.mod.Context().CreateEnumAttribute(llvm.AttributeKindID(inlineAttrName), 0)
+	p.impl.AddFunctionAttr(inlineAttr)
+}
+
+func (p Function) DisableTailCalls() {
+	attr := p.Pkg.mod.Context().CreateStringAttribute("disable-tail-calls", "true")
+	p.impl.AddFunctionAttr(attr)
+}
+
+// SetWasmImport maps an external function declaration to a WebAssembly host
+// import. LLVM preserves these attributes through the final wasm link.
+func (p Function) SetWasmImport(module, name string) {
+	ctx := p.Pkg.mod.Context()
+	p.impl.AddFunctionAttr(ctx.CreateStringAttribute("wasm-import-module", module))
+	p.impl.AddFunctionAttr(ctx.CreateStringAttribute("wasm-import-name", name))
+}
+
+// -----------------------------------------------------------------------------

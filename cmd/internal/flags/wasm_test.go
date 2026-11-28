@@ -20,8 +20,8 @@ import (
 	"flag"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/build"
-	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 )
 
 func TestWasmFinalFlags(t *testing.T) {

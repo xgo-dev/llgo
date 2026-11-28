@@ -45,9 +45,11 @@ class BuildShardsTest(unittest.TestCase):
             script = root / ".github/scripts/run_build_tests.py"
             script.parent.mkdir(parents=True)
             shutil.copy2(run_build_tests.__file__, script)
-            package = root / "internal/build"
+            package = root / "cmd/compiler/build"
             package.mkdir(parents=True)
-            (root / "go.mod").write_text("module github.com/xgo-dev/llgo\n\ngo 1.24\n")
+            (root / "go.mod").write_text("module github.com/xgo-dev/llgo\n\ngo 1.20\n")
+            (root / "cmd/go.mod").write_text("module github.com/xgo-dev/llgo/cmd\n\ngo 1.24\n")
+            (root / "go.work").write_text("go 1.24\n\nuse (\n\t.\n\t./cmd\n)\n")
             (package / "fixture.go").write_text("""package build
 func First() int { return 11 }
 func Second() int { return 22 }
@@ -78,7 +80,7 @@ func lock(t *testing.T) {
  t.Cleanup(func() { os.Remove("same-output") })
  wd, err := os.Getwd()
  if err != nil { t.Fatal(err) }
- if filepath.Clean(wd) != filepath.Join(os.Getenv("LLGO_ROOT"), "internal", "build") { t.Fatal("wrong LLGO_ROOT") }
+ if filepath.Clean(wd) != filepath.Join(os.Getenv("LLGO_ROOT"), "cmd", "compiler", "build") { t.Fatal("wrong LLGO_ROOT") }
  time.Sleep(50*time.Millisecond)
 }
 func FIRST(t *testing.T) {
@@ -113,13 +115,13 @@ func TestHelper(t *testing.T) {
             runner_temp.mkdir()
             overlay = root / "runtime overlay.json"
             overlay.write_text('{"Replace":{}}')
-            ldflags = "-X 'github.com/xgo-dev/llgo/internal/build.Config=configured value'"
+            ldflags = "-X 'github.com/xgo-dev/llgo/cmd/compiler/build.Config=configured value'"
             environment = {**os.environ, "GOFLAGS": "", "LLGO_ROOT": str(root),
                            "RUNNER_TEMP": str(runner_temp), "PYTHONIOENCODING": "cp1252"}
-            baseline = subprocess.run(["go", "test", "-count=1", "-coverpkg=./...",
+            baseline = subprocess.run(["go", "test", "-count=1", "-coverpkg=./...,./cmd/...",
                                        "-covermode=set", "-coverprofile=baseline.txt",
                                        "-overlay=" + str(overlay), "-ldflags=" + ldflags,
-                                       "./internal/build"], cwd=root, env=environment,
+                                       "./cmd/compiler/build"], cwd=root, env=environment,
                                       capture_output=True, text=True, timeout=120)
             self.assertEqual(baseline.returncode, 0, baseline.stdout + baseline.stderr)
             results = []

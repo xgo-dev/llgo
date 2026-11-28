@@ -35,17 +35,28 @@ TEST_DIRS = {
     "_cmptest",
     "test",
     "cl/cltest",
+    "cmd/cl/cltest",
+    "cmd/compiler/cl/cltest",
     "internal/filecheck",
+    "cmd/compiler/filecheck",
     "internal/littest",
+    "cmd/compiler/littest",
     "internal/llgen",
+    "cmd/compiler/llgen",
     "runtime/_test",
     "runtime/_patch/_test",
     "runtime/internal/test",
-    "ssa/ssatest",
+    "internal/llvmgen/ssatest",
+    "cmd/compiler/llvmgen/ssatest",
 }
 
 COMPILER_DIRS = {
     "cl",
+    "cmd/cl",
+    "cmd/compiler",
+    "cmd/xtool",
+    "callgraph",
+    "exportdata",
     "cmd/internal/base",
     "cmd/internal/build",
     "cmd/internal/clean",
@@ -59,10 +70,13 @@ COMPILER_DIRS = {
     "cmd/internal/run",
     "cmd/internal/test",
     "cmd/internal/version",
+    "directive",
     "internal",
     "ltoplugin",
     "ssa",
+    "target",
     "targets",
+    "types",
     "xtool",
 }
 
@@ -96,7 +110,7 @@ def classify_path(raw_path: str) -> str:
         name.endswith("_test.go")
         or "testdata" in PurePosixPath(path).parts
         or _under_any(path, TEST_DIRS)
-        or path.startswith("cl/_test")
+        or path.startswith(("cl/_test", "cmd/cl/_test", "cmd/compiler/cl/_test"))
     ):
         return "test"
     if _under(path, "benchmark"):
@@ -111,12 +125,12 @@ def classify_path(raw_path: str) -> str:
     if _under(path, "runtime"):
         return "runtime"
 
-    if path in {"go.mod", "go.sum"} or path.startswith("cmd/llgo/"):
+    if path in {"go.mod", "go.sum", "go.work", "cmd/go.mod", "cmd/go.sum"} or path.startswith("cmd/llgo/"):
         return "compiler"
     if _under_any(path, COMPILER_DIRS):
         return "compiler"
 
-    if _under_any(path, {"chore", "dev"}) or path == "install.sh":
+    if _under_any(path, {"chore", "cmd/chore", "dev"}) or path == "install.sh":
         return "tooling"
     return "other"
 

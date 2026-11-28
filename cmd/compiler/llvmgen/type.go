@@ -1,0 +1,885 @@
+/*
+ * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package llvmgen
+
+import (
+	"fmt"
+	"go/token"
+
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/abi"
+	"github.com/xgo-dev/llgo/types"
+	"github.com/xgo-dev/llvm"
+)
+
+var (
+	tyAny = types.NewInterfaceType(nil, nil)
+
+	NoArgsNoRet = types.NewSignatureType(nil, nil, nil, nil, nil, false)
+)
+
+// -----------------------------------------------------------------------------
+
+type valueKind = int
+
+const (
+	vkInvalid valueKind = iota
+	vkSigned
+	vkUnsigned
+	vkFloat
+	vkComplex
+	vkString
+	vkBool
+	vkPtr
+	vkFuncDecl
+	vkFuncPtr
+	vkClosure
+	vkIfaceMethod
+	vkBuiltin
+	vkPyFuncRef
+	vkPyVarRef
+	vkTuple
+	vkSlice
+	vkArray
+	vkMap
+	vkEface
+	vkIface
+	vkStruct
+	vkSIMD
+	vkChan
+)
+
+// -----------------------------------------------------------------------------
+
+func indexType(t types.Type) types.Type {
+	typ := t
+retry:
+	switch t := typ.(type) {
+	case *types.Named:
+		typ = t.Underlying()
+		goto retry
+	case *types.Slice:
+		return t.Elem()
+	case *types.Pointer:
+		switch t := t.Elem().Underlying().(type) {
+		case *types.Array:
+			return t.Elem()
+		}
+	case *types.Array:
+		return t.Elem()
+	}
+	panic("index: type doesn't support index - " + t.String())
+}
+
+// -----------------------------------------------------------------------------
+
+type goProgram aProgram
+
+// LLGoContext exposes the underlying canonical *types.Context to abi.Builder.
+func (p *goProgram) LLGoContext() *types.Context {
+	return Program(p).typeCtx
+}
+
+// Alignof returns the alignment of a variable of type T.
+// Alignof must implement the alignment guarantees required by the spec.
+// The result must be >= 1.
+func (p *goProgram) Alignof(T types.Type) int64 {
+	return Program(p).typeSizes.Alignof(T)
+}
+
+// Offsetsof returns the offsets of the given struct fields, in bytes.
+// Offsetsof must implement the offset guarantees required by the spec.
+// A negative entry in the result indicates that the struct is too large.
+func (p *goProgram) Offsetsof(fields []*types.Var) []int64 {
+	return Program(p).typeSizes.Offsetsof(fields)
+}
+
+// Sizeof returns the size of a variable of type T.
+// Sizeof must implement the size guarantees required by the spec.
+// A negative result indicates that T is too large.
+func (p *goProgram) Sizeof(T types.Type) int64 {
+	return Program(p).typeSizes.Sizeof(T)
+}
+
+func align(x, a int64) int64 {
+	return (x + a - 1) &^ (a - 1)
+}
+
+// -----------------------------------------------------------------------------
+
+type rawType struct {
+	Type types.Type
+}
+
+type aType struct {
+	ll   llvm.Type
+	raw  rawType
+	kind valueKind // value kind of llvm.Type
+}
+
+type Type = *aType
+
+// RawType returns the raw type.
+func (t Type) RawType() types.Type {
+	return t.raw.Type
+}
+
+// TypeSizes returns the target-configured types.Sizes backed by p's canonical
+// *types.Context. Physical and Go word/alignment rules are determined by p's
+// Target spec.
+func (p Program) TypeSizes() types.Sizes {
+	return (*goProgram)(p)
+}
+
+// TODO(xsw):
+// how to generate platform independent code?
+func (p Program) SizeOf(typ Type, n ...int64) uint64 {
+	size := p.td.TypeAllocSize(p.storageType(typ))
+	if len(n) != 0 {
+		size *= uint64(n[0])
+	}
+	return size
+}
+
+// AlignOf returns the ABI alignment of typ for the current target.
+func (p Program) AlignOf(typ Type) uint64 {
+	if p.needsWidePointerStorage(typ) {
+		return uint64(p.GoWordSize())
+	}
+	if p.usesWideGoStorage() && !p.isNativeStorage(typ) {
+		if _, ok := types.Unalias(typ.raw.Type).Underlying().(*types.Array); ok {
+			return p.AlignOf(p.Index(typ))
+		}
+	}
+	return uint64(p.td.ABITypeAlignment(p.storageType(typ)))
+}
+
+// OffsetOf returns the offset of a field in a struct.
+func (p Program) OffsetOf(typ Type, i int) uint64 {
+	return p.td.ElementOffset(p.storageType(typ), i)
+}
+
+// SizeOf returns the size of a type.
+func SizeOf(prog Program, t Type, n ...int64) Expr {
+	size := prog.SizeOf(t, n...)
+	return prog.IntVal(size, prog.Uintptr())
+}
+
+/*
+func OffsetOf(prog Program, t Type, i int) Expr {
+	offset := prog.OffsetOf(t, i)
+	return prog.IntVal(offset, prog.Uintptr())
+}
+*/
+
+func (p Program) PointerSize() int {
+	return p.ptrSize
+}
+
+// IsRegularMemory reports whether values of typ may be compared bytewise.
+func (p Program) IsRegularMemory(typ types.Type) bool {
+	return p.abi.IsRegularMemory(typ)
+}
+
+func (p Program) Slice(typ Type) Type {
+	return p.rawType(types.NewSlice(typ.raw.Type))
+}
+
+func (p Program) Pointer(typ Type) Type {
+	ret := p.rawType(types.NewPointer(typ.raw.Type))
+	if cc := p.nativeCallConvOf(typ); isNativeCallConv(cc) {
+		ret = p.nativeView(ret, cc)
+	} else if typ.kind == vkFuncPtr || typ.kind == vkFuncDecl {
+		ret = p.nativeView(ret, CDecl)
+	}
+	if p.isNativeStorage(typ) {
+		return p.withNativeStorage(ret)
+	}
+	return ret
+}
+
+func (p Program) Elem(typ Type) Type {
+	elem := typ.raw.Type.Underlying().(interface {
+		Elem() types.Type
+	}).Elem()
+	return p.childStorageType(typ, elem)
+}
+
+func (p Program) Index(typ Type) Type {
+	if typ.kind == vkPtr && p.usesWideGoStorage() {
+		typ = p.Elem(typ)
+	}
+	return p.childStorageType(typ, indexType(typ.raw.Type))
+}
+
+func (p Program) Field(typ Type, i int) Type {
+	// Strings, slices, and interfaces have synthetic LLVM aggregate
+	// representations even though their source-level go/types forms are not
+	// structs. Describe those fields here so storage conversions can apply the
+	// same pointer-slot rules as ordinary Go structs.
+	switch typ.kind {
+	case vkString:
+		if i == 0 {
+			return p.VoidPtr()
+		}
+		if i == 1 {
+			return p.Int()
+		}
+		panic("Field: string index out of range")
+	case vkSlice:
+		if i == 0 {
+			return p.VoidPtr()
+		}
+		if i == 1 || i == 2 {
+			return p.Int()
+		}
+		panic("Field: slice index out of range")
+	case vkEface, vkIface:
+		if i == 0 || i == 1 {
+			return p.VoidPtr()
+		}
+		panic("Field: interface index out of range")
+	case vkClosure, vkIfaceMethod:
+		if i == 0 {
+			sig := types.Unalias(typ.raw.Type).Underlying().(*types.Signature)
+			return p.funcPtrType(sig)
+		}
+		if i == 1 {
+			return p.VoidPtr()
+		}
+		panic("Field: closure index out of range")
+	}
+	var fld *types.Var
+	switch t := typ.raw.Type.Underlying().(type) {
+	case *types.Tuple:
+		fld = t.At(i)
+	case *types.Basic:
+		switch t.Kind() {
+		case types.Complex128:
+			return p.Float64()
+		case types.Complex64:
+			return p.Float32()
+		}
+		panic("Field: basic type doesn't have fields")
+	default:
+		st := t.(*types.Struct)
+		if i < 0 || i >= st.NumFields() {
+			panic(fmt.Sprintf("Field: struct index out of range: idx=%d fields=%d type=%s",
+				i, st.NumFields(), typeStringWithPkg(typ.raw.Type)))
+		}
+		fld = st.Field(i)
+	}
+	return p.childStorageType(typ, fld.Type())
+}
+
+func typeStringWithPkg(t types.Type) string {
+	return types.TypeString(t, func(p *types.Package) string {
+		if p == nil {
+			return ""
+		}
+		return p.Path()
+	})
+}
+
+func (p Program) funcPtrType(raw types.Type) Type {
+	if t := p.funcPtrs[raw]; t != nil {
+		return t
+	}
+	t := &aType{p.tyVoidPtr(), rawType{raw}, vkFuncPtr}
+	p.funcPtrs[raw] = t
+	return t
+}
+
+func (p Program) tyClosure() llvm.Type {
+	if p.closureType.IsNil() {
+		ptrTy := p.storageType(p.VoidPtr())
+		p.closureType = p.ctx.StructType([]llvm.Type{ptrTy, ptrTy}, false)
+	}
+	return p.closureType
+}
+
+func (p Program) rawType(raw types.Type) Type {
+	if alias, ok := raw.(*types.Alias); ok {
+		if sig, isSig := types.Unalias(alias).(*types.Signature); isSig {
+			if p.isNativeFuncType(alias) {
+				return p.funcPtrType(alias)
+			}
+			raw = sig
+		}
+	}
+	if sig, ok := raw.(*types.Signature); ok {
+		if sig.CallConv().IsNative() {
+			return p.funcPtrType(sig)
+		}
+		// Key Go signatures by pointer identity rather than types.Identical:
+		// Go identity ignores native callback aliases in parameter/result types
+		// and ignores __llgo_va_list parameter names.
+		if t := p.closures[sig]; t != nil {
+			return t
+		}
+		t := &aType{p.tyClosure(), rawType{sig}, vkClosure}
+		p.closures[sig] = t
+		return t
+	}
+	if v := p.typs.At(raw); v != nil {
+		return v.(Type)
+	}
+	ret := p.toType(raw)
+	p.typs.Set(raw, ret)
+	return ret
+}
+
+func (p Program) tyVoidPtr() llvm.Type {
+	if p.voidPtrTy.IsNil() {
+		// No void* in llvm, all the pointers are opaque pointer.
+		p.voidPtrTy = llvm.PointerType(p.tyInt8(), 0)
+	}
+	return p.voidPtrTy
+}
+
+func (p Program) tyVoid() llvm.Type {
+	if p.voidType.IsNil() {
+		p.voidType = p.ctx.VoidType()
+	}
+	return p.voidType
+}
+
+func (p Program) tyInt1() llvm.Type {
+	if p.int1Type.IsNil() {
+		p.int1Type = p.ctx.Int1Type()
+	}
+	return p.int1Type
+}
+
+func (p Program) tyInt() llvm.Type {
+	if p.intType.IsNil() {
+		p.intType = llvmIntType(p.ctx, p.GoWordSize())
+	}
+	return p.intType
+}
+
+func llvmIntType(ctx llvm.Context, size int) llvm.Type {
+	if size <= 4 {
+		return ctx.Int32Type()
+	}
+	return ctx.Int64Type()
+}
+
+func (p Program) tyInt8() llvm.Type {
+	if p.int8Type.IsNil() {
+		p.int8Type = p.ctx.Int8Type()
+	}
+	return p.int8Type
+}
+
+func (p Program) tyInt16() llvm.Type {
+	if p.int16Type.IsNil() {
+		p.int16Type = p.ctx.Int16Type()
+	}
+	return p.int16Type
+}
+
+func (p Program) tyInt32() llvm.Type {
+	if p.int32Type.IsNil() {
+		p.int32Type = p.ctx.Int32Type()
+	}
+	return p.int32Type
+}
+
+func (p Program) tyInt64() llvm.Type {
+	if p.int64Type.IsNil() {
+		p.int64Type = p.ctx.Int64Type()
+	}
+	return p.int64Type
+}
+
+/*
+func (p Program) toTuple(typ *types.Tuple) Type {
+	return &aType{p.toLLVMTuple(typ), rawType{typ}, vkTuple}
+}
+*/
+
+func (p Program) toType(raw types.Type) Type {
+	typ := rawType{raw}
+	switch t := raw.(type) {
+	case *types.Basic:
+		switch t.Kind() {
+		case types.Int:
+			return &aType{p.tyInt(), typ, vkSigned}
+		case types.Uint, types.Uintptr:
+			return &aType{p.tyInt(), typ, vkUnsigned}
+		case types.Bool:
+			return &aType{p.tyInt1(), typ, vkBool}
+		case types.Uint8:
+			return &aType{p.tyInt8(), typ, vkUnsigned}
+		case types.Int8:
+			return &aType{p.tyInt8(), typ, vkSigned}
+		case types.Int16:
+			return &aType{p.tyInt16(), typ, vkSigned}
+		case types.Uint16:
+			return &aType{p.tyInt16(), typ, vkUnsigned}
+		case types.Int32:
+			return &aType{p.tyInt32(), typ, vkSigned}
+		case types.Uint32:
+			return &aType{p.tyInt32(), typ, vkUnsigned}
+		case types.Int64:
+			return &aType{p.tyInt64(), typ, vkSigned}
+		case types.Uint64:
+			return &aType{p.tyInt64(), typ, vkUnsigned}
+		case types.Float32:
+			return &aType{p.ctx.FloatType(), typ, vkFloat}
+		case types.Float64:
+			return &aType{p.ctx.DoubleType(), typ, vkFloat}
+		case types.Complex64:
+			return &aType{p.tyComplex64(), typ, vkComplex}
+		case types.Complex128:
+			return &aType{p.tyComplex128(), typ, vkComplex}
+		case types.String:
+			return &aType{p.rtString(), typ, vkString}
+		case types.UnsafePointer:
+			return &aType{p.tyVoidPtr(), typ, vkPtr}
+		}
+	case *types.Pointer:
+		// LLVM pointers are opaque, so the element LLVM type is not needed here.
+		// Avoid expanding it eagerly: legal Go recursive types often close their
+		// cycle through a pointer.
+		return &aType{p.tyVoidPtr(), typ, vkPtr}
+	case *types.Interface:
+		if t.Empty() {
+			return &aType{p.rtEface(), typ, vkEface}
+		}
+		return &aType{p.rtIface(), typ, vkIface}
+	case *types.Slice:
+		return &aType{p.rtSlice(), typ, vkSlice}
+	case *types.Map:
+		if err := p.validateVectorMap(t); err != nil {
+			panic(err)
+		}
+		return &aType{llvm.PointerType(p.rtMap(), 0), typ, vkMap}
+	case *types.Struct:
+		ll := p.toLLVMStruct(t)
+		return &aType{ll, typ, vkStruct}
+	case *types.Named:
+		return p.toNamed(t)
+	case *types.Signature:
+		if t.CallConv().IsNative() {
+			return &aType{p.toLLVMFuncPtr(t), typ, vkFuncPtr}
+		}
+		return &aType{p.tyClosure(), typ, vkClosure}
+	case *types.Tuple:
+		return &aType{p.toLLVMTuple(t), typ, vkTuple}
+	case *types.Array:
+		elem := p.rawType(t.Elem())
+		return &aType{llvm.ArrayType(p.storageType(elem), int(t.Len())), typ, vkArray}
+	case *types.Chan:
+		return &aType{llvm.PointerType(p.rtChan(), 0), typ, vkChan}
+	case *types.Alias:
+		return p.toType(types.Unalias(t))
+	case *types.TypeParam:
+		return p.toType(t.Constraint())
+	}
+	panic(fmt.Sprintf("toLLVMType: todo - %T\n", raw))
+}
+
+func (p Program) toLLVMNamedStruct(name string, raw *types.Named, st *types.Struct, kind valueKind) Type {
+	t := p.ctx.StructCreateNamed(name)
+	typ := &aType{t, rawType{raw}, kind}
+	p.named[name] = typ
+	p.typs.Set(raw, typ)
+	fields, layout := p.toLLVMStructBody(st, p.hasLegacyNativeTypeLayout(raw))
+	t.StructSetBody(fields, false)
+	p.setStructLayout(raw, layout)
+	return typ
+}
+
+func (p Program) toLLVMNamedClosure(name string, raw *types.Named) Type {
+	t := p.ctx.StructCreateNamed(name)
+	typ := &aType{t, rawType{raw}, vkClosure}
+	p.named[name] = typ
+	p.typs.Set(raw, typ)
+	ptrTy := p.storageType(p.VoidPtr())
+	t.StructSetBody([]llvm.Type{ptrTy, ptrTy}, false)
+	return typ
+}
+
+func (p Program) toLLVMStruct(raw *types.Struct) llvm.Type {
+	fields, layout := p.toLLVMStructBody(raw, false)
+	ret := p.ctx.StructType(fields, false)
+	p.setStructLayout(raw, layout)
+	return ret
+}
+
+func (p Program) toLLVMFields(raw *types.Struct, native bool) (fields []llvm.Type) {
+	n := raw.NumFields()
+	if n > 0 {
+		fields = make([]llvm.Type, n)
+		for i := 0; i < n; i++ {
+			fieldRaw := p.patch(raw.Field(i).Type())
+			if native {
+				fields[i] = p.Type(fieldRaw, CDecl).ll
+			} else {
+				fields[i] = p.storageType(p.rawType(fieldRaw))
+			}
+		}
+	}
+	return
+}
+
+func (p Program) toLLVMTuple(t *types.Tuple) llvm.Type {
+	// Tuples containing vectors are compiler values, not source Go structs.
+	// Preserve their vector components across multiple-result calls as well.
+	for i := 0; i < t.Len(); i++ {
+		if _, ok := SIMDVectorShape(t.At(i).Type()); ok {
+			return p.ctx.StructType(p.toLLVMTypes(t, t.Len()), false)
+		}
+	}
+	if p.target.effectiveGOARCH() != "386" && !(p.target.effectiveGOARCH() == "wasm" && p.target.WasmProfile != "") {
+		return p.ctx.StructType(p.toLLVMTypes(t, t.Len()), false)
+	}
+	fields := make([]*types.Var, t.Len())
+	for i := range fields {
+		// Tuple result names are not part of their type and may be empty or
+		// repeated. Give the layout-only struct unique private field names.
+		fields[i] = types.NewField(token.NoPos, nil, fmt.Sprintf("_llgo%d", i), t.At(i).Type(), false)
+	}
+	// Multiple results are represented as an anonymous LLVM aggregate. Keep
+	// its physical layout identical to the equivalent Go struct: on 386,
+	// i64 and double fields are only four-byte aligned. Calls and returns are
+	// otherwise liable to disagree about offsets across package boundaries.
+	body, layout := p.toLLVMStructBody(types.NewStruct(fields, nil), false)
+	p.setStructLayout(t, layout)
+	return p.ctx.StructType(body, false)
+}
+
+func (p Program) toLLVMTypes(t *types.Tuple, n int) (ret []llvm.Type) {
+	if n > 0 {
+		ret = make([]llvm.Type, n)
+		for i := 0; i < n; i++ {
+			ret[i] = p.rawType(p.patch(t.At(i).Type())).ll
+		}
+	}
+	return
+}
+
+func (p Program) toLLVMFunc(sig *types.Signature) llvm.Type {
+	return p.toLLVMFuncBackground(sig, GoDecl)
+}
+
+func (p Program) toLLVMFuncBackground(sig *types.Signature, cc CallConv) llvm.Type {
+	if isNativeCallConv(cc) {
+		for _, tuple := range []*types.Tuple{sig.Params(), sig.Results()} {
+			for i := 0; i < tuple.Len(); i++ {
+				if containsWideSIMD(tuple.At(i).Type()) {
+					panic("256-bit SIMD values at native C call boundaries are not supported; use an explicit memory interface")
+				}
+			}
+		}
+	}
+	valueBackground := cc
+	if cc == Stdcall {
+		// Stdcall validation applies to the function type as a whole; its scalar
+		// parameter and result types use the same native storage rules as C.
+		valueBackground = CDecl
+	}
+	tParams := sig.Params()
+	n := tParams.Len()
+	hasVArg := HasNameValist(sig)
+	if hasVArg {
+		n--
+	}
+	params := make([]llvm.Type, n)
+	for i := range params {
+		params[i] = p.Type(p.patch(tParams.At(i).Type()), valueBackground).ll
+	}
+	out := sig.Results()
+	var ret llvm.Type
+	switch nret := out.Len(); nret {
+	case 0:
+		ret = p.tyVoid()
+	case 1:
+		ret = p.Type(p.patch(out.At(0).Type()), valueBackground).ll
+	default:
+		if isNativeCallConv(cc) {
+			ret = p.ctx.StructType(p.toLLVMNativeTypes(out, out.Len()), false)
+		} else {
+			ret = p.toLLVMTuple(out)
+		}
+	}
+	return llvm.FunctionType(ret, params, hasVArg)
+}
+
+func (p Program) toLLVMNativeTypes(t *types.Tuple, n int) []llvm.Type {
+	ret := make([]llvm.Type, n)
+	for i := range ret {
+		ret[i] = p.Type(p.patch(t.At(i).Type()), CDecl).ll
+	}
+	return ret
+}
+
+func (p Program) toLLVMFuncPtr(_ *types.Signature) llvm.Type {
+	// LLVM opaque pointers don't retain the pointee function type. Avoid
+	// recursively expanding named function types such as F func(F) F.
+	return p.tyVoidPtr()
+}
+
+func (p Program) retType(raw *types.Signature) Type {
+	out := raw.Results()
+	switch n := out.Len(); n {
+	case 0:
+		return p.Void()
+	case 1:
+		return p.rawType(out.At(0).Type())
+	default:
+		return &aType{p.toLLVMTuple(out), rawType{out}, vkTuple}
+	}
+}
+
+func (p Program) callResultType(fn Expr, sig *types.Signature) Type {
+	native := fn.kind == vkFuncPtr || isNativeCallConv(p.nativeCallConvOf(fn.Type)) || p.isNativeStorage(fn.Type)
+	if !native {
+		return p.retType(sig)
+	}
+	out := sig.Results()
+	switch n := out.Len(); n {
+	case 0:
+		return p.Void()
+	case 1:
+		return p.nativeType(out.At(0).Type(), CDecl)
+	default:
+		hasNativeDiff := false
+		for i := 0; i < n; i++ {
+			if p.hasNativeFuncDiff(p.patch(out.At(i).Type())) {
+				hasNativeDiff = true
+				break
+			}
+		}
+		if !hasNativeDiff {
+			return p.retType(sig)
+		}
+		fields := make([]llvm.Type, n)
+		for i := range fields {
+			fields[i] = p.nativeType(p.patch(out.At(i).Type()), CDecl).ll
+		}
+		tup := &aType{p.ctx.StructType(fields, false), rawType{out}, vkTuple}
+		return p.markNativeCallConv(tup, CDecl)
+	}
+}
+
+func (p Program) llvmNameOf(named *types.Named) (name string) {
+	name = NameOf(named)
+	if obj := named.Obj(); obj != nil {
+		parent := obj.Parent()
+		pkg := obj.Pkg()
+		if parent != nil && pkg != nil && !isPkgScope(parent, pkg.Scope()) {
+			index := p.fnnamed[name]
+			p.fnnamed[name] = index + 1
+			name += fmt.Sprintf("#%v", index)
+		}
+	}
+	return name
+}
+
+func isPkgScope(parent, pkgScope *types.Scope) bool {
+	if parent == pkgScope {
+		return true
+	}
+	if parent == nil || pkgScope == nil {
+		return false
+	}
+	// Some importer paths can materialize equivalent package scopes as distinct
+	// pointers. Keep package-level names stable when scopes describe the same
+	// package scope textually.
+	return parent.String() == pkgScope.String()
+}
+
+func (p Program) toNamed(raw *types.Named) Type {
+	if cc, ok := p.typeCtx.TypeCallConv(namedLinkname(raw)); ok && cc == types.Stdcall {
+		p.validateStdcallType(raw)
+	}
+	name := p.llvmNameOf(raw)
+	if typ, ok := p.named[name]; ok {
+		if namedTypeEquivalent(typ.raw.Type, raw) || p.namedStructLayoutEquivalent(typ, raw) {
+			return typ
+		}
+		// Some toolchains produce distinct instantiated named types that share
+		// the same object name (e.g. generic local helper structs in stdlib).
+		// Disambiguate instead of reusing an incompatible LLVM named struct.
+		base := name
+		for i := 0; ; i++ {
+			name = fmt.Sprintf("%s#%d", base, i)
+			if typ2, ok2 := p.named[name]; ok2 {
+				if namedTypeEquivalent(typ2.raw.Type, raw) || p.namedStructLayoutEquivalent(typ2, raw) {
+					return typ2
+				}
+				continue
+			}
+			break
+		}
+	}
+	if index := raw.SIMDTagIndex(); index >= 0 {
+		// Preserve the one-field, zero-size shape while making LLVM carry the
+		// target vector alignment into all aggregate storage.
+		ll := p.ctx.StructCreateNamed(name)
+		ll.StructSetBody([]llvm.Type{llvm.ArrayType(llvm.VectorType(p.tyInt8(), int(p.typeCtx.SIMDAlignment(index))), 0)}, false)
+		typ := &aType{ll, rawType{raw}, vkStruct}
+		p.named[name] = typ
+		return typ
+	}
+	if lanes, ok := SIMDVectorShape(raw); ok {
+		typ := &aType{llvm.VectorType(p.rawType(lanes.Elem()).ll, int(lanes.Len())), rawType{raw}, vkSIMD}
+		p.named[name] = typ
+		return typ
+	}
+	switch t := raw.Underlying().(type) {
+	case *types.Struct:
+		return p.toLLVMNamedStruct(name, raw, t, vkStruct)
+	case *types.Signature:
+		if p.isNativeFuncType(raw) {
+			return p.funcPtrType(raw)
+		}
+		return p.toLLVMNamedClosure(name, raw)
+	default:
+		if _, array := t.(*types.Array); array && p.hasLegacyNativeTypeLayout(raw) {
+			typ := p.Type(t, CDecl)
+			return &aType{typ.ll, rawType{raw}, typ.kind}
+		}
+		typ := p.rawType(t)
+		return &aType{typ.ll, rawType{raw}, typ.kind}
+	}
+}
+
+func namedTypeEquivalent(a, b types.Type) bool {
+	na, okA := types.Unalias(a).(*types.Named)
+	nb, okB := types.Unalias(b).(*types.Named)
+	if !okA || !okB {
+		return false
+	}
+	if types.Identical(na, nb) {
+		return true
+	}
+	if NameOf(na) != NameOf(nb) {
+		return false
+	}
+	_, sigA := na.Underlying().(*types.Signature)
+	_, sigB := nb.Underlying().(*types.Signature)
+	if sigA || sigB {
+		return false
+	}
+	// go/types may materialize the same package/type in distinct instances
+	// (e.g. mixed importer paths across toolchains). Reuse LLVM named structs
+	// when full-name and underlying shape are equivalent.
+	return typeStringWithPkg(na.Underlying()) == typeStringWithPkg(nb.Underlying())
+}
+
+func (p Program) namedStructLayoutEquivalent(existing Type, raw *types.Named) bool {
+	if existing == nil || raw == nil || existing.ll.TypeKind() != llvm.StructTypeKind {
+		return false
+	}
+	en, ok := types.Unalias(existing.raw.Type).(*types.Named)
+	if !ok || NameOf(en) != NameOf(raw) {
+		return false
+	}
+	rs, ok := raw.Underlying().(*types.Struct)
+	if !ok {
+		return false
+	}
+	existingFields := existing.ll.StructElementTypes()
+	rawFields := p.toLLVMFields(rs, p.hasNativeStructLayout(raw))
+	if len(existingFields) != len(rawFields) {
+		return false
+	}
+	for i := range existingFields {
+		if existingFields[i].String() != rawFields[i].String() {
+			return false
+		}
+	}
+	return true
+}
+
+// NameOf returns the full name of a named type.
+func NameOf(typ *types.Named) string {
+	return abi.FullName(typ.Obj().Pkg(), abi.NamedName(typ))
+}
+
+// FullName returns the full name of a package member.
+func FullName(pkg *types.Package, name string) string {
+	return abi.FullName(pkg, name)
+}
+
+// PathOf returns the package path of the specified package.
+func PathOf(pkg *types.Package) string {
+	return abi.PathOf(pkg)
+}
+
+// FuncName:
+// - func: pkg.name
+// - method: pkg.T.name, pkg.(*T).name
+func FuncName(pkg *types.Package, name string, recv *types.Var, org bool) string {
+	if recv != nil {
+		named, ptr := recvNamed(recv.Type())
+		var tName string
+		if named != nil {
+			if org {
+				tName = named.Obj().Name()
+			} else {
+				tName = abi.NamedName(named)
+			}
+			if ptr {
+				tName = "(*" + tName + ")"
+			}
+		} else {
+			tName = types.TypeString(recv.Type(), PathOf)
+		}
+		return PathOf(pkg) + "." + tName + "." + name
+	}
+	ret := FullName(pkg, name)
+	return ret
+}
+
+// MethodSymbolName qualifies an unexported method name when its declaring
+// package differs from the receiver package. Promoted methods need this extra
+// identity component to avoid colliding with same-named receiver methods.
+// Package identity intentionally uses PathOf rather than Package.Path: patched
+// runtime packages and their original counterparts must name the same symbol.
+func MethodSymbolName(receiverPkg *types.Package, method *types.Func, name string) string {
+	if receiverPkg == nil || method == nil || method.Exported() || method.Pkg() == nil ||
+		PathOf(receiverPkg) == PathOf(method.Pkg()) {
+		return name
+	}
+	return PathOf(method.Pkg()) + "." + name
+}
+
+func recvNamed(t types.Type) (typ *types.Named, ptr bool) {
+retry:
+	switch typ := t.(type) {
+	case *types.Named:
+		return typ, ptr
+	case *types.Pointer:
+		t = typ.Elem()
+		ptr = true
+		goto retry
+	case *types.Alias:
+		t = types.Unalias(typ)
+		goto retry
+	}
+	return
+}
+
+func TypeArgs(typeArgs []types.Type) string {
+	return abi.TypeArgs(typeArgs)
+}
+
+// -----------------------------------------------------------------------------

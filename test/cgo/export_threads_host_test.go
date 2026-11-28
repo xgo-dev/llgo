@@ -5,7 +5,7 @@ package cgo
 import (
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/build"
 )
 
 // Build in-process so host Go coverage records the compiler paths exercised by

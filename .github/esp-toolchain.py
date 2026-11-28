@@ -133,5 +133,5 @@ if __name__ == '__main__':
     parser.add_argument('--cache', type=Path, default=Path('.esp-runtime-downloads'))
     parser.add_argument('--output', type=Path, default=Path('.release-toolchains'))
     args = parser.parse_args()
-    pins = json.loads((ROOT / 'internal/crosscompile/espressif.json').read_text())
+    pins = json.loads((ROOT / 'cmd/compiler/crosscompile/espressif.json').read_text())
     stage_unix(pins, args.cache, args.output, ROOT / 'LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-exception.txt')

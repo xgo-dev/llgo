@@ -78,12 +78,12 @@ def main():
                               "minimum: (error=-2147483648)", "maximum: (error=2147483647)"])
         for mode in ("thin", "full"):
             print(f"Testing WASI {mode} LTO", flush=True)
-            fixture = ROOT / "cl/_testlto/globaldce_interface_matrix"
+            fixture = ROOT / "cmd/compiler/cl/_testlto/globaldce_interface_matrix"
             module = build(env, directory, mode, fixture)
             run(env, module, (fixture / "expect.txt").read_text().splitlines())
             # Keep the original method-summary DCE covered alongside Full LTO;
             # the interface matrix above exercises LLVM GoGlobalDCE instead.
-            module = build(env, directory, mode, ROOT / "internal/build/testdata/wasm-size",
+            module = build(env, directory, mode, ROOT / "cmd/compiler/build/testdata/wasm-size",
                            extra_flags=("-deadcodedrop", "-globaldce=false"))
             check_size_probe(env, module)
             for fixture, marker in (
@@ -96,12 +96,12 @@ def main():
                 # These local lowerings need no dev DCE proof. Exercise their
                 # production behavior under both LTO modes.
                 flags = () if fixture in ("wasm-root-sharing", "wasm-map-metadata", "wasm-finalizer-direct") else ("-deadcodedrop", "-globaldce=false")
-                module = build(env, directory, mode, ROOT / "internal/build/testdata" / fixture,
+                module = build(env, directory, mode, ROOT / "cmd/compiler/build/testdata" / fixture,
                                extra_flags=flags)
                 run(env, module, [marker])
                 if fixture == "wasm-root-sharing":
                     # Frame helpers are outlined only by size optimization.
-                    sized = build(env, directory, mode, ROOT / "internal/build/testdata" / fixture,
+                    sized = build(env, directory, mode, ROOT / "cmd/compiler/build/testdata" / fixture,
                                   extra_flags=("-deadcodedrop", "-globaldce=false"), opt="Oz")
                     run(env, sized, [marker])
                 if fixture == "wasm-finalizer-direct":
@@ -120,7 +120,7 @@ def main():
                 if mode == "full":
                     module = build(env, directory, mode, ROOT / "test/wasm" / fixture)
                     run(env, module, [marker])
-            module = build(env, directory, mode, ROOT / "internal/build/testdata/wasm-interface-panic",
+            module = build(env, directory, mode, ROOT / "cmd/compiler/build/testdata/wasm-interface-panic",
                            extra_flags=("-deadcodedrop", "-globaldce=false"))
             for kind, message in (
                 ("float32", "main.F32(1.25)"),
@@ -131,7 +131,7 @@ def main():
                 for args in ((kind,), (kind, "reflect")):
                     run(env, module, ["panic: " + message], expected_exits=(1, 2), args=args)
             for tags in ("nogc", ""):
-                fixture = ROOT / "internal/build/testdata/wasm-wasi-goexit-defer"
+                fixture = ROOT / "cmd/compiler/build/testdata/wasm-wasi-goexit-defer"
                 module = build(env, directory, mode, fixture, tags)
                 # Exercise caught Go/C exceptions repeatedly across pthreads.
                 for _ in range(3):

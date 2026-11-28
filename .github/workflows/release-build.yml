@@ -240,7 +240,7 @@ jobs:
         id: llvm-sdk-pin
         shell: pwsh
         run: |
-          $pins = Get-Content internal/crosscompile/espressif.json -Raw | ConvertFrom-Json
+          $pins = Get-Content cmd/compiler/crosscompile/espressif.json -Raw | ConvertFrom-Json
           "sha256=$($pins.sdk.sha256)" >> $env:GITHUB_OUTPUT
       - name: Cache Windows x86 LLVM SDK archive
         if: matrix.goarch == '386'
@@ -285,7 +285,7 @@ jobs:
         id: esp-pin
         shell: pwsh
         run: |
-          $pins = Get-Content internal/crosscompile/espressif.json -Raw | ConvertFrom-Json
+          $pins = Get-Content cmd/compiler/crosscompile/espressif.json -Raw | ConvertFrom-Json
           $target = @{ amd64 = 'x86_64-w64-mingw32'; arm64 = 'aarch64-w64-mingw32'; '386' = 'i686-w64-mingw32' }['${{ matrix.goarch }}']
           "sha256=$($pins.payloads.$target.sha256)" >> $env:GITHUB_OUTPUT
       - name: Cache bundled ESP archive

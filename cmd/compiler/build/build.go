@@ -1,0 +1,5216 @@
+/*
+ * Copyright (c) 2024 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package build
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"github.com/xgo-dev/llgo/types"
+	"go/ast"
+	"go/constant"
+	"go/parser"
+	"go/token"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"runtime/debug"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssautil"
+
+	llabi "github.com/xgo-dev/llgo/cmd/compiler/abi"
+	"github.com/xgo-dev/llgo/cmd/compiler/buildenv"
+	"github.com/xgo-dev/llgo/cmd/compiler/cabi"
+	"github.com/xgo-dev/llgo/cmd/compiler/cl"
+	"github.com/xgo-dev/llgo/cmd/compiler/clang"
+	"github.com/xgo-dev/llgo/cmd/compiler/compilerhash"
+	"github.com/xgo-dev/llgo/cmd/compiler/crosscompile"
+	"github.com/xgo-dev/llgo/cmd/compiler/dcepass"
+	"github.com/xgo-dev/llgo/cmd/compiler/deadcode"
+	"github.com/xgo-dev/llgo/cmd/compiler/debugabi"
+	"github.com/xgo-dev/llgo/cmd/compiler/env"
+	"github.com/xgo-dev/llgo/cmd/compiler/firmware"
+	"github.com/xgo-dev/llgo/cmd/compiler/flash"
+	"github.com/xgo-dev/llgo/cmd/compiler/goembed"
+	"github.com/xgo-dev/llgo/cmd/compiler/header"
+	"github.com/xgo-dev/llgo/cmd/compiler/heap2stack"
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen/abi"
+	"github.com/xgo-dev/llgo/cmd/compiler/lto"
+	"github.com/xgo-dev/llgo/cmd/compiler/meta"
+	"github.com/xgo-dev/llgo/cmd/compiler/mockable"
+	"github.com/xgo-dev/llgo/cmd/compiler/monitor"
+	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
+	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/cmd/compiler/pclnmap"
+	"github.com/xgo-dev/llgo/cmd/compiler/pclnpost"
+	"github.com/xgo-dev/llgo/cmd/compiler/pkgmeta"
+	"github.com/xgo-dev/llgo/cmd/compiler/quoted"
+	"github.com/xgo-dev/llgo/cmd/compiler/typepatch"
+	"github.com/xgo-dev/llgo/cmd/compiler/wasmworkers"
+	xenv "github.com/xgo-dev/llgo/cmd/xtool/env"
+	"github.com/xgo-dev/llgo/target"
+	gllvm "github.com/xgo-dev/llvm"
+
+	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
+	llruntime "github.com/xgo-dev/llgo/runtime"
+)
+
+type Mode int
+
+const (
+	ModeBuild Mode = iota
+	ModeInstall
+	ModeRun
+	ModeTest
+	ModeCmpTest
+	ModeGen
+)
+
+const defaultTestPthreadStackSize = 32 << 20
+
+type BuildMode string
+
+const (
+	BuildModeExe      BuildMode = "exe"
+	BuildModeCArchive BuildMode = "c-archive"
+	BuildModeCShared  BuildMode = "c-shared"
+)
+
+// ValidateBuildMode checks if the build mode is valid
+func ValidateBuildMode(mode string) error {
+	switch BuildMode(mode) {
+	case BuildModeExe, BuildModeCArchive, BuildModeCShared:
+		return nil
+	default:
+		return fmt.Errorf("invalid build mode %q, must be one of: exe, c-archive, c-shared", mode)
+	}
+}
+
+const (
+	debugBuild = packages.DebugPackagesLoad
+)
+
+// OutFmts contains output format specifications for embedded targets
+type OutFmts struct {
+	Bin bool // Generate binary output (.bin)
+	Hex bool // Generate Intel hex output (.hex)
+	Img bool // Generate image output (.img)
+	Uf2 bool // Generate UF2 output (.uf2)
+	Zip bool // Generate ZIP/DFU output (.zip)
+}
+
+// OutFmtDetails contains detailed output file paths for each format
+type OutFmtDetails struct {
+	Out   string // Base output file path
+	DWARF string // External debugger-owned DWARF container (.debug.wasm)
+	DSYM  string // Native Darwin debugger-owned .dSYM bundle
+	PCLN  string // PCLN sidecar output file path (.pclntab)
+	Bin   string // Binary output file path (.bin)
+	Hex   string // Intel hex output file path (.hex)
+	Img   string // Image output file path (.img)
+	Uf2   string // UF2 output file path (.uf2)
+	Zip   string // ZIP/DFU output file path (.zip)
+
+	WasmManifest string // Final Wasm artifact manifest
+
+	wasmSizeNames    map[uint32]string // Function indexes from the final module before stripping
+	wasmSizeNamesErr error             // Optional name metadata parse failure
+	tempDir          string            // LLGo-owned directory removed with implicit test outputs
+}
+
+// ModuleHook observes a package module immediately after it is generated and
+// before TransformModule mutates it. The callback runs synchronously and
+// receives the live llvm.Module, so callers that need a stable snapshot should
+// consume it immediately (for example, by calling mod.String() inside the
+// hook).
+type ModuleHook func(pkg Package)
+
+type Config struct {
+	Goos               string
+	Goarch             string
+	GO386              string // 386 floating-point implementation: sse2 or softfloat
+	GOAMD64            string // amd64 microarchitecture level: v1 through v4
+	GOARM              string // arm architecture and floating-point implementation
+	GOARM64            string // arm64 ISA version and optional lse/crypto extensions
+	GOEXPERIMENT       string // Go experiments; empty inherits cmd/go configuration, "none" disables defaults
+	Target             string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
+	OptLevel           optlevel.Level
+	WasmOpt            WasmOptMode
+	WasmStrip          WasmStripMode
+	LTO                lto.Mode
+	LTOPlugin          lto.PassPlugin
+	BinPath            string
+	AppExt             string  // ".exe" on Windows, empty on Unix
+	OutFile            string  // output file, or directory for ModeBuild package executables
+	OutFmts            OutFmts // Output format specifications (only for Target != "")
+	CompileOnly        bool    // compile test binary but do not run it (only valid for ModeTest)
+	RetainTestBinary   bool    // profiling keeps the test executable in the invocation directory
+	Emulator           bool    // run in emulator mode
+	Port               string  // target port for flashing
+	BaudRate           int     // baudrate for serial communication
+	RunArgs            []string
+	Exec               []string      // Explicit execution wrapper, before the artifact and RunArgs.
+	RunnerTimeout      time.Duration // Host execution limit; zero disables it.
+	Mode               Mode
+	BuildMode          BuildMode // Build mode: exe, c-archive, c-shared
+	GenExpect          bool      // only valid for ModeCmpTest
+	Verbose            bool
+	PrintPackages      bool // print package paths after successful compilation
+	PrintCommands      bool
+	GenLL              bool // generate pkg .ll files
+	DeadcodeDrop       bool // enable Go dead code drop (development builds only)
+	CollectPackageMeta bool // collect package metadata without enabling dead code drop
+	CheckLLFiles       bool // check .ll files valid
+	CheckLinkArgs      bool // check linkargs valid
+	ForceEspClang      bool // force to use esp-clang
+	frontendSourceOnly bool
+	frontendSourcePkgs map[string]bool
+	ForceRebuild       bool // force rebuilding of packages that are already up-to-date
+	Tags               string
+	SizeReport         bool   // print size report after successful build
+	SizeFormat         string // size report format: text,json (default text)
+	SizeLevel          string // size aggregation level: full,module,package (default module)
+	CompilerHash       string // content hash for the running compiler (development builds only)
+	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
+	NoErrorColumn      bool   // omit source columns from frontend diagnostics
+
+	EscapeDiagnostics           int // -m count for explicitly selected packages
+	DependencyEscapeDiagnostics int // -m count for dependencies selected by all=
+	// GoBuildFlags contains normalized raw Go build flags forwarded to
+	// go/packages. Callers use internal/goflags to parse supported compiler and
+	// linker semantics into typed Config fields before calling Do.
+	GoBuildFlags []string
+	// LoaderBuildFlags preserves package selection while removing diagnostics
+	// consumed by LLGo, so go/packages cannot emit host-compiler escape results.
+	// Nil uses GoBuildFlags for direct compiler API callers.
+	LoaderBuildFlags []string
+	// GoFlagsParsed means the command layer has consumed GOFLAGS into native
+	// configuration. Package probes must not parse those command defaults again.
+	GoFlagsParsed bool
+	// BuildParallelism is the package-build, test-link, and test-run concurrency
+	// requested by Go's -p build flag. Zero uses the Go default, GOMAXPROCS.
+	BuildParallelism int
+	// BuildTrace is an optional Chrome Trace Event JSON output path. Relative
+	// paths are resolved from the build invocation directory.
+	BuildTrace string
+	// TestRunSequential disables concurrent test binary execution when test
+	// flags share output paths or otherwise require one active binary.
+	TestRunSequential bool
+	// TestFailFast stops launching test binaries after the first failure.
+	TestFailFast bool
+	// NativeTestWaitDelay bounds native test pipe draining after process exit.
+	// Zero defaults to 5s when RunnerTimeout is enabled.
+	NativeTestWaitDelay time.Duration
+	// TestJSON streams package-attributed test2json events.
+	TestJSON          bool
+	testOutput        *testOutputPolicy
+	LinkOptions       LinkOptions
+	DebugArtifactMode DebugArtifactMode
+	// DebugArtifactModeSet distinguishes an explicit mode from the build default.
+	DebugArtifactModeSet bool
+	debugPointerSize     uint8
+	// OmitDWARFByDefault controls linked builds only when -w was not
+	// explicitly specified. Explicit -w and -w=false always win.
+	OmitDWARFByDefault bool
+	PCLNMode           PCLNMode
+	PCLNLoad           PCLNLoadPolicy
+	// PCLNModeSet marks PCLNMode as authoritative. Command flags set it for
+	// explicit requests; Do sets it after resolving the legacy environment
+	// default.
+	PCLNModeSet bool
+	AllowNoBody bool // allow declarations without bodies, as go tool compile does
+	// DisableBoundsChecks disables index, slice, and slice-to-array conversion
+	// bounds checks while retaining required integer conversions and nil checks.
+	DisableBoundsChecks bool
+	// SaturatingFloatToInt enables Go's experimental converthash behavior
+	// for float-to-integer conversions.
+	SaturatingFloatToInt bool
+
+	// PthreadStackSize sets a custom stack size, in bytes, for native and Wasm
+	// goroutines. A zero value keeps the backend's default.
+	PthreadStackSize int64
+	// PthreadStackSizeSet marks PthreadStackSize as explicitly requested. It
+	// keeps an explicit value, including zero, from being replaced by the
+	// host-only test default.
+	PthreadStackSizeSet bool
+
+	// DisableGoGlobalDCE disables Go-specific global DCE metadata emission
+	// when it would otherwise be enabled by full LTO.
+	DisableGoGlobalDCE bool
+
+	// GlobalRewrites specifies compile-time overrides for global string variables.
+	// Keys are fully qualified package paths (e.g. "main" or "github.com/user/pkg").
+	// Each Rewrites entry maps variable names to replacement string values. Only
+	// string-typed globals are supported and "main" applies to all root main
+	// packages in the current build.
+	GlobalRewrites map[string]Rewrites
+	ModuleHook     ModuleHook
+	Overlay        map[string][]byte
+	// SourceOverlay contains absolute paths from the public -overlay JSON.
+	// The Go loader and LLGo parser share this view, including file deletions.
+	SourceOverlay map[string]SourceOverlayFile
+	// sourceOverlayFile is borrowed by isolated child groups and fallback
+	// builds. The parent Build owns its lifetime through all child work.
+	sourceOverlayFile string
+	// TestPythonPackage supplies the synthetic Python ABI root used by compiler
+	// fixtures that intentionally avoid importing github.com/goplus/lib/py.
+	// Production callers leave this nil; the provider is evaluated once per Do.
+	TestPythonPackage func() *types.Package
+
+	// Coverage enables source coverage for builds/tests. Nil leaves the build
+	// unchanged; coverage holds only per-invocation temporary state.
+	Coverage                   *CoverageConfig
+	coverage                   *coverageBuild
+	coverageProfileInitialized bool
+
+	// Resolved once per invocation, independently of the Go version that built LLGo.
+	sourceGoVersion string
+	toolTags        []string
+	// Preserve inferred optimization levels when invocations are cloned.
+	// Only explicit -Oz requests the optional final optimizer.
+	optLevelDefaulted bool
+	wasiReleaseDCE    bool
+}
+
+type Rewrites map[string]string
+
+// clone returns an independent copy of c for use by a single build. Do
+// resolves defaults and target-specific values on this copy so callers can
+// safely reuse their input configuration after Do returns.
+func (c *Config) clone() *Config {
+	if c == nil {
+		return nil
+	}
+	cloned := *c
+	// Per-invocation coverage state may retain loaded packages and temporary
+	// paths. A cloned invocation rebuilds that state from Coverage.
+	cloned.coverage = nil
+	if c.Coverage != nil {
+		options := *c.Coverage
+		cloned.Coverage = &options
+	}
+	cloned.RunArgs = slices.Clone(c.RunArgs)
+	cloned.Exec = slices.Clone(c.Exec)
+	cloned.GoBuildFlags = slices.Clone(c.GoBuildFlags)
+	cloned.LoaderBuildFlags = slices.Clone(c.LoaderBuildFlags)
+	cloned.toolTags = slices.Clone(c.toolTags)
+	cloned.Overlay = cloneOverlay(c.Overlay)
+	cloned.SourceOverlay = cloneSourceOverlay(c.SourceOverlay)
+	if c.coverage != nil && c.coverage.inputOverlaySet {
+		// Coverage-generated files belong to the current loaded graph. Carrying
+		// them into an isolated initial group can make a test main appear beside
+		// its source package (and can re-instrument stale generated sources).
+		cloned.Overlay = cloneOverlay(c.coverage.inputOverlay)
+	}
+	if c.GlobalRewrites != nil {
+		cloned.GlobalRewrites = make(map[string]Rewrites, len(c.GlobalRewrites))
+		for pkgPath, rewrites := range c.GlobalRewrites {
+			if rewrites == nil {
+				cloned.GlobalRewrites[pkgPath] = nil
+				continue
+			}
+			copied := make(Rewrites, len(rewrites))
+			for name, value := range rewrites {
+				copied[name] = value
+			}
+			cloned.GlobalRewrites[pkgPath] = copied
+		}
+	}
+	if c.frontendSourcePkgs != nil {
+		cloned.frontendSourcePkgs = make(map[string]bool, len(c.frontendSourcePkgs))
+		for id, v := range c.frontendSourcePkgs {
+			cloned.frontendSourcePkgs[id] = v
+		}
+	}
+	return &cloned
+}
+
+// resolveBuildConfig validates and fills build-local defaults without
+// modifying the caller's Config. Target-derived GOOS/GOARCH values are
+// resolved later, after crosscompile.Use has selected the toolchain.
+func resolveBuildConfig(input *Config) (*Config, error) {
+	if input == nil {
+		return nil, errors.New("build config must not be nil")
+	}
+	conf := input.clone()
+	// Embedding callers bypass command-line flags but share the same archive
+	// cache. Give every development compiler an identity before fingerprinting.
+	if conf.CompilerHash == "" {
+		conf.CompilerHash = compilerhash.Value()
+	}
+	if conf.Goos == "" {
+		conf.Goos = runtime.GOOS
+	}
+	if conf.Goarch == "" {
+		conf.Goarch = runtime.GOARCH
+	}
+	if err := resolveGOARCHConfig(conf, os.Getenv); err != nil {
+		return nil, err
+	}
+	if conf.BuildMode == "" {
+		conf.BuildMode = BuildModeExe
+	}
+	// A named target may replace GOOS/GOARCH below. Delay its inferred
+	// executable extension until target resolution has completed.
+	if conf.AppExt == "" && conf.Target == "" {
+		conf.AppExt = defaultAppExt(conf)
+	}
+	if conf.BuildMode != BuildModeExe {
+		conf.DeadcodeDrop = false
+	}
+	conf.PCLNMode = effectivePCLNMode(conf)
+	conf.PCLNModeSet = true
+	if conf.SizeReport && conf.SizeFormat == "" {
+		conf.SizeFormat = "text"
+	}
+	if conf.SizeReport && conf.SizeLevel == "" {
+		conf.SizeLevel = "module"
+	}
+	if err := conf.PCLNMode.validate(); err != nil {
+		return nil, err
+	}
+	// Named targets replace GOOS/GOARCH later. Validate their target policy
+	// after resolution, while still rejecting invalid build modes here.
+	if conf.Target == "" || conf.Mode == ModeGen || conf.BuildMode != BuildModeExe {
+		if err := validatePCLNMode(conf); err != nil {
+			return nil, err
+		}
+	}
+	if err := ensureSizeReporting(conf); err != nil {
+		return nil, err
+	}
+	if err := conf.LinkOptions.validate(); err != nil {
+		return nil, err
+	}
+	conf.optLevelDefaulted = conf.optLevelDefaulted || conf.OptLevel == optlevel.Unset
+	conf.OptLevel = effectiveOptLevel(conf)
+	return conf, nil
+}
+
+func resolveGOARCHConfig(conf *Config, getenv func(string) string) error {
+	if conf.Target != "" {
+		conf.GO386, conf.GOAMD64, conf.GOARM, conf.GOARM64 = "", "", "", ""
+		return nil
+	}
+	go386, goamd64, goarm, goarm64 := conf.GO386, conf.GOAMD64, conf.GOARM, conf.GOARM64
+	conf.GO386, conf.GOAMD64, conf.GOARM, conf.GOARM64 = "", "", "", ""
+	switch conf.Goarch {
+	case "386":
+		if go386 == "" {
+			go386 = getenv("GO386")
+		}
+		value, err := target.Resolve386(go386)
+		conf.GO386 = value
+		return err
+	case "amd64":
+		if goamd64 == "" {
+			goamd64 = getenv("GOAMD64")
+		}
+		value, err := target.ResolveAMD64(goamd64)
+		conf.GOAMD64 = value
+		return err
+	case "arm":
+		if goarm == "" {
+			goarm = getenv("GOARM")
+		}
+		value, err := target.ParseARM(goarm)
+		conf.GOARM = value.String()
+		return err
+	case "arm64":
+		if goarm64 == "" {
+			goarm64 = getenv("GOARM64")
+		}
+		value, err := target.ParseARM64(goarm64)
+		conf.GOARM64 = value.String()
+		return err
+	}
+	return nil
+}
+
+func goarchEnv(conf *Config) []string {
+	if conf == nil {
+		return nil
+	}
+	values := []string{"GO386=", "GOAMD64=", "GOARM=", "GOARM64="}
+	if conf.Target != "" {
+		return values
+	}
+	switch conf.Goarch {
+	case "386":
+		values[0] += conf.GO386
+	case "amd64":
+		values[1] += conf.GOAMD64
+	case "arm":
+		values[2] += conf.GOARM
+	case "arm64":
+		values[3] += conf.GOARM64
+	}
+	return values
+}
+
+func NewDefaultConf(mode Mode) *Config {
+	bin := os.Getenv("GOBIN")
+	if bin == "" {
+		gopath, err := envGOPATH()
+		if err != nil {
+			panic(fmt.Errorf("cannot get GOPATH: %v", err))
+		}
+		bin = filepath.Join(gopath, "bin")
+	}
+	goos, goarch := os.Getenv("GOOS"), os.Getenv("GOARCH")
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	conf := &Config{
+		Goos:      goos,
+		Goarch:    goarch,
+		BinPath:   bin,
+		Mode:      mode,
+		BuildMode: BuildModeExe,
+		PCLNMode:  PCLNEmbedded,
+	}
+	if mode == ModeTest {
+		conf.PthreadStackSize = defaultTestPthreadStackSize
+	}
+	return conf
+}
+
+func envGOPATH() (string, error) {
+	if gopath := os.Getenv("GOPATH"); gopath != "" {
+		return gopath, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "go"), nil
+}
+
+func (c *Config) ltoMode() lto.Mode {
+	if c == nil {
+		return lto.Off
+	}
+	return c.LTO
+}
+
+func (c *Config) ltoEnabled() bool {
+	return c.ltoMode().Enabled()
+}
+
+func (c *Config) goGlobalDCEEnabled() bool {
+	if c == nil {
+		return false
+	}
+	return buildenv.Dev && c.ltoMode() == lto.Full && !c.DisableGoGlobalDCE
+}
+
+func (c *Config) deadcodeDropEnabled() bool {
+	return c.wasiReleaseDCE || buildenv.Dev && c.DeadcodeDrop && !c.goGlobalDCEEnabled()
+}
+
+func (c *Config) packageMetaEnabled() bool {
+	return c.CollectPackageMeta || c.deadcodeDropEnabled()
+}
+
+func (c *Config) parallelism() int {
+	if c != nil && c.BuildParallelism > 0 {
+		return c.BuildParallelism
+	}
+	return max(1, runtime.GOMAXPROCS(0))
+}
+
+// -----------------------------------------------------------------------------
+
+const (
+	loadFiles   = packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles
+	loadImports = loadFiles | packages.NeedImports
+	loadTypes   = loadImports | packages.NeedTypes | packages.NeedTypesSizes
+	loadSyntax  = loadTypes | packages.NeedSyntax | packages.NeedTypesInfo
+)
+
+var llssaInitOnce sync.Once
+
+func Do(args []string, conf *Config) ([]Package, error) {
+	return Build(Invocation{Args: args, Config: conf})
+}
+
+// Build executes one build invocation.
+func Build(inv Invocation) ([]Package, error) {
+	dir := inv.Dir
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+	}
+	conf, err := resolveBuildConfig(inv.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	buildTrace := inv.parentBuildTrace
+	isRootTrace := false
+	if buildTrace == nil {
+		buildTrace, err = startBuildTrace(conf.BuildTrace, dir, conf.parallelism())
+		if err != nil {
+			return nil, fmt.Errorf("start build trace: %w", err)
+		}
+		isRootTrace = true
+	}
+	inv.parentBuildTrace = buildTrace
+
+	buildSpan := buildTrace.startCoordinator("build", map[string]any{
+		"packages":    slices.Clone(inv.Args),
+		"parallelism": conf.parallelism(),
+	})
+	var traceOnce sync.Once
+	finishTrace := func() {
+		traceOnce.Do(func() {
+			buildSpan.done()
+			if isRootTrace {
+				if closeErr := buildTrace.close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: write build trace: %v\n", closeErr)
+				}
+			}
+		})
+	}
+	defer finishTrace()
+
+	var plan initialBuildPlan
+	defer func() {
+		if plan.sourceOverlayFile != "" {
+			os.Remove(plan.sourceOverlayFile)
+		}
+	}()
+
+	result, err := buildInvocation(inv, &plan)
+	if errors.Is(err, errFrontendSourceRequired) && !inv.Config.frontendSourceOnly {
+		for attempt := 0; attempt < 5 && errors.Is(err, errFrontendSourceRequired); attempt++ {
+			if plan.sourceOverlayFile != "" {
+				os.Remove(plan.sourceOverlayFile)
+				plan.sourceOverlayFile = ""
+			}
+			inv.Config = inv.Config.clone()
+			var reqErr *frontendSourceRequiredError
+			var reqPkgIDs []string
+			if attempt < 4 && errors.As(err, &reqErr) && len(reqErr.pkgIDs) > 0 {
+				reqPkgIDs = reqErr.pkgIDs
+				if inv.Config.frontendSourcePkgs == nil {
+					inv.Config.frontendSourcePkgs = make(map[string]bool, len(reqErr.pkgIDs))
+				}
+				added := 0
+				for _, id := range reqErr.pkgIDs {
+					if !inv.Config.frontendSourcePkgs[id] {
+						inv.Config.frontendSourcePkgs[id] = true
+						added++
+					}
+				}
+				if added == 0 {
+					inv.Config.frontendSourceOnly = true
+				}
+			} else {
+				inv.Config.frontendSourceOnly = true
+			}
+			args := map[string]any{
+				"attempt": attempt + 1,
+			}
+			if len(reqPkgIDs) > 0 {
+				args["packages"] = slices.Clone(reqPkgIDs)
+			}
+			retrySpan := buildTrace.startCoordinator("retry", args)
+			result, err = buildInvocation(inv, &plan)
+			retrySpan.done()
+			if inv.Config.frontendSourceOnly {
+				break
+			}
+		}
+	}
+	if len(plan.invocations) > 0 {
+		return buildInitialGroups(plan.invocations)
+	}
+	return result, err
+}
+
+func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, resultErr error) {
+	var fallback *multiBuildFallback
+	defer func() {
+		if resultErr == nil || fallback == nil || inv.disableMultiFallback || errors.Is(resultErr, errFrontendSourceRequired) {
+			return
+		}
+		result, resultErr = fallback.run()
+	}()
+
+	dir := inv.Dir
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+	}
+	environ := os.Environ()
+	conf, err := resolveBuildConfig(inv.Config)
+	if err != nil {
+		return nil, err
+	}
+	// Keep child Go invocations (notably cmptest's baseline) on the same
+	// architecture level as the LLVM build. GOOS/GOARCH retain their existing
+	// per-command handling.
+	commands := commandEnv{dir: dir, environ: isolateNestedModuleWorkspace(dir, withEnv(environ, goarchEnv(conf)...))}
+	conf.coverage, err = newCoverageBuild(conf, commands)
+	if err != nil {
+		return nil, err
+	}
+	if conf.coverage != nil {
+		conf.coverage.local = len(inv.Args) == 0
+		defer conf.coverage.close()
+	}
+	buildTrace := inv.parentBuildTrace
+	if conf.coverage != nil {
+		conf.coverage.trace = buildTrace
+	}
+	// Handle crosscompile configuration first to set correct GOOS/GOARCH
+	forceEspClang := conf.ForceEspClang || conf.Target != ""
+	nativeInput := crosscompile.NativeToolchainInput{}
+	if usesWindowsToolchainProfile(runtime.GOOS, conf) {
+		nativeInput, err = parseNativeToolchainInput(commands, conf.LinkOptions, conf.Mode != ModeGen)
+		if err != nil {
+			return nil, err
+		}
+	} else if conf.Target == "" && conf.Goos == runtime.GOOS && conf.Goarch == runtime.GOARCH {
+		// Unix compiler selection still follows its existing environment path.
+		// Parse the explicit linker options without changing CC/CXX handling.
+		nativeInput, err = parseNativeToolchainInput(commandEnv{dir: commands.dir}, conf.LinkOptions, false)
+		if err != nil {
+			return nil, err
+		}
+	}
+	export, err := crosscompile.UseWithGOARMAndToolchain(conf.Goos, conf.Goarch, conf.GOARM, conf.Target, forceEspClang, conf.OptLevel, conf.ltoMode(), conf.goGlobalDCEEnabled(), nativeInput)
+	if err != nil {
+		return nil, fmt.Errorf("failed to setup crosscompile: %w", err)
+	}
+	// Update GOOS/GOARCH from export if target was used
+	if conf.Target != "" && export.GOOS != "" {
+		conf.Goos = export.GOOS
+	}
+	if conf.Target != "" && export.GOARCH != "" {
+		conf.Goarch = export.GOARCH
+	}
+	if err := validatePCLNMode(conf); err != nil {
+		return nil, err
+	}
+	resolveTestPthreadStackSize(conf)
+	if err := validateWASIThreads(conf); err != nil {
+		return nil, err
+	}
+	wasmWorkers, err := configureWasmWorkers(conf, &export)
+	if err != nil {
+		return nil, err
+	}
+	if err := configureWasmReflectLibffi(conf, &export, wasmWorkers); err != nil {
+		return nil, err
+	}
+	wasmGC, err := configureWasmGC(conf, &export)
+	if err != nil {
+		return nil, err
+	}
+	applyWasmGCLinkFlags(conf, &export)
+	if conf.AppExt == "" {
+		conf.AppExt = defaultAppExt(conf)
+	}
+	applyBuildModeCompileFlags(conf.BuildMode, export.Toolchain, &export)
+	if err := resolveDebugArtifactMode(conf, &export); err != nil {
+		return nil, err
+	}
+	if err := validateLinkOptions(conf, &export); err != nil {
+		return nil, err
+	}
+	if err := validateWasmFinalOptions(conf, &export); err != nil {
+		return nil, err
+	}
+	applyWindowsAMD64StackReserve(conf, &export)
+	export.LDFLAGS = append(export.LDFLAGS, wasmFinalLinkFlags(conf, &export)...)
+	export.LDFLAGS = append(export.LDFLAGS, goJSLoaderLinkFlags(conf, &export)...)
+	if conf.Goarch == "wasm" && conf.PCLNMode == PCLNExternal {
+		export.LDFLAGS = append(export.LDFLAGS, "-Wl,--export="+pclnIdentitySymbol)
+	}
+	verbose := conf.Verbose
+	patterns := slices.Clone(inv.Args)
+	target := &llvmgen.Target{
+		GOOS:                 conf.Goos,
+		GOARCH:               conf.Goarch,
+		GO386:                conf.GO386,
+		GOAMD64:              conf.GOAMD64,
+		GOARM:                conf.GOARM,
+		GOARM64:              conf.GOARM64,
+		Target:               conf.Target,
+		LLVMTarget:           export.LLVMTarget,
+		WasmProfile:          string(export.WasmProfile),
+		WasmProvider:         string(export.WasmProvider),
+		OptLevel:             conf.OptLevel,
+		SaturatingFloatToInt: conf.SaturatingFloatToInt,
+	}
+	tags := DefaultBuildTags()
+	tags += "," + target.ClosureEnvBuildTag()
+	if conf.PCLNMode == PCLNExternal {
+		// Select the optional runtime loader as part of the normal package
+		// cache key. Embedded and none builds do not compile any loader or
+		// sidecar probing code.
+		tags += ",llgo_pclntab_external"
+		tags += conf.PCLNLoad.buildTags()
+	}
+	if conf.Tags != "" {
+		tags += "," + conf.Tags
+	}
+	if len(export.BuildTags) > 0 {
+		tags += "," + strings.Join(export.BuildTags, ",")
+	}
+	goBuildFlags := []string{"-tags=" + tags}
+	loaderFlags := conf.LoaderBuildFlags
+	if loaderFlags == nil {
+		loaderFlags = conf.GoBuildFlags
+	}
+	goBuildFlags = append(goBuildFlags, loaderFlags...)
+	ownsOverlay := conf.sourceOverlayFile == ""
+	overlayFile, err := prepareSourceOverlay(conf)
+	if err != nil {
+		return nil, err
+	}
+	if overlayFile != "" {
+		if ownsOverlay {
+			plan.sourceOverlayFile = overlayFile
+		}
+		goBuildFlags = append(goBuildFlags, "-overlay="+overlayFile)
+	}
+	cfg := &packages.Config{
+		Mode:       loadSyntax | packages.NeedDeps | packages.NeedModule,
+		BuildFlags: goBuildFlags,
+		Dir:        dir,
+		Fset:       token.NewFileSet(),
+		Tests:      conf.Mode == ModeTest,
+		Env:        withEnv(commands.environ, "GOOS="+conf.Goos, "GOARCH="+conf.Goarch),
+	}
+	if conf.Mode == ModeTest {
+		cfg.Mode |= packages.NeedForTest
+	}
+	emitDebugInfo := shouldEmitDebugInfo(conf, &export)
+	emitCodeView := shouldEmitCodeView(conf, &export)
+	frontendOptions := cl.Options{
+		OptLevel:                 conf.OptLevel,
+		DisableInlineBodyImports: conf.ltoMode() == lto.Full,
+		Debug:                    emitDebugInfo,
+		DebugSymbols:             emitDebugInfo,
+		Trace:                    IsTraceEnabled(),
+		// Hosted wasm profiles need renamed //export symbols for allocator and
+		// host entries even when selected through raw GOOS/GOARCH rather than a
+		// named -target.
+		ExportRename: conf.Target != "" || export.WasmProfile != crosscompile.WasmProfileNone,
+		// Wasm has no inspectable native return addresses for runtime callers.
+		ShadowStack:            conf.Goarch == "wasm",
+		DebuggerFrames:         conf.Goarch == "wasm" && slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.debugger"),
+		CompactCallerLocations: conf.Goarch == "wasm" && conf.PCLNMode == PCLNExternal && !slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.debugger"),
+	}
+	preloadOptions := frontendOptions
+	llssaInitOnce.Do(func() {
+		llvmgen.Initialize(llvmgen.InitAll)
+	})
+
+	prog := llvmgen.NewProgram(target)
+	prog.DisableBoundsChecks(conf.DisableBoundsChecks)
+	if conf.Mode != ModeGen {
+		// ModeGen callers (llgen and the golden suites) read LPkg.String()
+		// after Do returns and dispose the program themselves; every other
+		// mode's outputs are files or a spawned process, so the compile's
+		// LLVM context can be released when Do finishes. In-process
+		// drivers that build many packages per process (the cltest run
+		// harness) otherwise accumulate every compile's C++-side memory.
+		defer prog.Dispose()
+	}
+	prog.EnableGoGlobalDCE(conf.goGlobalDCEEnabled())
+	prog.EnableDeadcodeDrop(conf.deadcodeDropEnabled())
+	prog.EnableGCRoots(wasmGC)
+	prog.EnableLogicalGoroutineLocality(usesSingleWorkerWasmScheduler(conf))
+	prog.EnableThreadLocalGCRoots(useThreadLocalGCRoots(conf, wasmGC, wasmWorkers))
+	prog.EnableCooperativeSafepoints(wasmGC || wasmWorkers.Enabled())
+	if conf.PthreadStackSize > 0 {
+		prog.SetPthreadStackSize(uint64(conf.PthreadStackSize))
+	}
+	prog.EnableLTOPluginMarkers(conf.LTOPlugin.Enabled())
+	prog.EnableCodeViewDebugInfo(emitCodeView)
+	funcInfo := conf.Mode != ModeGen && conf.PCLNMode != PCLNNone
+	prog.EnableFuncInfoMetadata(funcInfo)
+	// Keep PC-line anchors for precise runtime locations. Darwin DWARF builds
+	// suppress only entry-address sites, which disturb LLDB lexical scopes.
+	prog.EnableFuncInfoSites(shouldEnablePCLNSites(conf, funcInfo))
+	sizes := func(_ types.Sizes, _, _ string) types.Sizes {
+		return prog.TypeContext()
+	}
+	dedup := packages.NewDeduper()
+	dedup.SetTypeContext(prog.TypeContext())
+	var syntaxErr error
+	var syntaxErrMu sync.Mutex
+	recordSyntaxErr := func(err error) {
+		syntaxErrMu.Lock()
+		defer syntaxErrMu.Unlock()
+		if syntaxErr == nil {
+			syntaxErr = err
+		}
+	}
+	loadSyntaxErr := func() error {
+		syntaxErrMu.Lock()
+		defer syntaxErrMu.Unlock()
+		return syntaxErr
+	}
+	// Assigned before package loading invokes the preload callback.
+	var sourcePatchGOROOT string
+	dedup.SetPreload(func(pkg *packages.Package) {
+		if llruntime.SkipToBuild(pkg.PkgPath) {
+			return
+		}
+		if pkg.Name == "main" && pkg.ForTest != "" {
+			pkg.Types.Scope().Insert(types.NewConst(0, pkg.Types, abi.ForTestMarker, types.Typ[types.UntypedBool], constant.MakeBool(true)))
+		}
+		if dedup.IsExported(pkg.ID) && len(pkg.Syntax) == 0 {
+			cl.HydrateExportedPackageSyntax(prog, pkg.Types)
+			return
+		}
+		options := preloadOptions
+		options.AllowInternalDirectives = isStandardLibraryPackage(pkg, sourcePatchGOROOT)
+		if err := cl.ParsePkgSyntaxWithOptions(prog, cfg.Fset, pkg.Types, pkg.Syntax, options); err != nil {
+			recordSyntaxErr(err)
+		}
+	})
+
+	if patterns == nil {
+		patterns = []string{"."}
+	}
+	if conf.GoFlagsParsed {
+		cfg.Env = withEnv(cfg.Env, "GOFLAGS= ")
+	}
+	sourceGo, err := resolveSourceGoConfig(commandEnv{dir: cfg.Dir, environ: cfg.Env}, conf.GOEXPERIMENT, cfg.BuildFlags...)
+	if err != nil {
+		return nil, err
+	}
+	sourcePatchGOROOT, sourcePatchGoVersion := sourceGo.GOROOT, sourceGo.GOVERSION
+	conf.GOEXPERIMENT = sourceGo.GOEXPERIMENT
+	conf.sourceGoVersion = sourceGo.GOVERSION
+	conf.toolTags = slices.Clone(sourceGo.toolTags)
+	if slices.Contains(sourceGo.toolTags, "goexperiment.simd") && (conf.Goarch == "amd64" || conf.Goarch == "arm64" || conf.Goarch == "wasm") {
+		cfg.Mode &^= packages.NeedExportFile
+		dedup.SetRewrite(func(pkg *packages.Package) (bool, error) {
+			return rewritePortableSIMD(pkg, conf.Goarch)
+		})
+	}
+	cfg.Env = sourceGo.apply(cfg.Env)
+	cfg.Env = cgoMetadataEnvironment(cfg.Env, sourceGo.GOVERSION, export.Toolchain.TargetTriple)
+	if err := applyPackageLoadFlags(cfg, sourceGo.GOFLAGS); err != nil {
+		return nil, fmt.Errorf("parse Go package flags: %w", err)
+	}
+	commands.environ = sourceGo.apply(commands.environ)
+	var llgoFiles map[string][]string
+	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
+	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
+		goos:       conf.Goos,
+		goarch:     conf.Goarch,
+		goversion:  sourcePatchGoVersion,
+		toolTags:   sourceGo.toolTags,
+		buildFlags: cfg.BuildFlags,
+		targetTags: export.BuildTags,
+		cgoEnabled: &sourceCgoEnabled,
+	})
+	if err != nil {
+		return nil, err
+	}
+	conf.Overlay, err = runtimeSourceOverlay(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchGoVersion)
+	if err != nil {
+		return nil, err
+	}
+	dedup.SetLLGoFiles(llgoFiles)
+	cfg.ParseFile = func(fset *token.FileSet, filename string, src []byte) (*ast.File, error) {
+		if data, ok := conf.Overlay[filename]; ok {
+			src = data
+		}
+		// We implicitly promise to keep doing ast.Object resolution. :(
+		const mode = parser.AllErrors | parser.ParseComments
+		return parser.ParseFile(fset, filename, src, mode)
+	}
+	if conf.coverage != nil {
+		dedup.SetPrepare(func(pkgs []*packages.Package, driver *packages.Config) error {
+			dedup.SetPrepare(nil)
+			return conf.coverage.prepare(pkgs, driver, conf, sourcePatchGOROOT)
+		})
+	}
+
+	// Default runtime globals must be registered before frontend cache keys are
+	// computed and before packages are built. The generated program must report
+	// the GOROOT whose standard library is being compiled, which may differ from
+	// the toolchain used to build llgo.
+	addDefaultRuntimeGlobals(conf, sourcePatchGOROOT, sourcePatchGoVersion)
+
+	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourcePatchGoVersion, mode: conf.Mode, frontendOptions: frontendOptions}, patterns)
+	if typeLoader != nil {
+		dedup.SetImportTypes(typeLoader.load)
+	}
+	// Start fetching runtime/alt package metadata concurrently with main package
+	// loading. The small fixed set of possible alt packages depends only on target
+	// config, so go list for the runtime module overlaps cleanly with user loading.
+	altCfg := runtimePackageConfig(cfg, env.LLGoRuntimeDir())
+	// The runtime submodule may otherwise select a different toolchain from its go.mod.
+	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourcePatchGoVersion)
+	altPrefetchCh := startPrefetchAltMetadata(dedup, &altCfg, prefetchAltPkgPaths(conf, llvmgen.PkgRuntime))
+	defer func() {
+		if altPrefetchCh != nil {
+			<-altPrefetchCh
+		}
+	}()
+
+	loadSpan := buildTrace.startCoordinator("load packages", map[string]any{
+		"patterns": slices.Clone(patterns),
+	})
+	initial, err := packages.LoadExWithSourceOverlay(dedup, sizes, cfg, conf.GoVersion, conf.Overlay, patterns...)
+	loadSpan.setArg("skipped_parse", dedup.SkippedParseCount())
+	loadSpan.done()
+	if err != nil {
+		return nil, err
+	}
+	if conf.AllowNoBody {
+		allowMissingFunctionBodies(initial)
+	}
+	if err := initialPackageListErrors(initial); err != nil {
+		return nil, err
+	}
+	mode := conf.Mode
+	var multiOutputDir string
+	if mode == ModeBuild && conf.OutFile != "" {
+		multiOutputDir, err = prepareBuildOutput(dir, conf.OutFile, len(initial) > 1, initial)
+		if err != nil {
+			return nil, err
+		}
+		if multiOutputDir != "" {
+			conf.OutFile = multiOutputDir
+		}
+	}
+	if mode == ModeTest {
+		configureTestOutput(conf, inv.Args, initial)
+		if conf.RetainTestBinary && testPackageCount(initial) > 1 {
+			return nil, fmt.Errorf("cannot use profiling flags with multiple test packages")
+		}
+		initial, err = filterTestPackages(initial, conf.OutFile)
+		if err != nil {
+			return nil, err
+		}
+		if conf.coverage != nil {
+			initial = append(initial, conf.coverage.noTests...)
+		}
+		if len(initial) == 0 {
+			return nil, nil
+		}
+	} else if len(initial) > 1 {
+		switch mode {
+		case ModeBuild:
+			if conf.BuildMode != BuildModeExe {
+				return nil, fmt.Errorf("-buildmode=%s requires exactly one main package", conf.BuildMode)
+			}
+			fallback = newMultiBuildFallback(conf, initial, dir, multiOutputDir)
+		case ModeInstall:
+			if conf.Target != "" {
+				return nil, fmt.Errorf("cannot install multiple packages to embedded target")
+			}
+		case ModeRun:
+			return nil, fmt.Errorf("cannot run multiple packages")
+		}
+	}
+	if err := loadSyntaxErr(); err != nil {
+		return nil, err
+	}
+
+	defaultGODEBUG, err := resolveDefaultGODEBUG(cfg, sourcePatchGOROOT, initial, patterns)
+	if err != nil {
+		return nil, err
+	}
+	altPkgPaths := altPkgs(initial, conf, llvmgen.PkgRuntime)
+	loadAltSpan := buildTrace.startCoordinator("load runtime packages", map[string]any{
+		"packages": slices.Clone(altPkgPaths),
+	})
+	var altPkgs []*packages.Package
+	var prefetched altMetadataPrefetchResult
+	if altPrefetchCh != nil {
+		prefetched = <-altPrefetchCh
+		altPrefetchCh = nil
+	}
+	if selected, ok := selectPrefetchedAltMetadata(prefetched, altPkgPaths); ok {
+		altPkgs, err = packages.LoadExWithPreloadedMetadata(dedup, sizes, &altCfg, "", conf.Overlay, selected)
+	} else {
+		altPkgs, err = packages.LoadExWithSourceOverlay(dedup, sizes, &altCfg, "", conf.Overlay, altPkgPaths...)
+	}
+	loadAltSpan.done()
+	if err != nil {
+		return nil, err
+	}
+	if err := loadSyntaxErr(); err != nil {
+		return nil, err
+	}
+
+	prog.SetRuntime(altPkgs[0].Types)
+	var pythonPackage *types.Package
+	if python := dedup.Check(llvmgen.PkgPython); python != nil {
+		pythonPackage = python.Types
+	} else if conf.TestPythonPackage != nil {
+		pythonPackage = conf.TestPythonPackage()
+	}
+	prog.SetPython(func() *types.Package { return pythonPackage })
+
+	buildMode := ssaBuildMode
+	passOpt := shouldRunLLVMPasses(mode)
+	if emitDebugInfo {
+		buildMode |= ssa.GlobalDebug
+	}
+	if !IsOptimizeEnabled() {
+		buildMode |= ssa.NaiveForm
+	}
+	prog.SetDebugInfoOptimized(passOpt && conf.OptLevel != optlevel.O0)
+	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
+	patches := make(cl.Patches, len(altPkgPaths))
+	altEntries := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
+	prepareSpan := buildTrace.startCoordinator("prepare shared backend state", nil)
+	if err := preloadPatchedPackageSyntax(prog, patches, dedup, preloadOptions, sourcePatchGOROOT); err != nil {
+		prepareSpan.done()
+		return nil, err
+	}
+	if err := prepareLocalVariables(prog, initial, altPkgs); err != nil {
+		prepareSpan.done()
+		return nil, err
+	}
+	if err := validateVectorMaps(prog, initial, altPkgs); err != nil {
+		prepareSpan.done()
+		return nil, err
+	}
+	prepareSpan.done()
+	frontendOptions.PreloadedSyntax = true
+
+	output := conf.OutFile != ""
+	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
+		patches: patches, callerTracking: cl.NewCallerTracking(),
+		initial: initial, mode: mode,
+		fingerprinting:  make(map[string]bool),
+		pkgs:            map[*packages.Package]Package{},
+		pkgByID:         map[string]Package{},
+		cacheManager:    newCacheManager(),
+		patchFiles:      llgoFiles,
+		output:          output,
+		passOpt:         passOpt,
+		buildConf:       conf,
+		crossCompile:    export,
+		commands:        commands,
+		frontendOptions: frontendOptions,
+		cTransformer:    cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
+		buildTrace:      buildTrace,
+		goVersion:       sourcePatchGoVersion,
+		defaultGODEBUG:  defaultGODEBUG,
+	}
+	defer ctx.closePackageMetas()
+	defer ctx.closePackageArchiveBuffers()
+	// Isolated backends use independent LLVM contexts. Keep Programs needed by
+	// whole-program consumers alive through deadcode analysis and strong ABI type
+	// override emission, then release them on every normal, error, or panic path.
+	defer ctx.disposeBackendPrograms()
+	features := inv.initialFeatures
+	var groups []initialBuildGroup
+	if features == nil && target.GOARCH != "wasm" {
+		// Native locality requirements are known from the prepared package
+		// declarations. Do not construct union SSA that will be discarded.
+		groups = groupInitialBuilds(ctx, altPkgs)
+		if len(groups) > 1 {
+			plan.invocations = initialGroupInvocations(inv, ctx, groups)
+			fallback = nil
+			return nil, nil
+		}
+	}
+
+	pkgs, pkgEntries, err := registerSSAPkgs(ctx, initial, verbose)
+	if err != nil {
+		return nil, err
+	}
+	depPkgs, depEntries, err := registerSSAPkgs(ctx, altPkgs, verbose)
+	if err != nil {
+		return nil, err
+	}
+	ssaEntries := append(append(altEntries, pkgEntries...), depEntries...)
+	ctx.frontend = ctx.newFrontendCache(ssaEntries, buildMode)
+	if ctx.frontend != nil && typeLoader != nil {
+		ctx.frontend.loader = typeLoader
+		typeLoader.ctx = ctx
+	}
+	if ctx.frontend != nil {
+		if err := ctx.frontend.prepare(); err != nil {
+			return nil, err
+		}
+	} else {
+		buildSSAPkgs(ctx, ssaEntries)
+	}
+	if ctx.frontend == nil {
+		if err := recordPackageSSAInstructions(ctx); err != nil {
+			return nil, err
+		}
+		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+		callerSpan.done()
+	}
+	// Pointer-method receiver nil checks are now recorded directly on
+	// ssa.CallCommon.RecvNilCheck and ssa.MakeClosure.RecvNilCheck by llgo/ssa.
+	if features == nil {
+		if target.GOARCH == "wasm" {
+			groups = groupInitialBuilds(ctx, altPkgs)
+		}
+		if len(groups) > 1 {
+			// Rebuild each group's frontend deliberately: sharing the parent's
+			// union SSA would reintroduce cross-program feature dependencies.
+			// Compatible groups still reuse their package-archive cache entries.
+			fallback = nil // Each group retains its own normal error recovery.
+			plan.invocations = initialGroupInvocations(inv, ctx, groups)
+			return nil, nil
+		}
+		if len(groups) == 1 {
+			features = &groups[0].features
+		}
+	}
+	if features != nil {
+		// RTA over a union of roots can conservatively connect otherwise
+		// independent reflection uses. Keep the per-initial feature decision.
+		target.WasmReflectBridges = features.reflectBridges
+		target.WasmFuncInfoEntries = features.funcInfoEntries
+	} else {
+		configureWasmReflectBridges(ctx)
+		configureWasmFuncInfoEntries(ctx)
+	}
+	configureWasmRuntimeFree(ctx)
+
+	allPkgs := append([]*aPackage{}, pkgs...)
+	asmRoots := ctx.wasiSizePruningInputs(sourcePatchGOROOT)
+	configureUnusedGlobalInits(ctx, asmRoots)
+	configureWasiReleaseDCE(ctx, asmRoots)
+	if ctx.frontend != nil {
+		if err := ctx.frontend.certify(); err != nil {
+			return nil, err
+		}
+	}
+	if ctx.frontend != nil {
+		if err := recordPackageSSAInstructions(ctx); err != nil {
+			return nil, err
+		}
+		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
+		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
+		callerSpan.done()
+	}
+	escapeSpan := buildTrace.startCoordinator("Go escape analysis", nil)
+	ctx.frontendOptions.EscapeAnalysis = ctx.prepareEscapeAnalysis(func(hits, misses int) {
+		escapeSpan.setArg("cache_hits", hits)
+		escapeSpan.setArg("cache_misses", misses)
+	})
+	escapeSpan.done()
+	ssaOptSpan := buildTrace.startCoordinator("ssaopt planning", nil)
+	ctx.frontendOptions.OptPlan = ctx.newOptPlan()
+	ssaOptSpan.done()
+	if ctx.frontend != nil {
+		ctx.frontend.capture(ctx.frontendOptions.EscapeAnalysis)
+	}
+	if conf.EscapeDiagnostics > 0 || conf.DependencyEscapeDiagnostics > 0 {
+		selected := make(map[string]bool, len(initial))
+		for _, pkg := range initial {
+			selected[pkg.PkgPath] = true
+		}
+		if err := ctx.frontendOptions.EscapeAnalysis.WriteReport(os.Stderr, func(fn *ssa.Function) int {
+			pkg := fn.Pkg
+			for parent := fn.Parent(); pkg == nil && parent != nil; parent = parent.Parent() {
+				pkg = parent.Pkg
+			}
+			if pkg != nil && selected[pkg.Pkg.Path()] {
+				return conf.EscapeDiagnostics
+			}
+			return conf.DependencyEscapeDiagnostics
+		}); err != nil {
+			return nil, fmt.Errorf("escape report: %w", err)
+		}
+	}
+	allPkgs = append(allPkgs, depPkgs...)
+	var nativeTestRoots []*packages.Package
+	if mode == ModeTest && !inv.compileOnly {
+		for _, pkg := range initial {
+			if needLink(pkg, mode) {
+				nativeTestRoots = append(nativeTestRoots, pkg)
+			}
+		}
+	}
+	if canUseNativeTestDAG(ctx, len(nativeTestRoots)) {
+		dagResult, buildErr := runNativeTestDAG(ctx, allPkgs, nativeTestRoots, conf, verbose)
+		fallback = nil
+		ctx.disposeBackendPrograms()
+		var errs []error
+		if buildErr != nil {
+			errs = append(errs, buildErr)
+		}
+		for index, result := range dagResult.links {
+			if result.err == nil {
+				continue
+			}
+			if inv.disableMultiFallback {
+				errs = append(errs, result.err)
+			} else {
+				errs = append(errs, fmt.Errorf("%s: %w", nativeTestRoots[index].PkgPath, result.err))
+			}
+		}
+		ctx.testFail = dagResult.tests.failed
+		if conf.coverage != nil && buildErr == nil {
+			errs = append(errs, conf.coverage.reportNoTests(conf))
+		}
+		if dagResult.tests.skipped != 0 {
+			fmt.Fprintf(os.Stderr, "FAIL\t%d package(s) skipped by -failfast\n", dagResult.tests.skipped)
+		}
+		if ctx.testFail {
+			if conf.coverage != nil {
+				return allPkgs, coverageTestFailure(errs)
+			}
+			mockable.Exit(1)
+		}
+		return allPkgs, errors.Join(errs...)
+	}
+	allPkgs, err = buildAllPkgs(ctx, allPkgs, verbose)
+	if err != nil {
+		return nil, err
+	}
+	if conf.coverage != nil {
+		if err := conf.coverage.reportNoTests(conf); err != nil {
+			return nil, err
+		}
+	}
+
+	if mode == ModeGen {
+		for _, pkg := range allPkgs {
+			if pkg.Package == initial[0] {
+				return []*aPackage{pkg}, nil
+			}
+		}
+		return nil, fmt.Errorf("initial package not found")
+	}
+
+	linkMultiple := mode == ModeBuild && (len(initial) > 1 || inv.multipleInitials)
+	var linkErrs []error
+	var testPrograms []testProgram
+	for _, pkg := range initial {
+		if !needLink(pkg, mode) || inv.compileOnly {
+			continue
+		}
+		program, err := linkInitialPackage(ctx, pkg, allPkgs, conf, verbose, linkMultiple && conf.OutFile == "")
+		if err != nil {
+			if inv.disableMultiFallback {
+				linkErrs = append(linkErrs, err)
+			} else {
+				linkErrs = append(linkErrs, fmt.Errorf("%s: %w", pkg.PkgPath, err))
+			}
+		} else if program != nil {
+			testPrograms = append(testPrograms, *program)
+		}
+	}
+	// The shared graph completed, so a link failure must not trigger the
+	// expensive per-root compile fallback. Other main packages were already
+	// attempted above and their link errors are returned together.
+	fallback = nil
+	ctx.disposeBackendPrograms()
+	if mode == ModeTest && len(linkErrs) == 0 && len(testPrograms) != 0 {
+		result := runNativeTestPrograms(ctx.commands, testPrograms, conf, os.Stdout, os.Stderr)
+		ctx.testFail = result.failed
+		if result.skipped != 0 {
+			fmt.Fprintf(os.Stderr, "FAIL\t%d package(s) skipped by -failfast\n", result.skipped)
+		}
+	}
+
+	if mode == ModeTest && ctx.testFail {
+		if conf.coverage != nil {
+			return allPkgs, coverageTestFailure(linkErrs)
+		}
+		mockable.Exit(1)
+	}
+
+	return allPkgs, errors.Join(linkErrs...)
+}
+
+func resolveTestPthreadStackSize(conf *Config) {
+	if conf == nil || conf.Mode != ModeTest || conf.PthreadStackSizeSet {
+		return
+	}
+	if conf.Target != "" || conf.Goos != runtime.GOOS || conf.Goarch != runtime.GOARCH {
+		conf.PthreadStackSize = 0
+	}
+}
+
+// Shared-memory collectors need one root chain per host thread. The
+// single-worker scheduler and nogc builds keep their existing root model.
+func useThreadLocalGCRoots(conf *Config, wasmGC bool, workers wasmworkers.Config) bool {
+	return wasmGC && (workers.Enabled() || conf.Goos == "wasip1")
+}
+
+type initialPackageLink struct {
+	pkg           *packages.Package
+	allPkgs       []*aPackage
+	conf          *Config
+	outFmts       *OutFmtDetails
+	preparation   *mainLinkPreparation
+	plan          *mainLinkPlan
+	discardOutput bool
+}
+
+func linkInitialPackage(ctx *context, pkg *packages.Package, allPkgs []*aPackage, conf *Config, verbose, discardOutput bool) (*testProgram, error) {
+	link, err := prepareInitialPackageLink(ctx, pkg, allPkgs, conf, verbose, discardOutput)
+	if err != nil {
+		return nil, err
+	}
+	ctx.releaseSingleExecutableBackend()
+	return executeInitialPackageLink(ctx, link, verbose, false)
+}
+
+// releaseSingleExecutableBackend runs after entry-object generation, including
+// deadcode overrides. External linking and PCLN finalization use the file-backed
+// link plan, so a single executable no longer needs LLVM modules. Keep them for
+// other roots and library headers, which still consume backend state.
+func (ctx *context) releaseSingleExecutableBackend() {
+	mode := ctx.buildConf.Mode
+	if (mode != ModeBuild && mode != ModeTest) || ctx.buildConf.BuildMode != BuildModeExe || len(ctx.initial) != 1 {
+		return
+	}
+	ctx.disposeBackendPrograms()
+	for _, pkg := range ctx.pkgs {
+		if pkg != nil {
+			pkg.LPkg = nil
+		}
+	}
+	ctx.prog.Dispose()
+	ctx.prog = nil
+	ctx.cTransformer = nil
+	ctx.progSSA = nil
+	ctx.dedup = nil
+	ctx.frontend = nil
+	ctx.callerTracking = nil
+	ctx.patches = nil
+	ctx.frontendOptions.EscapeAnalysis = nil
+	ctx.frontendOptions.OptPlan = nil
+	ctx.pkgs = nil
+	ctx.pkgByID = nil
+	// Return unused Go heap pages before the linker/optimizer allocates its
+	// own working set. LLVM's native allocations were released above.
+	debug.FreeOSMemory()
+}
+
+func prepareInitialPackageLink(ctx *context, pkg *packages.Package, allPkgs []*aPackage, conf *Config, verbose, discardOutput bool) (*initialPackageLink, error) {
+	link, err := planInitialPackageLink(ctx, pkg, allPkgs, conf, discardOutput)
+	if err != nil {
+		return nil, err
+	}
+	if err := buildInitialPackageEntry(ctx, link, verbose, false); err != nil {
+		if discardOutput || link.outFmts.tempDir != "" {
+			removeOutFmts(link.outFmts)
+		}
+		return nil, err
+	}
+	return link, nil
+}
+
+func planInitialPackageLink(ctx *context, pkg *packages.Package, allPkgs []*aPackage, conf *Config, discardOutput bool) (*initialPackageLink, error) {
+	name := defaultExecutableName(pkg.PkgPath)
+	// A split group may contain only one initial while still belonging to a
+	// check-only multi-build. Choose a temporary path before linking, not just
+	// cleanup afterward: the default name may already be a user file/directory.
+	outFmts, err := buildOutFmts(name, conf, len(ctx.initial) > 1 || discardOutput, &ctx.crossCompile)
+	if err != nil {
+		return nil, err
+	}
+	resolveOutputs(ctx.commands.dir, outFmts)
+	prepareSpan := ctx.buildTrace.startCoordinator("plan link "+pkg.PkgPath, map[string]any{
+		"package": pkg.PkgPath,
+		"output":  outFmts.Out,
+	})
+	preparation, err := planMainLink(ctx, pkg, allPkgs)
+	prepareSpan.done()
+	if err != nil {
+		if discardOutput || outFmts.tempDir != "" {
+			removeOutFmts(outFmts)
+		}
+		return nil, err
+	}
+	return &initialPackageLink{
+		pkg: pkg, allPkgs: allPkgs, conf: conf, outFmts: outFmts, preparation: preparation,
+		discardOutput: discardOutput,
+	}, nil
+}
+
+func buildInitialPackageEntry(ctx *context, link *initialPackageLink, verbose, worker bool) error {
+	// The preparation can contain full-program PCLN snapshots. Transfer it to
+	// this phase so the DAG does not retain one snapshot per root during tests.
+	preparation := link.preparation
+	link.preparation = nil
+	entryCtx := ctx
+	var entrySpan *buildTraceSpan
+	if worker {
+		if ctx.buildConf.deadcodeDropEnabled() {
+			return errors.New("parallel entry generation does not support dead-code drop")
+		}
+		session := ctx.newBackendSession()
+		defer session.prog.Dispose()
+		entryCtx = ctx.newBackendTask(session)
+		entrySpan = ctx.buildTrace.startWorker("entry-object", link.pkg.PkgPath)
+		entrySpan.setArg("output", link.outFmts.Out)
+	} else {
+		entrySpan = ctx.buildTrace.startCoordinator("entry object "+link.pkg.PkgPath, map[string]any{
+			"package": link.pkg.PkgPath,
+			"output":  link.outFmts.Out,
+		})
+	}
+	plan, err := buildMainLink(entryCtx, link.pkg, preparation, link.outFmts.Out, verbose)
+	entrySpan.done()
+	if err == nil {
+		link.plan = plan
+	}
+	return err
+}
+
+func executeInitialPackageLink(ctx *context, link *initialPackageLink, verbose, worker bool) (*testProgram, error) {
+	// PCLN finalization is the last consumer of the link plan. Keep it local so
+	// completed roots do not retain their metadata while other tests run.
+	plan := link.plan
+	link.plan = nil
+	cleanupTemp := link.outFmts.tempDir != ""
+	defer func() {
+		if link.discardOutput || cleanupTemp {
+			removeOutFmts(link.outFmts)
+		}
+	}()
+	var linkSpan *buildTraceSpan
+	if worker {
+		linkSpan = ctx.buildTrace.startWorker("link", link.pkg.PkgPath)
+	} else {
+		linkSpan = ctx.buildTrace.startCoordinator("link "+link.pkg.PkgPath, map[string]any{
+			"package": link.pkg.PkgPath,
+			"output":  link.outFmts.Out,
+		})
+	}
+	linkCtx := newLinkExecutionContext(ctx, plan)
+	err := func() error {
+		defer linkSpan.done()
+		if needsWasmFinalization(link.conf) {
+			return finalizeWasmArtifacts(linkCtx, plan, link.outFmts, verbose)
+		}
+		if err := executeMainLink(linkCtx, plan, verbose); err != nil {
+			return err
+		}
+		if err := finalizeRuntimePCLN(linkCtx, link.outFmts, verbose); err != nil {
+			return err
+		}
+		if err := finalizeDebugArtifact(link.conf, link.outFmts, verbose); err != nil {
+			return err
+		}
+		if err := finalizeDarwinSizeExecutable(linkCtx, link.outFmts.Out, verbose); err != nil {
+			return err
+		}
+		if err := finalizeNativeSymbols(linkCtx, link.outFmts, verbose); err != nil {
+			return err
+		}
+		if err := finalizeNativeDWARFCompression(linkCtx, link.outFmts.Out, verbose); err != nil {
+			return err
+		}
+		return removeStaleWasmManifest(link.conf, link.outFmts)
+	}()
+	if err != nil {
+		return nil, err
+	}
+	if linkCtx.buildConf.BuildMode == BuildModeCArchive || linkCtx.buildConf.BuildMode == BuildModeCShared {
+		libname := strings.TrimSuffix(filepath.Base(link.outFmts.Out), link.conf.AppExt)
+		headerPath := filepath.Join(filepath.Dir(link.outFmts.Out), libname) + ".h"
+		if err := header.GenHeaderFile(linkCtx.prog, cHeaderPackages(link.allPkgs), libname, headerPath, verbose); err != nil {
+			return nil, err
+		}
+		return nil, reportBuildOutputs(link.conf, link.outFmts, link.allPkgs, os.Stdout, os.Stderr)
+	}
+
+	envMap := link.outFmts.ToEnvMap()
+	if link.conf.Target != "" {
+		if err := firmware.ConvertFormats(linkCtx.crossCompile.BinaryFormat, linkCtx.crossCompile.FormatDetail, envMap); err != nil {
+			return nil, err
+		}
+	}
+	if err := reportBuildOutputs(link.conf, link.outFmts, link.allPkgs, os.Stdout, os.Stderr); err != nil {
+		return nil, err
+	}
+	switch link.conf.Mode {
+	case ModeInstall:
+		if link.conf.Target != "" {
+			return nil, flash.FlashDevice(linkCtx.crossCompile.Device, envMap, linkCtx.buildConf.Port, verbose)
+		}
+	case ModeRun, ModeTest, ModeCmpTest:
+		if link.conf.Mode == ModeCmpTest && link.pkg.PkgPath == "command-line-arguments" {
+			// The reference must compile the same selected files. The synthetic
+			// package name is not importable, and using the directory would also
+			// compile files the caller deliberately omitted.
+			cmpTest(linkCtx.commands, link.pkg.Dir, link.pkg.PkgPath, link.outFmts.Out, link.conf.GenExpect, link.conf.RunArgs, link.pkg.GoFiles...)
+			return nil, nil
+		}
+		if link.conf.Mode == ModeTest && (len(link.conf.Exec) != 0 || link.conf.Target == "" || namedTargetUsesEmulatorPath(link.conf) && !link.conf.CompileOnly) {
+			runner := goCompatibleWasmRunner(link.conf)
+			if link.conf.Target != "" {
+				runner = linkCtx.crossCompile.Emulator
+			}
+			program := &testProgram{
+				coverage:  link.conf.coverage != nil,
+				app:       link.outFmts.Out,
+				pkgDir:    link.pkg.Dir,
+				pkgName:   strings.TrimSuffix(link.pkg.PkgPath, ".test"),
+				runner:    runner,
+				runnerEnv: envMap,
+				profile:   string(linkCtx.crossCompile.WasmProfile),
+			}
+			if cleanupTemp {
+				program.temporaryOutputs = link.outFmts
+				cleanupTemp = false // runNativeTest now owns the temporary output.
+			}
+			return program, nil
+		}
+		if link.conf.Mode == ModeRun && len(link.conf.Exec) != 0 {
+			return nil, runWithExec(linkCtx.commands, link.outFmts.Out, link.conf,
+				runnerDetails{phase: "run", target: link.conf.Target, artifact: link.outFmts.Out, packageName: link.pkg.PkgPath, timeout: link.conf.RunnerTimeout},
+				os.Stdout, os.Stderr)
+		}
+		if link.conf.Target == "" {
+			runner := goCompatibleWasmRunner(link.conf)
+			if runner != "" && link.conf.Mode == ModeRun {
+				return nil, runInEmulator(linkCtx.commands, runner, string(linkCtx.crossCompile.WasmProfile), envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
+			}
+			return nil, runNative(linkCtx, link.outFmts.Out, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode)
+		}
+		if namedTargetUsesEmulatorPath(link.conf) {
+			return nil, runInEmulator(linkCtx.commands, linkCtx.crossCompile.Emulator, string(linkCtx.crossCompile.WasmProfile), envMap, link.pkg.Dir, link.pkg.PkgPath, link.conf, link.conf.Mode, verbose)
+		}
+		if err := flash.FlashDevice(linkCtx.crossCompile.Device, envMap, linkCtx.buildConf.Port, verbose); err != nil {
+			return nil, err
+		}
+		return nil, monitor.Monitor(monitor.MonitorConfig{
+			Port: linkCtx.buildConf.Port, Target: link.conf.Target, Executable: link.outFmts.Out,
+			BaudRate: link.conf.BaudRate, SerialPort: linkCtx.crossCompile.Device.SerialPort,
+		}, verbose)
+	}
+	return nil, nil
+}
+
+// goCompatibleWasmRunner preserves cmd/go's raw GOOS/GOARCH source selection
+// while routing the linked module through the host adapter required to execute
+// it. Named targets already obtain their runner from the target definition.
+func goCompatibleWasmRunner(conf *Config) string {
+	if conf == nil || conf.Target != "" || conf.Goarch != "wasm" {
+		return ""
+	}
+	switch conf.Goos {
+	case "js":
+		return fmt.Sprintf("node %q --browser-only %q", filepath.Join(env.LLGoROOT(), "targets", "emscripten-runner.mjs"), "{}")
+	case "wasip1":
+		return crosscompile.WASIThreadedEmulator
+	}
+	return ""
+}
+
+func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
+	return &context{
+		prog:                 ctx.prog,
+		mode:                 ctx.mode,
+		buildConf:            ctx.buildConf,
+		crossCompile:         ctx.crossCompile,
+		commands:             ctx.commands,
+		pclnExternal:         plan.pclnExternal,
+		wasmClosedProgram:    ctx.wasmClosedProgram,
+		frontendOptions:      cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
+		linkRuntimeSites:     &plan.runtimeSites,
+		stripDarwinLTOLocals: plan.stripDarwinLTOLocals,
+		darwinHiddenGlobals:  plan.darwinHiddenGlobals,
+		goVersion:            ctx.goVersion,
+	}
+}
+
+func namedTargetUsesEmulatorPath(conf *Config) bool {
+	if conf.Emulator {
+		return true
+	}
+	// runInEmulator returns before inspecting the emulator when -c is set.
+	// Route compile-only tests there instead of treating the target as a device.
+	return conf.Mode == ModeTest && conf.CompileOnly
+}
+
+func removeOutFmts(outFmts *OutFmtDetails) {
+	if outFmts == nil {
+		return
+	}
+	if outFmts.tempDir != "" {
+		// tempDir comes only from os.MkdirTemp in buildOutFmts and contains all
+		// intermediate sidecars as well as the final test executable.
+		_ = os.RemoveAll(outFmts.tempDir)
+		return
+	}
+	if outFmts.Out != "" {
+		_ = os.RemoveAll(darwinLTOObjectDir(outFmts.Out))
+	}
+	if outFmts.DSYM != "" {
+		_ = os.RemoveAll(outFmts.DSYM)
+	}
+	for _, output := range []string{
+		outFmts.Out, outFmts.PCLN, outFmts.Bin, outFmts.Hex, outFmts.WasmManifest,
+		outFmts.Img, outFmts.Uf2, outFmts.Zip,
+	} {
+		if output != "" {
+			_ = os.Remove(output)
+		}
+	}
+}
+
+func usesWindowsToolchainProfile(hostGOOS string, conf *Config) bool {
+	// Linked Windows output always needs a coherent compiler, ABI, CRT, and
+	// linker profile. This also covers a Unix-hosted LLGo compiler using an
+	// llvm-mingw toolchain. IR-only generation remains host-independent unless
+	// it runs natively on Windows, preserving golden-test behavior.
+	return conf.Target == "" && conf.Goos == "windows" &&
+		(hostGOOS == "windows" || conf.Mode != ModeGen)
+}
+
+func parseNativeToolchainInput(commands commandEnv, options LinkOptions, resolveWindows bool) (crosscompile.NativeToolchainInput, error) {
+	input := crosscompile.NativeToolchainInput{
+		Dir:            commands.dir,
+		Environ:        slices.Clone(commands.environ),
+		ResolveWindows: resolveWindows,
+	}
+	for _, setting := range []struct {
+		name       string
+		value      string
+		out        *[]string
+		allowEmpty bool
+	}{
+		{name: "CC", value: commands.lookup("CC"), out: &input.CC},
+		{name: "CXX", value: commands.lookup("CXX"), out: &input.CXX},
+		{name: "-extld", value: options.ExternalLinker, out: &input.ExternalLinker, allowEmpty: true},
+		{name: "-extldflags", value: options.ExternalLinkerFlags, out: &input.ExternalFlags, allowEmpty: true},
+	} {
+		if setting.value == "" {
+			continue
+		}
+		args, err := quoted.Split(setting.value)
+		if err != nil {
+			return crosscompile.NativeToolchainInput{}, fmt.Errorf("could not parse %s value %q: %w", setting.name, setting.value, err)
+		}
+		if len(args) == 0 {
+			if setting.allowEmpty {
+				continue
+			}
+			return crosscompile.NativeToolchainInput{}, fmt.Errorf("%s requires a non-empty command or argument list", setting.name)
+		}
+		*setting.out = args
+	}
+	return input, nil
+}
+
+// cHeaderPackages excludes the patched standard runtime implementation. Its
+// //export callbacks are linker implementation details and may use internal C
+// types that are deliberately not representable in a public generated header.
+func cHeaderPackages(allPkgs []*aPackage) []llvmgen.Package {
+	pkgs := make([]llvmgen.Package, 0, len(allPkgs))
+	for _, pkg := range allPkgs {
+		if pkg == nil || pkg.LPkg == nil || pkg.Package == nil || pkg.PkgPath == "runtime" || isRuntimePkg(pkg.PkgPath) || !hasLocalCExports(pkg.LPkg) {
+			continue
+		}
+		pkgs = append(pkgs, pkg.LPkg)
+	}
+	return pkgs
+}
+
+func hasLocalCExports(pkg llvmgen.Package) bool {
+	if pkg == nil {
+		return false
+	}
+	for name := range pkg.ExportFuncs() {
+		if !strings.Contains(name, ".") || strings.HasPrefix(name, pkg.Path()+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// applyBuildModeCompileFlags adds code-generation flags that must be present
+// while package C/C++ sources are compiled. Passing -fPIC only to the final
+// shared-library link is too late for objects containing global references.
+func applyBuildModeCompileFlags(mode BuildMode, toolchain crosscompile.NativeToolchain, export *crosscompile.Export) {
+	if mode == BuildModeCShared && toolchain.ObjectFormat != crosscompile.ObjectFormatCOFF &&
+		export != nil && !slices.Contains(export.CCFLAGS, "-fPIC") {
+		export.CCFLAGS = append(export.CCFLAGS, "-fPIC")
+	}
+}
+
+func cSharedLinkArgs(toolchain crosscompile.NativeToolchain) []string {
+	args := []string{"-shared"}
+	if toolchain.ObjectFormat != crosscompile.ObjectFormatCOFF {
+		args = append(args, "-fPIC")
+	}
+	return args
+}
+
+func cSharedImportLibraryArgs(toolchain crosscompile.NativeToolchain, output string) []string {
+	if toolchain.ObjectFormat != crosscompile.ObjectFormatCOFF || toolchain.ABI != crosscompile.PlatformABIGNU {
+		return nil
+	}
+	// lld-link creates a sibling .lib automatically for MSVC links. MinGW's
+	// GNU-flavor lld needs an explicit output path for the equivalent COFF
+	// import library.
+	imports := strings.TrimSuffix(output, filepath.Ext(output)) + ".lib"
+	return []string{"-Xlinker", "--out-implib", "-Xlinker", imports}
+}
+
+// DefaultBuildTags returns the build tags LLGo always enables.
+func DefaultBuildTags() string {
+	return "llgo,math_big_pure_go,purego"
+}
+
+func configureWasmWorkers(conf *Config, export *crosscompile.Export) (wasmworkers.Config, error) {
+	config, err := wasmworkers.Parse(os.Getenv(llgoWasmWorkers))
+	if err != nil {
+		return config, err
+	}
+	if err := config.ValidateTarget(conf.Goos, conf.Goarch, export.WasmProfile, export.WasmProvider); err != nil {
+		return config, err
+	}
+	// GoJS and Emscripten providers both currently use emcc+Asyncify. Bind
+	// this compatibility shim to the actual link contract, so a future JSPI
+	// or non-Emscripten provider does not require Asyncify control exports.
+	if conf.Goos == "js" && conf.Goarch == "wasm" && slices.Contains(export.LDFLAGS, "-sASYNCIFY=1") {
+		export.LDFLAGS = append(export.LDFLAGS,
+			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", "emscripten-asyncify-exports.js"),
+		)
+	}
+	if conf.Goos == "js" && export.WasmProvider == crosscompile.WasmProviderEmscripten {
+		export.LDFLAGS = append(export.LDFLAGS,
+			"--pre-js", filepath.Join(env.LLGoROOT(), "targets", "wasm_fs.js"),
+			"--js-library", wasmworkers.BrowserFSPath(env.LLGoROOT()),
+			"-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=$llgoBrowserFS",
+		)
+	}
+	if !config.Enabled() {
+		return config, nil
+	}
+	preJS := wasmworkers.PreJSPath(env.LLGoROOT())
+	if _, err := os.Stat(preJS); err != nil {
+		return config, fmt.Errorf("locate WebAssembly worker host shim: %w", err)
+	}
+	workers := strconv.Itoa(config.Count)
+	export.BuildTags = append(export.BuildTags, "llgo.wasm.workers")
+	export.CCFLAGS = append(export.CCFLAGS, "-pthread", "-DLLGO_WASM_WORKERS="+workers)
+	export.LDFLAGS = append(export.LDFLAGS,
+		"--pre-js", preJS,
+		"-pthread",
+		"-sPTHREAD_POOL_SIZE="+workers,
+		"-sPROXY_TO_PTHREAD=1",
+		"-sEXIT_RUNTIME=1",
+		// EXPORT_ALL eagerly reads memory views while a pthread worker is still
+		// waiting for Emscripten to deliver its shared WebAssembly.Memory. The
+		// profile already lists the public runtime methods it needs explicitly.
+		"-sEXPORT_ALL=0",
+	)
+	export.WasmRuntime.RunMainTask = true
+	return config, nil
+}
+
+func configureWasmReflectLibffi(conf *Config, export *crosscompile.Export, workers wasmworkers.Config) error {
+	tags := splitSourcePatchBuildTags(conf.Tags)
+	if !slices.Contains(tags, wasmReflectLibffiTag) {
+		return nil
+	}
+	if conf.Goos != "js" || conf.Goarch != "wasm" {
+		return fmt.Errorf("%s requires GOOS=js GOARCH=wasm", wasmReflectLibffiTag)
+	}
+	if workers.Enabled() || slices.Contains(tags, "llgo.wasm.workers") || slices.Contains(export.BuildTags, "llgo.wasm.workers") {
+		return fmt.Errorf("%s does not support WebAssembly workers", wasmReflectLibffiTag)
+	}
+	return crosscompile.EnableWasmReflectLibffi(export)
+}
+
+func configureWasmGC(conf *Config, export *crosscompile.Export) (bool, error) {
+	explicit := slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear")
+	if conf.Goarch != "wasm" {
+		if explicit {
+			return false, fmt.Errorf("llgo.wasm.gc.linear does not support GOARCH=%s", conf.Goarch)
+		}
+		return false, nil
+	}
+
+	defaultEnabled := false
+	switch export.WasmProfile {
+	case crosscompile.WasmProfileJ32, crosscompile.WasmProfileJ64:
+		defaultEnabled = true
+	case crosscompile.WasmProfileW32:
+		if slices.Contains(splitSourcePatchBuildTags(conf.Tags), "nogc") {
+			if explicit {
+				return false, errors.New("WASI threads cannot combine nogc with llgo.wasm.gc.linear")
+			}
+			return false, nil
+		}
+		defaultEnabled = true
+	case crosscompile.WasmProfileNone:
+		if explicit {
+			return false, fmt.Errorf("llgo.wasm.gc.linear requires a supported hosted WebAssembly profile")
+		}
+		return false, nil
+	default:
+		if explicit {
+			return false, fmt.Errorf("llgo.wasm.gc.linear does not support WebAssembly profile %q", export.WasmProfile)
+		}
+		return false, nil
+	}
+
+	enabled := explicit || defaultEnabled
+	if enabled && !explicit {
+		if conf.Tags != "" {
+			conf.Tags += ","
+		}
+		conf.Tags += "llgo.wasm.gc.linear"
+	}
+	return enabled, nil
+}
+
+func usesSingleWorkerWasmScheduler(conf *Config) bool {
+	if conf == nil || conf.Goarch != "wasm" {
+		return false
+	}
+	switch conf.Goos {
+	case "js":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyWasmGCLinkFlags(conf *Config, export *crosscompile.Export) {
+	if conf.Goos != "js" || conf.Goarch != "wasm" ||
+		(export.WasmProfile != crosscompile.WasmProfileJ32 && export.WasmProfile != crosscompile.WasmProfileJ64) ||
+		!slices.Contains(splitSourcePatchBuildTags(conf.Tags), "llgo.wasm.gc.linear") {
+		return
+	}
+	if !slices.Contains(export.LDFLAGS, "-sMALLOC=none") {
+		export.LDFLAGS = append(export.LDFLAGS, "-sMALLOC=none")
+	}
+}
+
+func allowMissingFunctionBodies(initial []*packages.Package) {
+	for _, pkg := range initial {
+		hasMissingBody := false
+		hasOtherError := false
+		for _, pkgErr := range pkg.Errors {
+			switch {
+			case strings.Contains(pkgErr.Msg, "missing function body"):
+				hasMissingBody = true
+			case strings.HasPrefix(pkgErr.Msg, "# "):
+				// go list prefixes compiler diagnostics with the package name.
+			default:
+				hasOtherError = true
+			}
+		}
+		if hasMissingBody && !hasOtherError {
+			pkg.Errors = nil
+			pkg.TypeErrors = nil
+			pkg.IllTyped = false
+		}
+	}
+}
+
+func needLink(pkg *packages.Package, mode Mode) bool {
+	if mode == ModeTest {
+		return strings.HasSuffix(pkg.ID, ".test")
+	}
+	return pkg.Name == "main"
+}
+
+func filterTestPackages(initial []*packages.Package, outFile string) ([]*packages.Package, error) {
+	filtered := initial[:0]
+	for _, pkg := range initial {
+		if needLink(pkg, ModeTest) {
+			filtered = append(filtered, pkg)
+		}
+	}
+	if len(filtered) > 1 && outFile != "" {
+		return nil, fmt.Errorf("cannot use -o flag with multiple packages")
+	}
+	return filtered, nil
+}
+
+func (p Package) setNeedRuntimeOrPyInit(needRuntime, needPyInit bool) {
+	p.NeedRt = needRuntime
+	p.NeedPyInit = needPyInit
+}
+
+func (p Package) isNeedRuntimeOrPyInit() (needRuntime, needPyInit bool) {
+	needRuntime = p.NeedRt
+	needPyInit = p.NeedPyInit
+	return
+}
+
+const (
+	ssaBuildMode = ssa.SanityCheckFunctions | ssa.InstantiateGenerics
+)
+
+type context struct {
+	conf           *packages.Config
+	progSSA        *ssa.Program
+	prog           llvmgen.Program
+	dedup          packages.Deduper
+	patches        cl.Patches
+	callerTracking *cl.CallerTracking
+	frontend       *frontendCache
+	fingerprinting map[string]bool
+	cacheDisabled  map[string]none
+	patchFiles     map[string][]string
+	initial        []*packages.Package
+	pkgs           map[*packages.Package]Package // cache for lookup
+	pkgByID        map[string]Package            // cache for lookup by pkg.ID
+	mode           Mode
+	nLibdir        int32
+	output         bool
+	passOpt        bool
+
+	buildConf         *Config
+	crossCompile      crosscompile.Export
+	commands          commandEnv
+	frontendOptions   cl.Options
+	wasmRuntimeFree   bool
+	wasmClosedProgram bool // true when native inputs cannot introduce untracked Go references
+	wasiSizeRoots     []string
+
+	cTransformer *cabi.Transformer
+
+	testFail bool
+
+	// Cache related fields
+	cacheManager *cacheManager
+	posCache     frontendPosCache
+	llvmVersion  string
+	// goVersion is the GOVERSION of the GOROOT whose standard library is being
+	// compiled. collectEnvInputs records it through sourceGoVersion; compiled
+	// programs report it through addDefaultRuntimeGlobals as runtime.Version().
+	goVersion      string
+	defaultGODEBUG map[string]string // generated entry package ID -> effective defaults
+
+	// go list derived file lists (SFiles, etc.)
+	sfilesCache       map[string][]string // pkg.ID -> absolute .s/.S file paths
+	sfilesFrozen      bool
+	llgoFilesCache    map[*packages.Package][]llgoFileInput
+	llgoFilesFrozen   bool
+	llgoFileHashMu    sync.RWMutex
+	llgoFileHashCache map[llgoFileHashKey]string
+	llgoFileErrCache  map[llgoFileHashKey]error
+	depfileChecksOnce sync.Once
+	depfileChecks     *depfileCheckCache
+	pkgInputsMu       sync.RWMutex
+
+	// plan9asm package policy parsed from env.
+	plan9asmOnce  sync.Once
+	plan9asmReady bool
+	plan9asmMode  plan9asmPkgsEnvMode
+	plan9asmPkgs  map[string]bool
+	// Per-context, package-path-keyed Plan 9 assembly signature cache. Binding
+	// it to this context's lifetime avoids a global {*context, pkgPath} cache
+	// retaining completed frontend graphs.
+	plan9asmSigs sync.Map // package path -> map[string]struct{}
+
+	// pclnExternal is populated while generating the synthetic main module
+	// and completed with final linked PCs by the post-link externalizer.
+	pclnExternal *pclnmap.Data
+	pclnEmbedded *pclnmap.Data
+
+	// stripDarwinLTOLocals is set by the final executable link plan. LTO has
+	// already internalized ordinary Go symbols, but pclnpost still needs them
+	// until the runtime tables have been rewritten.
+	stripDarwinLTOLocals bool
+	// Metadata relinks stage the executable elsewhere, but its debug map must
+	// keep LTO objects under the final output's persistent directory.
+	darwinLTOObjectOutput    string
+	darwinLTOObjectDirectory string
+
+	// A non-nil list hides data/type globals while preserving function
+	// exports needed by the DWARF runtime dlsym path.
+	darwinHiddenGlobals []string
+
+	// linkRuntimeSites snapshots the backend-dependent site policy for linking.
+	linkRuntimeSites *bool
+
+	// effectiveLinkArgs records the actual driver invocation for the Wasm manifest.
+	effectiveLinkArgs []string
+
+	buildTrace *buildTracer
+
+	wasmProgramUseOnce sync.Once
+	wasmProgramUse     *wasmProgramUse
+}
+
+// backendAbiTypes snapshots Go-owned type identities from isolated Programs
+// in stable linked-package order. Entry generation may consume the result in
+// another Program after the source Programs have been disposed; no LLVM value
+// may cross that ownership boundary.
+func (c *context) backendAbiTypes(pkgs []Package) []llvmgen.AbiTypeInfo {
+	seen := make(map[llvmgen.Program]none)
+	var infos []llvmgen.AbiTypeInfo
+	for _, pkg := range pkgs {
+		if pkg == nil {
+			continue
+		}
+		if pkg.linkSnapshot != nil {
+			infos = append(infos, pkg.linkSnapshot.abiTypes...)
+			continue
+		}
+		if pkg.LPkg == nil {
+			continue
+		}
+		prog := pkg.LPkg.Prog
+		if prog == nil || prog == c.prog {
+			continue
+		}
+		if _, ok := seen[prog]; ok {
+			continue
+		}
+		seen[prog] = none{}
+		infos = append(infos, prog.AbiTypes()...)
+	}
+	return infos
+}
+
+func (c *context) disposeBackendPrograms() {
+	programs := make(map[llvmgen.Program]none)
+	// Clear every package reference before destroying any LLVM context so no
+	// later observer can retain a dangling cross-context module.
+	for _, pkg := range c.pkgs {
+		if pkg == nil || pkg.LPkg == nil {
+			continue
+		}
+		prog := pkg.LPkg.Prog
+		if prog == nil || prog == c.prog {
+			continue
+		}
+		programs[prog] = none{}
+		pkg.LPkg = nil
+	}
+	for prog := range programs {
+		prog.Dispose()
+	}
+}
+
+// closePackageMetas releases metadata mappings owned by this build. Metadata
+// remains available to hooks and whole-program consumers until Do returns.
+func (c *context) closePackageMetas() {
+	for _, pkg := range c.pkgs {
+		if pkg.Meta == nil {
+			continue
+		}
+		_ = pkg.Meta.Close()
+		pkg.Meta = nil
+	}
+}
+
+// backendSession owns all LLVM state used to lower one package. The Program
+// shares only the coordinator's already-prepared Go metadata.
+type backendSession struct {
+	prog        llvmgen.Program
+	transformer *cabi.Transformer
+}
+
+func (c *context) newBackendSession() backendSession {
+	prog := c.prog.NewBackendProgram()
+	return backendSession{
+		prog: prog,
+		transformer: cabi.NewTransformer(
+			prog,
+			c.crossCompile.LLVMTarget,
+			c.crossCompile.TargetABI,
+			!shouldEmitDebugInfo(c.buildConf, &c.crossCompile),
+		),
+	}
+}
+
+// preloadPatchedPackageSyntax prepares the effective types.Package used by
+// patched lowering. Normal and alternate packages are already covered by the
+// packages loader's preload callback, but patch.Types has a distinct identity.
+func preloadPatchedPackageSyntax(prog llvmgen.Program, patches cl.Patches, dedup packages.Deduper, options cl.Options, goroot string) error {
+	paths := make([]string, 0, len(patches))
+	for pkgPath := range patches {
+		paths = append(paths, pkgPath)
+	}
+	slices.Sort(paths)
+	for _, pkgPath := range paths {
+		packageOptions := options
+		patch := patches[pkgPath]
+		alt := dedup.Check(altPkgPathPrefix + pkgPath)
+		if alt == nil || len(alt.Syntax) == 0 || patch.Types == nil {
+			continue
+		}
+		fset := alt.Fset
+		files := slices.Clone(alt.Syntax)
+		if original := dedup.Check(pkgPath); original != nil {
+			fset = original.Fset
+			files = append(slices.Clone(original.Syntax), files...)
+			packageOptions.AllowInternalDirectives = isStandardLibraryPackage(original.Package, goroot)
+		}
+		if err := cl.ParsePkgSyntaxWithOptions(prog, fset, patch.Types, files, packageOptions); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isStandardLibraryPackage(pkg *packages.Package, goroot string) bool {
+	if pkg == nil || pkg.Module != nil || pkg.PkgPath == "" || pkg.Dir == "" || goroot == "" {
+		return false
+	}
+	first := strings.SplitN(pkg.PkgPath, "/", 2)[0]
+	rel, err := filepath.Rel(filepath.Join(goroot, "src"), pkg.Dir)
+	return err == nil && !strings.Contains(first, ".") && rel != "." && rel != ".." && !filepath.IsAbs(rel) && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func (c *context) compiler() *clang.Cmd {
+	cmd := clang.NewCompiler(c.clangConfig())
+	cmd.Dir = c.commands.dir
+	cmd.Env = slices.Clone(c.commands.environ)
+	cmd.Verbose = c.shouldPrintCommands(false)
+	return cmd
+}
+
+// irCompiler compiles LLVM IR produced by LLGo itself. Emscripten's bundled
+// clang remains authoritative for C/C++ sources and final linking, but recent
+// Emscripten releases bundle an LLVM backend that cannot select some valid
+// wasm64 loads emitted by the LLVM version linked into LLGo. Use that matching
+// LLVM installation for Memory64 IR so the producer and consumer agree, while
+// preserving emcc's sysroot, Embind, and JavaScript glue at the C ABI boundary.
+func (c *context) irCompiler() *clang.Cmd {
+	cmd := clang.NewCompiler(c.irClangConfig())
+	cmd.Dir = c.commands.dir
+	cmd.Env = slices.Clone(c.commands.environ)
+	cmd.Verbose = c.shouldPrintCommands(false)
+	return cmd
+}
+
+func (c *context) irClangConfig() clang.Config {
+	config := c.clangConfig()
+	if c.crossCompile.WasmProfile == crosscompile.WasmProfileJ64 &&
+		c.crossCompile.WasmProvider == crosscompile.WasmProviderEmscripten {
+		// cmd/llgo puts the LLVM installation selected at build time first in
+		// PATH. Do not inherit emcc's command prefix here: only its target and
+		// optimization flags are relevant when consuming LLVM IR. Preserve the
+		// backend settings emcc normally supplies: the SjLj pass lowers the
+		// setjmp/longjmp used by LLGo's panic path, while the other two keep its
+		// WebAssembly code-generation policy unchanged.
+		config.CC = "clang"
+		config.CCArgs = nil
+		config.CCFLAGS = append(slices.Clone(config.CCFLAGS),
+			"-mllvm", "-combiner-global-alias-analysis=false",
+			"-mllvm", "-enable-emscripten-sjlj",
+			"-mllvm", "-disable-lsr",
+		)
+	}
+	return config
+}
+
+func (c *context) cxxCompiler() *clang.Cmd {
+	cmd := clang.NewCXXCompiler(c.clangConfig())
+	cmd.Dir = c.commands.dir
+	cmd.Env = slices.Clone(c.commands.environ)
+	cmd.Verbose = c.shouldPrintCommands(false)
+	return cmd
+}
+
+func (c *context) clangConfig() clang.Config {
+	config := clang.NewConfig(
+		c.crossCompile.CC,
+		c.crossCompile.CCFLAGS,
+		c.crossCompile.CFLAGS,
+		c.crossCompile.LDFLAGS,
+		c.crossCompile.Linker,
+	)
+	config.CCArgs = slices.Clone(c.crossCompile.CCArgs)
+	config.CXX = c.crossCompile.CXX
+	config.CXXArgs = slices.Clone(c.crossCompile.CXXArgs)
+	config.LinkerArgs = slices.Clone(c.crossCompile.LinkerArgs)
+	return config
+}
+
+func (c *context) linker() *clang.Cmd {
+	config := c.clangConfig()
+	config.LDFLAGS = append(c.nativeFullLTOLinkerArgs(), config.LDFLAGS...)
+	linkerProgram := config.Linker
+	useCXX := config.Linker == "" && config.CXX != ""
+	if useCXX {
+		// Native LLGo historically linked through clang++. Preserve that C++
+		// runtime behavior while allowing CC and CXX to be selected and probed
+		// independently. An explicit -extld keeps Go's precedence.
+		linkerProgram = config.CXX
+	} else if linkerProgram == "" {
+		linkerProgram = config.CC
+	}
+	if c.shouldDisableClangImplicitWasmOpt(linkerProgram) {
+		config.LDFLAGS = append(slices.Clone(config.LDFLAGS), "--no-wasm-opt")
+	}
+	cmd := clang.NewLinker(config)
+	if useCXX {
+		cmd = clang.NewCXXCompiler(config)
+	}
+	cmd.Dir = c.commands.dir
+	cmd.Env = slices.Clone(c.commands.environ)
+	cmd.Verbose = c.shouldPrintCommands(false)
+	return cmd
+}
+
+// shouldDisableClangImplicitWasmOpt keeps post-link optimization under LLGo's
+// control. Asyncify profiles run explicit passes with the requested debug
+// policy; WASI threads need no Binaryen pass. Clang's implicit invocation would
+// otherwise change the output (and discard DWARF) whenever wasm-opt is on PATH.
+func (c *context) shouldDisableClangImplicitWasmOpt(linkerProgram string) bool {
+	return c != nil &&
+		c.buildConf != nil &&
+		c.buildConf.Goarch == "wasm" &&
+		c.crossCompile.Linker == "" &&
+		clangDriverMayRunWasmOpt(linkerProgram)
+}
+
+// clangDriverMayRunWasmOpt identifies clang drivers. Emscripten drivers are
+// deliberately excluded because they manage their own wasm-opt pipeline.
+func clangDriverMayRunWasmOpt(program string) bool {
+	name := strings.TrimSuffix(strings.ToLower(filepath.Base(program)), ".exe")
+	return name == "clang" || name == "clang++" ||
+		strings.HasSuffix(name, "-clang") || strings.HasSuffix(name, "-clang++")
+}
+
+// shouldPrintCommands reports whether command tracing should be enabled.
+func (c *context) shouldPrintCommands(verbose bool) bool {
+	return c.buildConf.PrintCommands || c.buildConf.Verbose || verbose
+}
+
+func (c *context) hasAltPkg(pkgPath string) bool {
+	return hasAltPkgForTarget(c.buildConf, pkgPath)
+}
+
+// normalizeToArchive creates an archive from file and memory members and sets ArchiveFile.
+// This ensures the link step always consumes .a archives regardless of cache state.
+func normalizeToArchive(ctx *context, aPkg *aPackage, verbose bool) error {
+	if len(aPkg.ObjFiles) == 0 && len(aPkg.ObjBuffers) == 0 {
+		return nil
+	}
+	defer aPkg.disposeArchiveBuffers()
+
+	archiveFile, err := os.CreateTemp("", "pkg-*.a")
+	if err != nil {
+		return fmt.Errorf("create temp archive: %w", err)
+	}
+	archiveFile.Close()
+	archivePath := archiveFile.Name()
+
+	if err := ctx.createPackageArchiveFile(archivePath, aPkg, verbose); err != nil {
+		os.Remove(archivePath)
+		return fmt.Errorf("create archive for %s: %w", aPkg.PkgPath, err)
+	}
+
+	aPkg.cleanupTemporaryObjFiles()
+	aPkg.ObjFiles = nil
+	aPkg.ArchiveFile = archivePath
+	return nil
+}
+
+func buildAllPkgs(ctx *context, pkgs []*aPackage, verbose bool) ([]*aPackage, error) {
+	// Split packages into runtime tree vs others so runtime preparation remains
+	// deferred until ordinary package results show that it is needed.
+	var runtimeTasks []*packageBuildTask
+	var normalTasks []*packageBuildTask
+	for _, p := range pkgs {
+		task := newPackageBuildTask(p)
+		if task.isRuntime() {
+			runtimeTasks = append(runtimeTasks, task)
+		} else {
+			normalTasks = append(normalTasks, task)
+		}
+	}
+	// Resolve the lazy Plan 9 policy before workers start.
+	_ = ctx.plan9asmEnabled("")
+
+	// Host links always include runtime, so put ordinary and runtime packages in
+	// the same cost-ordered worker pool. This avoids making runtime wait behind
+	// the longest ordinary backend without adding another scheduling boundary.
+	if ctx.buildConf.Target == "" {
+		normalTasks = append(normalTasks, runtimeTasks...)
+		if err := buildPackageGroup(ctx, normalTasks, verbose); err != nil {
+			return nil, err
+		}
+		return pkgs, nil
+	}
+
+	// Cross builds still defer all runtime preparation until ordinary package
+	// results show it is needed; unused target runtimes must remain untouched.
+	if err := buildPackageGroup(ctx, normalTasks, verbose); err != nil {
+		return nil, err
+	}
+	needRuntime, needPyInit := packageRuntimeNeeds(normalTasks)
+
+	if needRuntime || needPyInit {
+		if err := buildPackageGroup(ctx, runtimeTasks, verbose); err != nil {
+			return nil, err
+		}
+	}
+
+	return pkgs, nil
+}
+
+// prePackageBuild performs classification, fingerprinting, and cache
+// lookup without creating or transforming an LLVM module.
+func prePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
+	aPkg := task.pkg
+	pkg := aPkg.Package
+	traceSpan := ctx.buildTrace.startPackageCoordinator("pre", pkg.PkgPath)
+	defer func() {
+		traceSpan.setArg("package_id", pkg.ID)
+		traceSpan.setArg("cache_hit", aPkg.CacheHit)
+		traceSpan.setArg("skip", task.skip)
+		traceSpan.done()
+	}()
+	if task.isDeclOnly() {
+		pkg.ExportFile = ""
+		task.skip = true
+		return nil
+	}
+	if task.isLinkOnly() && !task.hasSource() {
+		pkg.ExportFile = ""
+		if task.kind == cl.PkgLinkExtern {
+			appendExternalLinkArgs(ctx, aPkg, task.kindParam)
+		}
+		task.skip = true
+		return nil
+	}
+	if err := ctx.collectFingerprint(aPkg); err != nil {
+		return err
+	}
+	if pkg.ExportFile == "" {
+		// Source transforms do not consume gc export data. Use the LLGo
+		// fingerprint as the backend output identity in those metadata loads.
+		paths := ctx.ensureCacheManager().PackagePaths(ctx.targetTriple(), pkg.PkgPath, aPkg.Fingerprint)
+		if err := os.MkdirAll(paths.Dir, 0o755); err != nil {
+			return err
+		}
+		pkg.ExportFile = paths.Archive + ".backend"
+	}
+	ctx.tryLoadFromCache(aPkg)
+	if verbose {
+		status := "MISS"
+		if aPkg.CacheHit {
+			status = "HIT"
+		}
+		fmt.Fprintf(os.Stderr, "CACHE %s: %s\n", status, pkg.PkgPath)
+	}
+	return nil
+}
+
+// executePackageBuild creates the package module and runs its LLVM backend.
+func executePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
+	aPkg := task.pkg
+	if aPkg.CacheHit && aPkg.linkSnapshot != nil &&
+		!ctx.buildConf.deadcodeDropEnabled() && ctx.buildConf.ModuleHook == nil &&
+		ctx.buildConf.BuildMode == BuildModeExe &&
+		(ctx.mode == ModeBuild || ctx.mode == ModeTest && len(ctx.initial) == 1) {
+		return nil
+	}
+	if err := buildPkg(ctx, aPkg, verbose); err != nil {
+		return err
+	}
+	if task.needsRuntimeSignals() && aPkg.LPkg != nil && aPkg.frontendOpaque == nil {
+		aPkg.setNeedRuntimeOrPyInit(aPkg.LPkg.NeedRuntime, aPkg.LPkg.NeedPyInit)
+	}
+	return nil
+}
+
+// finalizePackageBuild publishes fresh archives, then reads the same link-time
+// source mappings from fresh and cached artifacts.
+func finalizePackageBuild(ctx *context, task *packageBuildTask, verbose bool) error {
+	if err := publishPackageArchive(ctx, task, verbose); err != nil {
+		return err
+	}
+	if ctx.mode != ModeGen && ctx.buildConf.PCLNMode != PCLNNone {
+		return loadPackagePCLN(task.pkg)
+	}
+	return nil
+}
+
+func publishPackageArchive(ctx *context, task *packageBuildTask, verbose bool) error {
+	aPkg := task.pkg
+	if aPkg.CacheHit {
+		return nil
+	}
+	if err := normalizeToArchive(ctx, aPkg, verbose); err != nil {
+		return err
+	}
+	if task.kind == cl.PkgLinkExtern {
+		appendExternalLinkArgs(ctx, aPkg, task.kindParam)
+	}
+	if err := ctx.saveToCache(aPkg); err != nil && verbose {
+		fmt.Fprintf(os.Stderr, "warning: failed to save cache for %s: %v\n", aPkg.PkgPath, err)
+	}
+	printCompletedPackage(ctx.buildConf, aPkg)
+	return nil
+}
+
+func appendExternalLinkArgs(ctx *context, aPkg *aPackage, spec string) {
+	// need to be linked with external library
+	// format: ';' separated alternative link methods. e.g.
+	//   link: $LLGO_LIB_PYTHON; $(pkg-config --libs python3-embed); -lpython3
+	altParts := strings.Split(spec, ";")
+	expdArgs := make([]string, 0, len(altParts))
+	for _, alt := range altParts {
+		alt = strings.TrimSpace(alt)
+		if strings.ContainsRune(alt, '$') {
+			expdArgs = append(expdArgs, xenv.ExpandEnvToArgsWith(alt, ctx.commands.dir, ctx.commands.environ)...)
+			atomic.AddInt32(&ctx.nLibdir, 1)
+		} else {
+			fields := strings.Fields(alt)
+			expdArgs = append(expdArgs, fields...)
+		}
+		if len(expdArgs) > 0 {
+			break
+		}
+	}
+	if len(expdArgs) == 0 {
+		panic(fmt.Sprintf("'%s' cannot locate the external library", spec))
+	}
+
+	pkgLinkArgs := make([]string, 0, 3)
+	if expdArgs[0][0] == '-' {
+		pkgLinkArgs = append(pkgLinkArgs, expdArgs...)
+	} else {
+		linkFile := expdArgs[0]
+		dir, lib := filepath.Split(linkFile)
+		pkgLinkArgs = append(pkgLinkArgs, "-l"+lib)
+		if dir != "" {
+			pkgLinkArgs = append(pkgLinkArgs, "-L"+dir)
+			atomic.AddInt32(&ctx.nLibdir, 1)
+		}
+	}
+	if ctx.buildConf.CheckLinkArgs {
+		if err := ctx.compiler().CheckLinkArgs(pkgLinkArgs, isWasmTarget(ctx.buildConf.Goos)); err != nil {
+			panic(fmt.Sprintf("test link args '%s' failed\n\texpanded to: %v\n\tresolved to: %v\n\terror: %v", spec, expdArgs, pkgLinkArgs, err))
+		}
+	}
+	aPkg.LinkArgs = append(aPkg.LinkArgs, pkgLinkArgs...)
+}
+
+var (
+	errXflags = errors.New("-X flag requires argument of the form importpath.name=value")
+)
+
+// maxRewriteValueLength limits the size of rewrite values to prevent
+// excessive memory usage and potential resource exhaustion during compilation.
+const maxRewriteValueLength = 1 << 20 // 1 MiB cap per rewrite value
+
+func addGlobalString(conf *Config, arg string, mainPkgs []string) {
+	addGlobalStringWith(conf, arg, mainPkgs, true)
+}
+
+func addDefaultRuntimeGlobals(conf *Config, goroot, goversion string) {
+	addGlobalString(conf, "runtime.defaultGOROOT="+goroot, nil)
+	addGlobalString(conf, "runtime.buildVersion="+goversion, nil)
+}
+
+func addGlobalStringWith(conf *Config, arg string, mainPkgs []string, skipIfExists bool) {
+	eq := strings.Index(arg, "=")
+	dot := strings.LastIndex(arg[:eq+1], ".")
+	if eq < 0 || dot < 0 {
+		panic(errXflags)
+	}
+	pkg := arg[:dot]
+	varName := arg[dot+1 : eq]
+	value := arg[eq+1:]
+	validateRewriteInput(pkg, varName, value)
+	pkgs := []string{pkg}
+	if pkg == "main" {
+		pkgs = mainPkgs
+	}
+	if len(pkgs) == 0 {
+		return
+	}
+	if conf.GlobalRewrites == nil {
+		conf.GlobalRewrites = make(map[string]Rewrites)
+	}
+	for _, realPkg := range pkgs {
+		vars := conf.GlobalRewrites[realPkg]
+		if vars == nil {
+			vars = make(Rewrites)
+			conf.GlobalRewrites[realPkg] = vars
+		}
+		if skipIfExists {
+			if _, exists := vars[varName]; exists {
+				continue
+			}
+		}
+		vars[varName] = value
+	}
+}
+
+func validateRewriteInput(pkg, varName, value string) {
+	if pkg == "" || strings.ContainsAny(pkg, " \t\r\n") {
+		panic(fmt.Errorf("invalid package path for rewrite: %q", pkg))
+	}
+	if !token.IsIdentifier(varName) {
+		panic(fmt.Errorf("invalid variable name for rewrite: %q", varName))
+	}
+	if len(value) > maxRewriteValueLength {
+		panic(fmt.Errorf("rewrite value too large: %d bytes", len(value)))
+	}
+}
+
+// compileExtraFiles compiles extra files (.s/.c) from target configuration and returns object files
+func compileExtraFiles(ctx *context, verbose bool) ([]string, error) {
+	if len(ctx.crossCompile.ExtraFiles) == 0 {
+		return nil, nil
+	}
+
+	printCmds := ctx.shouldPrintCommands(verbose)
+	var objFiles []string
+	llgoRoot := env.LLGoROOT()
+
+	for _, extraFile := range ctx.crossCompile.ExtraFiles {
+		// Resolve the file path relative to llgo root
+		srcFile := filepath.Join(llgoRoot, extraFile)
+
+		// Check if file exists
+		if _, err := os.Stat(srcFile); os.IsNotExist(err) {
+			return nil, fmt.Errorf("extra file not found: %s", srcFile)
+		}
+
+		// Generate output file name
+		tmpFile, err := os.CreateTemp("", "extra-*"+filepath.Base(extraFile))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp file for %s: %w", extraFile, err)
+		}
+		tmpFile.Close()
+		baseName := tmpFile.Name()
+
+		ext := filepath.Ext(srcFile)
+
+		// Prepare base compilation arguments
+		var baseArgs []string
+
+		// Handle different file types
+		switch ext {
+		case ".c":
+			baseArgs = append(baseArgs, "-x", "c")
+		case ".S", ".s":
+			baseArgs = append(baseArgs, "-x", "assembler-with-cpp")
+		}
+
+		// If GenLL is enabled, first emit .ll for debugging
+		if ctx.buildConf.GenLL {
+			llFile := baseName + ".ll"
+			llArgs := append(slices.Clone(baseArgs), "-emit-llvm", "-S", "-o", llFile, "-c", srcFile)
+			if printCmds {
+				fmt.Fprintf(os.Stderr, "Compiling extra file (ll): clang %s\n", strings.Join(llArgs, " "))
+			}
+			cmd := ctx.compiler()
+			if err := cmd.Compile(llArgs...); err != nil {
+				return nil, fmt.Errorf("failed to compile extra file %s to .ll: %w", srcFile, err)
+			}
+		}
+
+		// Always compile to .o for linking
+		objFile := baseName + ".o"
+		objArgs := append(baseArgs, "-o", objFile, "-c", srcFile)
+		if printCmds {
+			fmt.Fprintf(os.Stderr, "Compiling extra file: clang %s\n", strings.Join(objArgs, " "))
+		}
+		cmd := ctx.compiler()
+		if err := cmd.Compile(objArgs...); err != nil {
+			return nil, fmt.Errorf("failed to compile extra file %s: %w", srcFile, err)
+		}
+
+		objFiles = append(objFiles, objFile)
+		os.Remove(baseName) // Remove the temp file we created for naming
+	}
+
+	return objFiles, nil
+}
+
+// rewritePrebuiltFuncTab runs the link-phase prebuilt-table rewrite on the
+// linked executable: it deduplicates LTO inline copies of the funcinfo entry
+// records against the symbol table and replaces the entry section with a
+// sorted ftab plus findfunctab that the runtime adopts zero-copy (see
+// internal/pclnpost and doc/design/pclntab-linkphase.md). Raw entry carriers
+// support first-use fallback; symbol-only carriers require materialization.
+func rewritePrebuiltFuncTab(ctx *context, out string, verbose bool) error {
+	if !shouldEmitRuntimeEntrySites(ctx) {
+		return nil
+	}
+	if ctx.buildConf.BuildMode != BuildModeExe {
+		return nil
+	}
+	if os.Getenv("LLGO_PCLNPOST") == "0" { // escape hatch: keep first-use construction
+		return nil
+	}
+	st, err := pclnpost.Rewrite(out)
+	if err != nil {
+		if darwinSymbolEntries(ctx) {
+			return fmt.Errorf("build native symbol index: %w", err)
+		}
+		if verbose {
+			fmt.Fprintf(os.Stderr, "llgo: prebuilt functab rewrite skipped: %v\n", err)
+		}
+		return nil
+	}
+	if verbose {
+		fmt.Fprintf(os.Stderr, "llgo: prebuilt functab: %d entries (%d LTO inline copies removed), %d buckets, %d carrier bytes removed\n",
+			st.FtabEntries, st.InlineCopies, st.Buckets, st.CarrierBytesRemoved)
+	}
+	return nil
+}
+
+type mainLinkPlan struct {
+	runtimeSites         bool
+	outputPath           string
+	linkInputs           []string
+	linkArgs             []string
+	pclnExternal         *pclnmap.Data
+	embeddedPCLN         *pclnmap.Data
+	entryIR              string
+	entryTarget          llvmgen.Target
+	stripDarwinLTOLocals bool
+	darwinHiddenGlobals  []string
+}
+
+// mainLinkPreparation separates shared package inspection from entry-module
+// emission. planMainLink runs on the coordinator because linkedOrder may still
+// contain packages owned by the shared coordinator Program. Every other field
+// is a Go-owned snapshot and must remain safe to consume after isolated package
+// Programs are disposed.
+// linkedOrder is kept only for the coordinator-only dead-code-drop path; the
+// native test DAG is disabled when that mode is active, so its workers must
+// never dereference linkedOrder.
+type mainLinkPreparation struct {
+	linkedOrder          []*aPackage
+	archiveInputs        []string
+	linkArgs             []string
+	gen                  genConfig
+	stripDarwinLTOLocals bool
+	darwinHiddenGlobals  []string
+}
+
+func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPath string, verbose bool) error {
+	plan, err := prepareMainLink(ctx, pkg, pkgs, outputPath, verbose)
+	if err != nil {
+		return err
+	}
+	return executeMainLink(ctx, plan, verbose)
+}
+
+func prepareMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPath string, verbose bool) (*mainLinkPlan, error) {
+	preparation, err := planMainLink(ctx, pkg, pkgs)
+	if err != nil {
+		return nil, err
+	}
+	return buildMainLink(ctx, pkg, preparation, outputPath, verbose)
+}
+
+// planMainLink combines package-owned snapshots into the state needed to
+// generate one entry module. Native test DAG callers invoke it on the
+// coordinator; isolated package Programs may already have been disposed.
+func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainLinkPreparation, error) {
+	needRuntime := ctx.buildConf.PCLNLoad.startsAtEntry()
+	needPyInit := false
+	var needAbiInit int
+	methodByIndex := make(map[int]none)
+	methodByName := make(map[string]none)
+	// archiveInputs contains package .a files. Object files are prepended later so
+	// archive extraction can see their undefined references in a single linker pass.
+	var archiveInputs []string
+	var linkArgs []string
+	var rtLinkInputs []string
+	var rtLinkArgs []string
+	linkedOrder := linkedPackageClosure(ctx, pkg, pkgs)
+
+	// packages.Visit with a post callback yields dependencies before importers.
+	// Reverse that order so static archives are linked after the objects that use them.
+	for i := len(linkedOrder) - 1; i >= 0; i-- {
+		aPkg := linkedOrder[i]
+		p := aPkg.Package
+		// Defer linking runtime packages unless we actually need the runtime.
+		if isRuntimePkg(p.PkgPath) {
+			rtLinkArgs = append(rtLinkArgs, aPkg.LinkArgs...)
+			if aPkg.ArchiveFile != "" {
+				rtLinkInputs = append(rtLinkInputs, aPkg.ArchiveFile)
+			}
+			continue
+		}
+		// Only let non-runtime packages influence whether runtime is needed.
+		need1, need2 := aPkg.isNeedRuntimeOrPyInit()
+		needRuntime = needRuntime || need1
+		needPyInit = needPyInit || need2
+		if snapshot := aPkg.linkSnapshot; snapshot != nil {
+			needAbiInit |= snapshot.needAbiInit
+			for k := range snapshot.methodByIndex {
+				methodByIndex[k] = none{}
+			}
+			for k := range snapshot.methodByName {
+				methodByName[k] = none{}
+			}
+		} else {
+			needAbiInit |= aPkg.LPkg.NeedAbiInit
+			for k := range aPkg.LPkg.MethodByIndex {
+				methodByIndex[k] = none{}
+			}
+			for k := range aPkg.LPkg.MethodByName {
+				methodByName[k] = none{}
+			}
+		}
+
+		linkArgs = append(linkArgs, aPkg.LinkArgs...)
+		if aPkg.ArchiveFile != "" {
+			archiveInputs = append(archiveInputs, aPkg.ArchiveFile)
+		}
+	}
+
+	cExports, err := linkedCExports(ctx, linkedOrder)
+	if err != nil {
+		return nil, err
+	}
+	// Even a leaf export needs the runtime for foreign-thread registration.
+	needRuntime = needRuntime || len(cExports) != 0
+
+	// Only link runtime objects when needed (or for host builds where runtime is always required).
+	if needRuntime || needPyInit || ctx.buildConf.Target == "" {
+		linkArgs = append(linkArgs, rtLinkArgs...)
+		archiveInputs = append(archiveInputs, rtLinkInputs...)
+	}
+
+	linkArgs = deduplicateDispatchInlineCost(linkArgs)
+
+	// Generate main module file (needed for global variables even in library modes)
+	// This is compiled directly to .o and added to linkInputs (not cached)
+	// Use a stable synthetic name to avoid confusing it with the real main package in traces/logs.
+	var funcInfo []funcInfoRecord
+	var pcLineInfo []pcLineRecord
+	if ctx.buildConf.PCLNMode != PCLNNone {
+		// Native links supply runtime archives even for runtime-free programs;
+		// archive extraction may leave all their function bodies out. Select
+		// metadata by semantic runtime use, including generated startup calls,
+		// rather than by the presence of those archives on the link command.
+		// genMainModule supplies runtime.main/runtime.goexit records separately.
+		metadataOrder := linkedOrder
+		if !needRuntime && !needPyInit && !needsWasmRuntimeScheduler(ctx) && (ctx.prog == nil || !ctx.prog.NeedsLocalContext()) {
+			metadataOrder = filterOutRuntimePkgs(linkedOrder)
+		}
+		funcInfo = prepareFuncInfoTableRecords(collectFuncInfo(metadataOrder), nil)
+		pcLineInfo = collectPCLineInfo(metadataOrder)
+	}
+	packageInits, err := linkedPackageInitNames(pkg, linkedOrder)
+	if err != nil {
+		return nil, err
+	}
+	gen := genConfig{
+		defaultGODEBUG: ctx.defaultGODEBUG[pkg.ID],
+		rtInit:         needRuntime && !ctx.wasmRuntimeFree,
+		pyInit:         needPyInit,
+		abiInit:        needAbiInit,
+		packageInits:   packageInits,
+		methodByIndex:  methodByIndex,
+		methodByName:   methodByName,
+		abiSymbols:     linkedModuleGlobals(linkedOrder),
+		abiTypes:       ctx.backendAbiTypes(linkedOrder),
+		funcInfo:       funcInfo,
+		pcLineInfo:     pcLineInfo,
+		cExports:       cExports,
+	}
+
+	if IsFullRpathEnabled() {
+		linkArgs = append(linkArgs, fullRpathArgs(ctx.crossCompile.Toolchain, linkArgs)...)
+	}
+	linkArgs = append(linkArgs, debuggerABIRootArgs(ctx)...)
+	linkArgs = append(linkArgs, cSharedExportArgs(ctx, linkedOrder)...)
+	linkArgs = append(linkArgs, linuxCExportArgs(ctx, cExports)...)
+	darwinSymbols := planDarwinSizeSymbols(ctx, linkedOrder, linkArgs)
+	linkArgs = append(linkArgs, darwinSymbols.linkerArgs...)
+
+	return &mainLinkPreparation{
+		linkedOrder:          linkedOrder,
+		archiveInputs:        archiveInputs,
+		linkArgs:             linkArgs,
+		gen:                  gen,
+		stripDarwinLTOLocals: darwinSymbols.stripLTOLocals,
+		darwinHiddenGlobals:  darwinSymbols.hiddenGlobals,
+	}, nil
+}
+
+// buildMainLink consumes the LLVM-free portion of preparation. It may run in
+// an isolated backend Program after the package Programs have been released.
+func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPreparation, outputPath string, verbose bool) (*mainLinkPlan, error) {
+	if preparation == nil {
+		return nil, errors.New("missing main link preparation")
+	}
+	ctx.pclnExternal = nil
+	ctx.pclnEmbedded = nil
+	ctx.stripDarwinLTOLocals = false
+	ctx.darwinHiddenGlobals = nil
+	entryPkg := genMainModule(ctx, llvmgen.PkgRuntime, pkg, &preparation.gen)
+	cExports := preparation.gen.cExports
+	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
+		return nil, err
+	}
+	if ctx.buildConf.deadcodeDropEnabled() {
+		// Share the native-input visibility proof with initializer pruning.
+		trimMethods := canPruneWasmTypeMetadata(ctx)
+		var roots []string
+		if ctx.buildConf.wasiReleaseDCE {
+			// Entry thunks are generated outside package compilation. Record
+			// their references, including WASI worker entry calls.
+			roots = appendModuleDeclarationRoots(slices.Clone(ctx.wasiSizeRoots), entryPkg.LPkg.Module())
+		}
+		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose, roots...); err != nil {
+			return nil, err
+		}
+	}
+	entryPkg.LPkg.ApplyTargetBaseline()
+	var entryIR string
+	if ctx.pclnEmbedded != nil {
+		// Retain Go-owned IR, never an LLVM module: native builds release their
+		// backend before linking, and test DAG links run concurrently.
+		applySizeOptimizationAttributes(entryPkg.LPkg.Module(), ctx.buildConf.OptLevel)
+		entryIR = entryPkg.LPkg.String()
+	}
+	entryObjFile, err := exportObject(ctx, "entry_main", entryPkg.ExportFile, entryPkg.LPkg)
+	if err != nil {
+		return nil, err
+	}
+	linkInputs := []string{entryObjFile}
+
+	// Compile extra files from target configuration
+	extraObjFiles, err := compileExtraFiles(ctx, verbose)
+	if err != nil {
+		return nil, err
+	}
+	linkInputs = append(linkInputs, extraObjFiles...)
+	linkInputs = append(linkInputs, preparation.archiveInputs...)
+	ctx.stripDarwinLTOLocals = preparation.stripDarwinLTOLocals
+	ctx.darwinHiddenGlobals = preparation.darwinHiddenGlobals
+
+	return &mainLinkPlan{
+		runtimeSites:         shouldEmitRuntimeSites(ctx),
+		outputPath:           outputPath,
+		linkInputs:           linkInputs,
+		linkArgs:             preparation.linkArgs,
+		pclnExternal:         ctx.pclnExternal,
+		embeddedPCLN:         ctx.pclnEmbedded,
+		entryIR:              entryIR,
+		entryTarget:          *ctx.prog.Target(),
+		stripDarwinLTOLocals: preparation.stripDarwinLTOLocals,
+		darwinHiddenGlobals:  preparation.darwinHiddenGlobals,
+	}, nil
+}
+
+func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
+	if plan == nil {
+		return errors.New("missing main link plan")
+	}
+	driverOut := emscriptenDriverOutput(ctx.buildConf, plan.outputPath)
+	linkOutput, err := prepareWasmLinkOutput(ctx.buildConf, &ctx.crossCompile, driverOut)
+	if err != nil {
+		return err
+	}
+	defer cleanupWasmLinkOutput(linkOutput, driverOut)
+	if err := linkObjFiles(ctx, linkOutput, plan.linkInputs, plan.linkArgs, verbose); err != nil {
+		return err
+	}
+	if err := pruneEmbeddedPCLN(ctx, plan, linkOutput, verbose); err != nil {
+		return err
+	}
+	if err := publishWasmLinkOutput(ctx, linkOutput, driverOut, verbose); err != nil {
+		return err
+	}
+	if err := removeStaleEmscriptenGlue(ctx.buildConf, driverOut); err != nil {
+		return err
+	}
+	if err := publishGoJSLoader(ctx, driverOut, verbose); err != nil {
+		return err
+	}
+	return publishEmscriptenBrowserHost(ctx, driverOut, verbose)
+}
+
+func fullRpathArgs(toolchain crosscompile.NativeToolchain, linkArgs []string) (rpathArgs []string) {
+	// PE images use the Windows DLL search order. Neither lld-link nor
+	// link.exe has an ELF/Mach-O-style runtime search-path option.
+	if toolchain.ObjectFormat == crosscompile.ObjectFormatCOFF {
+		return nil
+	}
+	// Treat every link-time library search path, specified by -L, as a
+	// runtime search path too. This keeps relocatable install names such as
+	// @rpath/libfoo.dylib discoverable without duplicating entries.
+	rpaths := make(map[string]none)
+	for _, arg := range linkArgs {
+		if !strings.HasPrefix(arg, "-L") {
+			continue
+		}
+		path := arg[2:]
+		if _, ok := rpaths[path]; ok {
+			continue
+		}
+		rpaths[path] = none{}
+		rpathArgs = append(rpathArgs, "-rpath", path)
+	}
+	return rpathArgs
+}
+
+func linkedPackageMetas(pkgs []Package) ([]*meta.PackageMeta, error) {
+	metas := make([]*meta.PackageMeta, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		if pkg.Meta == nil {
+			return nil, fmt.Errorf("missing dead-code metadata for linked package %s", pkg.PkgPath)
+		}
+		metas = append(metas, pkg.Meta)
+	}
+	return metas, nil
+}
+
+func applyDeadcodeDropOverrides(pkgs []Package, entryPkg Package, needRuntime, trimMethods, verbose bool, externalRoots ...string) error {
+	metas, err := linkedPackageMetas(pkgs)
+	if err != nil {
+		return err
+	}
+	summary, err := meta.NewGlobalSummary(metas)
+	if err != nil {
+		return err
+	}
+
+	roots := dceEntryRootCandidates(pkgs, needRuntime)
+	roots = append(roots, externalRoots...)
+	analysis := deadcode.AnalyzeProgram(summary, roots)
+	var dropMetadata func(string) bool
+	var rejectInterfaceType func(string) bool
+	if trimMethods {
+		dropMetadata = analysis.CanDropMethodMetadata
+		rejectInterfaceType = analysis.CanRejectInterfaceType
+	}
+	mods := dceSourceModules(pkgs)
+	dcepass.EmitInterfaceUseOverrides(entryPkg.LPkg.Module(), mods, rejectInterfaceType)
+	dcepass.EmitStrongTypeOverrides(entryPkg.LPkg.Module(), mods, analysis.LiveSlots, dropMetadata, verbose)
+	if trimMethods {
+		dcepass.EmitRegularTypeFieldOverrides(entryPkg.LPkg.Module(), mods, analysis.CanDropTypeFields)
+	}
+	return nil
+}
+
+func dceSourceModules(pkgs []Package) []gllvm.Module {
+	mods := make([]gllvm.Module, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		mods = append(mods, pkg.LPkg.Module())
+	}
+	return mods
+}
+
+func dceEntryRootCandidates(pkgs []Package, needRuntime bool) []string {
+	roots := []string{"main.init", "main.main"}
+	// C code can call //export functions without an ordinary edge from a Go
+	// root, so their final linker names must seed the analysis explicitly.
+	var exports []string
+	for _, pkg := range pkgs {
+		for goName, cName := range pkg.LPkg.ExportFuncs() {
+			name := cName
+			if fn := pkg.LPkg.FuncOf(goName); fn != nil && fn.Name() == goName {
+				name = goName
+			}
+			exports = append(exports, name)
+		}
+	}
+	slices.Sort(exports)
+	roots = append(roots, exports...)
+	if needRuntime {
+		roots = append(roots, llvmgen.PkgRuntime+".InitGC", llvmgen.PkgRuntime+".init")
+	}
+	return roots
+}
+
+// packageCExportDeclarations snapshots Go-owned export names and signatures.
+// It deliberately retains no LLVM values after an isolated worker is disposed.
+func packageCExportDeclarations(pkg llvmgen.Package) []cExport {
+	if pkg == nil {
+		return nil
+	}
+	var exports []cExport
+	for goName, cName := range pkg.ExportFuncs() {
+		if strings.Contains(goName, ".") && !strings.HasPrefix(goName, pkg.Path()+".") {
+			continue
+		}
+		var sig *types.Signature
+		if fn := pkg.FuncOf(goName); fn != nil {
+			sig, _ = fn.RawType().(*types.Signature)
+		}
+		exports = append(exports, cExport{goName: goName, cName: cName, sig: sig})
+	}
+	return exports
+}
+
+func packageCExports(pkg *aPackage) []cExport {
+	if pkg.linkSnapshot != nil {
+		return pkg.linkSnapshot.cExports
+	}
+	return packageCExportDeclarations(pkg.LPkg)
+}
+
+func linkedCExports(ctx *context, pkgs []Package) ([]cExport, error) {
+	seen := make(map[string]string)
+	var exports []cExport
+	for _, pkg := range pkgs {
+		if !needsCExportWrappers(ctx, pkg) {
+			continue
+		}
+		for _, export := range packageCExports(pkg) {
+			goName, cName := export.goName, export.cName
+			if cName == "" {
+				return nil, fmt.Errorf("C export implementation %q has an empty export name", goName)
+			}
+			if previous, ok := seen[cName]; ok {
+				if previous != goName {
+					return nil, fmt.Errorf("C export %q is provided by both %q and %q", cName, previous, goName)
+				}
+				continue
+			}
+			sig := export.sig
+			if sig == nil {
+				return nil, fmt.Errorf("C export implementation %q not found", goName)
+			}
+			if sig.Recv() != nil || sig.Variadic() || sig.Results().Len() > 1 {
+				return nil, fmt.Errorf("C export %q has an unsupported signature", goName)
+			}
+			seen[cName] = goName
+			exports = append(exports, export)
+		}
+	}
+	slices.SortFunc(exports, func(a, b cExport) int {
+		return strings.Compare(a.cName, b.cName)
+	})
+	return exports, nil
+}
+
+func needsCExportWrappers(ctx *context, pkg *aPackage) bool {
+	if ctx == nil || ctx.buildConf == nil || pkg == nil || pkg.Package == nil ||
+		ctx.buildConf.Target != "" || cl.IsCPackage(pkg.Name) || isRuntimePkg(pkg.PkgPath) || pkg.PkgPath == "runtime" {
+		return false
+	}
+	// A C callback may live in an imported package or an ordinary executable.
+	// package C defines its unqualified exports in the package module itself.
+	// Runtime-owned low-level entries keep their existing bootstrap contracts.
+	switch ctx.buildConf.Goos {
+	case "darwin", "linux", "windows":
+		switch ctx.buildConf.BuildMode {
+		case BuildModeExe, BuildModeCShared, BuildModeCArchive:
+			return true
+		}
+	default:
+		// Preserve the existing export policy on other execution targets.
+		return pkg.Name == "main" &&
+			(ctx.buildConf.BuildMode == BuildModeCShared || ctx.buildConf.BuildMode == BuildModeCArchive)
+	}
+	return false
+}
+
+func linkedModuleGlobals(pkgs []Package) map[string]none {
+	if len(pkgs) == 0 {
+		return nil
+	}
+	seen := make(map[string]none)
+	for _, pkg := range pkgs {
+		if pkg == nil {
+			continue
+		}
+		if pkg.linkSnapshot != nil {
+			for name := range pkg.linkSnapshot.abiSymbols {
+				seen[name] = none{}
+			}
+			continue
+		}
+		if pkg.LPkg == nil {
+			continue
+		}
+		for g := pkg.LPkg.Module().FirstGlobal(); !g.IsNil(); g = gllvm.NextGlobal(g) {
+			if g.IsDeclaration() {
+				continue
+			}
+			seen[g.Name()] = none{}
+		}
+	}
+	return seen
+}
+
+// isRuntimePkg reports whether the package path belongs to the llgo runtime tree.
+func isRuntimePkg(pkgPath string) bool {
+	rtRoot := env.LLGoRuntimePkg
+	return pkgPath == rtRoot || strings.HasPrefix(pkgPath, rtRoot+"/")
+}
+
+// filterOutRuntimePkgs returns the packages in order with the llgo runtime tree
+// removed. It is used to keep runtime metadata out of the synthetic main module
+// when the program does not use runtime functions, regardless of archive inputs.
+func filterOutRuntimePkgs(pkgs []Package) []Package {
+	out := make([]Package, 0, len(pkgs))
+	for _, pkg := range pkgs {
+		if pkg != nil && pkg.Package != nil && isRuntimePkg(pkg.PkgPath) {
+			continue
+		}
+		out = append(out, pkg)
+	}
+	return out
+}
+
+func linkObjFiles(ctx *context, app string, objFiles, linkArgs []string, verbose bool) error {
+	printCmds := ctx.shouldPrintCommands(verbose)
+	if dir := filepath.Dir(app); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create output directory %s: %w", dir, err)
+		}
+	}
+	// Handle c-archive mode differently - use ar tool instead of linker
+	if ctx.buildConf.BuildMode == BuildModeCArchive {
+		return ctx.createMergedArchiveFile(app, objFiles, printCmds)
+	}
+
+	linkOutput := app
+	moveExactWindowsOutput := false
+	if ctx.crossCompile.Toolchain.ObjectFormat == crosscompile.ObjectFormatCOFF &&
+		ctx.buildConf.Target == "" && filepath.Ext(app) == "" {
+		switch ctx.buildConf.BuildMode {
+		case BuildModeExe:
+			// Clang's Windows driver appends .exe when -o has no extension,
+			// while cmd/go treats an explicit -o name as exact. Implicit
+			// outputs already carry Config.AppExt.
+			linkOutput = app + ".exe"
+			moveExactWindowsOutput = true
+		case BuildModeCShared:
+			if ctx.crossCompile.Toolchain.ABI == crosscompile.PlatformABIGNU {
+				// MinGW's driver appends .exe even for -shared. Like cmd/link,
+				// suppress that suffix with a trailing dot. Windows resolves
+				// it to the requested name; cross-host links need a rename.
+				linkOutput = app + "."
+				moveExactWindowsOutput = runtime.GOOS != "windows"
+			}
+		}
+	}
+	buildArgs := []string{"-o", linkOutput}
+	buildArgs = append(buildArgs, linkArgs...)
+	siteLayoutArgs, cleanupSiteLayout, err := funcInfoSiteLayoutArgs(ctx, app)
+	if err != nil {
+		return err
+	}
+	defer cleanupSiteLayout()
+	buildArgs = append(buildArgs, siteLayoutArgs...)
+	hiddenGlobalArgs, cleanupHiddenGlobals, err := darwinHiddenGlobalArgs(app, ctx.darwinHiddenGlobals)
+	if err != nil {
+		return err
+	}
+	defer cleanupHiddenGlobals()
+	buildArgs = append(buildArgs, hiddenGlobalArgs...)
+	buildArgs = append(buildArgs, debugInfoLinkerArgs(ctx.buildConf, &ctx.crossCompile)...)
+	buildArgs = append(buildArgs, emscriptenLTOLibcallArgs(ctx)...)
+	ltoPluginFlags, err := ctx.buildConf.LTOPlugin.LinkerFlags(ctx.buildConf.Goos)
+	if err != nil {
+		return err
+	}
+	buildArgs = append(buildArgs, ltoPluginFlags...)
+
+	// Add build mode specific linker arguments
+	switch ctx.buildConf.BuildMode {
+	case BuildModeCShared:
+		buildArgs = append(buildArgs, cSharedLinkArgs(ctx.crossCompile.Toolchain)...)
+		buildArgs = append(buildArgs, cSharedImportLibraryArgs(ctx.crossCompile.Toolchain, linkOutput)...)
+	case BuildModeExe:
+		if needsLinuxNoPIE(ctx, linkArgs) {
+			buildArgs = append(buildArgs, "-no-pie")
+		}
+		buildArgs = append(buildArgs, linuxExportDynamicArgs(ctx)...)
+	}
+
+	if shouldEmitDebugInfo(ctx.buildConf, &ctx.crossCompile) {
+		buildArgs = append(buildArgs, ctx.crossCompile.DebugInfo.PreserveDriverFlags...)
+	}
+
+	if ctx.buildConf.GenLL {
+		var compiledObjFiles []string
+		for _, objFile := range objFiles {
+			if strings.HasSuffix(objFile, ".ll") {
+				oFile := strings.TrimSuffix(objFile, ".ll") + ".o"
+				args := []string{"-o", oFile, "-c", objFile, "-Wno-override-module"}
+				if printCmds {
+					fmt.Fprintln(os.Stderr, "clang", args)
+				}
+				if err := ctx.irCompiler().Compile(args...); err != nil {
+					return fmt.Errorf("failed to compile %s: %v", objFile, err)
+				}
+				compiledObjFiles = append(compiledObjFiles, oFile)
+			} else {
+				compiledObjFiles = append(compiledObjFiles, objFile)
+			}
+		}
+		objFiles = compiledObjFiles
+	}
+
+	cmd := ctx.linker()
+	ltoObjectArgs, err := darwinLTOObjectArgs(ctx, app, cmd, buildArgs)
+	if err != nil {
+		return fmt.Errorf("retain Darwin LTO debug object: %w", err)
+	}
+	buildArgs = append(buildArgs, ltoObjectArgs...)
+	buildArgs = append(buildArgs, objFiles...)
+
+	buildArgs = append(buildArgs, defaultWASIHeapArgs(ctx, cmd, buildArgs)...)
+	cmd.Verbose = printCmds
+	if needsWasmFinalization(ctx.buildConf) {
+		ctx.effectiveLinkArgs = cmd.LinkArguments(buildArgs...)
+	}
+	if err := cmd.Link(buildArgs...); err != nil {
+		if len(ltoObjectArgs) != 0 {
+			_ = os.RemoveAll(filepath.Dir(ltoObjectArgs[len(ltoObjectArgs)-1]))
+		}
+		return err
+	}
+	if !moveExactWindowsOutput {
+		return nil
+	}
+	if ctx.buildConf.BuildMode == BuildModeExe && ctx.mode == ModeTest && !ctx.buildConf.CompileOnly {
+		// Keep the .exe sibling so os/exec's Windows PATHEXT lookup can run an
+		// extensionless explicit test output, while also publishing the exact
+		// file requested by -o.
+		if err := copyFileAtomic(linkOutput, app); err != nil {
+			return fmt.Errorf("publish exact Windows test output %s: %w", app, err)
+		}
+		return nil
+	}
+	// os.Rename replaces an existing non-directory destination. On Windows it
+	// uses MoveFileEx with MOVEFILE_REPLACE_EXISTING, avoiding a remove/rename
+	// gap in which another build could recreate app.
+	if err := os.Rename(linkOutput, app); err != nil {
+		return fmt.Errorf("publish exact Windows output %s: %w", app, err)
+	}
+	return nil
+}
+
+// funcInfoSiteLayoutArgs places the ELF entry carrier immediately before .bss,
+// at the file-backed tail of the final writable PT_LOAD. pclnpost can shorten
+// p_filesz after replacing the carrier with the compact table without
+// moving any virtual address or pinning otherwise-dead functions. Mach-O gets
+// the same property from the dedicated __LLGO segment named at emission time.
+func funcInfoSiteLayoutArgs(ctx *context, outputPath string) ([]string, func(), error) {
+	cleanup := func() {}
+	if ctx == nil || ctx.buildConf == nil || ctx.buildConf.Goos != "linux" ||
+		ctx.buildConf.Target != "" || ctx.buildConf.BuildMode != BuildModeExe ||
+		!shouldEmitRuntimeSites(ctx) {
+		return nil, cleanup, nil
+	}
+	dir := filepath.Dir(outputPath)
+	f, err := os.CreateTemp(dir, ".llgo-funcinfo-layout-*.ld")
+	if err != nil {
+		return nil, cleanup, fmt.Errorf("create funcinfo linker script: %w", err)
+	}
+	name := f.Name()
+	cleanup = func() { _ = os.Remove(name) }
+	const script = `SECTIONS
+{
+  llgo_funcinfo_entry : { *(llgo_funcinfo_entry) }
+}
+INSERT BEFORE .bss;
+`
+	if _, err := f.WriteString(script); err != nil {
+		_ = f.Close()
+		cleanup()
+		return nil, func() {}, fmt.Errorf("write funcinfo linker script: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		cleanup()
+		return nil, func() {}, fmt.Errorf("close funcinfo linker script: %w", err)
+	}
+	return []string{"-Wl,-T," + name}, cleanup, nil
+}
+
+// debuggerABIRootArgs retains the structured record through native section GC.
+// COFF records use dllexport/COMDAT. Wasm uses the portable custom section.
+func debuggerABIRootArgs(ctx *context) []string {
+	if ctx == nil || ctx.buildConf == nil || !ctx.frontendOptions.Debug || ctx.buildConf.Goarch == "wasm" || ctx.buildConf.Goos == "windows" {
+		return nil
+	}
+	// Named targets may invoke ld directly. Native Unix -extld selects a
+	// compiler driver and needs the same -Wl forwarding as the default driver.
+	rawLinker := ctx.buildConf.Target != "" && ctx.crossCompile.Linker != ""
+	var args []string
+	for _, symbol := range []string{debugabi.LegacyMarkerSymbol, debugabi.NativeRecordSymbol} {
+		if ctx.buildConf.Goos == "darwin" {
+			if rawLinker {
+				args = append(args, "-u", "_"+symbol)
+			} else {
+				args = append(args, "-Wl,-u,_"+symbol)
+			}
+		} else if rawLinker {
+			args = append(args, "--undefined="+symbol)
+		} else {
+			args = append(args, "-Wl,--undefined="+symbol)
+		}
+	}
+	return args
+}
+
+// cSharedExportArgs keeps //export functions and synthetic test entry points as
+// shared-library link roots. They live in package archives and otherwise remain
+// unreferenced, so the linker can omit both their object files and symbols.
+func cSharedExportArgs(ctx *context, pkgs []*aPackage) []string {
+	if ctx == nil || ctx.buildConf == nil || ctx.buildConf.BuildMode != BuildModeCShared {
+		return nil
+	}
+	exports := make(map[string]none)
+	for _, pkg := range pkgs {
+		if pkg == nil {
+			continue
+		}
+		for _, export := range packageCExports(pkg) {
+			if export.cName != "" {
+				exports[export.cName] = none{}
+			}
+		}
+		if ctx.mode == ModeTest && pkg.Package != nil && pkg.Name == "main" && strings.HasSuffix(pkg.PkgPath, ".test") {
+			exports["main.init"] = none{}
+			exports["main.main"] = none{}
+		}
+	}
+	names := make([]string, 0, len(exports))
+	for name := range exports {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	args := make([]string, 0, len(names))
+	for _, name := range names {
+		switch ctx.crossCompile.Toolchain.ObjectFormat {
+		case crosscompile.ObjectFormatMachO:
+			args = append(args, "-Wl,-u,_"+name)
+		case crosscompile.ObjectFormatCOFF:
+			// /export both roots the symbol and writes it to the PE export
+			// table. lld-link also creates the import library consumed by C
+			// and Visual Studio callers.
+			args = append(args, "-Wl,/export:"+name)
+		default:
+			args = append(args, "-Wl,--undefined="+name)
+		}
+	}
+	return args
+}
+
+func needsLinuxNoPIE(ctx *context, linkArgs []string) bool {
+	if ctx.buildConf.Target != "" || ctx.buildConf.Goos != "linux" {
+		return false
+	}
+	// Host Linux toolchains commonly default to PIE executables, which can
+	// break runtime assumptions unless the user explicitly requested a PIE mode.
+	for _, arg := range linkArgs {
+		if arg == "-pie" || arg == "-static-pie" || arg == "-no-pie" || arg == "-nopie" {
+			return false
+		}
+	}
+	return true
+}
+
+func needsLinuxExportDynamic(ctx *context) bool {
+	// Entry sites (including the prebuilt table derived from them) resolve Go
+	// PCs without dynamic symbols. Exporting every main-package definition
+	// otherwise roots unused methods and their reflection dependencies in LTO.
+	// Keep the legacy dlsym fallback only when entry sites are unavailable.
+	return ctx != nil && ctx.buildConf != nil &&
+		ctx.buildConf.Target == "" && ctx.buildConf.Goos == "linux" &&
+		ctx.buildConf.BuildMode == BuildModeExe &&
+		effectivePCLNMode(ctx.buildConf) != PCLNNone && !shouldEmitRuntimeEntrySites(ctx)
+}
+
+// linuxCExportArgs publishes the validated public C entries, not their qualified
+// Go implementations. These names are an ABI contract independent of PCLN.
+// linkedCExports supplies sorted, unique, non-empty names and excludes
+// runtime-owned implementation callbacks. --undefined retains entries even
+// when their only callers use dlopen/dlsym; --export-dynamic-symbol makes those
+// entries discoverable in the dynamic symbol table.
+func linuxCExportArgs(ctx *context, exports []cExport) []string {
+	if len(exports) == 0 || ctx == nil || ctx.buildConf == nil || ctx.buildConf.Target != "" ||
+		ctx.buildConf.Goos != "linux" || ctx.buildConf.BuildMode != BuildModeExe {
+		return nil
+	}
+	args := make([]string, 0, 2*len(exports))
+	for _, export := range exports {
+		args = append(args, "-Wl,--undefined="+export.cName,
+			"-Wl,--export-dynamic-symbol="+export.cName)
+	}
+	return args
+}
+
+func linuxExportDynamicArgs(ctx *context) []string {
+	if !needsLinuxExportDynamic(ctx) {
+		return nil
+	}
+	return []string{
+		"-Wl,--export-dynamic-symbol=main.*",
+		"-Wl,--export-dynamic-symbol=command-line-arguments.*",
+	}
+}
+
+// archiver returns the archiving tool to use for the current context.
+// For COFF or wasm targets, and for LTO builds, it prefers llvm-ar because
+// linkers need LLVM-aware archive indexes for COFF objects, wasm objects, and
+// bitcode members.
+func (c *context) archiver() string {
+	// Allow user override before probing any implicit toolchain path.
+	if ar := os.Getenv("LLGO_AR"); ar != "" {
+		return ar
+	}
+	if ar := c.emscriptenArchiver(); ar != "" {
+		return ar
+	}
+	// First check toolchain directory (for cross-compilation)
+	if llvmAr := siblingTool(c.crossCompile.CC, "llvm-ar"); llvmAr != "" {
+		return llvmAr
+	}
+	if c.crossCompile.Toolchain.ObjectFormat == crosscompile.ObjectFormatCOFF ||
+		c.buildConf.ltoEnabled() || c.buildConf.Goarch == "wasm" || strings.Contains(c.crossCompile.LLVMTarget, "wasm") {
+		if llvmAr, err := exec.LookPath("llvm-ar"); err == nil {
+			return llvmAr
+		}
+	}
+	return "ar"
+}
+
+// archiveMerger returns an archiver with MRI support, which is required to
+// flatten package archives into the final c-archive instead of nesting .a
+// files as members. LLVM is already a required LLGo toolchain dependency.
+func (c *context) archiveMerger() (string, error) {
+	if ar := os.Getenv("LLGO_AR"); ar != "" {
+		return ar, nil
+	}
+	if ar := c.emscriptenArchiver(); ar != "" {
+		return ar, nil
+	}
+	if llvmAr := siblingTool(c.crossCompile.CC, "llvm-ar"); llvmAr != "" {
+		return llvmAr, nil
+	}
+	if llvmAr, err := exec.LookPath("llvm-ar"); err == nil {
+		return llvmAr, nil
+	}
+	return "", errors.New("llvm-ar is required to create a flat c-archive")
+}
+
+// Both GoJS and the named Emscripten targets build C/C++ through emcc. That
+// bitcode can be newer than LLGo's linked LLVM, so use the SDK's emar wrapper
+// to select its matching llvm-ar for both objects and MRI merges.
+func (c *context) emscriptenArchiver() string {
+	provider := c.crossCompile.WasmProvider
+	if provider != crosscompile.WasmProviderGoJS && provider != crosscompile.WasmProviderEmscripten {
+		return ""
+	}
+	if cc, err := exec.LookPath(c.crossCompile.CC); err == nil {
+		// LookPath handles the SDK's emar.bat via PATHEXT on Windows;
+		// siblingTool only handles native executables such as llvm-ar.exe.
+		if ar, err := exec.LookPath(filepath.Join(filepath.Dir(cc), "emar")); err == nil {
+			return ar
+		}
+	}
+	if ar, err := exec.LookPath("emar"); err == nil {
+		return ar
+	}
+	return ""
+}
+
+func siblingTool(compiler, name string) string {
+	if compiler == "" {
+		return ""
+	}
+	base := filepath.Join(filepath.Dir(compiler), name)
+	candidates := []string{base}
+	if runtime.GOOS == "windows" {
+		// LLVM's native Windows distributions include the PE executable suffix
+		// even when the configured Clang path omitted it.
+		candidates = append([]string{base + ".exe"}, candidates...)
+	}
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// createMergedArchiveFile combines object files and package archives into one
+// flat archive. A regular `ar rcs output.a input.a` stores input.a as a nested
+// member, which C linkers cannot search or load.
+func (c *context) createMergedArchiveFile(archivePath string, inputs []string, verbose ...bool) error {
+	if len(inputs) == 0 {
+		return fmt.Errorf("no inputs provided for archive %s", archivePath)
+	}
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(archivePath), filepath.Base(archivePath)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	_ = os.Remove(tmpName)
+
+	var script strings.Builder
+	fmt.Fprintf(&script, "CREATE %s\n", strconv.Quote(tmpName))
+	for _, input := range inputs {
+		command := "ADDMOD"
+		if isArchiveInput(input) {
+			command = "ADDLIB"
+		}
+		fmt.Fprintf(&script, "%s %s\n", command, strconv.Quote(input))
+	}
+	// Source mappings have already been consumed to build the runtime tables.
+	// Strip every compiler-private carrier from this exported C archive so
+	// whole-archive consumers do not retain it. Input package caches stay intact.
+	fmt.Fprintf(&script, "DELETE %s\n", strconv.Quote(packagePCLNMember))
+	script.WriteString("SAVE\nEND\n")
+
+	arCmd, err := c.archiveMerger()
+	if err != nil {
+		return err
+	}
+	cmd := c.commands.configure(exec.Command(arCmd, "-M"))
+	cmd.Stdin = strings.NewReader(script.String())
+	printCmds := c.shouldPrintCommands(len(verbose) > 0 && verbose[0])
+	if printCmds {
+		fmt.Fprintf(os.Stderr, "%s -M\n%s", filepath.Base(arCmd), script.String())
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("merge archive %s: %w\n%s", archivePath, err, output)
+	}
+	if err := os.Rename(tmpName, archivePath); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("publish archive %s: %w", archivePath, err)
+	}
+	return nil
+}
+
+func isArchiveInput(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".a", ".lib":
+		return true
+	default:
+		return false
+	}
+}
+
+// createArchiveFile builds an archive at archivePath atomically to avoid races when
+// multiple builds target the same output concurrently.
+func (c *context) createArchiveFile(archivePath string, objFiles []string, verbose ...bool) error {
+	if len(objFiles) == 0 {
+		return fmt.Errorf("no object files provided for archive %s", archivePath)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(archivePath), filepath.Base(archivePath)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmp.Close()
+	tmpName := tmp.Name()
+	// Remove the placeholder so ar can create the archive fresh.
+	_ = os.Remove(tmpName)
+
+	args := append([]string{"rcs", tmpName}, objFiles...)
+	arCmd := c.archiver()
+	cmd := c.commands.configure(exec.Command(arCmd, args...))
+	printCmds := c.shouldPrintCommands(len(verbose) > 0 && verbose[0])
+	if printCmds {
+		fmt.Fprintf(os.Stderr, "%s %s\n", filepath.Base(arCmd), strings.Join(args, " "))
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("create archive %s: %w\n%s", archivePath, err, output)
+	}
+
+	if err := os.Rename(tmpName, archivePath); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("publish archive %s: %w", archivePath, err)
+	}
+	return nil
+}
+
+func isWasmTarget(goos string) bool {
+	return slices.Contains([]string{"wasi", "js", "wasip1"}, goos)
+}
+
+func needStart(ctx *context) bool {
+	if ctx.crossCompile.WasmProvider == crosscompile.WasmProviderWASI {
+		// Inherited WASI targets use the same libc startup as wasi/wasip1.
+		return false
+	}
+	if ctx.buildConf.Target == "" {
+		return !isWasmTarget(ctx.buildConf.Goos)
+	}
+	switch ctx.buildConf.Target {
+	case "wasi", "wasip1":
+		// WASI libc owns _start and calls __main_argc_argv after initializing
+		// argc/argv and its process state. Defining LLGo's generic weak _start
+		// makes current wasi-libc select __main_void and drop the Go entry.
+		return false
+	default:
+		// since newlib-esp32 provides _start, we don't need to provide a fake _start function
+		return ctx.crossCompile.Libc != "newlib-esp32"
+	}
+}
+
+func is32Bits(goarch string) bool {
+	return goarch == "386" || goarch == "arm" || goarch == "mips" || goarch == "wasm"
+}
+
+func buildPkg(ctx *context, aPkg *aPackage, verbose bool) error {
+	externs, err := preparePackageModule(ctx, aPkg, verbose)
+	if err != nil || aPkg.CacheHit || aPkg.LPkg == nil {
+		return err
+	}
+	return compilePackageModule(ctx, aPkg, externs, verbose)
+}
+
+// preparePackageModule runs the frontend and creates the package LLVM module.
+func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string, error) {
+	pkg := aPkg.Package
+	pkgPath := pkg.PkgPath
+	if debugBuild || verbose && !ctx.buildConf.PrintPackages {
+		fmt.Fprintln(os.Stderr, pkgPath)
+	}
+	if llruntime.SkipToBuild(pkgPath) {
+		pkg.ExportFile = ""
+		return nil, nil
+	}
+	var syntax = pkg.Syntax
+	if altPkg := aPkg.AltPkg; altPkg != nil {
+		syntax = append(syntax, altPkg.Syntax...)
+	}
+	showDetail := verbose && pkgExists(ctx.initial, pkg)
+	needMeta := !aPkg.CacheHit && ctx.buildConf.packageMetaEnabled()
+	if showDetail {
+		fmt.Fprintf(os.Stderr, "==> Compile %s\n", pkgPath)
+	}
+	embedMap, err := goembed.LoadDirectives(ctx.conf.Fset, syntax)
+	if err != nil {
+		return nil, fmt.Errorf("load go:embed directives for %s failed: %w", pkgPath, err)
+	}
+	options := ctx.frontendOptions
+	options.DeclarationsOnly = aPkg.frontendOpaque != nil
+	// Hosted //export entries use final-link wrappers to register foreign caller threads
+	// with the collector; Windows shared libraries also initialize lazily.
+	// Dependency implementations retain Go symbols too; their public entry
+	// wrappers are generated in the uncached final-link module.
+	// package C retains its direct, unqualified definitions in its own module.
+	options.CExportWrappers = needsCExportWrappers(ctx, aPkg)
+	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
+		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
+		aPkg.SSA, syntax, embedMap, needMeta, options)
+	check(err)
+
+	aPkg.LPkg = ret
+	if !aPkg.CacheHit {
+		aPkg.Meta = ret.Meta
+	}
+	if hook := ctx.buildConf.ModuleHook; hook != nil {
+		hook(aPkg)
+	}
+
+	// If cache hit, we only needed to register types - skip compilation
+	if aPkg.CacheHit {
+		return nil, nil
+	}
+	return externs, nil
+}
+
+// lowerLargeAggregates is shared by package, export-wrapper, and translated
+// assembly modules so every late allocation follows the selected GC policy.
+func lowerLargeAggregates(prog llvmgen.Program, mod gllvm.Module) {
+	llabi.LowerLargeAggregates(prog.TargetData(), mod, llabi.AggregateLoweringConfig{
+		GoWordSize: prog.GoWordSize(),
+		GCRoots:    prog.GCRootsEnabled(),
+		Wasm:       prog.Target().GOARCH == "wasm",
+	})
+}
+
+func lowerMainCExportAggregates(prog llvmgen.Program, mod gllvm.Module, exports []cExport) bool {
+	if len(exports) == 0 {
+		return false
+	}
+	lowerLargeAggregates(prog, mod)
+	return true
+}
+
+func lowerMainCExportModule(ctx *context, pkg llvmgen.Package, exports []cExport) (bool, error) {
+	mod := pkg.Module()
+	if !lowerMainCExportAggregates(ctx.prog, mod, exports) {
+		return false, nil
+	}
+	ctx.cTransformer.LowerGoABI(pkg.Path(), mod)
+	// C ABI lowering can introduce 4-64 KiB aggregate snapshots in export
+	// wrappers. Apply the same post-C-ABI copy pass as package modules.
+	lowerAggregateCopies(ctx.prog.TargetData(), mod, llabi.AggregateLoweringConfig{
+		GoWordSize: ctx.prog.GoWordSize(),
+		GCRoots:    ctx.prog.GCRootsEnabled(),
+		Wasm:       ctx.buildConf.Goarch == "wasm",
+	})
+	if ctx.buildConf.Goarch != "wasm" {
+		return true, nil
+	}
+	applySizeOptimizationAttributes(mod, ctx.buildConf.OptLevel)
+	if err := optimizeLLVMModule(ctx, pkg.Path(), mod); err != nil {
+		return true, err
+	}
+	lowerEmscriptenSIMDCalls(ctx, mod)
+	localizeWasmStackAddresses(ctx.buildConf.Goarch, mod)
+	return true, nil
+}
+
+var (
+	runHeapToStack           = heap2stack.Run
+	runPostInlineHeapToStack = heap2stack.RunPostInline
+)
+
+// optimizeHeapAllocations runs full-module Attributor while aggregate arguments
+// and results are still SSA values. Running module-wide Attributor after C ABI
+// lowering (which introduces spills, reloads, and byval/sret storage) would be
+// expensive; post-inline heap-to-stack below avoids that cost by scoping
+// analysis strictly to functions that still hold constant-size allockind calls.
+// Run after large-aggregate lowering has rewritten oversized returns so
+// inferred memory effects include its result stores, and before the ordinary
+// pipeline can inline allocator wrappers.
+func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 {
+		return nil
+	}
+	if err := runHeapToStack(mod, ctx.prog.TargetMachine()); err != nil {
+		return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
+	}
+	return nil
+}
+
+// optimizePostInlineHeapAllocations catches small temporary allocations that
+// only become non-escaping after LLVM inlines helper functions into their
+// callers (for example, a helper returning a fresh slice literal whose caller
+// only indexes an element). Allocator wrappers remain external declarations in
+// non-runtime packages, so Attributor can still recognize their allockind calls.
+// RunPostInline temporarily marks functions without constant-size allockind
+// calls as optnone (relying on parameter attributes already inferred by O2),
+// and CleanupPromoted cleans up only the functions where promotions occurred.
+func optimizePostInlineHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 || pkgPath == llvmgen.PkgRuntime {
+		return nil
+	}
+	promoted, err := runPostInlineHeapToStack(mod, ctx.prog.TargetMachine())
+	if err != nil {
+		return fmt.Errorf("run post-inline Attributor heap-to-stack for %v failed: %w", pkgPath, err)
+	}
+	if len(promoted) == 0 {
+		return nil
+	}
+	if err := heap2stack.CleanupPromoted(mod, ctx.prog.TargetMachine(), promoted); err != nil {
+		return fmt.Errorf("run post-inline heap-to-stack cleanup for %v failed: %w", pkgPath, err)
+	}
+	return nil
+}
+
+func optimizeLLVMModule(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt {
+		return nil
+	}
+	mod.SetDataLayout(ctx.prog.DataLayout())
+	mod.SetTarget(ctx.prog.Target().Spec().Triple)
+	pbo := gllvm.NewPassBuilderOptions()
+	defer pbo.Dispose()
+	if err := gllvm.VerifyModule(mod, gllvm.ReturnStatusAction); err != nil {
+		return fmt.Errorf("verify LLVM module for %v failed: %w", pkgPath, err)
+	}
+	if err := mod.RunPasses(llvmPassPipeline(ctx.buildConf.OptLevel, ctx.buildConf.ltoMode()), ctx.prog.TargetMachine(), pbo); err != nil {
+		return fmt.Errorf("run LLVM passes failed for %v: %w", pkgPath, err)
+	}
+	return nil
+}
+
+// compilePackageModule applies LLVM transforms and emits package objects.
+func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbose bool) error {
+	pkg := aPkg.Package
+	pkgPath := pkg.PkgPath
+	ret := aPkg.LPkg
+
+	ctx.cTransformer.SetSkipFuncs(cabiSkipFuncsForPlan9Asm(ctx, pkgPath, ret.Module()))
+	// Finish call-boundary lowering before creating musttail dispatchers.
+	// They must forward the caller's ABI storage, not materialize aggregates
+	// in a forwarding frame that a tail transfer immediately releases.
+	lowerLargeAggregates(ctx.prog, ret.Module())
+	if err := optimizeHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
+		return err
+	}
+	ctx.cTransformer.LowerGoABI(ret.Path(), ret.Module())
+	ctx.cTransformer.SetSkipFuncs(nil)
+	if err := ret.SpecializeSIMD(); err != nil {
+		return fmt.Errorf("%s: %w", pkgPath, err)
+	}
+	if ctx.buildConf.Goos == "windows" {
+		pragmaSyntax := append([]*ast.File(nil), pkg.Syntax...)
+		if aPkg.AltPkg != nil {
+			pragmaSyntax = append(pragmaSyntax, aPkg.AltPkg.Syntax...)
+		}
+		if err := lowerWindowsCgoImportPointers(ctx.buildConf.Goos, ctx.buildConf.Goarch, pkgPath, pragmaSyntax, ret.Module()); err != nil {
+			return err
+		}
+	}
+	lowerAggregateCopies(ctx.prog.TargetData(), ret.Module(), llabi.AggregateLoweringConfig{
+		GoWordSize: ctx.prog.GoWordSize(),
+		GCRoots:    ctx.prog.GCRootsEnabled(),
+		Wasm:       ctx.buildConf.Goarch == "wasm",
+	})
+	applySizeOptimizationAttributes(ret.Module(), ctx.buildConf.OptLevel)
+	printCmds := ctx.shouldPrintCommands(verbose)
+	if ctx.mode != ModeGen {
+		if aPkg.AltPkg == nil || llruntime.HasAdditiveAltPkg(pkgPath) {
+			asmObjFiles, err := compilePkgSFiles(ctx, aPkg, pkg, printCmds)
+			if err != nil {
+				return err
+			}
+			aPkg.ObjFiles = append(aPkg.ObjFiles, asmObjFiles...)
+		}
+		if aPkg.AltPkg != nil {
+			asmObjFiles, err := compilePkgSFiles(ctx, aPkg, aPkg.AltPkg.Package, printCmds)
+			if err != nil {
+				return err
+			}
+			aPkg.ObjFiles = append(aPkg.ObjFiles, asmObjFiles...)
+		}
+	}
+
+	// Run the default LLVM optimization pipeline selected by the requested -O level.
+	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
+		return err
+	}
+	if err := optimizePostInlineHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
+		return err
+	}
+	applyPackageDispatchInlineBudget(ctx, aPkg, ret.Module())
+	lowerEmscriptenSIMDCalls(ctx, ret.Module())
+	localizeWasmStackAddresses(ctx.buildConf.Goarch, ret.Module())
+	dropUnusedWindowsTestMain(ctx, aPkg, ret.Module())
+	emitFuncInfoEntrySites(ctx, ret)
+	ret.ApplyTargetBaseline()
+	// ModeGen callers consume the in-memory LLVM module directly. They do not
+	// need cgo/link objects or a package archive for a later link step.
+	if ctx.mode == ModeGen {
+		return nil
+	}
+
+	cgoLLFiles, cgoLdflags, err := buildCgo(ctx, aPkg, aPkg.Package.Syntax, externs, printCmds)
+	if err != nil {
+		return fmt.Errorf("build cgo of %v failed: %v", pkgPath, err)
+	}
+	aPkg.appendTemporaryObjFiles(cgoLLFiles...)
+	llgoFiles, err := concatPkgLinkFiles(ctx, pkg, printCmds)
+	if err != nil {
+		return fmt.Errorf("build LLGoFiles of %v failed: %w", pkgPath, err)
+	}
+	aPkg.appendTemporaryObjFiles(llgoFiles...)
+	if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, aPkg.Package.Syntax, printCmds); err != nil {
+		return err
+	} else {
+		aPkg.ObjFiles = append(aPkg.ObjFiles, aliasObjs...)
+	}
+	aPkg.LinkArgs = append(aPkg.LinkArgs, cgoLdflags...)
+	pragmaLdflags, err := goCgoLinkArgs(aPkg.Package.Syntax, ctx.buildConf.Goos)
+	if err != nil {
+		return fmt.Errorf("%s: %w", pkgPath, err)
+	}
+	aPkg.LinkArgs = append(aPkg.LinkArgs, pragmaLdflags...)
+	if aPkg.AltPkg != nil {
+		altLLFiles, altLdflags, e := buildCgo(ctx, aPkg, aPkg.AltPkg.Syntax, externs, printCmds)
+		if e != nil {
+			return fmt.Errorf("build cgo of %v failed: %v", pkgPath, e)
+		}
+		aPkg.appendTemporaryObjFiles(altLLFiles...)
+		altLLGoFiles, err := concatPkgLinkFiles(ctx, aPkg.AltPkg.Package, printCmds)
+		if err != nil {
+			return fmt.Errorf("build alternate LLGoFiles of %v failed: %w", pkgPath, err)
+		}
+		aPkg.appendTemporaryObjFiles(altLLGoFiles...)
+		if aliasObjs, err := buildGoCgoAliasObjects(ctx, pkgPath, aPkg.AltPkg.Syntax, printCmds); err != nil {
+			return err
+		} else {
+			aPkg.ObjFiles = append(aPkg.ObjFiles, aliasObjs...)
+		}
+		aPkg.LinkArgs = append(aPkg.LinkArgs, altLdflags...)
+		pragmaLdflags, err := goCgoLinkArgs(aPkg.AltPkg.Syntax, ctx.buildConf.Goos)
+		if err != nil {
+			return fmt.Errorf("%s: %w", pkgPath, err)
+		}
+		aPkg.LinkArgs = append(aPkg.LinkArgs, pragmaLdflags...)
+	}
+	if pkg.ExportFile != "" {
+		exportFile, exportBuffer, err := exportPackageObject(ctx, pkg.PkgPath, pkg.ExportFile, ret)
+		if err != nil {
+			return fmt.Errorf("export object of %v failed: %v", pkgPath, err)
+		}
+		if exportFile != "" {
+			aPkg.ObjFiles = append(aPkg.ObjFiles, exportFile)
+		} else {
+			aPkg.ObjBuffers = append(aPkg.ObjBuffers, exportBuffer)
+		}
+		if debugBuild || verbose {
+			fmt.Fprintf(os.Stderr, "==> Export %s: %s\n", aPkg.PkgPath, pkg.ExportFile)
+		}
+	}
+	return emitPackagePCLN(ctx, aPkg)
+}
+
+// dropUnusedWindowsTestMain mirrors cmd/link's treatment of a command package
+// under `go test`. The tested package still contains its source main function,
+// now named <import-path>.main, but the executable entry is the synthetic test
+// main. cmd/link computes Go reachability before diagnosing unresolved symbols,
+// so it can discard an unreferenced source main even when that body contains a
+// one-sided //go:linkname call. lld-link instead resolves every COFF relocation
+// before /OPT:REF section GC and reports the dead call as undefined.
+//
+// Do not rewrite //go:linkname or weaken undefined symbols: either would also
+// hide an error when the source main is genuinely reachable. Remove only this
+// test-specific entry candidate while it is LLVM IR and only after proving that
+// it has no local use, no //go:linkname reference from any loaded test package,
+// and no //export root. Ordinary builds, synthetic test mains, and non-Windows
+// object formats keep their existing behavior.
+func dropUnusedWindowsTestMain(ctx *context, pkg *aPackage, mod gllvm.Module) {
+	if ctx == nil || ctx.prog == nil || ctx.buildConf == nil || pkg == nil || pkg.Package == nil ||
+		ctx.mode != ModeTest || ctx.buildConf.Goos != "windows" || ctx.buildConf.BuildMode != BuildModeExe ||
+		pkg.Name != "main" || pkg.ForTest == "" || mod.IsNil() {
+		return
+	}
+	symbol := pkg.PkgPath + ".main"
+	fn := mod.NamedFunction(symbol)
+	if fn.IsNil() || fn.IsDeclaration() || !fn.FirstUse().IsNil() || ctx.prog.HasLinknameTarget(symbol) {
+		return
+	}
+	if _, exported := ctx.prog.PackageExport(symbol); exported {
+		return
+	}
+	fn.EraseFromParentAsFunction()
+}
+
+func printCompletedPackage(conf *Config, pkg *aPackage) {
+	if conf.PrintPackages && !pkg.CacheHit {
+		fmt.Fprintln(os.Stderr, pkg.PkgPath)
+	}
+}
+
+func exportObject(ctx *context, pkgPath string, exportFile string, pkg llvmgen.Package) (string, error) {
+	prepareWasmGCGlobals(pkg.Module(), pkg.Prog.GCRootsEnabled(), pkgPath+"/"+filepath.Base(exportFile), ctx.buildConf.goGlobalDCEEnabled())
+	applySizeOptimizationAttributes(pkg.Module(), ctx.buildConf.OptLevel)
+	applyWASILTOFeatures(ctx, pkg.Module())
+	applyEmscriptenEHFeature(ctx, pkg.Module())
+	if useInMemoryNativeCodegen(ctx) {
+		return exportObjectInMemory(ctx, pkgPath, exportFile, pkg)
+	}
+	return exportObjectWithClang(ctx, pkgPath, exportFile, []byte(pkg.String()))
+}
+
+func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg llvmgen.Package) (string, packageArchiveBuffer, error) {
+	prepareWasmGCGlobals(pkg.Module(), pkg.Prog.GCRootsEnabled(), pkgPath+"/"+filepath.Base(exportFile), ctx.buildConf.goGlobalDCEEnabled())
+	applyWASILTOFeatures(ctx, pkg.Module())
+	applyEmscriptenEHFeature(ctx, pkg.Module())
+	if !useInMemoryNativeCodegen(ctx) {
+		path, err := exportObjectWithClang(ctx, pkgPath, exportFile, []byte(pkg.String()))
+		return path, packageArchiveBuffer{}, err
+	}
+	if ctx.buildConf.CheckLLFiles || ctx.buildConf.GenLL {
+		if err := dumpLLVMIRIfNeeded(ctx, pkgPath, exportFile, pkg.String()); err != nil {
+			return "", packageArchiveBuffer{}, err
+		}
+	}
+	buf, kind, err := emitObjectToMemoryBuffer(ctx.buildConf, ctx.prog, pkg.Module())
+	if err != nil {
+		return "", packageArchiveBuffer{}, err
+	}
+	name := filepath.Base(exportFile) + ".o"
+	if ctx.shouldPrintCommands(false) {
+		fmt.Fprintf(os.Stderr, "# compiling archive member %s for pkg: %s\n", name, pkgPath)
+		fmt.Fprintf(os.Stderr, "# using %s\n", kind)
+	}
+	return "", packageArchiveBuffer{name: name, buffer: buf}, nil
+}
+
+// LTO backend defaults do not merge into existing target-features attributes.
+// Fill the WASI profile requirements without replacing features such as SIMD.
+func applyWASILTOFeatures(ctx *context, mod gllvm.Module) {
+	if !ctx.buildConf.ltoEnabled() || ctx.crossCompile.WasmProfile != crosscompile.WasmProfileW32 {
+		return
+	}
+	// Match the WASI compiler/backend flags in internal/crosscompile/crosscompile.go.
+	const required = "+atomics,+bulk-memory,+exception-handling,+mutable-globals,+nontrapping-fptoint,+sign-ext"
+	requiredFeatures := strings.Split(required, ",")
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = gllvm.NextFunction(fn) {
+		if fn.IsDeclaration() {
+			continue
+		}
+		for _, existing := range fn.GetFunctionAttributes() {
+			if existing.IsString() && existing.GetStringKind() == "target-features" {
+				merged := slices.Clone(requiredFeatures)
+				for _, feature := range strings.Split(existing.GetStringValue(), ",") {
+					// The mandatory profile features supersede both positive
+					// and negative copies; retain unrelated per-function ones.
+					if feature != "" && !slices.Contains(requiredFeatures, "+"+strings.TrimLeft(feature, "+-")) {
+						merged = append(merged, feature)
+					}
+				}
+				slices.Sort(merged)
+				features := strings.Join(slices.Compact(merged), ",")
+				fn.AddFunctionAttr(mod.Context().CreateStringAttribute("target-features", features))
+				break
+			}
+		}
+	}
+}
+
+func useInMemoryNativeCodegen(ctx *context) bool {
+	return useInMemoryNativeCodegenConf(ctx.buildConf)
+}
+
+func useInMemoryNativeCodegenConf(conf *Config) bool {
+	return conf != nil && !conf.GenLL &&
+		conf.Target == "" &&
+		conf.Goos == runtime.GOOS &&
+		conf.Goarch == runtime.GOARCH &&
+		conf.Goarch != "wasm"
+}
+
+func dumpLLVMIRIfNeeded(ctx *context, pkgPath string, exportFile string, data string) error {
+	if !ctx.buildConf.CheckLLFiles && !ctx.buildConf.GenLL {
+		return nil
+	}
+
+	base := filepath.Base(exportFile)
+	f, err := os.CreateTemp("", base+"-*.ll")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(data); err != nil {
+		f.Close()
+		return err
+	}
+	err = f.Close()
+	if err != nil {
+		return err
+	}
+	if ctx.buildConf.CheckLLFiles {
+		if msg, err := llcCheck(ctx.commands, f.Name()); err != nil {
+			fmt.Fprintf(os.Stderr, "==> llc %v: %v\n%v\n", pkgPath, f.Name(), msg)
+		}
+	}
+	// If GenLL is enabled, keep a copy of the .ll file for debugging
+	if ctx.buildConf.GenLL {
+		llFile := exportFile + ".ll"
+		if err := os.Chmod(f.Name(), 0644); err != nil {
+			return err
+		}
+		if err := copyFileAtomic(f.Name(), llFile); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func exportObjectInMemory(ctx *context, pkgPath string, exportFile string, pkg llvmgen.Package) (string, error) {
+	if ctx.buildConf.CheckLLFiles || ctx.buildConf.GenLL {
+		// Avoid formatting large IR unless a debug/check path needs it.
+		if err := dumpLLVMIRIfNeeded(ctx, pkgPath, exportFile, pkg.String()); err != nil {
+			return "", err
+		}
+	}
+	buf, kind, err := emitObjectToMemoryBuffer(ctx.buildConf, ctx.prog, pkg.Module())
+	if err != nil {
+		return "", err
+	}
+	defer buf.Dispose()
+	return writeObjectBufferToFile(ctx, pkgPath, exportFile, buf, kind)
+}
+
+func emitObjectToMemoryBuffer(conf *Config, prog llvmgen.Program, mod gllvm.Module) (gllvm.MemoryBuffer, string, error) {
+	ltoMode := conf.ltoMode()
+	var (
+		buf  gllvm.MemoryBuffer
+		err  error
+		kind = "in-memory LLVM object emission"
+	)
+	switch ltoMode {
+	case lto.Full:
+		// reference to https: //github.com/espressif/llvm-project/blob/04a1a3482ce3ee00b5bbec1ce852e58410e4b6ad/clang/lib/CodeGen/BackendUtil.cpp#L197
+		// Clang emit SplitLTOUnit for full lto bitcode except on darwin.
+		buf = gllvm.WriteFullLTOBitcodeToMemoryBuffer(mod, conf.Goos != "darwin")
+		kind = "in-memory LLVM full LTO bitcode emission"
+	case lto.Thin:
+		buf = gllvm.WriteThinLTOBitcodeToMemoryBuffer(mod)
+		kind = "in-memory LLVM ThinLTO bitcode emission"
+	default:
+		buf, err = prog.TargetMachine().EmitToMemoryBuffer(mod, gllvm.ObjectFile)
+		if err != nil {
+			return gllvm.MemoryBuffer{}, "", err
+		}
+	}
+	return buf, kind, nil
+}
+
+func writeObjectBufferToFile(ctx *context, pkgPath, exportFile string, buf gllvm.MemoryBuffer, kind string) (string, error) {
+	base := filepath.Base(exportFile)
+	objFile, err := os.CreateTemp("", base+"-*.o")
+	if err != nil {
+		return "", err
+	}
+	objFileName := objFile.Name()
+	if ctx.shouldPrintCommands(false) {
+		fmt.Fprintf(os.Stderr, "# compiling %s for pkg: %s\n", objFileName, pkgPath)
+		fmt.Fprintf(os.Stderr, "# using %s\n", kind)
+	}
+	if _, err := objFile.Write(buf.Bytes()); err != nil {
+		objFile.Close()
+		os.Remove(objFileName)
+		return "", err
+	}
+	if err := objFile.Close(); err != nil {
+		os.Remove(objFileName)
+		return "", err
+	}
+	return objFileName, nil
+}
+
+func exportObjectWithClang(ctx *context, pkgPath string, exportFile string, data []byte) (string, error) {
+	base := filepath.Base(exportFile)
+	f, err := os.CreateTemp("", base+"-*.ll")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return "", err
+	}
+	err = f.Close()
+	if err != nil {
+		return exportFile, err
+	}
+	if ctx.buildConf.CheckLLFiles {
+		if msg, err := llcCheck(ctx.commands, f.Name()); err != nil {
+			fmt.Fprintf(os.Stderr, "==> llc %v: %v\n%v\n", pkgPath, f.Name(), msg)
+		}
+	}
+	if ctx.buildConf.GenLL {
+		llFile := exportFile + ".ll"
+		if err := os.Chmod(f.Name(), 0644); err != nil {
+			return "", err
+		}
+		// Copy instead of rename so we can still compile to .o
+		if err := copyFileAtomic(f.Name(), llFile); err != nil {
+			return "", err
+		}
+	}
+	objFile, err := os.CreateTemp("", base+"-*.o")
+	if err != nil {
+		return "", err
+	}
+	objFile.Close()
+	args := []string{"-o", objFile.Name(), "-c", f.Name(), "-Wno-override-module"}
+	if ctx.shouldPrintCommands(false) {
+		fmt.Fprintf(os.Stderr, "# compiling %s for pkg: %s\n", f.Name(), pkgPath)
+		fmt.Fprintln(os.Stderr, "clang", args)
+	}
+	cmd := ctx.irCompiler()
+	if err := cmd.Compile(args...); err != nil {
+		os.Remove(objFile.Name())
+		return "", err
+	}
+	return objFile.Name(), nil
+}
+
+func llcCheck(commands commandEnv, exportFile string) (msg string, err error) {
+	cmd := commands.configure(exec.Command("llc", "-filetype=null", exportFile))
+	var buf bytes.Buffer
+	cmd.Stderr = &buf
+	if err = cmd.Run(); err != nil {
+		msg = buf.String()
+	}
+	return
+}
+
+const (
+	altPkgPathPrefix = abi.PatchPathPrefix
+)
+
+func (c *context) depfileCheckCache() *depfileCheckCache {
+	if c == nil {
+		return nil
+	}
+	c.depfileChecksOnce.Do(func() {
+		c.depfileChecks = newDepfileCheckCache()
+	})
+	return c.depfileChecks
+}
+
+type altMetadataPrefetchResult struct {
+	pkgs []*packages.Package
+	err  error
+}
+
+var knownAltPkgTargets = []string{
+	"internal/abi",
+	"internal/reflectlite",
+	"reflect",
+	"runtime",
+	"syscall/js",
+}
+
+func prefetchAltPkgPaths(conf *Config, base ...string) []string {
+	paths := append([]string(nil), base...)
+	for _, pkgPath := range knownAltPkgTargets {
+		if pkgPath == "syscall/js" && (conf == nil || (conf.Goos != "js" && conf.Goarch != "wasm")) {
+			continue
+		}
+		if hasAltPkgForTarget(conf, pkgPath) {
+			paths = append(paths, altPkgPathPrefix+pkgPath)
+		}
+	}
+	return paths
+}
+
+func startPrefetchAltMetadata(dedup packages.Deduper, altCfg *packages.Config, patterns []string) chan altMetadataPrefetchResult {
+	if len(patterns) == 0 || altCfg == nil {
+		return nil
+	}
+	driverCfg := packages.MetadataConfig(dedup, altCfg)
+	ch := make(chan altMetadataPrefetchResult, 1)
+	go func() {
+		pkgs, err := packages.LoadMetadata(&driverCfg, patterns...)
+		ch <- altMetadataPrefetchResult{pkgs: pkgs, err: err}
+	}()
+	return ch
+}
+
+func selectPrefetchedAltMetadata(res altMetadataPrefetchResult, want []string) ([]*packages.Package, bool) {
+	if res.err != nil || len(res.pkgs) == 0 || len(want) == 0 {
+		return nil, false
+	}
+	byPath := make(map[string]*packages.Package, len(res.pkgs))
+	for _, pkg := range res.pkgs {
+		if pkg == nil {
+			continue
+		}
+		if pkg.PkgPath != "" {
+			byPath[pkg.PkgPath] = pkg
+		}
+		if pkg.ID != "" {
+			byPath[pkg.ID] = pkg
+		}
+	}
+	selected := make([]*packages.Package, 0, len(want))
+	for _, path := range want {
+		pkg := byPath[path]
+		if pkg == nil || len(pkg.Errors) > 0 {
+			return nil, false
+		}
+		selected = append(selected, pkg)
+	}
+	return selected, true
+}
+
+func altPkgs(initial []*packages.Package, conf *Config, alts ...string) []string {
+	packages.Visit(initial, nil, func(p *packages.Package) {
+		if p.Types != nil && !p.IllTyped {
+			if hasAltPkgForTarget(conf, p.PkgPath) {
+				alts = append(alts, altPkgPathPrefix+p.PkgPath)
+			}
+		}
+	})
+	return alts
+}
+
+func prepareLocalVariables(prog llvmgen.Program, groups ...[]*packages.Package) error {
+	seen := make(map[*types.Package]bool)
+	var firstErr error
+	for _, roots := range groups {
+		packages.Visit(roots, nil, func(p *packages.Package) {
+			if firstErr != nil || p.Types == nil || p.IllTyped || seen[p.Types] {
+				return
+			}
+			seen[p.Types] = true
+			firstErr = cl.PrepareInactiveLocalVariables(prog, p.Fset, p.Types, p.TypesInfo, p.Syntax)
+		})
+		if firstErr != nil {
+			return firstErr
+		}
+	}
+
+	for _, pkg := range activeLocalityPackages(groups...) {
+		prog.ActivateLocalitiesFor(pkg)
+	}
+	return nil
+}
+
+// Match activation for a standalone build, including alternate packages only
+// when their canonical package is reachable from the selected initials.
+func activeLocalityPackages(groups ...[]*packages.Package) []*types.Package {
+	if len(groups) == 0 {
+		return nil
+	}
+	var result []*types.Package
+	active := make(map[string]bool)
+	activate := func(p *packages.Package) {
+		if p.Types == nil || p.IllTyped {
+			return
+		}
+		active[llvmgen.PathOf(p.Types)] = true
+		result = append(result, p.Types)
+	}
+	packages.Visit(groups[0], nil, activate)
+	for _, roots := range groups[1:] {
+		for _, root := range roots {
+			if root == nil || root.Types == nil || !active[llvmgen.PathOf(root.Types)] {
+				continue
+			}
+			packages.Visit([]*packages.Package{root}, nil, activate)
+		}
+	}
+	return result
+}
+
+type ssaBuildEntry struct {
+	id         string
+	pkg        *ssa.Package
+	syntax     []*ast.File
+	complexity int64
+}
+
+func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.Package, conf *Config, verbose bool) []ssaBuildEntry {
+	var entries []ssaBuildEntry
+	packages.Visit(alts, nil, func(p *packages.Package) {
+		if typs := p.Types; typs != nil && !p.IllTyped {
+			if debugBuild || verbose {
+				log.Println("==> BuildSSA", p.ID)
+			}
+			// Large static [N]byte initializers are folded natively onto
+			// ssa.Global.StaticBytes during llgo/ssa Package.Build without
+			// mutating AST or TypesInfo.InitOrder.
+			isAlt := strings.HasPrefix(p.ID, altPkgPathPrefix)
+			pkgSSA := prog.CreatePackage(typs, p.Syntax, p.TypesInfo, true)
+			entries = append(entries, ssaBuildEntry{id: p.ID, pkg: pkgSSA, syntax: p.Syntax})
+			if isAlt {
+				path := p.ID[len(altPkgPathPrefix):]
+				// Even if an alt package exists and is pulled in as a dependency of other
+				// patches (e.g. runtime/reflect), we should only apply it when it is
+				// enabled for the target (and not overridden by Plan9 asm translation).
+				if !hasAltPkgForTarget(conf, path) {
+					return
+				}
+				patches[path] = cl.Patch{Alt: pkgSSA, Types: typepatch.Clone(typs)}
+				if debugBuild || verbose {
+					log.Println("==> Patching", path)
+				}
+			}
+		}
+	})
+	return entries
+}
+
+type aPackage struct {
+	*packages.Package
+	SSA    *ssa.Package
+	AltPkg *packages.Cached
+	LPkg   llvmgen.Package
+
+	NeedRt          bool
+	NeedPyInit      bool
+	ssaInstructions int64
+	linkSnapshot    *packageLinkSnapshot
+
+	LinkArgs        []string
+	ObjFiles        []string               // file-backed archive members: .o or .ll
+	ObjBuffers      []packageArchiveBuffer // LLVM-produced in-memory archive members
+	ArchiveFile     string                 // archive file: .a (output of archiver, used for linking)
+	Meta            *meta.PackageMeta
+	rewriteVars     map[string]string
+	tempObjFiles    []string // process-private C/C++/assembly objects consumed by ArchiveFile
+	cachedPkgInputs *packageSection
+
+	pcln *packagePCLN // source mappings read from ArchiveFile before linking
+
+	// Cache related fields
+	Fingerprint    string          // fingerprint digest
+	Manifest       string          // manifest text content
+	CacheHit       bool            // whether cache was hit
+	frontendOpaque *frontendExport // validated body-independent archive contract
+	exportMetaMu   sync.RWMutex
+	exportMeta     *pkgmeta.PackageMeta // binary compiler summary sidecar
+}
+
+func (p *aPackage) getExportMeta() *pkgmeta.PackageMeta {
+	p.exportMetaMu.RLock()
+	defer p.exportMetaMu.RUnlock()
+	return p.exportMeta
+}
+
+func (p *aPackage) setExportMeta(meta *pkgmeta.PackageMeta) {
+	p.exportMetaMu.Lock()
+	defer p.exportMetaMu.Unlock()
+	p.exportMeta = meta
+}
+
+func (p *aPackage) appendTemporaryObjFiles(files ...string) {
+	p.ObjFiles = append(p.ObjFiles, files...)
+	p.tempObjFiles = append(p.tempObjFiles, files...)
+}
+
+func (p *aPackage) cleanupTemporaryObjFiles() {
+	for _, file := range p.tempObjFiles {
+		_ = os.Remove(file)
+	}
+	p.tempObjFiles = nil
+}
+
+type Package = *aPackage
+
+func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([]*aPackage, []ssaBuildEntry, error) {
+	prog := ctx.progSSA
+	var all []*aPackage
+	var entries []ssaBuildEntry
+	var errs []*packages.Package
+	packages.Visit(initial, nil, func(p *packages.Package) {
+		if p.Types != nil && !p.IllTyped {
+			pkgPath := p.PkgPath
+			// Use p.ID to check duplicates since same pkgPath may have different IDs
+			if _, ok := ctx.pkgByID[p.ID]; ok || strings.HasPrefix(pkgPath, altPkgPathPrefix) {
+				return
+			}
+			var altPkg *packages.Cached
+			ssaPkg, created := createSSAPkg(ctx, prog, p, verbose)
+			if created {
+				entries = append(entries, ssaBuildEntry{id: p.ID, pkg: ssaPkg, syntax: p.Syntax})
+			}
+			if ctx.hasAltPkg(pkgPath) {
+				if altPkg = ctx.dedup.Check(altPkgPathPrefix + pkgPath); altPkg == nil {
+					return
+				}
+			}
+			rewrites := collectRewriteVars(ctx, pkgPath)
+			if altPkg != nil {
+				ssaPkg.RetainInit = cl.SkipNamesRetainingInit(altPkg.Syntax)
+			}
+			aPkg := &aPackage{
+				Package:     p,
+				SSA:         ssaPkg,
+				AltPkg:      altPkg,
+				LPkg:        nil,
+				NeedRt:      false,
+				NeedPyInit:  false,
+				LinkArgs:    nil,
+				ObjFiles:    nil,
+				rewriteVars: rewrites,
+			}
+			ctx.pkgs[p] = aPkg
+			ctx.pkgByID[p.ID] = aPkg
+			all = append(all, aPkg)
+		} else {
+			errs = append(errs, p)
+		}
+	})
+	if len(errs) > 0 {
+		for _, errPkg := range errs {
+			for _, err := range errPkg.Errors {
+				fmt.Fprintln(os.Stderr, formatPackageError(err, ctx.buildConf.NoErrorColumn))
+			}
+			fmt.Fprintln(os.Stderr, "cannot build SSA for package", errPkg)
+		}
+		return nil, nil, fmt.Errorf("cannot build SSA for packages")
+	}
+	return all, entries, nil
+}
+
+// buildSSAPkgs builds registered packages with the requested bound.
+// Return-value load ordering is repaired natively inside llgo/ssa during
+// each package's parallel Build().
+func buildSSAPkgs(ctx *context, entries []ssaBuildEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	rankSpan := ctx.buildTrace.startCoordinator("rank SSA packages", map[string]any{
+		"entries": len(entries),
+	})
+	unique := make([]ssaBuildEntry, 0, len(entries))
+	index := make(map[*ssa.Package]int, len(entries))
+	for _, entry := range entries {
+		if entry.pkg == nil {
+			continue
+		}
+		if _, ok := index[entry.pkg]; ok {
+			continue
+		}
+		index[entry.pkg] = len(unique)
+		entry.complexity = syntaxNodeCount(entry.syntax)
+		unique = append(unique, entry)
+	}
+	slices.SortStableFunc(unique, func(left, right ssaBuildEntry) int {
+		switch {
+		case left.complexity > right.complexity:
+			return -1
+		case left.complexity < right.complexity:
+			return 1
+		default:
+			return 0
+		}
+	})
+	rankSpan.setArg("packages", len(unique))
+	rankSpan.done()
+	jobs := make(chan ssaBuildEntry, len(unique))
+	var wg sync.WaitGroup
+	for range min(ctx.buildConf.parallelism(), len(unique)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for entry := range jobs {
+				pkgPath := entry.pkg.Pkg.Path()
+				traceSpan := ctx.buildTrace.startWorker("ssa", pkgPath)
+				traceSpan.setArg("package_id", entry.id)
+				traceSpan.setArg("syntax_nodes", entry.complexity)
+				func() {
+					defer traceSpan.done()
+					entry.pkg.Build()
+				}()
+				ctx.buildTrace.rememberSSA(entry.id, traceSpan)
+			}
+		}()
+	}
+	for _, entry := range unique {
+		jobs <- entry
+	}
+	close(jobs)
+	wg.Wait()
+}
+
+func syntaxNodeCount(files []*ast.File) (nodes int64) {
+	for _, file := range files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			if node != nil {
+				nodes++
+			}
+			return true
+		})
+	}
+	return
+}
+
+// recordPackageSSAInstructions makes backend ordering a single linear pass
+// over the SSA that was already built. It includes methods, wrappers, and
+// closures without repeating a whole-program reachability scan per package.
+// Reuse that traversal to validate concrete map types before LLVM lowering.
+func recordPackageSSAInstructions(ctx *context) error {
+	if ctx == nil || ctx.progSSA == nil {
+		return nil
+	}
+	span := ctx.buildTrace.startCoordinator("count SSA instructions", nil)
+	defer span.done()
+	counts := make(map[*ssa.Package]int64)
+	var total int64
+	literalFormats := canSpecializeLiteralFormats(ctx)
+	var validateMaps func(types.Type) error
+	if ctx.prog != nil {
+		validateMaps = ctx.prog.VectorMapValidator()
+	}
+	for fn := range ssautil.AllFunctions(ctx.progSSA) {
+		if fn == nil {
+			continue
+		}
+		if validateMaps != nil {
+			if err := validateSSAVectorMaps(fn, validateMaps); err != nil {
+				return err
+			}
+		}
+		for _, block := range fn.Blocks {
+			if literalFormats {
+				for _, instruction := range block.Instrs {
+					specializeLiteralFormat(instruction)
+				}
+			}
+			if fn.Pkg == nil {
+				continue
+			}
+			instructions := int64(len(block.Instrs))
+			counts[fn.Pkg] += instructions
+			total += instructions
+		}
+	}
+	for _, pkg := range ctx.pkgs {
+		if pkg == nil {
+			continue
+		}
+		pkg.ssaInstructions = counts[pkg.SSA]
+		if pkg.AltPkg != nil && pkg.AltPkg.Types != nil {
+			pkg.ssaInstructions += counts[ctx.progSSA.Package(pkg.AltPkg.Types)]
+		}
+	}
+	span.setArg("packages", len(counts))
+	span.setArg("instructions", total)
+	return nil
+}
+
+func formatPackageError(err packages.Error, noColumn bool) string {
+	formatted := err.Error()
+	if !noColumn {
+		return formatted
+	}
+	if pos, ok := positionWithoutColumn(err.Pos); ok {
+		return pos + ": " + err.Msg
+	}
+	lines := strings.Split(formatted, "\n")
+	for i, line := range lines {
+		if line, ok := diagnosticWithoutColumn(line); ok {
+			lines[i] = line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func positionWithoutColumn(pos string) (string, bool) {
+	lastColon := strings.LastIndexByte(pos, ':')
+	if lastColon < 0 {
+		return "", false
+	}
+	if _, parseErr := strconv.Atoi(pos[lastColon+1:]); parseErr != nil {
+		return "", false
+	}
+	linePos := pos[:lastColon]
+	lineColon := strings.LastIndexByte(linePos, ':')
+	if lineColon < 0 {
+		return "", false
+	}
+	if _, parseErr := strconv.Atoi(linePos[lineColon+1:]); parseErr != nil {
+		return "", false
+	}
+	return linePos, true
+}
+
+func diagnosticWithoutColumn(line string) (string, bool) {
+	separator := strings.Index(line, ": ")
+	if separator < 0 {
+		return "", false
+	}
+	pos, ok := positionWithoutColumn(line[:separator])
+	if !ok {
+		return "", false
+	}
+	return pos + line[separator:], true
+}
+
+func collectRewriteVars(ctx *context, pkgPath string) map[string]string {
+	data := ctx.buildConf.GlobalRewrites
+	if len(data) == 0 {
+		return nil
+	}
+	basePath := strings.TrimPrefix(pkgPath, altPkgPathPrefix)
+	if vars := data[basePath]; vars != nil {
+		return cloneRewrites(vars)
+	}
+	if vars := data[pkgPath]; vars != nil {
+		return cloneRewrites(vars)
+	}
+	return nil
+}
+
+func cloneRewrites(src Rewrites) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dup := make(map[string]string, len(src))
+	for k, v := range src {
+		dup[k] = v
+	}
+	return dup
+}
+
+func toTypeList(args *types.TypeList) []types.Type {
+	if args == nil {
+		return nil
+	}
+	result := make([]types.Type, args.Len())
+	for i := 0; i < args.Len(); i++ {
+		result[i] = args.At(i)
+	}
+	return result
+}
+
+// fixUntypedShiftTypes fixes a bug in go/types where non-constant shift expressions
+// with untyped constant left operands have type "untyped int" instead of "int".
+//
+// According to the Go spec: "If the left operand of a non-constant shift expression
+// is an untyped constant, it is first implicitly converted to the type it would assume
+// if the shift expression were replaced by its left operand alone."
+//
+// Parent expressions can inherit that untyped result. This causes go/ssa sanity
+// check to fail when a non-constant instruction result remains untyped.
+// See: https://github.com/golang/go/issues/77067
+func fixUntypedShiftTypes(p *packages.Package) {
+	var toFix []ast.Expr
+	for expr, tv := range p.TypesInfo.Types {
+		if tv.Value != nil {
+			continue
+		}
+		basic, ok := tv.Type.(*types.Basic)
+		if !ok || basic.Info()&types.IsUntyped == 0 {
+			continue
+		}
+		toFix = append(toFix, expr)
+	}
+
+	for _, expr := range toFix {
+		tv := p.TypesInfo.Types[expr]
+		p.TypesInfo.Types[expr] = types.TypeAndValue{
+			Type:  types.Default(tv.Type),
+			Value: tv.Value,
+		}
+	}
+}
+
+func applyPatches(ctx *context, p *packages.Package, verbose bool) {
+	// Fix untyped shift types before SSA build
+	// See: https://github.com/golang/go/issues/77067
+	fixUntypedShiftTypes(p)
+
+	// fix instance patch
+	for id, inst := range p.TypesInfo.Instances {
+		if obj := p.TypesInfo.Uses[id]; obj != nil && obj.Pkg() != nil && obj.Pkg() != p.Types {
+			if pkg := obj.Pkg(); pkg != nil && pkg != p.Types {
+				if patch, ok := ctx.patches[pkg.Path()]; ok {
+					if robj := patch.Alt.Pkg.Scope().Lookup(obj.Name()); robj != nil {
+						typ, err := types.Instantiate(nil, robj.Type(), toTypeList(inst.TypeArgs), true)
+						if err != nil {
+							if debugBuild || verbose {
+								log.Printf("==> Instance patch failed for %q: %v\n", obj.Id(), err)
+							}
+							continue
+						}
+						inst.Type = typ
+						p.TypesInfo.Instances[id] = inst
+						p.TypesInfo.Uses[id] = robj
+					}
+				}
+			}
+		}
+	}
+}
+
+func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose bool) (*ssa.Package, bool) {
+	// SSA imports are keyed by types.Package identity. A path lookup can
+	// return the test-augmented variant and leave the ordinary package
+	// unregistered (or vice versa), even though both have the same PkgPath.
+	pkgSSA := prog.Package(p.Types)
+	if pkgSSA == nil {
+		if debugBuild || verbose {
+			log.Println("==> BuildSSA", p.ID)
+		}
+		applyPatches(ctx, p, verbose)
+		if ctx.dedup.IsExported(p.ID) {
+			pkgSSA = prog.CreatePackage(p.Types, nil, nil, true)
+			for _, member := range pkgSSA.Members {
+				if fn, ok := member.(*ssa.Function); ok && fn.Name() != "init" {
+					fn.Synthetic = ""
+				}
+			}
+			for _, name := range p.Types.Scope().Names() {
+				if named, ok := p.Types.Scope().Lookup(name).Type().(*types.Named); ok {
+					for i := 0; i < named.NumMethods(); i++ {
+						if fn := prog.FuncValue(named.Method(i)); fn != nil {
+							fn.Synthetic = ""
+						}
+					}
+				}
+			}
+		} else {
+			pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
+		}
+		return pkgSSA, true
+	}
+	return pkgSSA, false
+}
+
+/*
+var (
+	// TODO(xsw): complete build flags
+	buildFlags = map[string]bool{
+		"-C":         true,  // -C dir: Change to dir before running the command
+		"-a":         false, // -a: force rebuilding of packages that are already up-to-date
+		"-n":         false, // -n: print the commands but do not run them
+		"-p":         true,  // -p n: the number of programs to run in parallel
+		"-race":      false, // -race: enable data race detection
+		"-cover":     false, // -cover: enable coverage analysis
+		"-covermode": true,  // -covermode mode: set the mode for coverage analysis
+		"-v":         false, // -v: print the names of packages as they are compiled
+		"-work":      false, // -work: print the name of the temporary work directory and do not delete it when exiting
+		"-x":         false, // -x: print the commands
+		"-tags":      true,  // -tags 'tag,list': a space-separated list of build tags to consider satisfied during the build
+		"-pkgdir":    true,  // -pkgdir dir: install and load all packages from dir instead of the usual locations
+		"-ldflags":   true,  // --ldflags 'flag list': arguments to pass on each go tool link invocation
+	}
+)
+*/
+
+const llgoFuncInfo = "LLGO_FUNCINFO"
+const llgoFuncInfoSites = "LLGO_FUNCINFO_SITES"
+const llgoTrace = "LLGO_TRACE"
+const llgoOptimize = "LLGO_OPTIMIZE"
+const llgoWasmRuntime = "LLGO_WASM_RUNTIME"
+const llgoWasiThreads = "LLGO_WASI_THREADS"
+const llgoWasmWorkers = "LLGO_WASM_WORKERS"
+const llgoStdioNobuf = "LLGO_STDIO_NOBUF"
+const llgoFullRpath = "LLGO_FULL_RPATH"
+const llgoBuildCache = "LLGO_BUILD_CACHE"
+
+// for Plan9 asm translation debug
+const llgoPlan9ASMPkgs = "LLGO_PLAN9ASM_PKGS"
+
+const defaultWasmRuntime = "wasmer"
+
+func defaultEnv(env string, defVal string) string {
+	envVal := os.Getenv(env)
+	if envVal == "" {
+		return defVal
+	}
+	return envVal
+}
+
+func isEnvOn(env string, defVal bool) bool {
+	envVal := strings.ToLower(os.Getenv(env))
+	if envVal == "" {
+		return defVal
+	}
+	return envVal == "1" || envVal == "true" || envVal == "on"
+}
+
+// cacheEnabled checks if build cache is enabled.
+// Cache can be disabled by setting LLGO_BUILD_CACHE=off|0
+func cacheEnabled() bool {
+	return isEnvOn(llgoBuildCache, true)
+}
+
+func IsTraceEnabled() bool {
+	return isEnvOn(llgoTrace, false)
+}
+
+func IsStdioNobuf() bool {
+	return isEnvOn(llgoStdioNobuf, false)
+}
+
+func IsFuncInfoEnabled() bool {
+	return isEnvOn(llgoFuncInfo, true)
+}
+
+// IsFuncInfoSitesEnabled controls the body-embedded site records
+// independently of the funcinfo tables (LLGO_FUNCINFO_SITES=0 keeps the
+// metadata but drops entry and PC-line inline-asm sites). Useful for
+// isolating codegen perturbation caused by the in-body asm anchors.
+func IsFuncInfoSitesEnabled() bool {
+	return isEnvOn(llgoFuncInfoSites, true)
+}
+
+func IsOptimizeEnabled() bool {
+	return isEnvOn(llgoOptimize, true)
+}
+
+func effectiveOptLevel(conf *Config) optlevel.Level {
+	if conf != nil && conf.OptLevel.IsValid() {
+		return conf.OptLevel
+	}
+	if conf != nil && conf.Target != "" {
+		return optlevel.TargetDefault
+	}
+	return optlevel.Default
+}
+
+// applySizeOptimizationAttributes records the per-function size policy that
+// LLVM preserves in bitcode and consumes during both ordinary and LTO
+// optimization/code generation. The PassBuilder's Os/Oz pipeline selection is
+// not sufficient by itself: unlike Clang's frontend, it does not add these
+// attributes to existing IR.
+func applySizeOptimizationAttributes(mod gllvm.Module, level optlevel.Level) {
+	if level != optlevel.Os && level != optlevel.Oz {
+		return
+	}
+	ctx := mod.Context()
+	optSize := ctx.CreateEnumAttribute(gllvm.AttributeKindID("optsize"), 0)
+	var minSize gllvm.Attribute
+	if level == optlevel.Oz {
+		minSize = ctx.CreateEnumAttribute(gllvm.AttributeKindID("minsize"), 0)
+	}
+	for fn := mod.FirstFunction(); !fn.IsNil(); fn = gllvm.NextFunction(fn) {
+		if fn.IsDeclaration() {
+			continue
+		}
+		fn.AddFunctionAttr(optSize)
+		if !minSize.IsNil() {
+			fn.AddFunctionAttr(minSize)
+		}
+	}
+}
+
+func llvmPassPipeline(level optlevel.Level, ltoMode lto.Mode) string {
+	switch ltoMode {
+	case lto.Full:
+		return "lto-pre-link<" + level.Name() + ">"
+	case lto.Thin:
+		return "thinlto-pre-link<" + level.Name() + ">"
+	default:
+		return "default<" + level.Name() + ">"
+	}
+}
+
+func shouldRunLLVMPasses(mode Mode) bool {
+	return mode != ModeGen
+}
+
+func validateWASIThreads(conf *Config) error {
+	if conf.Goos == "wasip1" && conf.Goarch == "wasm" && !isEnvOn(llgoWasiThreads, true) {
+		return errors.New("single-thread WASI is no longer supported; unset LLGO_WASI_THREADS and use Wasmer with WASI threads")
+	}
+	return nil
+}
+
+func IsFullRpathEnabled() bool {
+	return isEnvOn(llgoFullRpath, true)
+}
+
+func Plan9ASMPkgs() string {
+	return defaultEnv(llgoPlan9ASMPkgs, "")
+}
+
+func WasmRuntime() string {
+	return defaultEnv(llgoWasmRuntime, defaultWasmRuntime)
+}
+
+func concatPkgLinkFiles(ctx *context, pkg *packages.Package, verbose bool) (parts []string, err error) {
+	inputs, err := llgoPkgFileInputs(ctx, pkg)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			removeFiles(parts)
+		}
+	}()
+	for _, input := range inputs {
+		linkFile, compileErr := clFile(ctx, input.compilerArgs, input.path, pkg.ExportFile, pkg.PkgPath, verbose)
+		if compileErr != nil {
+			return parts, compileErr
+		}
+		parts = append(parts, linkFile)
+	}
+	return parts, nil
+}
+
+type llgoFileInput struct {
+	path         string
+	compilerArgs []string
+}
+
+type llgoFileHashKey struct {
+	path         string
+	compilerArgs string
+	envIdentity  string
+}
+
+// const LLGoFiles = "file1; file2; ..."
+func llgoPkgFileInputs(ctx *context, pkg *packages.Package) ([]llgoFileInput, error) {
+	if ctx.llgoFilesCache == nil {
+		if ctx.llgoFilesFrozen {
+			return nil, fmt.Errorf("package %s LLGoFiles were not prepared before backend execution", pkg.PkgPath)
+		}
+		ctx.llgoFilesCache = make(map[*packages.Package][]llgoFileInput)
+	}
+	if inputs, ok := ctx.llgoFilesCache[pkg]; ok {
+		return inputs, nil
+	}
+	if ctx.llgoFilesFrozen {
+		return nil, fmt.Errorf("package %s LLGoFiles were not prepared before backend execution", pkg.PkgPath)
+	}
+
+	var inputs []llgoFileInput
+	if pkg.Types != nil {
+		if object, ok := pkg.Types.Scope().Lookup("LLGoFiles").(*types.Const); ok {
+			value := object.Val()
+			if value.Kind() == constant.String {
+				inputs = parseLLGoFileInputs(ctx, constant.StringVal(value), pkg)
+			}
+		}
+	}
+	ctx.llgoFilesCache[pkg] = inputs
+	return inputs, nil
+}
+
+// files = "file1; file2; ..."
+// files = "$(pkg-config --cflags xxx): file1; file2; ..."
+func parseLLGoFileInputs(ctx *context, files string, pkg *packages.Package) []llgoFileInput {
+	if len(pkg.GoFiles) == 0 {
+		return nil
+	}
+	dir := filepath.Dir(pkg.GoFiles[0])
+	args := make([]string, 0, 16)
+	if strings.HasPrefix(files, "$") { // has cflags
+		if pos := strings.IndexByte(files, ':'); pos > 0 {
+			cflags := xenv.ExpandEnvToArgsWith(files[:pos], ctx.commands.dir, ctx.commands.environ)
+			files = files[pos+1:]
+			args = append(args, cflags...)
+		}
+	}
+	var inputs []llgoFileInput
+	for _, file := range strings.Split(files, ";") {
+		file = strings.TrimSpace(file)
+		if file == "" {
+			continue
+		}
+		inputs = append(inputs, llgoFileInput{
+			path:         filepath.Join(dir, file),
+			compilerArgs: slices.Clone(args),
+		})
+	}
+	return inputs
+}
+
+func clFile(ctx *context, args []string, cFile, expFile, pkgPath string, verbose bool) (string, error) {
+	baseName := expFile + filepath.Base(cFile)
+	args = llgoFileCompilerArgs(ctx, args, cFile)
+
+	// If GenLL is enabled, first emit .ll for debugging, then compile to .o
+	printCmds := ctx.shouldPrintCommands(verbose)
+	if ctx.buildConf.GenLL {
+		llFile, err := genLLGoFileOutput(cFile, ".ll")
+		if err != nil {
+			return "", fmt.Errorf("create temporary LLVM IR output for %s: %w", cFile, err)
+		}
+		defer os.Remove(llFile)
+		llArgs := append(slices.Clone(args), "-emit-llvm", "-S", "-o", llFile, "-c", cFile)
+		if printCmds {
+			fmt.Fprintf(os.Stderr, "# compiling %s for pkg: %s\n", llFile, pkgPath)
+			fmt.Fprintln(os.Stderr, "clang", llArgs)
+		}
+		cmd := ctx.compilerForSource(cFile)
+		if err := cmd.Compile(llArgs...); err != nil {
+			return "", fmt.Errorf("compile %s to LLVM IR: %w", cFile, err)
+		}
+		published := baseName + ".ll"
+		if err := copyFileAtomic(llFile, published); err != nil {
+			return "", fmt.Errorf("publish LLVM IR for %s: %w", cFile, err)
+		}
+		if err := os.Chmod(published, 0o644); err != nil {
+			return "", fmt.Errorf("set LLVM IR permissions for %s: %w", cFile, err)
+		}
+	}
+
+	// Always compile to .o for linking
+	objFile, err := genLLGoFileOutput(cFile, ".o")
+	if err != nil {
+		return "", fmt.Errorf("create temporary object output for %s: %w", cFile, err)
+	}
+	objArgs := append(args, "-o", objFile, "-c", cFile)
+	if printCmds {
+		fmt.Fprintf(os.Stderr, "# compiling %s for pkg: %s\n", objFile, pkgPath)
+		fmt.Fprintln(os.Stderr, "clang", objArgs)
+	}
+	cmd := ctx.compilerForSource(cFile)
+	if err := cmd.Compile(objArgs...); err != nil {
+		_ = os.Remove(objFile)
+		return "", fmt.Errorf("compile %s: %w", cFile, err)
+	}
+	return objFile, nil
+}
+
+// llgoFileCompilerArgs returns the source-specific arguments shared by the
+// fingerprint preprocessor pass and the object compilation pass. Keeping this
+// in one place prevents cache keys from drifting away from compilation.
+func llgoFileCompilerArgs(ctx *context, args []string, source string) []string {
+	// A configured C++ driver must not change the source language or mangle C
+	// symbols. Put these defaults before explicit flags so cgo can override
+	// the language of generated .c preambles (for example, -x objective-c).
+	// Extensions are case-sensitive: Clang treats .C as C++ and .M as
+	// Objective-C++, so leave those to the driver rather than forcing C.
+	var defaults []string
+	switch filepath.Ext(source) {
+	case ".c":
+		defaults = []string{"-x", "c"}
+	case ".m":
+		defaults = []string{"-x", "objective-c"}
+	}
+	return slices.Concat(defaults, args, debugInfoCompilerArgs(ctx.buildConf, &ctx.crossCompile))
+}
+
+func removeFiles(files []string) {
+	for _, file := range files {
+		_ = os.Remove(file)
+	}
+}
+
+func genLLGoFileOutput(source, ext string) (string, error) {
+	return genTempOutputFile("llgofile-"+filepath.Base(source), ext)
+}
+
+func (c *context) compilerForSource(path string) *clang.Cmd {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".cc", ".cpp", ".cxx":
+		return c.cxxCompiler()
+	default:
+		return c.compiler()
+	}
+}
+
+func pkgExists(initial []*packages.Package, pkg *packages.Package) bool {
+	for _, v := range initial {
+		if v == pkg {
+			return true
+		}
+	}
+	return false
+}
+
+type none struct{}
+
+func check(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+// -----------------------------------------------------------------------------

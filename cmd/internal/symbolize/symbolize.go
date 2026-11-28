@@ -8,8 +8,8 @@ import (
 	"regexp"
 	"strconv"
 
-	"github.com/xgo-dev/llgo/internal/pclnmap"
-	"github.com/xgo-dev/llgo/internal/wasmdebug"
+	"github.com/xgo-dev/llgo/cmd/compiler/pclnmap"
+	"github.com/xgo-dev/llgo/cmd/compiler/wasmdebug"
 )
 
 // Run resolves raw logical frames using a module and its adjacent PCLN map.

@@ -34,7 +34,7 @@ Copy-Item -LiteralPath (Join-Path $HostCompilerDirectory 'licenses') `
 $readObj = Join-Path $HostCompilerDirectory 'inspection/llvm-readobj.exe'
 if (-not (Test-Path $readObj)) { throw 'The compiler artifact is missing its inspection tool' }
 Copy-ReleaseDLLs -ReadObj $readObj -Executable $executable -GoArch $GoArch -Profile 'msvc' -CheckOnly
-$toolchain = Get-Content -Raw (Join-Path $PSScriptRoot '../../internal/crosscompile/espressif.json') | ConvertFrom-Json
+$toolchain = Get-Content -Raw (Join-Path $PSScriptRoot '../../cmd/compiler/crosscompile/espressif.json') | ConvertFrom-Json
 $espHost = @{ amd64 = 'x86_64-w64-mingw32'; arm64 = 'aarch64-w64-mingw32'; '386' = 'i686-w64-mingw32' }[$GoArch]
 $payload = $toolchain.payloads.$espHost
 $espArchive = Get-ReleaseArchive `

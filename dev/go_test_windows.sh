@@ -12,7 +12,7 @@ fi
 # corrupt an unrelated heap object. A corrupted testing.T signal channel then
 # produces this otherwise-impossible synctest fatal error. This wrapper is used
 # only for the host-test batch containing this module's test package tree.
-module_path="$(go list -m -f '{{.Path}}')"
+module_path="$(GOWORK=off go list -m -f '{{.Path}}')"
 
 is_known_runtime_corruption() {
 	local log="$1"

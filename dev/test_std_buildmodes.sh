@@ -10,18 +10,26 @@ fi
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 test_pkgs=("$@")
 go_list() {
-	if [[ -n "${LLGO_TEST_MODFILE:-}" ]]; then
-		command go list "-modfile=${LLGO_TEST_MODFILE}" "$@"
-	else
-		command go list "$@"
-	fi
+	(
+		cd "${root_dir}/test"
+		if [[ -n "${LLGO_TEST_MODFILE:-}" ]]; then
+			command go list "-modfile=${LLGO_TEST_MODFILE}" "$@"
+		else
+			command go list "$@"
+		fi
+	)
 }
 import_paths=()
 stems=()
 groups=()
 max_group=0
 for test_pkg in "${test_pkgs[@]}"; do
-	package_info="$(go_list -tags=llgo -f '{{.ImportPath}} {{.Dir}}' "${test_pkg}")"
+	list_pkg="${test_pkg}"
+	case "${list_pkg}" in
+		./test/*) list_pkg="./${list_pkg#./test/}" ;;
+		test/*) list_pkg="./${list_pkg#test/}" ;;
+	esac
+	package_info="$(go_list -tags=llgo -f '{{.ImportPath}} {{.Dir}}' "${list_pkg}")"
 	read -r import_path package_dir <<<"${package_info}"
 	case "${import_path}" in
 		github.com/xgo-dev/llgo/test/std/*) ;;
@@ -78,7 +86,7 @@ if [[ "$(uname -s)" != Darwin ]] && pkg-config --exists libunwind; then
   done < <(pkg-config --libs libunwind | xargs -n1)
 fi
 
-work_dir="$(mktemp -d "${root_dir}/.std-buildmodes.XXXXXX")"
+work_dir="$(mktemp -d "${root_dir}/test/.std-buildmodes.XXXXXX")"
 trap 'rm -rf "${work_dir}"' EXIT
 
 for mode in c-shared c-archive; do

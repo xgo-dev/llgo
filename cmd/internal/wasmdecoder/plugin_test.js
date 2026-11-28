@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const debuggerSchema = require('../../../internal/debugabi/schema_v1.json');
+const debuggerSchema = require('../../compiler/debugabi/schema_v1.json');
 
 require('./plugin.js');
 require('./goroutines.js');

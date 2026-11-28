@@ -97,7 +97,7 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn(dependency, package['overrides']['rpm']['dependencies'])
         for build in config['builds']:
             if build['id'].startswith('llgo-linux-'):
-                self.assertIn('-X github.com/xgo-dev/llgo/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-22', build['ldflags'])
+                self.assertIn('-X github.com/xgo-dev/llgo/cmd/xtool/env/llvm.ldLLVMConfigBin=/usr/bin/llvm-config-22', build['ldflags'])
         job = load('release-build.yml')['jobs']['test-artifacts']
         smoke = next(step for step in job['steps'] if step.get('name') == 'Test Hello World')
         self.assertEqual(smoke['env']['LLGO_BUILD_CACHE'], '0')
@@ -111,13 +111,13 @@ class WorkflowContractTests(unittest.TestCase):
             with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory) / "workspace with spaces"
                 base = root / ".benchmark/base-source"
-                (base / "internal/build").mkdir(parents=True)
+                (base / "cmd/compiler/build").mkdir(parents=True)
                 marker = root / "installed"
                 (base / "install.sh").write_text(
                     'test "$LLGO_INSTALLER_LIBRARY_ONLY" = 1 || exit 9\n'
                     'install_macos_lld() { touch "$TEST_MARKER"; PATH=/invalid; }\n')
                 if legacy:
-                    (base / "internal/build/darwin_linker.go").touch()
+                    (base / "cmd/compiler/build/darwin_linker.go").touch()
                 result = subprocess.run(["bash", "-c", step["run"] + '\ncommand -v bash\n'],
                                         capture_output=True, text=True,
                                         env={**os.environ, "GITHUB_WORKSPACE": str(root), "TEST_MARKER": str(marker)})
@@ -250,11 +250,11 @@ import json, os, sys, time
 from pathlib import Path
 if sys.argv[1] == 'list':
     print('github.com/xgo-dev/llgo/cmd/internal/version')
-    print('github.com/xgo-dev/llgo/internal/build')
+    print('github.com/xgo-dev/llgo/cmd/compiler/build')
 else:
     args = sys.argv[1:]
     suite = next((name for package, name in (
-        ('./internal/build', 'build'), ('./cl', 'compiler'), ('./test/go', 'language'))
+        ('./cmd/compiler/build', 'build'), ('./cmd/compiler/cl', 'compiler'), ('./test/go', 'language'))
         if package in args), 'main')
     root = Path(os.environ['TEST_GO_LOG']).parent
     with (root / 'commands.jsonl').open('a') as stream:
@@ -294,7 +294,7 @@ if args.overlay:
     command.append('-overlay=' + args.overlay)
 if args.ldflags:
     command.append('-ldflags=' + args.ldflags)
-sys.exit(subprocess.call(command + ['./internal/build']))
+sys.exit(subprocess.call(command + ['./cmd/compiler/build']))
 """)
                 result = subprocess.run(["bash", "-c", script], cwd=root,
                                         capture_output=True, text=True, timeout=20,
@@ -323,7 +323,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 for suite in expected_suites:
                     self.assertTrue((root / (suite + ".finished")).exists())
                     self.assertIn(f"### Go tests: {suite} (exit {7 if suite == failure else 0})", report)
-                for package in ("./cl", "./internal/build", "./test/go"):
+                for package in ("./cmd/compiler/cl", "./cmd/compiler/build", "./test/go"):
                     for args in (args for args in calls if package in args):
                         self.assertEqual([arg for arg in args if arg.startswith("-overlay=")],
                                          [f"-overlay={overlay}"] if overlay else [])
@@ -332,15 +332,15 @@ sys.exit(subprocess.call(command + ['./internal/build']))
                 self.assertFalse(any(arg.startswith("-overlay=") for arg in main))
                 # Every build case still runs exactly once with compiler coverage.
                 if "build" in expected_suites:
-                    build = next(args for args in calls if "./internal/build" in args)
+                    build = next(args for args in calls if "./cmd/compiler/build" in args)
                     self.assertNotIn("-run", build)
                     self.assertNotIn("-skip", build)
                     self.assertIn("-coverprofile=coverage-build.txt", build)
                     self.assertIn("-coverpkg=./...", build)
-                    self.assertEqual(sum("./internal/build" in args for args in calls), 1)
+                    self.assertEqual(sum("./cmd/compiler/build" in args for args in calls), 1)
                     self.assertEqual(any(arg.startswith("-ldflags=-linkmode=external") for arg in build),
                                      runner == "Windows")
-                self.assertFalse(any("github.com/xgo-dev/llgo/internal/build" in args
+                self.assertFalse(any("github.com/xgo-dev/llgo/cmd/compiler/build" in args
                                      for args in calls))
                 self.assertTrue(all("-json" in args for args in calls))
 
@@ -610,7 +610,7 @@ sys.exit(subprocess.call(command + ['./internal/build']))
         jobs = load("release-build.yml")["jobs"]
         self.assertNotIn("build-windows-x86-toolchains", jobs)
         self.assertFalse((WORKFLOWS.parent / "windows/build-x86-toolchains.sh").exists())
-        pins = json.loads((WORKFLOWS.parents[1] / "internal/crosscompile/espressif.json").read_text())
+        pins = json.loads((WORKFLOWS.parents[1] / "cmd/compiler/crosscompile/espressif.json").read_text())
         self.assertRegex(pins["release"], r"^22\.1\.4_\d{8}$")
         self.assertRegex(pins["producer_commit"], r"^[0-9a-f]{40}$")
         self.assertRegex(pins["sdk"]["release"], r"^22\.1\.4_\d{8}$")

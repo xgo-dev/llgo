@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/build/funcinfo"
-	"github.com/xgo-dev/llgo/internal/pclnmap"
-	"github.com/xgo-dev/llgo/internal/wasmdebug"
+	"github.com/xgo-dev/llgo/cmd/compiler/build/funcinfo"
+	"github.com/xgo-dev/llgo/cmd/compiler/pclnmap"
+	"github.com/xgo-dev/llgo/cmd/compiler/wasmdebug"
 )
 
 func TestRunResolvesMatchingWasmLocations(t *testing.T) {

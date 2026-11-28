@@ -302,8 +302,8 @@ jobs:
           python .github/scripts/check_llgo_coverage.py coverage-llgo.txt
 
           # Literal formatting must preserve arbitrary Writers' caller frames.
-          "$LLGO" run ./internal/build/testdata/wasm-fmt-literal-debugger
-          "$LLGO" run -O0 ./internal/build/testdata/wasm-fmt-literal-debugger
+          "$LLGO" run ./cmd/compiler/build/testdata/wasm-fmt-literal-debugger
+          "$LLGO" run -O0 ./cmd/compiler/build/testdata/wasm-fmt-literal-debugger
 
           # Native thread and TLS regressions live outside test/.
           (cd runtime && "$LLGO" test -v -count=1 -timeout=2m ./internal/wordmap)
@@ -626,7 +626,7 @@ jobs:
 
       - name: Native debug metadata tests
         if: ${{ startsWith(matrix.os, 'macos') && matrix.os != 'macos-15-intel' }}
-        run: go test -timeout 15m ./internal/build -run '^(TestStandardDWARF|TestWindowsPDBLinkPath)$' -count=1 -v
+        run: go test -timeout 15m ./cmd/compiler/build -run '^(TestStandardDWARF|TestWindowsPDBLinkPath)$' -count=1 -v
 
       - name: Native debug metadata tests (Windows)
         # This Go test binary links the x64 host LLVM libraries, so it cannot
@@ -642,7 +642,7 @@ jobs:
             $env:CC = $env:LLGO_WINDOWS_HOST_CC
             $env:CXX = $env:LLGO_WINDOWS_HOST_CXX
           }
-          go test -timeout 15m ./internal/build -run '^(TestStandardDWARF|TestWindowsPDBLinkPath)$' -count=1 -v
+          go test -timeout 15m ./cmd/compiler/build -run '^(TestStandardDWARF|TestWindowsPDBLinkPath)$' -count=1 -v
           if ($LASTEXITCODE -ne 0) {
             throw "Native debug metadata tests failed with exit code $LASTEXITCODE"
           }
@@ -772,7 +772,7 @@ jobs:
       - name: Run caller regressions in C shared libraries and archives
         run: dev/test_std_buildmodes.sh ./test/std/runtime
       - name: Run Linux all-thread ownership and barrier acceptance
-        run: go test ./internal/build -run '^TestAllThreads' -count=1 -v -timeout=8m
+        run: go test ./cmd/compiler/build -run '^TestAllThreads' -count=1 -v -timeout=8m
 
   native-debuggers-intel:
     name: Native debuggers (macOS Intel, GDB values and registry)
@@ -825,7 +825,7 @@ jobs:
         env:
           LLGO_LLDB: /usr/bin/lldb
         run: |
-          go test ./internal/build -run '^TestDWARFPCLNLineSites$' -count=1 -timeout=10m
+          go test ./cmd/compiler/build -run '^TestDWARFPCLNLineSites$' -count=1 -timeout=10m
           bash test/debug/native/runtest.sh
       # GDB 17/18 cannot load dyld 17 shared libraries or unwind blocked
       # system frames here; a plain pthread C control reproduces the failure.
@@ -873,7 +873,7 @@ jobs:
 
       - name: Install llgo
         run: |
-          go install ./...
+          go install ./cmd/...
           echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Test Cross Compilation (wasm)
@@ -955,7 +955,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test -tags=dev ./internal/build -count=1 \
+          go test -tags=dev ./cmd/compiler/build -count=1 \
             -run '^Test(DeadcodeDropCollectFingerprint|DevLTOGlobalDCECollectFingerprint)$'
           go build -tags=dev -o "$RUNNER_TEMP/llgo-dev" ./cmd/llgo
           LLGO="$RUNNER_TEMP/llgo-dev" python3 dev/test_wasm_wasi_lto.py
@@ -1323,7 +1323,7 @@ jobs:
           GOOS=js GOARCH=wasm go test \
             -exec="$(go env GOROOT)/lib/wasm/go_js_wasm_exec" \
             -run '^TestJS(Call|Host)' -count=1 -timeout=30s \
-            ./internal/build/testdata/wasm-test
+            ./cmd/compiler/build/testdata/wasm-test
 
       - name: Test wasm standard-library packages
         if: matrix.suite == 'stdlib'
@@ -1351,11 +1351,11 @@ jobs:
             "$LLGO" test -target "$target" -emulator -v -count=1 -timeout=2m \
               ./test/std/fmt
             "$LLGO" run -target "$target" -emulator -O2 \
-              ./internal/build/testdata/wasm-fmt-literal-callers
+              ./cmd/compiler/build/testdata/wasm-fmt-literal-callers
             "$LLGO" run -target "$target" -emulator -tags=llgo.wasm.debugger \
-              ./internal/build/testdata/wasm-fmt-literal-debugger
+              ./cmd/compiler/build/testdata/wasm-fmt-literal-debugger
             "$llgo_dev" run -target "$target" -emulator -deadcodedrop -Oz \
-              ./internal/build/testdata/wasm-map-metadata
+              ./cmd/compiler/build/testdata/wasm-map-metadata
           done
 
       - name: Run caller and large-function regressions on browser targets

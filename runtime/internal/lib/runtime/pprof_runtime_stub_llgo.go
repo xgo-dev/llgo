@@ -134,12 +134,10 @@ func funcForPCSlow(pc uintptr) *Func {
 	// Caller has already resolved instruction PCs. Reuse that result before
 	// considering entry-anchor slack, which can reach across the preceding
 	// function's epilogue in a shared library.
-	if pc > minLegalPC {
-		if entry := frameSymbolResultCache[(pc>>2)&(frameSymbolResultCacheSize-1)]; entry != nil && entry.pc == pc && entry.sym.ok {
-			fn := newFuncForPC(pc, entry.sym)
-			cacheFuncForPC(pc, fn)
-			return fn
-		}
+	if entry := cachedFrameSymbolResult(pc); entry != nil && entry.sym.ok {
+		fn := newFuncForPC(pc, entry.sym)
+		cacheFuncForPC(pc, fn)
+		return fn
 	}
 	// Exact-entry lookup first, regardless of alignment: arm64 functions are
 	// always 4-aligned, but amd64 function and stub entries need not be, and

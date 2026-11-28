@@ -18,7 +18,7 @@ def run_load_policies(llgo, target, directory, flags, build_environment, environ
         work.mkdir()
         output = work / ('app.wasm' if target == 'wasi' else 'app.mjs')
         command = [llgo, 'build', *flags, '-pclntab-load=' + policy, '-o', str(output),
-                   './internal/build/testdata/wasm-pclntab-policy']
+                   './cmd/compiler/build/testdata/wasm-pclntab-policy']
         subprocess.run(command, cwd=ROOT, env=build_environment, check=True, timeout=300)
         if target == 'wasi':
             wasm_runner = os.environ.get('WASMER', 'wasmer')
@@ -86,7 +86,7 @@ def main():
                 flags += ['-target=' + target]
             if target in ('emscripten', 'emscripten-memory64'):
                 build_environment['LLGO_WASM_WORKERS'] = '2'
-            command = [llgo, 'build', *flags, '-o', str(output), './internal/build/testdata/wasm-pclntab']
+            command = [llgo, 'build', *flags, '-o', str(output), './cmd/compiler/build/testdata/wasm-pclntab']
             subprocess.run(command, cwd=ROOT, env=build_environment, check=True, timeout=300)
             sidecar = Path(str(module) + '.pclntab')
             original = sidecar.read_bytes()
@@ -190,7 +190,7 @@ def main():
                     command = [llgo, subcommand, *flags, '-emulator']
                     if subcommand == 'test':
                         command += ['-v']
-                    result = subprocess.run(command + ['./internal/build/testdata/wasm-pclntab'],
+                    result = subprocess.run(command + ['./cmd/compiler/build/testdata/wasm-pclntab'],
                                             cwd=ROOT, env=cli_environment, capture_output=True, text=True, timeout=300)
                     if result.returncode or expected not in result.stdout + result.stderr:
                         raise RuntimeError(f'WASI CLI {subcommand}: {result.stdout}{result.stderr}')
@@ -201,7 +201,7 @@ def main():
                     # Exercise the actual GoJS host, whose Emscripten runtime
                     # intentionally has no onExit callback in ordinary builds.
                     output = directory / 'browser' / 'app.wasm'
-                    subprocess.run([llgo, 'build', *flags, '-o', str(output), './internal/build/testdata/wasm-pclntab'],
+                    subprocess.run([llgo, 'build', *flags, '-o', str(output), './cmd/compiler/build/testdata/wasm-pclntab'],
                                    cwd=ROOT, env=build_environment, check=True, timeout=300)
                 for mode in ['available', 'cache-reuse', 'concurrent', 'no-symbols', 'missing', 'corrupt', 'stale', 'oversized', 'timeout']:
                     argument = mode if mode in ('available', 'cache-reuse', 'concurrent', 'no-symbols') else 'missing'

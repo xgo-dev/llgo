@@ -9,7 +9,7 @@ artifact_dir=${1:?usage: test_aes_llvm.sh ARTIFACT_DIR}
 mkdir -p "$artifact_dir"
 artifact_dir=$(cd "$artifact_dir" && pwd)
 cd "$repo_root"
-LLGO_AES_CROSS_DIR="$artifact_dir" go test ./ssa -run '^TestAESMachineCode$' -count=1
+LLGO_AES_CROSS_DIR="$artifact_dir" go test ./cmd/compiler/llvmgen -run '^TestAESMachineCode$' -count=1
 
 for arch in amd64 386 arm64 arm ppc64 ppc64le riscv64; do
   flags=()
@@ -24,6 +24,6 @@ for arch in amd64 386 arm64 arm ppc64 ppc64le riscv64; do
   esac
   echo "LLVM AES conformance: $arch"
   "$cc" "${flags[@]}" -O2 -static -DPREKEY="$prekey" \
-    ssa/testdata/aesllvm/check.c "$artifact_dir/$arch.o" -o "$artifact_dir/check-$arch"
+    cmd/compiler/llvmgen/testdata/aesllvm/check.c "$artifact_dir/$arch.o" -o "$artifact_dir/check-$arch"
   "$emulator" -cpu "$cpu" "$artifact_dir/check-$arch"
 done

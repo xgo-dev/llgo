@@ -7,14 +7,14 @@ temporary="$(mktemp -d "${TMPDIR:-/tmp}/llgo-local-install-test.XXXXXXXX")"
 temporary="$(cd "$temporary" && pwd)"
 trap 'rm -rf "$temporary"' EXIT
 checkout="$temporary/local checkout"
-mkdir -p "$checkout"
+mkdir -p "$checkout/cmd"
 cp "$repository/install.sh" "$checkout/install.sh"
 
 # Exercise the actual entrypoint without rebuilding the compiler. If checkout
 # detection fails, the Windows release path rejects this MSVC shell immediately.
 go() {
-    [[ "$PWD" == "$LLGO_INSTALLER_TEST_CHECKOUT" ]] || return 1
-    [[ "$*" == 'install ./cmd/llgo' ]] || return 1
+    [[ "$PWD" == "$LLGO_INSTALLER_TEST_CHECKOUT/cmd" ]] || return 1
+    [[ "$*" == 'install ./llgo' ]] || return 1
     printf 'local go install\n'
 }
 uname() {

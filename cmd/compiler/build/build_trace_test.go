@@ -1,0 +1,316 @@
+/*
+ * Copyright (c) 2026 The XGo Authors (xgo.dev). All rights reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package build
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func TestBuildTraceWritesChromeEvents(t *testing.T) {
+	dir := t.TempDir()
+	tracer, err := startBuildTrace("trace.json", dir, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildSpan := tracer.startCoordinator("build", map[string]any{"packages": []string{"./..."}})
+	preSpan := tracer.startPackageCoordinator("pre", "example.com/p")
+	preSpan.done()
+	ssaSpan := tracer.startWorker("ssa", "example.com/p")
+	ssaSpan.done()
+	tracer.rememberSSA("example.com/p", ssaSpan)
+	backendSpan := tracer.startWorker("backend+publish", "example.com/p")
+	backendSpan.setArg("class", "isolated")
+	tracer.flowFromSSA("example.com/p", backendSpan)
+	backendSpan.done()
+	buildSpan.done()
+	if err := tracer.close(); err != nil {
+		t.Fatal(err)
+	}
+	tracer.writeEvent(buildTraceEvent{Name: "late", Phase: "X"})
+	if err := tracer.close(); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "trace.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []buildTraceEvent
+	if err := json.Unmarshal(data, &events); err != nil {
+		t.Fatalf("trace is not valid Chrome Trace JSON: %v\n%s", err, data)
+	}
+	var metadata, complete, packageCoordinator, flowStart, flowEnd bool
+	for _, event := range events {
+		if event.Name == "late" {
+			t.Fatal("trace contains an event written after close")
+		}
+		switch event.Phase {
+		case "M":
+			metadata = true
+		case "X":
+			complete = true
+			if event.Name == "pre example.com/p" {
+				packageCoordinator = event.Category == "llgo.pre" && event.TID == 0
+			}
+			if event.Name == "backend+publish example.com/p" {
+				if got := event.Args["class"]; got != "isolated" {
+					t.Fatalf("backend class = %v, want isolated", got)
+				}
+			}
+		case "s":
+			flowStart = true
+		case "f":
+			flowEnd = event.Bind == "e"
+		}
+	}
+	if !metadata || !complete || !packageCoordinator || !flowStart || !flowEnd {
+		t.Fatalf("trace phases: metadata=%v complete=%v packageCoordinator=%v flowStart=%v flowEnd=%v", metadata, complete, packageCoordinator, flowStart, flowEnd)
+	}
+}
+
+func TestBuildTraceRecordsBuildInvocation(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/trace\n\ngo 1.24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "trace.go"), []byte("package trace\n\nfunc F(v int) int { return v + 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(llgoBuildCache, "0")
+	conf := NewDefaultConf(ModeGen)
+	conf.BuildParallelism = 2
+	conf.BuildTrace = "trace.json"
+	pkgs, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 || pkgs[0].LPkg == nil {
+		t.Fatalf("Build returned packages = %+v, want one generated package", pkgs)
+	}
+	t.Cleanup(pkgs[0].LPkg.Prog.Dispose)
+
+	data, err := os.ReadFile(filepath.Join(dir, "trace.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []buildTraceEvent
+	if err := json.Unmarshal(data, &events); err != nil {
+		t.Fatalf("trace is not valid Chrome Trace JSON: %v\n%s", err, data)
+	}
+	want := map[string]bool{
+		"build":                             false,
+		"load packages":                     false,
+		"prepare shared backend state":      false,
+		"precompute caller tracking":        false,
+		"ssa example.com/trace":             false,
+		"pre example.com/trace":             false,
+		"backend+publish example.com/trace": false,
+	}
+	var flowStart, flowEnd bool
+	for _, event := range events {
+		if _, ok := want[event.Name]; ok && event.Phase == "X" {
+			want[event.Name] = true
+		}
+		if event.Phase == "s" {
+			flowStart = true
+		}
+		if event.Phase == "f" && event.Bind == "e" {
+			flowEnd = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("trace does not contain complete event %q", name)
+		}
+	}
+	if !flowStart || !flowEnd {
+		t.Errorf("trace flow events: start=%v end=%v, want both", flowStart, flowEnd)
+	}
+}
+
+func TestBuildTraceWorkerLanesRespectParallelism(t *testing.T) {
+	tracer, err := startBuildTrace(filepath.Join(t.TempDir(), "trace.json"), "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var active atomic.Int32
+	var maximum atomic.Int32
+	var wg sync.WaitGroup
+	for i := range 12 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			span := tracer.startWorker("backend", string(rune('a'+i)))
+			current := active.Add(1)
+			for {
+				previous := maximum.Load()
+				if current <= previous || maximum.CompareAndSwap(previous, current) {
+					break
+				}
+			}
+			time.Sleep(time.Millisecond)
+			active.Add(-1)
+			span.done()
+		}()
+	}
+	wg.Wait()
+	if got := maximum.Load(); got > 2 {
+		t.Fatalf("maximum active traced workers = %d, want <= 2", got)
+	}
+	if err := tracer.close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuildTraceRefusesExistingOutput(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "trace.json")
+	if err := os.WriteFile(path, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := startBuildTrace(path, dir, 1); err == nil {
+		t.Fatal("startBuildTrace(existing file) succeeded")
+	}
+	conf := NewDefaultConf(ModeBuild)
+	conf.BuildTrace = path
+	if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err == nil {
+		t.Fatal("Build with existing trace output succeeded")
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "keep" {
+		t.Fatalf("existing output = %q, %v; want unchanged", got, err)
+	}
+}
+
+func TestBuildTraceRefusesCoverageProfileConflict(t *testing.T) {
+	t.Run("exact path", func(t *testing.T) {
+		dir := t.TempDir()
+		conf := NewDefaultConf(ModeTest)
+		conf.BuildTrace = "trace.json"
+		conf.Coverage = &CoverageConfig{
+			Mode:    "set",
+			Profile: "trace.json",
+		}
+		targetFile := filepath.Join(dir, "trace.json")
+		if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err == nil || !strings.Contains(err.Error(), "conflicts with -coverprofile") {
+			t.Fatalf("Build() err = %v, want conflict with -coverprofile", err)
+		}
+		if got, err := os.ReadFile(targetFile); err == nil && strings.HasPrefix(string(got), "mode:") {
+			t.Fatalf("target file %s was initialized with coverage profile header despite conflict", targetFile)
+		}
+	})
+
+	t.Run("symlink alias", func(t *testing.T) {
+		dir := t.TempDir()
+		realDir := filepath.Join(dir, "real")
+		if err := os.Mkdir(realDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		symlinkDir := filepath.Join(dir, "symlink")
+		if err := os.Symlink(realDir, symlinkDir); err != nil {
+			t.Skipf("symlink not supported: %v", err)
+		}
+		conf := NewDefaultConf(ModeTest)
+		conf.BuildTrace = filepath.Join(symlinkDir, "trace.json")
+		conf.Coverage = &CoverageConfig{
+			Mode:    "set",
+			Profile: filepath.Join(realDir, "trace.json"),
+		}
+		if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err == nil || !strings.Contains(err.Error(), "conflicts with -coverprofile") {
+			t.Fatalf("Build() err = %v, want conflict with -coverprofile", err)
+		}
+		targetFile := filepath.Join(realDir, "trace.json")
+		if got, err := os.ReadFile(targetFile); err == nil && strings.HasPrefix(string(got), "mode:") {
+			t.Fatalf("target file %s was initialized with coverage profile header despite conflict", targetFile)
+		}
+	})
+
+	t.Run("case alias", func(t *testing.T) {
+		dir := t.TempDir()
+		realDir := filepath.Join(dir, "real")
+		if err := os.Mkdir(realDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		upperDir := filepath.Join(dir, "REAL")
+		if s1, err1 := os.Stat(realDir); err1 != nil {
+			t.Fatal(err1)
+		} else if s2, err2 := os.Stat(upperDir); err2 != nil || !os.SameFile(s1, s2) {
+			t.Skip("filesystem is case-sensitive; skipping case alias test")
+		}
+		conf := NewDefaultConf(ModeTest)
+		conf.BuildTrace = filepath.Join(realDir, "trace.json")
+		conf.Coverage = &CoverageConfig{
+			Mode:    "set",
+			Profile: filepath.Join(upperDir, "trace.json"),
+		}
+		if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err == nil || !strings.Contains(err.Error(), "conflicts with -coverprofile") {
+			t.Fatalf("Build() err = %v, want conflict with -coverprofile", err)
+		}
+		targetFile := filepath.Join(realDir, "trace.json")
+		if got, err := os.ReadFile(targetFile); err == nil && strings.HasPrefix(string(got), "mode:") {
+			t.Fatalf("target file %s was initialized with coverage profile header despite conflict", targetFile)
+		}
+	})
+}
+
+func TestBuildNilConfigReturnsError(t *testing.T) {
+	if _, err := Build(Invocation{Config: nil}); err == nil || !strings.Contains(err.Error(), "build config must not be nil") {
+		t.Fatalf("Build(Invocation{Config: nil}) err = %v, want 'build config must not be nil'", err)
+	}
+}
+
+func TestBuildTraceDisabledAndErrors(t *testing.T) {
+	tracer, err := startBuildTrace("", t.TempDir(), 1)
+	if err != nil || tracer != nil {
+		t.Fatalf("disabled trace = (%v, %v), want (nil, nil)", tracer, err)
+	}
+	var span *buildTraceSpan
+	span.setArg("ignored", true)
+	span.done()
+	tracer.startCoordinator("ignored", nil).done()
+	tracer.startPackageCoordinator("ignored", "example.com/p").done()
+	tracer.startWorker("ignored", "example.com/p").done()
+	tracer.rememberSSA("example.com/p", span)
+	tracer.flowFromSSA("example.com/p", span)
+	tracer.flow(span, span)
+	if err := tracer.close(); err != nil {
+		t.Fatalf("closing disabled trace: %v", err)
+	}
+
+	if _, err := startBuildTrace(filepath.Join(t.TempDir(), "missing", "trace.json"), "", 1); err == nil {
+		t.Fatal("startBuildTrace in missing directory succeeded")
+	}
+
+	tracer, err = startBuildTrace(filepath.Join(t.TempDir(), "trace.json"), "", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracer.writeEvent(buildTraceEvent{
+		Name:  "invalid",
+		Phase: "X",
+		Args:  map[string]any{"function": func() {}},
+	})
+	if err := tracer.close(); err == nil {
+		t.Fatal("closing trace after JSON encoding error succeeded")
+	}
+}

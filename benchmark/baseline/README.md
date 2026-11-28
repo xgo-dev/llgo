@@ -91,7 +91,7 @@ GOMAXPROCS=1 go test \
   -run '^$' \
   -bench '^(BenchmarkMergeCompilerFlags|BenchmarkMergeLinkerFlags|BenchmarkLookupPCRandom)$' \
   -benchtime=250ms -count=5 -cpu=1 \
-  ./internal/clang ./internal/build/funcinfo | tee "$results"
+  ./cmd/compiler/clang ./cmd/compiler/build/funcinfo | tee "$results"
 GOMAXPROCS=1 go test \
   -run '^$' -bench '^BenchmarkTimer' -benchtime=250ms -count=5 -cpu=1 \
   ./benchmark/timer | tee -a "$results"

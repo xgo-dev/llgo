@@ -1,4 +1,4 @@
-//go:build !wasm
+//go:build !llgo && !wasm
 
 package sizereport_test
 
@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/xgo-dev/llgo/internal/sizereport"
+	"github.com/xgo-dev/llgo/cmd/compiler/sizereport"
 )
 
 func TestCollectFinalSizeRealBinary(t *testing.T) {

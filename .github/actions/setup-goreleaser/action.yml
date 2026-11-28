@@ -36,7 +36,7 @@ runs:
       run: |
         python3 - <<'PY' >> "$GITHUB_OUTPUT"
         import hashlib, json
-        pins = json.load(open('internal/crosscompile/espressif.json'))
+        pins = json.load(open('cmd/compiler/crosscompile/espressif.json'))
         digests = ''.join(pin['sha256'] for target, pin in sorted(pins['payloads'].items())
                           if not target.endswith('-w64-mingw32'))
         print('sha256=' + hashlib.sha256(digests.encode()).hexdigest())

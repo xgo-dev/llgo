@@ -26,10 +26,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/cmd/compiler/build"
+	"github.com/xgo-dev/llgo/cmd/compiler/env"
+	"github.com/xgo-dev/llgo/cmd/compiler/mockable"
 	"github.com/xgo-dev/llgo/cmd/internal/gotool"
-	"github.com/xgo-dev/llgo/internal/build"
-	"github.com/xgo-dev/llgo/internal/mockable"
-	"github.com/xgo-dev/llgo/internal/targets"
+	"github.com/xgo-dev/llgo/target"
 )
 
 // Invocation describes one invocation of a command in the Go toolchain. Empty
@@ -118,7 +119,7 @@ func Build(command string, args []string) (Invocation, error) {
 	}
 	var targetTags []string
 	if query.target != "" {
-		config, err := targets.NewDefaultResolver().Resolve(query.target)
+		config, err := target.NewResolver(env.LLGoTargetsDir()).Resolve(query.target)
 		if err != nil {
 			return Invocation{}, err
 		}
