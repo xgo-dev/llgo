@@ -25,6 +25,10 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
 
+// mPoolSlot holds per-worker parking state. On backends where sig.useFast() is
+// true (Darwin macOS 14.4+), assignment uses the lock-free sig.resetFast /
+// parkIdleFast / readyFast handshake without touching hasWork; portable
+// backends synchronize work handoff via hasWork under sig.lock().
 type mPoolSlot struct {
 	next    *runtimeContext
 	sig     chanSignal
@@ -150,6 +154,20 @@ func mPoolStart(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callerg
 	return true
 }
 
+func mPoolPushIdle(ctx *runtimeContext) bool {
+	mPool.mu.Lock()
+	if mPool.idle >= mPool.maxIdle {
+		mPool.mu.Unlock()
+		return false
+	}
+	ctx.platform.pool.next = mPool.head
+	mPool.head = ctx
+	mPool.idle++
+	atomic.Store(&mPool.idleCount, uint32(mPool.idle))
+	mPool.mu.Unlock()
+	return true
+}
+
 // mPoolPark parks an idle worker thread in the pool until another goroutine is
 // assigned. It returns false when the pool is full so the caller can exit the
 // OS thread cleanly.
@@ -162,33 +180,18 @@ func mPoolPark(ctx *runtimeContext) bool {
 	}
 	if slot.sig.useFast() {
 		slot.sig.resetFast()
-		mPool.mu.Lock()
-		if mPool.idle >= mPool.maxIdle {
-			mPool.mu.Unlock()
+		if !mPoolPushIdle(ctx) {
 			return false
 		}
-		slot.next = mPool.head
-		mPool.head = ctx
-		mPool.idle++
-		atomic.Store(&mPool.idleCount, uint32(mPool.idle))
-		mPool.mu.Unlock()
-
 		slot.sig.parkIdleFast()
 		return true
 	}
 	slot.sig.lock()
 	slot.hasWork = false
-	mPool.mu.Lock()
-	if mPool.idle >= mPool.maxIdle {
-		mPool.mu.Unlock()
+	if !mPoolPushIdle(ctx) {
 		slot.sig.unlock()
 		return false
 	}
-	slot.next = mPool.head
-	mPool.head = ctx
-	mPool.idle++
-	atomic.Store(&mPool.idleCount, uint32(mPool.idle))
-	mPool.mu.Unlock()
 
 	for !slot.hasWork {
 		slot.sig.parkIdle()

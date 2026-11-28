@@ -39,13 +39,17 @@ type Chan struct {
 	// When enabled, published under mutex: nonzero when closed, buffered, or a
 	// sender is queued. Nonblocking receivers can skip the lock when it is zero.
 	// Blocking receives and all sends still inspect state under the lock.
-	recvReady    uint32
-	spinCooldown uint32
-	recvx        int
-	sendx        int
+	recvReady uint32
+	recvx     int
+	sendx     int
 
 	sendq chanWaitq
 	recvq chanWaitq
+
+	// Lock-free exponential-backoff spin cooldown word (Darwin fast-path
+	// parkFast). Placed after the mutex-protected queue headers to keep
+	// sleeping-waiter backoff writes away from recvReady/mutex hot fields.
+	spinCooldown uint32
 }
 
 type chanWaitq struct {
@@ -976,6 +980,9 @@ func Select(ops ...ChanOp) (isel int, recvOK bool) {
 
 	for w := waiters; w != nil; w = w.all {
 		if w.caseIndex == isel {
+			// Safe to skip cleanupSelectWaiter for the winner: every claimWaiter
+			// call runs immediately after dequeue under ch.mutex, so the winner
+			// is already unlinked and publishRecvReady ran when ch unlocked.
 			continue
 		}
 		cleanupSelectWaiter(w)

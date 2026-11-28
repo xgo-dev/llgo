@@ -60,8 +60,11 @@ var chanAddressWaitEnabled uint32
 var chanMaxSpinners uint32
 var chanActiveSpinners uint32
 
-// TryAcquireSpinSlot reserves one slot from the shared core-bounded spin budget.
-// Callers must pair every true return with ReleaseSpinSlot.
+// TryAcquireSpinSlot reserves one slot from the shared core-bounded spin budget
+// (exported for Darwin runtime subpackages such as the kqueue netpoller).
+// atomic.Add returns the previous value, so < maxSpin admits at most maxSpin
+// concurrent extended spinners. Callers must pair every true return with
+// ReleaseSpinSlot.
 func TryAcquireSpinSlot() bool {
 	maxSpin := atomic.Load(&chanMaxSpinners)
 	if maxSpin == 0 || atomic.Load(&chanActiveSpinners) >= maxSpin {
@@ -142,6 +145,11 @@ func (s *chanSignal) resetFast() {
 func (s *chanSignal) lock()   { s.mutex.Lock() }
 func (s *chanSignal) unlock() { s.mutex.Unlock() }
 
+// waitFastDone waits until readyFast finishes its os_sync_wake_by_address_any
+// call and publishes sigDone, guaranteeing the waiter never reuses or destroys
+// s.notified while a kernel wake is still referencing it. Because
+// chanAddressWait expects sigSleeping (0), not sigWaking (2), the rare
+// preempted-notifier case falls back to a short c.Usleep(1) after 256 spins.
 func (s *chanSignal) waitFastDone() {
 	for i := 0; atomic.Load(&s.notified) != sigDone; i++ {
 		if i < 256 {
@@ -168,16 +176,18 @@ func (s *chanSignal) sleepAddressFast() {
 
 // parkFast waits for readyFast without any pthread mutex lock/unlock/init/destroy.
 //
-// spinCooldown packs exponential-backoff state into one uint32:
+// spinCooldown packs exponential-backoff state into one lock-free uint32:
 //   - 0: hot — extended spinning allowed for queue-head waiters when a spare
-//     spinner slot is available (never written on hot hits -> zero cache-line bounce).
+//     spinner slot is available (not written while already 0; cleared back to 0
+//     on a spin hit after a prior cold backoff).
 //   - (step << 16) | rem: cold — skip extended spin while rem > 0, decrementing
 //     rem on each sleep; when rem reaches 0, re-probe extended spin and either
 //     reset to 0 on hit or double step (2 -> 4 -> 8 -> 16 -> 32 -> 64) on miss.
 //
-// Only queue-head waiters (isHead == true) consume extended spin slots; waiters
-// queued behind another waiter on the same FIFO channel sleep promptly so
-// spinners never starve active reply/handoff waiters.
+// For single-channel ops, only queue-head waiters (isHead == true) consume
+// extended spin slots so waiters queued behind another waiter sleep promptly.
+// For Select, the caller passes isHead = true if any selected case is at its
+// channel's queue head.
 func (s *chanSignal) parkFast(spinCooldown *uint32, isHead bool) {
 	if st := atomic.Load(&s.notified); st >= sigWaking {
 		if st == sigWaking {
@@ -253,6 +263,9 @@ func (s *chanSignal) parkFast(spinCooldown *uint32, isHead bool) {
 func (s *chanSignal) readyFast() {
 	prev := atomic.Exchange(&s.notified, sigWaking)
 	if prev == sigSleeping {
+		// ENOENT means the waiter set sigSleeping (or already woke spuriously)
+		// without currently being parked in os_sync_wait_on_address; publishing
+		// sigDone below still completes the handoff safely.
 		if chanAddressWake(&s.notified) < 0 && syscall.Errno(os.Errno()) != syscall.ENOENT {
 			panic("channel address wake failed")
 		}
@@ -294,12 +307,20 @@ func (s *chanSignal) parkIdleFast() {
 	s.waitFastDone()
 }
 
+// chanSlowSpinLimit caps extended spinning on the mutex/cond slow path
+// (synctest, pre-14.4 macOS) which lacks parkFast's cooldown and head gating.
+const chanSlowSpinLimit = 128
+
 func (s *chanSignal) park() {
 	TracebackWaiting(true)
 	atomic.Store(&s.notified, uint32(0))
 	s.unlock()
 	const fastSpin = 32
-	firstLimit := chanSignalSpinLimit
+	slowLimit := chanSignalSpinLimit
+	if slowLimit > chanSlowSpinLimit {
+		slowLimit = chanSlowSpinLimit
+	}
+	firstLimit := slowLimit
 	if firstLimit > fastSpin {
 		firstLimit = fastSpin
 	}
@@ -310,20 +331,16 @@ func (s *chanSignal) park() {
 		}
 		chanSignalSpinHint(chanSignalSpinInstruction)
 	}
-	if chanSignalSpinLimit > firstLimit {
-		if maxSpin := atomic.Load(&chanMaxSpinners); maxSpin > 0 && atomic.Load(&chanActiveSpinners) < maxSpin {
-			if atomic.Add(&chanActiveSpinners, uint32(1)) < maxSpin {
-				for i := firstLimit; i < chanSignalSpinLimit; i++ {
-					if atomic.Load(&s.notified) != 0 && s.mutex.TryLock() {
-						atomic.Sub(&chanActiveSpinners, uint32(1))
-						TracebackWaiting(false)
-						return
-					}
-					chanSignalSpinHint(chanSignalSpinInstruction)
-				}
+	if slowLimit > firstLimit && TryAcquireSpinSlot() {
+		for i := firstLimit; i < slowLimit; i++ {
+			if atomic.Load(&s.notified) != 0 && s.mutex.TryLock() {
+				ReleaseSpinSlot()
+				TracebackWaiting(false)
+				return
 			}
-			atomic.Sub(&chanActiveSpinners, uint32(1))
+			chanSignalSpinHint(chanSignalSpinInstruction)
 		}
+		ReleaseSpinSlot()
 	}
 	s.lock()
 	if atomic.Load(&s.notified) == 0 {
@@ -388,21 +405,22 @@ func (s *chanSignal) waitOnAddress() {
 			}
 		}
 	}
+	// Briefly spin for s.mutex right after wake so the notifier's unlock can
+	// hand off without another kernel sleep, bounded by 32 hints and the
+	// global spin-slot cap.
 	postWakeSpin := chanSignalSpinLimit
 	if postWakeSpin > 32 {
 		postWakeSpin = 32
 	}
-	if maxSpin := atomic.Load(&chanMaxSpinners); maxSpin > 0 && atomic.Load(&chanActiveSpinners) < maxSpin {
-		if atomic.Add(&chanActiveSpinners, uint32(1)) < maxSpin {
-			for i := 0; i < postWakeSpin; i++ {
-				if s.mutex.TryLock() {
-					atomic.Sub(&chanActiveSpinners, uint32(1))
-					return
-				}
-				chanSignalSpinHint(chanSignalSpinInstruction)
+	if TryAcquireSpinSlot() {
+		for i := 0; i < postWakeSpin; i++ {
+			if s.mutex.TryLock() {
+				ReleaseSpinSlot()
+				return
 			}
+			chanSignalSpinHint(chanSignalSpinInstruction)
 		}
-		atomic.Sub(&chanActiveSpinners, uint32(1))
+		ReleaseSpinSlot()
 	}
 	s.lock()
 }
@@ -416,6 +434,8 @@ func (s *chanSignal) ready() {
 		s.cond.Signal()
 		return
 	}
+	// ENOENT means the waiter has not entered (or already left) the kernel wait
+	// on s.notified; storing 1 above ensures it observes the notification.
 	if chanAddressWake(&s.notified) < 0 && syscall.Errno(os.Errno()) != syscall.ENOENT {
 		panic("channel address wake failed")
 	}

@@ -35,6 +35,11 @@ void llgo_lifetime_arm(void) {
     armed = 1;
     unlocked = NULL;
     address_wait_attempts = 0;
+    atomic_store(&waiting, 0);
+    atomic_store(&resume_wait, 0);
+    atomic_store(&signaling, 0);
+    atomic_store(&destroyed, 0);
+    atomic_store(&address_woken, 0);
 }
 
 int llgo_lifetime_bind_address_wait(void) {
