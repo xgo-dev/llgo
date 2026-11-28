@@ -6,6 +6,8 @@
 package runtime
 
 import (
+	"unsafe"
+
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/sync"
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
@@ -22,7 +24,11 @@ func (m *chanMutex) Unlock() { m.mutex.Unlock() }
 
 func chanAddressWaitInit() {}
 
-func chanAddressWaitAvailable() bool { return true }
+func chanAddressWaitAvailable() bool {
+	// Win32 GDB cannot unwind suspended Go workers through the native
+	// WaitOnAddress stack. Keep the supported condition-variable path there.
+	return unsafe.Sizeof(uintptr(0)) == 8
+}
 
 func chanAddressSleep(notified *uint32) {
 	for atomic.Load(notified) == sigSleeping {

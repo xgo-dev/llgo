@@ -147,6 +147,14 @@ func freeSelectCache(gp *g) {
 	}
 }
 
+func prepareSelectCacheForTesting() bool {
+	if getg().selectCache != nil {
+		return true
+	}
+	releaseSelectCache(acquireSelectCache(), 0)
+	return false
+}
+
 func freeChanWaiter(gp *g) {
 	if gp != nil && gp.chanWaiter != nil {
 		if gp.chanWaiter.signalReady {

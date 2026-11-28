@@ -117,8 +117,7 @@ func mPoolStart(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callerg
 		fatal("runtime: pooled worker retained dirty goroutine state")
 	}
 
-	savedWaiter := ctx.g.chanWaiter
-	ctx.g = g{chanWaiter: savedWaiter}
+	ctx.g = g{chanWaiter: ctx.g.chanWaiter, selectCache: ctx.g.selectCache}
 	ctx.platform.systemG = false
 
 	gp := &ctx.g
