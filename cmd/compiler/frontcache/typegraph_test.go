@@ -537,3 +537,33 @@ func TestTypesKeyComparableDistinctFromEmptyInterfaceAndExtendedTypes(t *testing
 		t.Fatalf("Key(nil) = %q, want empty", idx.Key(nil))
 	}
 }
+
+func TestTypeGraphMultipleGenericSignaturesWithSameTypeParamName(t *testing.T) {
+	const source = `package p
+
+func F[T any](x []T) {}
+func G[T comparable](x []T) {}
+`
+	prog, pkg, index := fixture(t, source, true)
+	graph := NewTypeGraph(index, prog.Fset)
+	fID := graph.Add(pkg.Pkg.Scope().Lookup("F").Type())
+	gID := graph.Add(pkg.Pkg.Scope().Lookup("G").Type())
+
+	data, err := json.Marshal(graph)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded TypeGraph
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh := types.NewPackage(pkg.Pkg.Path(), pkg.Pkg.Name())
+	importer := &TypeImporter{Graph: &decoded, Existing: index, Packages: map[string]*types.Package{fresh.Path(): fresh}}
+	if _, err := importer.Import(fID); err != nil {
+		t.Fatalf("import F: %v", err)
+	}
+	if _, err := importer.Import(gID); err != nil {
+		t.Fatalf("import G: %v", err)
+	}
+}

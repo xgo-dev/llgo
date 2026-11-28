@@ -2,6 +2,8 @@ package build
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,6 +14,96 @@ import (
 	"golang.org/x/mod/modfile"
 	gopackages "golang.org/x/tools/go/packages"
 )
+
+// effectiveGoWork determines the active workspace configuration or file path.
+// It checks build flags (-gowork=...), GOFLAGS, GOWORK environment variable,
+// and finally searches upward for go.work from dir.
+func effectiveGoWork(dir string, cmdEnv commandEnv, buildFlags []string) string {
+	for _, f := range buildFlags {
+		if f == "-gowork=off" {
+			return "off"
+		}
+		if strings.HasPrefix(f, "-gowork=") {
+			return strings.TrimPrefix(f, "-gowork=")
+		}
+	}
+	goflags := commandEnvLookup(cmdEnv, "GOFLAGS")
+	if goflags != "" {
+		if words, err := quoted.Split(goflags); err == nil {
+			for _, f := range words {
+				if f == "-gowork=off" {
+					return "off"
+				}
+				if strings.HasPrefix(f, "-gowork=") {
+					return strings.TrimPrefix(f, "-gowork=")
+				}
+			}
+		}
+	}
+	gowork := commandEnvLookup(cmdEnv, "GOWORK")
+	if gowork != "" {
+		return gowork
+	}
+	if dir == "" {
+		dir = cmdEnv.dir
+	}
+	if dir == "" {
+		dir, _ = os.Getwd()
+	}
+	cur := filepath.Clean(dir)
+	for {
+		cand := filepath.Join(cur, "go.work")
+		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+			return cand
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		cur = parent
+	}
+	return ""
+}
+
+// recordEffectiveGoWork writes the effective workspace state and content hash
+// into the hasher h, ensuring caches invalidate whenever the active workspace
+// file content changes.
+func recordEffectiveGoWork(h io.Writer, dir string, cmdEnv commandEnv, buildFlags []string, overlay map[string][]byte) {
+	work := effectiveGoWork(dir, cmdEnv, buildFlags)
+	if work == "" {
+		fmt.Fprintf(h, "work=none\x00")
+		return
+	}
+	if work == "off" {
+		fmt.Fprintf(h, "work=off\x00")
+		return
+	}
+	if !filepath.IsAbs(work) {
+		base := dir
+		if base == "" {
+			base = cmdEnv.dir
+		}
+		if base != "" {
+			work = filepath.Join(base, work)
+		}
+	}
+	work = filepath.Clean(work)
+	if overlay != nil {
+		if data, ok := overlay[work]; ok {
+			fmt.Fprintf(h, "workcontent=%s:%s\x00", work, digestBytes(data))
+			return
+		}
+	}
+	if data, err := os.ReadFile(work); err == nil {
+		fmt.Fprintf(h, "workcontent=%s:%s\x00", work, digestBytes(data))
+		return
+	}
+	if fi, err := os.Stat(work); err == nil {
+		fmt.Fprintf(h, "workstat=%s:%d:%d\x00", work, fi.Size(), fi.ModTime().UnixNano())
+		return
+	}
+	fmt.Fprintf(h, "workmissing=%s\x00", work)
+}
 
 // isolateNestedModuleWorkspace disables implicit parent go.work discovery when
 // building inside a standalone nested Go module that is not listed in that

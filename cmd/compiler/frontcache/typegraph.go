@@ -177,13 +177,103 @@ func (g *TypeGraph) Add(typ types.Type) int {
 }
 
 type TypeImporter struct {
-	Graph    *TypeGraph
-	Packages map[string]*types.Package
-	Existing *Types
-	Position func(string) token.Pos
-	values   map[int]types.Type
-	active   map[int]bool
-	failed   error
+	Graph      *TypeGraph
+	Packages   map[string]*types.Package
+	Existing   *Types
+	Position   func(string) token.Pos
+	values     map[int]types.Type
+	active     map[int]bool
+	paramNodes map[int]bool
+	failed     error
+}
+
+func (p *TypeImporter) isParameterized(id int) bool {
+	if p.Graph == nil || id < 0 || id >= len(p.Graph.Nodes) {
+		return false
+	}
+	if p.paramNodes == nil {
+		p.paramNodes = make(map[int]bool)
+		visiting := make(map[int]bool)
+		var check func(int) bool
+		check = func(curr int) bool {
+			if curr < 0 || curr >= len(p.Graph.Nodes) {
+				return false
+			}
+			if val, ok := p.paramNodes[curr]; ok {
+				return val
+			}
+			if visiting[curr] {
+				return false
+			}
+			visiting[curr] = true
+			defer func() { visiting[curr] = false }()
+
+			n := &p.Graph.Nodes[curr]
+			if n.Kind == "parameter" || len(n.TypeParams) > 0 || len(n.RecvParams) > 0 {
+				p.paramNodes[curr] = true
+				return true
+			}
+			if n.Elem >= 0 && check(n.Elem) {
+				p.paramNodes[curr] = true
+				return true
+			}
+			if n.Kind == "named" || n.Kind == "alias" {
+				if n.Base >= 0 {
+					for _, ref := range n.Types {
+						if check(ref) {
+							p.paramNodes[curr] = true
+							return true
+						}
+					}
+				}
+			} else {
+				if n.Base >= 0 && check(n.Base) {
+					p.paramNodes[curr] = true
+					return true
+				}
+				for _, ref := range n.Types {
+					if check(ref) {
+						p.paramNodes[curr] = true
+						return true
+					}
+				}
+			}
+			for _, ref := range n.Params {
+				if check(ref) {
+					p.paramNodes[curr] = true
+					return true
+				}
+			}
+			for _, ref := range n.Results {
+				if check(ref) {
+					p.paramNodes[curr] = true
+					return true
+				}
+			}
+			for _, f := range n.Fields {
+				if check(f.Type) {
+					p.paramNodes[curr] = true
+					return true
+				}
+			}
+			for _, m := range n.Methods {
+				if check(m.Type) {
+					p.paramNodes[curr] = true
+					return true
+				}
+			}
+			if n.Receiver != nil && check(n.Receiver.Type) {
+				p.paramNodes[curr] = true
+				return true
+			}
+			p.paramNodes[curr] = false
+			return false
+		}
+		for i := range p.Graph.Nodes {
+			check(i)
+		}
+	}
+	return p.paramNodes[id]
 }
 
 func (p *TypeImporter) Import(id int) (typ types.Type, err error) {
@@ -223,7 +313,7 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 		p.values[id] = obj.Type()
 		return obj.Type(), nil
 	}
-	if p.Existing != nil && n.Kind != "parameter" && n.Kind != "alias" && n.Kind != "func" && n.Kind != "tuple" {
+	if p.Existing != nil && !p.isParameterized(id) && n.Kind != "alias" && n.Kind != "func" && n.Kind != "tuple" {
 		if typ, ok := p.Existing.Lookup(n.Key); ok {
 			p.values[id] = typ
 			return typ, nil
@@ -443,7 +533,7 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 			if ref >= 0 {
 				sig := methods[i].Type()
 				p.values[ref] = sig
-				if p.Existing != nil && p.Graph.Nodes[ref].Key != "" && !p.Existing.Bind(p.Graph.Nodes[ref].Key, sig) {
+				if p.Existing != nil && p.Graph.Nodes[ref].Key != "" && !p.isParameterized(ref) && !p.Existing.Bind(p.Graph.Nodes[ref].Key, sig) {
 					return nil, fmt.Errorf("conflicting frontend type identity %s", p.Graph.Nodes[ref].Key)
 				}
 			}
@@ -461,7 +551,7 @@ func (p *TypeImporter) importType(id, depth int) (types.Type, error) {
 		return nil, fmt.Errorf("invalid frontend type kind %q", n.Kind)
 	}
 	p.values[id] = result
-	if p.Existing != nil && n.Key != "" && !p.Existing.Bind(n.Key, types.Unalias(result)) {
+	if p.Existing != nil && n.Key != "" && !p.isParameterized(id) && !p.Existing.Bind(n.Key, types.Unalias(result)) {
 		return nil, fmt.Errorf("conflicting frontend type identity %s", n.Key)
 	}
 	return result, nil

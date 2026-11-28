@@ -22,12 +22,13 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
-const sourcePatchCacheMagic = "LLGOSP01"
+const sourcePatchCacheMagic = "LLGOSP02"
 
 type sourcePatchFileStat struct {
 	Path    string
 	Size    int64
 	ModTime int64
+	Hash    string
 }
 
 type sourcePatchCacheRecord struct {
@@ -95,6 +96,7 @@ func marshalSourcePatchCache(rec *sourcePatchCacheRecord) []byte {
 		writeBinStr(&buf, f.Path)
 		writeBinVarint(&buf, f.Size)
 		writeBinVarint(&buf, f.ModTime)
+		writeBinStr(&buf, f.Hash)
 	}
 	ovKeys := make([]string, 0, len(rec.Overlay))
 	for k := range rec.Overlay {
@@ -157,6 +159,9 @@ func unmarshalSourcePatchCache(raw []byte) (*sourcePatchCacheRecord, error) {
 				return nil, err
 			}
 			if rec.Files[i].ModTime, err = r.readVarint(); err != nil {
+				return nil, err
+			}
+			if rec.Files[i].Hash, err = r.readStr(); err != nil {
 				return nil, err
 			}
 		}
@@ -231,6 +236,12 @@ func validateSourcePatchCache(rec *sourcePatchCacheRecord) bool {
 		if err != nil || fi.Size() != f.Size || fi.ModTime().UnixNano() != f.ModTime {
 			return false
 		}
+		if f.Hash != "" {
+			data, err := os.ReadFile(f.Path)
+			if err != nil || digestBytes(data) != f.Hash {
+				return false
+			}
+		}
 	}
 	return true
 }
@@ -303,10 +314,15 @@ func collectSourcePatchCacheInputs(runtimeDir, goroot string) ([]depfileDirStat,
 		if err != nil {
 			return nil, nil, false
 		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, nil, false
+		}
 		fileStats = append(fileStats, sourcePatchFileStat{
 			Path:    p,
 			Size:    fi.Size(),
 			ModTime: fi.ModTime().UnixNano(),
+			Hash:    digestBytes(data),
 		})
 	}
 	return dirStats, fileStats, true

@@ -411,3 +411,29 @@ func TestDefaultGODEBUGEntryInitialization(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultGODEBUGExplicitGOWORKInvalidation(t *testing.T) {
+	root := godebugFixture(t)
+	extDir := t.TempDir()
+	extWork := filepath.Join(extDir, "go.work")
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/debugextwork\ngo 1.27.0\n")
+	writeFile(t, filepath.Join(root, "main.go"), godebugMainSource)
+	writeFile(t, extWork, "go 1.27.0\nuse "+root+"\ngodebug randseednop=0\n")
+
+	t.Setenv("GOWORK", extWork)
+	conf := godebugConfig(ModeBuild)
+	conf.OutFile = filepath.Join(t.TempDir(), "app"+defaultAppExt(conf))
+	if _, err := Build(Invocation{Dir: root, Config: conf}); err != nil {
+		t.Fatal(err)
+	}
+	godebugAssertProgram(t, conf.OutFile, "true true")
+
+	// Now modify the external go.work file to randseednop=1
+	writeFile(t, extWork, "go 1.27.0\nuse "+root+"\ngodebug randseednop=1\n")
+	conf2 := godebugConfig(ModeBuild)
+	conf2.OutFile = filepath.Join(t.TempDir(), "app2"+defaultAppExt(conf2))
+	if _, err := Build(Invocation{Dir: root, Config: conf2}); err != nil {
+		t.Fatal(err)
+	}
+	godebugAssertProgram(t, conf2.OutFile, "false false")
+}

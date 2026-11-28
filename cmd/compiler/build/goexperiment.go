@@ -121,7 +121,7 @@ func sourceGoConfigCachePath(commands commandEnv, experiment string, buildFlags 
 		fmt.Fprintf(h, "%s=%s\x00", name, commandEnvLookup(commands, name))
 	}
 	fmt.Fprintf(h, "gomod=%s\x00", findUpwardFileStat(commands.dir, "go.mod"))
-	fmt.Fprintf(h, "gowork=%s\x00", findUpwardFileStat(commands.dir, "go.work"))
+	recordEffectiveGoWork(h, commands.dir, commands, buildFlags, nil)
 	goenvPath := commandEnvLookup(commands, "GOENV")
 	if goenvPath == "" {
 		if cfgDir, err := os.UserConfigDir(); err == nil {

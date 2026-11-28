@@ -242,11 +242,13 @@ func (t *Types) add(typ types.Type, seen map[types.Type]bool) {
 		return
 	}
 	seen[typ] = true
-	key := t.Key(typ)
-	if previous, ok := t.values[key]; !ok {
-		t.values[key] = typ
-	} else if previous != nil && !types.Identical(previous, typ) {
-		t.values[key] = nil
+	if !hasTypeParam(typ) {
+		key := t.Key(typ)
+		if previous, ok := t.values[key]; !ok {
+			t.values[key] = typ
+		} else if previous != nil && !types.Identical(previous, typ) {
+			t.values[key] = nil
+		}
 	}
 	add := func(v types.Type) { t.add(v, seen) }
 	switch v := typ.(type) {
@@ -348,4 +350,108 @@ func Position(fset *token.FileSet, pos token.Pos) string {
 		return ""
 	}
 	return f.Name() + ":" + strconv.Itoa(f.Offset(pos))
+}
+
+func hasTypeParam(typ types.Type) bool {
+	visited := make(map[types.Type]bool)
+	var visit func(types.Type) bool
+	visit = func(tt types.Type) bool {
+		if tt == nil {
+			return false
+		}
+		tt = types.Unalias(tt)
+		if visited[tt] {
+			return false
+		}
+		visited[tt] = true
+		switch t := tt.(type) {
+		case *types.TypeParam:
+			return true
+		case *types.Named:
+			if tp := t.TypeParams(); tp != nil && tp.Len() > 0 {
+				if ta := t.TypeArgs(); ta == nil || ta.Len() == 0 {
+					return true
+				}
+			}
+			if ta := t.TypeArgs(); ta != nil {
+				for i := 0; i < ta.Len(); i++ {
+					if visit(ta.At(i)) {
+						return true
+					}
+				}
+			}
+			return visit(t.Underlying())
+		case *types.Pointer:
+			return visit(t.Elem())
+		case *types.Slice:
+			return visit(t.Elem())
+		case *types.Array:
+			return visit(t.Elem())
+		case *types.Chan:
+			return visit(t.Elem())
+		case *types.Map:
+			return visit(t.Key()) || visit(t.Elem())
+		case *types.Signature:
+			if tp := t.TypeParams(); tp != nil && tp.Len() > 0 {
+				return true
+			}
+			if rtp := t.RecvTypeParams(); rtp != nil && rtp.Len() > 0 {
+				return true
+			}
+			if t.Recv() != nil && visit(t.Recv().Type()) {
+				return true
+			}
+			if params := t.Params(); params != nil {
+				for i := 0; i < params.Len(); i++ {
+					if visit(params.At(i).Type()) {
+						return true
+					}
+				}
+			}
+			if results := t.Results(); results != nil {
+				for i := 0; i < results.Len(); i++ {
+					if visit(results.At(i).Type()) {
+						return true
+					}
+				}
+			}
+			return false
+		case *types.Tuple:
+			for i := 0; i < t.Len(); i++ {
+				if visit(t.At(i).Type()) {
+					return true
+				}
+			}
+			return false
+		case *types.Struct:
+			for i := 0; i < t.NumFields(); i++ {
+				if visit(t.Field(i).Type()) {
+					return true
+				}
+			}
+			return false
+		case *types.Interface:
+			for i := 0; i < t.NumMethods(); i++ {
+				if visit(t.Method(i).Type()) {
+					return true
+				}
+			}
+			for i := 0; i < t.NumEmbeddeds(); i++ {
+				if visit(t.EmbeddedType(i)) {
+					return true
+				}
+			}
+			return false
+		case *types.Union:
+			for i := 0; i < t.Len(); i++ {
+				if visit(t.Term(i).Type()) {
+					return true
+				}
+			}
+			return false
+		default:
+			return false
+		}
+	}
+	return visit(typ)
 }

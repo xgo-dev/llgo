@@ -30,7 +30,7 @@ func TestSourcePatchCacheCodecRoundTrip(t *testing.T) {
 			{Path: "/dir2", Exists: false},
 		},
 		Files: []sourcePatchFileStat{
-			{Path: "/file1.go", Size: 1234, ModTime: 5678},
+			{Path: "/file1.go", Size: 1234, ModTime: 5678, Hash: "hash1234"},
 		},
 		Overlay: map[string][]byte{
 			"/file1.go": []byte("package p"),
@@ -93,11 +93,22 @@ func TestSourcePatchCacheValidationAndErrors(t *testing.T) {
 			{Path: tmpDir, Exists: true, Hash: dHash},
 		},
 		Files: []sourcePatchFileStat{
-			{Path: fPath, Size: fi.Size(), ModTime: fi.ModTime().UnixNano()},
+			{Path: fPath, Size: fi.Size(), ModTime: fi.ModTime().UnixNano(), Hash: digestBytes([]byte("content"))},
 		},
 	}
 	if !validateSourcePatchCache(validRec) {
 		t.Error("expected validRec to validate successfully")
+	}
+
+	// Tamper file content while preserving size and mtime
+	if err := os.WriteFile(fPath, []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(fPath, fi.ModTime(), fi.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	if validateSourcePatchCache(validRec) {
+		t.Error("expected validRec to fail validation after content change with identical size and mtime")
 	}
 
 	// Tamper file size
