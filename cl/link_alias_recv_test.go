@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llvm"
 )
 
 func linkedAliasReceiverCases(t *testing.T, test func(*testing.T, string, string)) {
@@ -89,6 +90,86 @@ func TestLinkedAliasReceiverCompile(t *testing.T) {
 			t.Fatalf("call did not use the linked C symbol:\n%s", ir)
 		}
 	})
+
+	// GOROOT/test/fixedbugs/issue38125.go uses an alias to an anonymous
+	// receiver. Compile each retention separately: emitting T's metadata
+	// first can hide a mismatched method symbol in the *T metadata path.
+	const source = `package p
+type I int
+func (I) M() {}
+type T = struct{ I }
+func F() {
+	_ = T.M
+	_ = struct{ I }.M
+}
+`
+	for _, target := range []llssa.Target{
+		{GOOS: "linux", GOARCH: "amd64"},
+		{GOOS: "linux", GOARCH: "arm64"},
+		{GOOS: "linux", GOARCH: "arm"},
+		{GOOS: "darwin", GOARCH: "amd64"},
+		{GOOS: "darwin", GOARCH: "arm64"},
+		{GOOS: "windows", GOARCH: "amd64"},
+		{GOOS: "windows", GOARCH: "arm64"},
+		{GOOS: "windows", GOARCH: "386"},
+		{GOOS: "wasip1", GOARCH: "wasm"},
+	} {
+		t.Run("promoted/"+target.GOOS+"/"+target.GOARCH, func(t *testing.T) {
+			for _, test := range []struct {
+				name       string
+				decl       string
+				staticItab bool
+			}{
+				{"alias", "var metadata any = (*T)(nil)", false},
+				{"alias-chain", "type alias = T; var metadata any = (*alias)(nil)", false},
+				{"pointer-alias", "type pointer = *T; var metadata any = pointer(nil)", false},
+				{"interface", "var value interface{ M() } = T{}", false},
+				{"expression", "var metadata any = (*T)(nil); var expression = T.M", false},
+				{"bound", "var metadata any = (*T)(nil); var bound = T{}.M", false},
+				{"static-interface", "var value interface{ M() } = T{}", true},
+				{"static-pointer", "var value interface{ M() } = (*T)(nil)", true},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					ssaPkg, _, files := buildGoSSAPkg(t, source+test.decl)
+					prog := newLLSSAProgForTarget(t, &target)
+					defer prog.Dispose()
+					if test.staticItab {
+						prog.EnableGoGlobalDCE(true)
+						prog.EnableLTOPluginMarkers(true)
+					}
+					pkg, err := NewPackage(prog, ssaPkg, files)
+					if err != nil {
+						t.Fatal(err)
+					}
+					mod := pkg.Module()
+					if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+						t.Fatal(err)
+					}
+					if test.staticItab {
+						var found bool
+						for global := mod.FirstGlobal(); !global.IsNil(); global = llvm.NextGlobal(global) {
+							if strings.HasPrefix(global.Name(), "_llgo_itab$") {
+								found = true
+							}
+						}
+						if !found {
+							t.Fatal("missing static itab template")
+						}
+					}
+					for _, name := range []string{"p.struct{p.I}.M", "p.*struct{p.I}.M"} {
+						if fn := mustNamedFunction(t, mod, name); fn.IsDeclaration() {
+							t.Errorf("method table target %q has no body", name)
+						}
+					}
+					for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+						if strings.HasPrefix(fn.Name(), "p.") && strings.HasSuffix(fn.Name(), ".M") && fn.IsDeclaration() {
+							t.Errorf("unresolved promoted method %q", fn.Name())
+						}
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestLinkedAliasReceiverAcrossFiles(t *testing.T) {
