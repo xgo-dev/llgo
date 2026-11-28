@@ -8,6 +8,9 @@ import (
 	csyscall "github.com/xgo-dev/llgo/runtime/internal/clite/syscall"
 )
 
+// EAGAIN (== EWOULDBLOCK on Darwin).
+const pollEAGAIN = 35
+
 func pollPipe(fds *[2]c.Int) bool {
 	if cliteos.Pipe(fds) != 0 {
 		return false
