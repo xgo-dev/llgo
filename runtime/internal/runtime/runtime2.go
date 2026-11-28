@@ -45,9 +45,10 @@ type g struct {
 	panic_        unsafe.Pointer
 	recoverFrame  unsafe.Pointer
 	recoverPanic  unsafe.Pointer
-	// One idle ordinary channel waiter; active/select waiters are never cached.
-	chanWaiter *chanWaiter
-	m          *m
+	// One idle ordinary channel waiter and one idle select cache; active waiters are never cached.
+	chanWaiter  *singleChanWaiter
+	selectCache *selectCache
+	m           *m
 
 	goexit       bool
 	isMain       bool
