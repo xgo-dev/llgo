@@ -40,21 +40,40 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-// LLVM uniques attributes in each context. Preserve their parameter indexes
-// in the key: two calls with the same IR type may differ in nest, sret, etc.
-func adapterAttributeKey(call llvm.Value) string {
-	var key strings.Builder
+var (
+	dereferenceable       = int(llvm.AttributeKindID("dereferenceable"))
+	dereferenceableOrNull = int(llvm.AttributeKindID("dereferenceable_or_null"))
+)
+
+// Omit per-site pointer accessibility promises from the shared inner call.
+// Its body may be reached from callers that only guarantee a smaller range.
+func visitAdapterAttrs(call llvm.Value, visit func(int, llvm.Attribute)) {
 	for index := -1; index <= call.ArgOperandsCount(); index++ {
 		count := C.LLVMGetCallSiteAttributeCount(unsafe.Pointer(call.C), C.unsigned(index))
-		if count != 0 {
-			attrs := make([]unsafe.Pointer, count)
-			C.LLVMGetCallSiteAttributes(unsafe.Pointer(call.C), C.unsigned(index), &attrs[0])
-			fmt.Fprintf(&key, "%d:%p;", index, attrs[0])
-			for _, attr := range attrs[1:] {
-				fmt.Fprintf(&key, "%p;", attr)
+		if count == 0 {
+			continue
+		}
+		attrs := make([]llvm.Attribute, count)
+		C.LLVMGetCallSiteAttributes(unsafe.Pointer(call.C), C.unsigned(index), (*unsafe.Pointer)(unsafe.Pointer(&attrs[0].C)))
+		for _, attr := range attrs {
+			if attr.IsEnum() {
+				switch attr.GetEnumKind() {
+				case dereferenceable, dereferenceableOrNull:
+					continue
+				}
 			}
+			visit(index, attr)
 		}
 	}
+}
+
+// LLVM uniques attributes inside a context. Use their identities for the
+// module-local cache, and serialize the ABI only once per distinct adapter.
+func adapterAttributeKey(call llvm.Value) string {
+	var key strings.Builder
+	visitAdapterAttrs(call, func(index int, attr llvm.Attribute) {
+		fmt.Fprintf(&key, "%d:%p;", index, attr.C)
+	})
 	return key.String()
 }
 

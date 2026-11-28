@@ -879,7 +879,7 @@ func TestFuncInfoTableEmissionMatrix(t *testing.T) {
 }
 
 func TestELFFuncInfoSiteSectionsAllowSharedLibraryRelocations(t *testing.T) {
-	if got, want := entrySiteSectionInfo.push(siteObjectELF, "anchor"), `.pushsection llgo_funcinfo_entry,"awo",@progbits,anchor`; got != want {
+	if got, want := entrySiteSectionInfo.push(siteObjectELF, "anchor"), `.pushsection llgo_funcinfo_entry,"awo?",@progbits,anchor`; got != want {
 		t.Fatalf("ELF site section = %q, want %q", got, want)
 	}
 	if got, want := entrySiteSectionInfo.retain(siteObjectELF), `.section llgo_funcinfo_entry,"awR",@progbits`; got != want {
@@ -1055,6 +1055,9 @@ func testELFFuncInfoMetadataLinksIntoSharedLibrary(t *testing.T) {
 	src.EmitFuncInfo("example.com/p.live", "example.com/p.Live", "live.go", 17, 3)
 	fn := src.NewFunc("example.com/p.live", llssa.NoArgsNoRet, llssa.GoDecl)
 	fn.MakeBody(1).Return()
+	live := src.Module().NamedFunction("example.com/p.live")
+	live.SetLinkage(llvm.LinkOnceODRLinkage)
+	live.SetComdat(src.Module().Comdat(live.Name()))
 	records := collectFuncInfo([]Package{{LPkg: src}})
 	emitFuncInfoEntrySites(ctx, src)
 
@@ -1076,9 +1079,19 @@ func testELFFuncInfoMetadataLinksIntoSharedLibrary(t *testing.T) {
 		return path
 	}
 	srcObj := writeObject("src.o", src.Module())
+	obj, err := elf.Open(srcObj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer obj.Close()
+	if site := obj.Section(entrySiteSectionInfo.elf); site == nil || site.Flags&elf.SHF_GROUP == 0 {
+		t.Fatal("ELF entry site must belong to the function's COMDAT group")
+	}
 	metadataObj := writeObject("metadata.o", metadata.Module())
 	shared := filepath.Join(dir, "libfuncinfo.so")
-	cmd := exec.Command(linker, "-shared", "-z", "text", "--gc-sections", "-o", shared, srcObj, metadataObj)
+	// Supply the same COMDAT definition twice. The metadata relocation count
+	// below must include exactly one live entry for the selected function.
+	cmd := exec.Command(linker, "-shared", "-z", "text", "--gc-sections", "-o", shared, srcObj, srcObj, metadataObj)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("link ELF shared library: %v\n%s", err, out)
 	}

@@ -1,6 +1,12 @@
 package llvmfmv
 
-import "github.com/xgo-dev/llvm"
+import (
+	"crypto/sha256"
+	"fmt"
+
+	xtllvm "github.com/xgo-dev/llgo/internal/xtool/llvm"
+	"github.com/xgo-dev/llvm"
+)
 
 // The actual Go entry keeps its platform register ABI. Only the call from a
 // narrower body into this private adapter uses 128-bit pieces. The target is
@@ -105,10 +111,43 @@ func (a *wideABI) adaptCall(old llvm.Value) {
 	old.EraseFromParentAsInstruction()
 }
 
+// Print just the two signatures in their own module. LLVM includes the full
+// definitions of referenced types (also inside byval/sret), attribute groups
+// and numbered unnamed types, independent of the caller's module.
+func (key adapterKey) symbol(mod llvm.Module, call llvm.Value) string {
+	contract := mod.Context().NewModule("regcall.v1")
+	defer contract.Dispose()
+	contract.SetTarget(mod.Target())
+	contract.SetDataLayout(mod.DataLayout())
+	target := llvm.AddFunction(contract, "target", key.target)
+	target.SetFunctionCallConv(key.cc)
+	if !key.varargs.IsNil() {
+		// Attributes on variadic operands need a corresponding parameter.
+		params := append(key.target.ParamTypes(), key.varargs.ParamTypes()...)
+		target = llvm.AddFunction(contract, "actual", llvm.FunctionType(key.target.ReturnType(), params, false))
+	}
+	visitAdapterAttrs(call, target.AddAttributeAtIndex)
+	llvm.AddFunction(contract, "transport", key.transport)
+	return fmt.Sprintf("__llgo_fmv_regcall.v1.%x", sha256.Sum256([]byte(contract.String())))
+}
+
 func (a *wideABI) newRegisterAdapter(old llvm.Value, key adapterKey) llvm.Value {
 	ctx := a.mod.Context()
-	fn := llvm.AddFunction(a.mod, old.InstructionParent().Parent().Name()+symbolPrefix+"regcall", key.transport)
-	fn.SetLinkage(llvm.InternalLinkage)
+	name := key.symbol(a.mod, old)
+	fn := llvm.AddFunction(a.mod, name, key.transport)
+	if fn.Name() != name {
+		// Distinct unnamed LLVM types in this module can print identically.
+		// Keep the nominally typed second definition local.
+		fn.SetLinkage(llvm.InternalLinkage)
+	} else {
+		fn.SetLinkage(llvm.LinkOnceODRLinkage)
+		fn.SetVisibility(llvm.HiddenVisibility)
+		if !xtllvm.IsDarwinTarget(a.mod.Target()) {
+			group := a.mod.Comdat(name)
+			group.SetSelectionKind(llvm.AnyComdatSelectionKind)
+			fn.SetComdat(group)
+		}
+	}
 	fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("noinline"), 0))
 	enableWidth(fn, a.signature(key.target))
 	a.abi.applyWideCallingConvention(fn)
@@ -124,7 +163,7 @@ func (a *wideABI) newRegisterAdapter(old llvm.Value, key adapterKey) llvm.Value 
 	}
 	call := b.CreateCall(key.target, fn.Param(0), args, "")
 	call.SetInstructionCallConv(key.cc)
-	copyOutlineCallAttrs(old, call)
+	visitAdapterAttrs(old, call.AddCallSiteAttribute)
 	// A Win64 overflow argument may point into this frame. A normal call
 	// keeps the copy alive and the result unpacking on the same boundary.
 	call.SetTailCallKind(llvm.TailCallKindNoTail)

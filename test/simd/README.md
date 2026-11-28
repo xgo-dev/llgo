@@ -135,8 +135,11 @@ a caller can still use the fixed ZMM ABI on an AVX-512F machine with ZMM
 state enabled. A body with sufficient width calls the original entry directly.
 At a narrower call site, LLGo passes the vector bits in 128-bit pieces to an
 internal function. It packs the arguments into wide registers, calls the same
-entry and splits the returned vectors. Direct calls and function values with
-the same machine signature and compatible call attributes can share this code.
+entry through the supplied function pointer and splits the returned vectors.
+Direct calls and function values in different packages share a helper when
+their lowered signatures, calling conventions and retained call attributes
+match. Ordinary linking coalesces the helper even with LTO disabled. A
+capturing closure supplies its own context on each call.
 The wide transfer executes only when control reaches that call. On hardware
 without the required register support it can raise an illegal instruction.
 `TestSIMD512FixedRegisterCall` exercises both branches. The Sapphire Rapids

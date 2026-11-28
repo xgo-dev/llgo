@@ -1,6 +1,7 @@
 package llvmfmv
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -260,5 +261,103 @@ define void @root(ptr %ctx, ptr %p, ptr %closure, ptr %plain) {
 	nest := llvm.AttributeKindID("nest")
 	if nested.GetCallSiteEnumAttribute(1, nest).IsNil() || !ordinary.GetCallSiteEnumAttribute(1, nest).IsNil() {
 		t.Fatal("closure context attribute changed", nested.String(), ordinary.String())
+	}
+}
+
+func TestRegisterAdapterAcrossModules(t *testing.T) {
+	const ir = `target triple = "%[1]s"
+declare void @%[2]s.target(ptr, <8 x i32>)
+define void @%[2]s.caller(ptr %%p, ptr %%fn) {
+ call void @%[2]s.target(ptr %[3]s %%p, <8 x i32> zeroinitializer)
+ call void %%fn(ptr %%p, <8 x i32> zeroinitializer)
+ ret void
+}`
+	for _, tc := range []struct {
+		triple string
+		comdat bool
+	}{
+		{"x86_64-unknown-linux-gnu", true},
+		{"x86_64-pc-windows-msvc", true},
+		{"x86_64-apple-darwin", false},
+	} {
+		t.Run(tc.triple, func(t *testing.T) {
+			var names []string
+			for i, pkg := range []string{"left", "right"} {
+				promise := []string{"dereferenceable(8)", "dereferenceable_or_null(64)"}[i]
+				mod := parseModule(t, fmt.Sprintf(ir, tc.triple, pkg, promise))
+				if err := Run(mod, "v1"); err != nil {
+					t.Fatal(err)
+				}
+				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+					t.Fatal(err)
+				}
+				body := mod.NamedFunction(pkg + ".caller" + symbolPrefix + "guard_base")
+				direct, inner := checkFixedCall(t, body, mod.NamedFunction(pkg+".target"), 256)
+				indirect, _ := checkFixedCall(t, body, body.Param(1), 256)
+				fn := direct.CalledValue()
+				if fn != indirect.CalledValue() || strings.Contains(inner.String(), "dereferenceable") {
+					t.Fatal("expected a shared adapter without the caller's pointer guarantee", fn.String())
+				}
+				if fn.Linkage() != llvm.LinkOnceODRLinkage || fn.Visibility() != llvm.HiddenVisibility {
+					t.Fatalf("expected a hidden linkonce_odr definition:\n%s", fn.String())
+				}
+				group := fn.Comdat()
+				if (group.C != nil) != tc.comdat || tc.comdat && (group != mod.Comdat(fn.Name()) || group.SelectionKind() != llvm.AnyComdatSelectionKind) {
+					t.Fatalf("unexpected adapter COMDAT:\n%s", mod.String())
+				}
+				names = append(names, fn.Name())
+			}
+			if names[0] != names[1] {
+				t.Fatalf("different names for the same ABI in independent modules: %s, %s", names[0], names[1])
+			}
+		})
+	}
+}
+
+func TestRegisterAdapterDistinctContracts(t *testing.T) {
+	for _, tc := range []struct {
+		name, ir, innerCall string
+		types               [2]string
+	}{
+		// Each module owns its named types. Their names alone cannot identify
+		// the storage that the caller copies for a byval argument.
+		{"byval", `
+%inner = type { [TYPE x i64] }
+%outer = type { %inner }
+declare void @target(ptr byval(%outer), <8 x i32>)
+define void @caller(ptr %p) {
+ call void @target(ptr byval(%outer) %p, <8 x i32> zeroinitializer)
+ ret void
+}`, "byval(%outer)", [2]string{"1", "5"}},
+		// Both vectors use the same transport pieces, but the actual variadic
+		// argument type has to survive the indirect call through the adapter.
+		{"varargs", `
+declare void @target(<8 x i32>, ...)
+define void @caller() {
+ call void (<8 x i32>, ...) @target(<8 x i32> zeroinitializer, <8 x TYPE> zeroinitializer)
+ ret void
+}`, "<8 x TYPE>", [2]string{"i32", "float"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var name string
+			for _, typ := range tc.types {
+				mod := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"`+"\n"+strings.ReplaceAll(tc.ir, "TYPE", typ))
+				if err := Run(mod, "v1"); err != nil {
+					t.Fatal(err)
+				}
+				if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+					t.Fatal(err)
+				}
+				site, inner := checkFixedCall(t, mod.NamedFunction("caller"+symbolPrefix+"guard_base"), mod.NamedFunction("target"), 256)
+				if !strings.Contains(inner.String(), strings.ReplaceAll(tc.innerCall, "TYPE", typ)) {
+					t.Fatal("target ABI changed", inner.String())
+				}
+				fn := site.CalledValue()
+				if fn.Linkage() != llvm.LinkOnceODRLinkage || fn.Name() == name {
+					t.Fatal("expected distinct linkable names for incompatible calls", fn.Name())
+				}
+				name = fn.Name()
+			}
+		})
 	}
 }
