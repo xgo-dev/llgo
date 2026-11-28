@@ -36,9 +36,13 @@ func TestSliceRoundupAndFreshNilAppend(t *testing.T) {
 		}
 		// Ensure writing all bytes up to cap(s) stays inside the allocation.
 		full[0] = 0x5a
-		full[len(full)-1] = 0xa5
-		if full[0] != 0x5a || full[len(full)-1] != 0xa5 {
-			t.Fatalf("n=%d: write/read at capacity edges failed", n)
+		if len(full) > 1 {
+			full[len(full)-1] = 0xa5
+			if full[0] != 0x5a || full[len(full)-1] != 0xa5 {
+				t.Fatalf("n=%d: write/read at capacity edges failed", n)
+			}
+		} else if full[0] != 0x5a {
+			t.Fatalf("n=%d: write/read at capacity edge failed", n)
 		}
 	}
 
