@@ -102,7 +102,7 @@ jobs:
     if: needs.prepare.outputs.run_code_ci == 'true'
     needs: prepare
     name: llgo + test (${{ matrix.os }}${{ matrix.windows_abi && format(', {0}', matrix.windows_abi) || '' }}${{ matrix.windows_arch && format(', {0}', matrix.windows_arch) || '' }}, LLVM ${{ matrix.llvm }}, Go 1.27)
-    timeout-minutes: 60
+    timeout-minutes: ${{ matrix.job_timeout || 60 }}
     strategy:
       fail-fast: false
       matrix:
@@ -126,6 +126,8 @@ jobs:
             windows_abi: msvc
             windows_arch: arm64
             host_go_arch: arm64
+            # Cold native toolchain and cache cleanup can exceed an hour.
+            job_timeout: 75
           - os: windows-11-arm
             llvm: 22
             windows_abi: mingw
