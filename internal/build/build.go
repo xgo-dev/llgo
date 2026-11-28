@@ -1694,11 +1694,12 @@ func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 		commands:     ctx.commands,
 		pclnExternal: plan.pclnExternal,
 
-		wasmRuntimeFree:       ctx.wasmRuntimeFree,
-		wasmClosedProgram:     ctx.wasmClosedProgram,
-		embeddedClosedProgram: ctx.embeddedClosedProgram,
-		nativeClosedProgram:   ctx.nativeClosedProgram,
-		sizePruningRoots:      ctx.sizePruningRoots,
+		skipEmscriptenMinifier: ctx.skipEmscriptenMinifier,
+		wasmRuntimeFree:        ctx.wasmRuntimeFree,
+		wasmClosedProgram:      ctx.wasmClosedProgram,
+		embeddedClosedProgram:  ctx.embeddedClosedProgram,
+		nativeClosedProgram:    ctx.nativeClosedProgram,
+		sizePruningRoots:       ctx.sizePruningRoots,
 
 		frontendOptions:      cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
 		linkRuntimeSites:     &plan.runtimeSites,

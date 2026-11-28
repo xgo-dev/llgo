@@ -1,4 +1,4 @@
-//go:build llgo && baremetal && llgo.baremetal.stdio && llgo.size.embedded
+//go:build llgo && linux && baremetal && llgo.baremetal.stdio && llgo.size.embedded
 
 package os
 

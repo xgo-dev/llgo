@@ -80,7 +80,8 @@ func TestEmscriptenMinifierDriver(t *testing.T) {
 			if ctx.wasmJSMinifier != tt.minifier || slices.Contains(ctx.effectiveLinkArgs, "--closure") != (tt.minifier != "") {
 				t.Fatalf("unexpected manifest state: %q, %q", ctx.wasmJSMinifier, ctx.effectiveLinkArgs)
 			}
-			if ctx.skipEmscriptenMinifier != (tt.mode == "missing") {
+			next := newLinkExecutionContext(ctx, &mainLinkPlan{})
+			if next.skipEmscriptenMinifier != (tt.mode == "missing") {
 				t.Fatal("retry policy did not persist to subsequent links")
 			}
 		})
