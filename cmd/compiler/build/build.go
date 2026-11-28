@@ -562,9 +562,6 @@ func Do(args []string, conf *Config) ([]Package, error) {
 
 // Build executes one build invocation.
 func Build(inv Invocation) ([]Package, error) {
-	if inv.Config == nil {
-		inv.Config = NewDefaultConf(ModeBuild)
-	}
 	dir := inv.Dir
 	if dir == "" {
 		var err error
@@ -576,6 +573,18 @@ func Build(inv Invocation) ([]Package, error) {
 	conf, err := resolveBuildConfig(inv.Config)
 	if err != nil {
 		return nil, err
+	}
+
+	if conf.BuildTrace != "" && conf.Coverage != nil && conf.Coverage.Profile != "" && !conf.CompileOnly {
+		tracePath := filepath.Clean(resolvePath(dir, conf.BuildTrace))
+		coverDir := dir
+		if conf.Coverage.OutputDir != "" {
+			coverDir = resolvePath(dir, conf.Coverage.OutputDir)
+		}
+		profilePath := filepath.Clean(resolvePath(coverDir, conf.Coverage.Profile))
+		if tracePath == profilePath {
+			return nil, fmt.Errorf("-debug-trace conflicts with -coverprofile: %s", tracePath)
+		}
 	}
 
 	buildTrace := inv.parentBuildTrace

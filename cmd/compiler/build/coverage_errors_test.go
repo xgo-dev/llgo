@@ -32,6 +32,21 @@ func TestCoverageSetupErrors(t *testing.T) {
 			t.Fatal("ignored temporary directory creation failure")
 		}
 	})
+	t.Run("conflict with build trace", func(t *testing.T) {
+		dir := t.TempDir()
+		profile := filepath.Join(dir, "out.file")
+		conf := &Config{
+			Mode:       ModeTest,
+			BuildTrace: profile,
+			Coverage:   &CoverageConfig{Profile: profile},
+		}
+		if c, err := newCoverageBuild(conf, commandEnv{dir: dir}); err == nil {
+			c.close()
+			t.Fatal("accepted build trace as coverage profile")
+		} else if !strings.Contains(err.Error(), "conflicts with -coverprofile") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }
 
 func TestCoverageRunErrors(t *testing.T) {

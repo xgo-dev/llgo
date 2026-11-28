@@ -125,6 +125,12 @@ func newCoverageBuild(conf *Config, commands commandEnv) (*coverageBuild, error)
 			outputDir = resolvePath(commands.dir, options.OutputDir)
 		}
 		options.Profile = resolvePath(outputDir, options.Profile)
+		if conf.BuildTrace != "" {
+			tracePath := filepath.Clean(resolvePath(commands.dir, conf.BuildTrace))
+			if tracePath == filepath.Clean(options.Profile) {
+				return nil, fmt.Errorf("-debug-trace conflicts with -coverprofile: %s", tracePath)
+			}
+		}
 		// An initial-group parent prepares the destination before its child
 		// invocations rebuild isolated package graphs. Do not let each child
 		// truncate fragments already appended by an earlier group.

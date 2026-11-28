@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -198,6 +199,29 @@ func TestBuildTraceRefusesExistingOutput(t *testing.T) {
 	}
 	if got, err := os.ReadFile(path); err != nil || string(got) != "keep" {
 		t.Fatalf("existing output = %q, %v; want unchanged", got, err)
+	}
+}
+
+func TestBuildTraceRefusesCoverageProfileConflict(t *testing.T) {
+	dir := t.TempDir()
+	conf := NewDefaultConf(ModeTest)
+	conf.BuildTrace = "trace.json"
+	conf.Coverage = &CoverageConfig{
+		Mode:    "set",
+		Profile: "trace.json",
+	}
+	targetFile := filepath.Join(dir, "trace.json")
+	if _, err := Build(Invocation{Args: []string{"."}, Config: conf, Dir: dir}); err == nil || !strings.Contains(err.Error(), "conflicts with -coverprofile") {
+		t.Fatalf("Build() err = %v, want conflict with -coverprofile", err)
+	}
+	if _, err := os.Stat(targetFile); !os.IsNotExist(err) {
+		t.Fatalf("target file %s was created despite conflict: %v", targetFile, err)
+	}
+}
+
+func TestBuildNilConfigReturnsError(t *testing.T) {
+	if _, err := Build(Invocation{Config: nil}); err == nil || !strings.Contains(err.Error(), "build config must not be nil") {
+		t.Fatalf("Build(Invocation{Config: nil}) err = %v, want 'build config must not be nil'", err)
 	}
 }
 
