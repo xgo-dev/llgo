@@ -4,6 +4,7 @@ package build
 
 import (
 	stdctx "context"
+	gobuild "go/build"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/xgo-dev/llgo/cmd/compiler/env"
+	llssa "github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 )
 
 func TestRuntimeAESHashDispatch(t *testing.T) {
@@ -98,5 +102,73 @@ func main() {
 	}
 	if got := run("cpu.aes=off,cpu.aes=on"); got != def {
 		t.Fatalf("GODEBUG=cpu.aes=off,cpu.aes=on = %q, want %q", got, def)
+	}
+}
+
+func TestRuntimeAESKeySchedAlignment(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LLGO_ROOT", root)
+	conf := NewDefaultConf(ModeGen)
+	pkgs, err := Build(Invocation{Args: []string{llssa.PkgRuntime}, Config: conf})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pkgs) != 1 || pkgs[0].LPkg == nil {
+		t.Fatal("missing compiled runtime package")
+	}
+	defer pkgs[0].LPkg.Prog.Dispose()
+	sched := pkgs[0].LPkg.Module().NamedGlobal(llssa.PkgRuntime + ".aeskeysched")
+	if sched.IsNil() {
+		t.Fatal("missing runtime.aeskeysched global")
+	}
+	if got := sched.Alignment(); got < 16 {
+		t.Fatalf("runtime.aeskeysched alignment = %d, want >= 16", got)
+	}
+}
+
+func TestRuntimeMaxProcsWindowsBuildTagSelection(t *testing.T) {
+	rtDir := filepath.Join(env.LLGoRuntimeDir(), "internal", "runtime")
+	baseTags := strings.Split(DefaultBuildTags(), ",")
+	for _, tc := range []struct {
+		name      string
+		extraTags []string
+		wantFile  string
+		denyFile  string
+	}{
+		{
+			name:     "windows-default",
+			wantFile: "maxprocs_windows.go",
+			denyFile: "maxprocs_stub.go",
+		},
+		{
+			name:      "windows-baremetal",
+			extraTags: []string{"baremetal"},
+			wantFile:  "maxprocs_stub.go",
+			denyFile:  "maxprocs_windows.go",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := gobuild.Default
+			ctx.GOOS = "windows"
+			ctx.GOARCH = "amd64"
+			ctx.BuildTags = append(append([]string(nil), baseTags...), tc.extraTags...)
+			want, err := ctx.MatchFile(rtDir, tc.wantFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !want {
+				t.Fatalf("%s did not match for %s/%s tags=%v", tc.wantFile, ctx.GOOS, ctx.GOARCH, ctx.BuildTags)
+			}
+			deny, err := ctx.MatchFile(rtDir, tc.denyFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if deny {
+				t.Fatalf("%s unexpectedly matched for %s/%s tags=%v", tc.denyFile, ctx.GOOS, ctx.GOARCH, ctx.BuildTags)
+			}
+		})
 	}
 }

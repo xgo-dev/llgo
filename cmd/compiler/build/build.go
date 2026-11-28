@@ -3768,13 +3768,18 @@ func lowerMainCExportModule(ctx *context, pkg llvmgen.Package, exports []cExport
 	return true, nil
 }
 
-var runHeapToStack = heap2stack.Run
+var (
+	runHeapToStack           = heap2stack.Run
+	runPostInlineHeapToStack = heap2stack.RunPostInline
+)
 
-// optimizeHeapAllocations runs while aggregate arguments and results are still
-// SSA values. C ABI lowering introduces spills, reloads, and byval/sret storage
-// that can make Attributor's pointer and reachability analyses prohibitively
-// expensive. Run after large-aggregate lowering has rewritten oversized returns
-// so inferred memory effects include its result stores, and before the ordinary
+// optimizeHeapAllocations runs full-module Attributor while aggregate arguments
+// and results are still SSA values. Running module-wide Attributor after C ABI
+// lowering (which introduces spills, reloads, and byval/sret storage) would be
+// expensive; post-inline heap-to-stack below avoids that cost by scoping
+// analysis strictly to functions that still hold constant-size allockind calls.
+// Run after large-aggregate lowering has rewritten oversized returns so
+// inferred memory effects include its result stores, and before the ordinary
 // pipeline can inline allocator wrappers.
 func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) error {
 	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 {
@@ -3782,6 +3787,31 @@ func optimizeHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) err
 	}
 	if err := runHeapToStack(mod, ctx.prog.TargetMachine()); err != nil {
 		return fmt.Errorf("run Attributor heap-to-stack for %v failed: %w", pkgPath, err)
+	}
+	return nil
+}
+
+// optimizePostInlineHeapAllocations catches small temporary allocations that
+// only become non-escaping after LLVM inlines helper functions into their
+// callers (for example, a helper returning a fresh slice literal whose caller
+// only indexes an element). Allocator wrappers remain external declarations in
+// non-runtime packages, so Attributor can still recognize their allockind calls.
+// RunPostInline temporarily marks functions without constant-size allockind
+// calls as optnone (relying on parameter attributes already inferred by O2),
+// and CleanupPromoted cleans up only the functions where promotions occurred.
+func optimizePostInlineHeapAllocations(ctx *context, pkgPath string, mod gllvm.Module) error {
+	if !ctx.passOpt || ctx.buildConf.OptLevel == optlevel.O0 || pkgPath == llvmgen.PkgRuntime {
+		return nil
+	}
+	promoted, err := runPostInlineHeapToStack(mod, ctx.prog.TargetMachine())
+	if err != nil {
+		return fmt.Errorf("run post-inline Attributor heap-to-stack for %v failed: %w", pkgPath, err)
+	}
+	if len(promoted) == 0 {
+		return nil
+	}
+	if err := heap2stack.CleanupPromoted(mod, ctx.prog.TargetMachine(), promoted); err != nil {
+		return fmt.Errorf("run post-inline heap-to-stack cleanup for %v failed: %w", pkgPath, err)
 	}
 	return nil
 }
@@ -3857,6 +3887,9 @@ func compilePackageModule(ctx *context, aPkg *aPackage, externs []string, verbos
 
 	// Run the default LLVM optimization pipeline selected by the requested -O level.
 	if err := optimizeLLVMModule(ctx, pkgPath, ret.Module()); err != nil {
+		return err
+	}
+	if err := optimizePostInlineHeapAllocations(ctx, pkgPath, ret.Module()); err != nil {
 		return err
 	}
 	applyPackageDispatchInlineBudget(ctx, aPkg, ret.Module())

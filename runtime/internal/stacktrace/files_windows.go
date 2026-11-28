@@ -3,3 +3,5 @@
 package stacktrace
 
 const LLGoFiles = "_wrap/traceback_windows.c; _wrap/traceback_accessors.c"
+
+func AllThreadsControlled() bool { return false }

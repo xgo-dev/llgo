@@ -42,6 +42,17 @@ func unregisterTraceback(gp *g) {
 	}
 }
 
+func detachTraceback(gp *g) {
+	if gp.tracebackThread != nil {
+		stacktrace.Detach(gp.tracebackThread)
+		gp.tracebackThread = nil
+	}
+}
+
+func releaseTracebackThread() { stacktrace.ReleaseThread() }
+
+func allThreadsControlled() bool { return stacktrace.AllThreadsControlled() }
+
 func releaseFaultSnapshot() { stacktrace.ReleaseFaultBuffer() }
 
 func TracebackWaiting(waiting bool) {

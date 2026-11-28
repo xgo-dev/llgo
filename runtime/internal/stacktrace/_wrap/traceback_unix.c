@@ -55,6 +55,11 @@ __attribute__((used, retain, visibility("default")))
 thread_node *llgo_debugger_threads_v1;
 static _Thread_local thread_node *current;
 static _Thread_local uintptr_t *fault_buffer;
+static _Thread_local uintptr_t cached_stack_low;
+static _Thread_local uintptr_t cached_stack_high;
+static _Thread_local uint64_t cached_tid;
+static _Thread_local int cached_thread_info;
+static _Thread_local llgo_traceback_thread_init cached_thread_init;
 static _Thread_local sigjmp_buf capture_recovery;
 static _Thread_local volatile sig_atomic_t capture_armed;
 static llgo_traceback_unwinder unwind_context;
@@ -270,44 +275,58 @@ void llgo_traceback_attach(void *raw)
     thread_node *node = raw;
     if (!node || current == node)
         return;
-    pthread_once(&handler_once, install_handler);
-    if (!fault_buffer)
-        fault_buffer = map_buffer();
-    llgo_traceback_thread_init init = __atomic_load_n(&initialize_thread, __ATOMIC_ACQUIRE);
-    if (init)
-        init();
-    uintptr_t low = 0, high = 0;
+    int reused = cached_thread_info;
+    if (!reused) {
+        pthread_once(&handler_once, install_handler);
+        if (!fault_buffer)
+            fault_buffer = map_buffer();
+        uintptr_t low = 0, high = 0;
 #if defined(__APPLE__)
-    high = (uintptr_t)pthread_get_stackaddr_np(pthread_self());
-    low = high - pthread_get_stacksize_np(pthread_self());
+        high = (uintptr_t)pthread_get_stackaddr_np(pthread_self());
+        low = high - pthread_get_stacksize_np(pthread_self());
+        pthread_threadid_np(0, &cached_tid);
 #elif defined(__linux__)
-    pthread_attr_t attr;
-    if (pthread_getattr_np(pthread_self(), &attr) == 0) {
-        void *base; size_t size;
-        if (pthread_attr_getstack(&attr, &base, &size) == 0) {
-            low = (uintptr_t)base; high = low + size;
+        pthread_attr_t attr;
+        if (pthread_getattr_np(pthread_self(), &attr) == 0) {
+            void *base; size_t size;
+            if (pthread_attr_getstack(&attr, &base, &size) == 0) {
+                low = (uintptr_t)base; high = low + size;
+            }
+            pthread_attr_destroy(&attr);
         }
-        pthread_attr_destroy(&attr);
+        cached_tid = (uint64_t)syscall(SYS_gettid);
+#endif
+        cached_stack_low = low;
+        cached_stack_high = high;
+        cached_thread_info = 1;
+    } else if (!fault_buffer) {
+        fault_buffer = map_buffer();
     }
-#endif
+    llgo_traceback_thread_init init = __atomic_load_n(&initialize_thread, __ATOMIC_ACQUIRE);
+    if (init && init != cached_thread_init) {
+        init();
+        cached_thread_init = init;
+    }
     pthread_mutex_lock(&registry_lock);
-    node->low = low; node->high = high;
+    node->low = cached_stack_low; node->high = cached_stack_high;
     node->thread = pthread_self();
-#if defined(__APPLE__)
-    pthread_threadid_np(0, &node->debugger_thread_id);
-#elif defined(__linux__)
-    node->debugger_thread_id = (uint64_t)syscall(SYS_gettid);
-#endif
+    node->debugger_thread_id = cached_tid;
     node->attached = 1;
     node->state = 2;
     current = node;
     pthread_mutex_unlock(&registry_lock);
+    /* Always ensure SIGURG is unblocked: a prior goroutine or C call on a
+     * pooled thread may have modified the thread signal mask. */
     sigset_t mask;
     sigemptyset(&mask); sigaddset(&mask, SIGURG);
     pthread_sigmask(SIG_UNBLOCK, &mask, 0);
+    /* A reused pooled thread must start each new goroutine with errno == 0,
+     * matching a freshly spawned OS thread (e.g. for cgo errno checks). */
+    if (reused)
+        errno = 0;
 }
 
-void llgo_traceback_unregister(void *raw)
+static void unregister_node(void *raw, int release_buffer)
 {
     thread_node *node = raw;
     if (!node)
@@ -319,19 +338,40 @@ void llgo_traceback_unregister(void *raw)
     if (node->next) node->next->prev = node->prev;
     int retired = 0;
 #if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
-    retired = allcall_retire_owned(node);
+    /* Only retire nodes onto allcall_retired on actual OS thread exit; a
+     * detached pooled thread never exits so retiring it would leak nodes/fds. */
+    if (release_buffer)
+        retired = allcall_retire_owned(node);
 #endif
     int was_current = current == node;
     /* A disabled-mode prune may free retired nodes as soon as we unlock. */
     if (was_current) current = 0;
     pthread_mutex_unlock(&registry_lock);
-    if (was_current) {
+    if (was_current && release_buffer) {
         if (fault_buffer) {
             munmap(fault_buffer, LLGO_TRACEBACK_MAX * sizeof(uintptr_t));
             fault_buffer = 0;
         }
     }
     if (!retired) free(node);
+}
+
+void llgo_traceback_unregister(void *raw)
+{
+    unregister_node(raw, 1);
+}
+
+void llgo_traceback_detach(void *raw)
+{
+    unregister_node(raw, 0);
+}
+
+void llgo_traceback_release_thread(void)
+{
+    if (fault_buffer) {
+        munmap(fault_buffer, LLGO_TRACEBACK_MAX * sizeof(uintptr_t));
+        fault_buffer = 0;
+    }
 }
 
 void llgo_traceback_state(void *raw, uint32_t state)
@@ -411,3 +451,13 @@ void llgo_traceback_free(llgo_traceback_snapshot *head)
 }
 
 #include "allthreads_linux.h"
+
+int llgo_traceback_allthreads_controlled(void)
+{
+#if defined(__linux__) && (defined(__x86_64__) || defined(__aarch64__))
+    return __atomic_load_n(&__llgo_allthreads_executable, __ATOMIC_ACQUIRE) == 1 ||
+           llgo_allthreads_controlled_enabled();
+#else
+    return 0;
+#endif
+}

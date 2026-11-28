@@ -167,6 +167,13 @@ func (b Builder) AESRound(op AESOp, dst, src, key Expr) Expr {
 		}
 	}
 	b.requireAESFeatures()
+	if op == AESHashRound || op == AESHashLast {
+		// Align runtime.aeskeysched to 16 bytes so LLVM can emit aligned
+		// 128-bit vector loads for each 16-byte lane.
+		if g := b.Pkg.mod.NamedGlobal(PkgRuntime + ".aeskeysched"); !g.IsNil() && g.Alignment() < 16 {
+			g.SetAlignment(16)
+		}
+	}
 	vec := b.aesBytes()
 	state := b.impl.CreateLoad(vec, src.impl, "")
 	state.SetAlignment(1)

@@ -154,7 +154,7 @@ runtime/internal/lib/runtime/_wrap/profile_windows.c`,
 		`runtime/internal/lib/runtime/_wrap/dynunwind.c`,
 	},
 	{"C.llgo_fault_capture_done C.llgo_install_fault_handler", "LLGo POSIX fault bridge", "runtime/internal/lib/runtime/_wrap/fault.c"},
-	{"C.llgo_framepointer", "LLGo frame-pointer intrinsic bridge", "runtime/internal/runtime/_wrap/fp.c"},
+	{"C.llgo_framepointer C.llgo_scrub_stack", "LLGo frame-pointer and stack-scrub runtime bridges", "runtime/internal/runtime/_wrap/fp.c"},
 	{"C.llgo_gc_stack_top", "LLGo linear-memory GC", "runtime/internal/runtime/tinygogc/_wrap/gc_wasm.c"},
 	{
 		`C.llgo_getpagesize C.llgo_iocp_associate C.llgo_iocp_create C.llgo_iocp_get C.llgo_nanotime

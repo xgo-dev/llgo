@@ -2,7 +2,9 @@
 
 package runtime
 
-import "github.com/xgo-dev/llgo/runtime/internal/sync"
+import (
+	"github.com/xgo-dev/llgo/runtime/internal/sync"
+)
 
 type chanMutex struct {
 	mutex sync.Mutex
@@ -42,6 +44,14 @@ func (s *chanSignal) park() {
 	TracebackWaiting(true)
 	s.cond.Wait(&s.mutex)
 	TracebackWaiting(false)
+}
+
+// parkIdle waits for the next pooled goroutine assignment without touching
+// traceback wait state. WaitInactive always wraps the blocking syscall in a
+// single BDWGC GC_do_blocking frame (including on Windows ARM64 MSVC, where
+// Wait stays active for LLDB Go-frame unwinding) without nesting GC_do_blocking.
+func (s *chanSignal) parkIdle() {
+	s.cond.WaitInactive(&s.mutex)
 }
 
 func (s *chanSignal) ready() {
