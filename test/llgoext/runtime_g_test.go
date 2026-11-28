@@ -255,6 +255,38 @@ func TestRuntimePoolReuse(t *testing.T) {
 	}
 }
 
+//go:linkname prepareSelectCache github.com/xgo-dev/llgo/runtime/internal/runtime.prepareSelectCacheForTesting
+func prepareSelectCache() bool
+
+func TestRuntimePoolRetainsSelectCache(t *testing.T) {
+	if !runtimeSchedulerMultiplexesForTesting() || runtime.GOARCH == "wasm" {
+		t.Skip("requires the native worker pool")
+	}
+	type result struct {
+		mid    int64
+		cached bool
+	}
+	seen := make(map[int64]bool)
+	for i := 0; i < 24; i++ {
+		if i > 0 {
+			waitForIdlePoolWorker(t)
+		}
+		done := make(chan result, 1)
+		go func() {
+			done <- result{currentRuntimeGMPState().mid, prepareSelectCache()}
+		}()
+		got := <-done
+		if seen[got.mid] {
+			if !got.cached {
+				t.Fatalf("reused worker %d lost its select cache", got.mid)
+			}
+			return
+		}
+		seen[got.mid] = true
+	}
+	t.Fatal("no worker was reused")
+}
+
 func TestRuntimePoolLockOSThread(t *testing.T) {
 	if !runtimeSchedulerMultiplexesForTesting() {
 		t.Skip("backend does not pool worker threads")

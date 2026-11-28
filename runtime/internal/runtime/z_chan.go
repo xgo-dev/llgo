@@ -21,6 +21,7 @@ import (
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/math"
+	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
 
 // -----------------------------------------------------------------------------
@@ -44,6 +45,11 @@ type Chan struct {
 
 	sendq chanWaitq
 	recvq chanWaitq
+
+	// Lock-free exponential-backoff spin cooldown word (address-wait fast-path
+	// parkFast). Placed after the mutex-protected queue headers to keep
+	// sleeping-waiter backoff writes away from recvReady/mutex hot fields.
+	spinCooldown uint32
 }
 
 type chanWaitq struct {
@@ -62,8 +68,10 @@ type chanWaiter struct {
 	size int
 	send bool
 
-	queued bool
-	status waitStatus
+	queued   bool
+	fastWait bool
+	isHead   bool
+	status   waitStatus
 
 	// Non-nil for ordinary single-channel waiters; select waiters share
 	// sel.signal so they do not carry unused per-case chanSignal storage.
@@ -74,27 +82,31 @@ type chanWaiter struct {
 }
 
 type singleChanWaiter struct {
-	waiter chanWaiter
-	signal chanSignal
+	waiter      chanWaiter
+	signal      chanSignal
+	signalReady bool
 }
 
 type selectState struct {
 	synctest *SynctestWaiter
 	signal   chanSignal
 
-	status waitStatus
-	chosen int
+	status   uint32
+	chosen   int
+	fastWait bool
 }
 
 type selectCache struct {
-	state   selectState
-	waiters [selectInlineChanCount]chanWaiter
+	state        selectState
+	spinCooldown uint32
+	waiters      [selectInlineChanCount]chanWaiter
 }
 
 func resetSelectState(state *selectState) {
 	state.synctest = nil
-	state.status = waitPending
+	atomic.Store(&state.status, uint32(waitPending))
 	state.chosen = -1
+	state.fastWait = false
 }
 
 func acquireSelectCache() *selectCache {
@@ -109,7 +121,7 @@ func acquireSelectCache() *selectCache {
 		panic("out of memory")
 	}
 	c.Memset(unsafe.Pointer(sc), 0, unsafe.Sizeof(selectCache{}))
-	sc.state.signal.init()
+	sc.state.signal.initFast()
 	resetSelectState(&sc.state)
 	return sc
 }
@@ -132,6 +144,23 @@ func freeSelectCache(gp *g) {
 		gp.selectCache.state.signal.destroy()
 		c.Free(unsafe.Pointer(gp.selectCache))
 		gp.selectCache = nil
+	}
+}
+
+func prepareSelectCacheForTesting() bool {
+	if getg().selectCache != nil {
+		return true
+	}
+	releaseSelectCache(acquireSelectCache(), 0)
+	return false
+}
+
+func freeChanWaiter(gp *g) {
+	if gp != nil && gp.chanWaiter != nil {
+		if gp.chanWaiter.signalReady {
+			gp.chanWaiter.signal.destroy()
+		}
+		gp.chanWaiter = nil
 	}
 }
 
@@ -162,6 +191,7 @@ func (q *chanWaitq) enqueue(w *chanWaiter) {
 	w.prev = q.last
 	w.next = nil
 	w.queued = true
+	w.isHead = q.last == nil
 	if q.last == nil {
 		q.first = w
 	} else {
@@ -279,7 +309,20 @@ func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanW
 	if sw == nil {
 		sw = new(singleChanWaiter)
 	}
+	if !sw.signalReady {
+		sw.signal.initFast()
+		sw.signalReady = true
+	}
 	w := &sw.waiter
+	w.synctest = nil
+	w.prev = nil
+	w.next = nil
+	w.all = nil
+	w.queued = false
+	w.isHead = false
+	w.status = waitPending
+	w.sel = nil
+	w.caseIndex = 0
 	if ch.bubble != nil {
 		w.synctest = NewSynctestWaiter()
 	}
@@ -288,7 +331,13 @@ func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanW
 	w.size = eltSize
 	w.send = send
 	w.signal = &sw.signal
-	sw.signal.init()
+	if w.synctest == nil && sw.signal.useFast() {
+		w.fastWait = true
+		sw.signal.resetFast()
+		return w
+	}
+	w.fastWait = false
+	sw.signal.ensureMutexInit()
 	sw.signal.lock()
 	return w
 }
@@ -310,38 +359,69 @@ func newSelectWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool, stat
 
 func (w *chanWaiter) wait() waitStatus {
 	sig := w.signal
+	var status waitStatus
+	if w.fastWait {
+		sig.parkFast(&w.ch.spinCooldown, w.isHead)
+		status = w.status
+		// Clear channel/element pointers before caching, including on panic wakes,
+		// while keeping the lock-free signal initialized for reuse.
+		w.synctest = nil
+		w.prev = nil
+		w.next = nil
+		w.all = nil
+		w.ch = nil
+		w.elem = nil
+		w.sel = nil
+		w.queued = false
+		w.fastWait = false
+		w.isHead = false
+		w.status = waitPending
+		sw := (*singleChanWaiter)(unsafe.Pointer(w))
+		if gp := getg(); gp != nil && gp.chanWaiter == nil {
+			gp.chanWaiter = sw
+		} else {
+			sig.destroy()
+		}
+		return status
+	}
 	for !w.status.done() {
 		w.synctest.Block()
 		sig.park()
 	}
 	sig.unlock()
 	sig.destroy()
-	status := w.status
-	// finish holds the signal lock through notification. After reacquiring it,
-	// no further users remain: mutex destruction/reuse is permitted after
-	// release even if the previous unlock call has not returned yet.
-	// Clear channel/element pointers before caching, including on panic wakes.
+	status = w.status
 	sw := (*singleChanWaiter)(unsafe.Pointer(w))
 	*sw = singleChanWaiter{}
-	// A nested operation may already have filled this one-entry cache.
 	if gp := getg(); gp != nil && gp.chanWaiter == nil {
 		gp.chanWaiter = sw
 	}
 	return status
 }
 
-// finish keeps the signal locked through ready. An ordinary waiter can otherwise
-// wake spuriously, observe completion, and destroy its signal before ready runs.
-// Select cleanup also acquires the channel lock held by finish's caller, which
-// protects its signal's lifetime. Use the same ordering so notification completes
-// under the signal lock in both branches.
+// finish keeps the signal locked through ready on the mutex/cond backend. On
+// the lock-free fast path (non-synctest Darwin/Linux/Windows address-wait),
+// readyFast uses a 4-state atomic handshake (sigPending/sigSleeping ->
+// sigWaking -> sigDone) so the waiter never reuses or destroys its signal until
+// readyFast completes.
 func (w *chanWaiter) finish(status waitStatus) {
 	if w.sel != nil {
+		if w.sel.fastWait {
+			w.sel.chosen = w.caseIndex
+			atomic.Store(&w.sel.status, uint32(status))
+			w.sel.signal.readyFast()
+			return
+		}
 		w.sel.signal.lock()
-		w.sel.status = status
+		atomic.Store(&w.sel.status, uint32(status))
 		w.sel.synctest.Wake()
 		w.sel.signal.ready()
 		w.sel.signal.unlock()
+		return
+	}
+	if w.fastWait {
+		w.status = status
+		w.signal.readyFast()
 		return
 	}
 	w.signal.lock()
@@ -353,12 +433,16 @@ func (w *chanWaiter) finish(status waitStatus) {
 
 func claimWaiter(w *chanWaiter) bool {
 	if w.sel != nil {
+		if w.sel.fastWait {
+			_, won := atomic.CompareAndExchange(&w.sel.status, uint32(waitPending), uint32(waitClaimed))
+			return won
+		}
 		w.sel.signal.lock()
-		if w.sel.status != waitPending {
+		if waitStatus(atomic.Load(&w.sel.status)) != waitPending {
 			w.sel.signal.unlock()
 			return false
 		}
-		w.sel.status = waitClaimed
+		atomic.Store(&w.sel.status, uint32(waitClaimed))
 		w.sel.chosen = w.caseIndex
 		w.sel.signal.unlock()
 		return true
@@ -835,9 +919,17 @@ func Select(ops ...ChanOp) (isel int, recvOK bool) {
 	if durable {
 		state.synctest = NewSynctestWaiter()
 	}
+	if state.synctest == nil && state.signal.useFast() {
+		state.fastWait = true
+		state.signal.resetFast()
+	} else {
+		state.fastWait = false
+		state.signal.ensureMutexInit()
+	}
 
 	inlineUsed := 0
 	hasHeapWaiters := false
+	anyHead := false
 	var waiters *chanWaiter
 	var lastWaiter *chanWaiter
 	for n := 0; n < len(ops); n++ {
@@ -865,6 +957,9 @@ func Select(ops ...ChanOp) (isel int, recvOK bool) {
 		} else {
 			op.C.recvq.enqueue(w)
 		}
+		if w.isHead {
+			anyHead = true
+		}
 		if lastWaiter == nil {
 			waiters = w
 		} else {
@@ -874,17 +969,31 @@ func Select(ops ...ChanOp) (isel int, recvOK bool) {
 	}
 	unlockSelectChannels(&chans)
 
-	state.signal.lock()
-	for !state.status.done() {
-		state.synctest.Block()
-		state.signal.park()
+	var status waitStatus
+	if state.fastWait {
+		state.signal.parkFast(&sc.spinCooldown, anyHead)
+		isel = state.chosen
+		status = waitStatus(atomic.Load(&state.status))
+		recvOK = status.recvOK()
+	} else {
+		state.signal.lock()
+		for !waitStatus(atomic.Load(&state.status)).done() {
+			state.synctest.Block()
+			state.signal.park()
+		}
+		isel = state.chosen
+		status = waitStatus(atomic.Load(&state.status))
+		recvOK = status.recvOK()
+		state.signal.unlock()
 	}
-	isel = state.chosen
-	status := state.status
-	recvOK = status.recvOK()
-	state.signal.unlock()
 
 	for w := waiters; w != nil; w = w.all {
+		if w.caseIndex == isel {
+			// Safe to skip cleanupSelectWaiter for the winner: every claimWaiter
+			// call runs immediately after dequeue under ch.mutex, so the winner
+			// is already unlinked and publishRecvReady ran when ch unlocked.
+			continue
+		}
 		cleanupSelectWaiter(w)
 	}
 	if hasHeapWaiters {

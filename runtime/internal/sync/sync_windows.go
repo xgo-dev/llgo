@@ -55,6 +55,9 @@ type Mutex struct {
 //go:linkname acquireSRWLockExclusive stdcall.AcquireSRWLockExclusive
 func acquireSRWLockExclusive(m *Mutex)
 
+//go:linkname tryAcquireSRWLockExclusive stdcall.TryAcquireSRWLockExclusive
+func tryAcquireSRWLockExclusive(m *Mutex) uint8
+
 //go:linkname releaseSRWLockExclusive stdcall.ReleaseSRWLockExclusive
 func releaseSRWLockExclusive(m *Mutex)
 
@@ -67,6 +70,10 @@ func (m *Mutex) Destroy() {}
 
 func (m *Mutex) Lock() {
 	acquireSRWLockExclusive(m)
+}
+
+func (m *Mutex) TryLock() bool {
+	return tryAcquireSRWLockExclusive(m) != 0
 }
 
 func (m *Mutex) Unlock() {
@@ -131,6 +138,9 @@ func (cond *Cond) TimedWait(m *Mutex, abstime *ctime.Timespec) c.Int {
 //go:linkname winWaitUint32 C.llgo_win_wait_uint32
 func winWaitUint32(addr *uint32, value uint32) c.Int
 
+//go:linkname winWaitUint32Inactive C.llgo_win_wait_uint32_inactive
+func winWaitUint32Inactive(addr *uint32, value uint32) c.Int
+
 //go:linkname wakeByAddressSingle stdcall.WakeByAddressSingle
 func wakeByAddressSingle(addr *uint32)
 
@@ -138,6 +148,13 @@ func wakeByAddressSingle(addr *uint32)
 // value after it returns because Windows permits spurious wakeups.
 func WaitUint32(addr *uint32, value uint32) c.Int {
 	return winWaitUint32(addr, value)
+}
+
+// WaitUint32Inactive blocks outside BDWGC's active thread set on every Windows
+// ABI (including MSVC ARM64). Use only for detached runtime worker threads
+// that carry no Go frames.
+func WaitUint32Inactive(addr *uint32, value uint32) c.Int {
+	return winWaitUint32Inactive(addr, value)
 }
 
 // WakeUint32 wakes one thread waiting for addr.

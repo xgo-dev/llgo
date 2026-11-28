@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 int llgo_bind_channel_address_wait(void);
 int llgo_channel_address_wait(uint32_t *notified);
@@ -23,6 +24,7 @@ static _Atomic int waiting;
 static _Atomic int resume_wait;
 static _Atomic int signaling;
 static _Atomic int destroyed;
+static _Atomic int address_woken;
 
 static void fail(const char *message) {
     fprintf(stderr, "%s\n", message);
@@ -33,6 +35,11 @@ void llgo_lifetime_arm(void) {
     armed = 1;
     unlocked = NULL;
     address_wait_attempts = 0;
+    atomic_store(&waiting, 0);
+    atomic_store(&resume_wait, 0);
+    atomic_store(&signaling, 0);
+    atomic_store(&destroyed, 0);
+    atomic_store(&address_woken, 0);
 }
 
 int llgo_lifetime_bind_address_wait(void) {
@@ -119,9 +126,6 @@ int llgo_lifetime_address_wait(uint32_t *notified) {
         return -1;
     }
     armed = 0;
-    if (unlocked == NULL) {
-        fail("address wait did not release its signal mutex");
-    }
     target_mutex = unlocked;
     target_address = notified;
     atomic_store(&waiting, 1);
@@ -135,8 +139,19 @@ int llgo_lifetime_address_wake(uint32_t *notified) {
     if (!atomic_load(&waiting) || notified != target_address) {
         return llgo_channel_address_wake(notified);
     }
-    resume_notification();
-    atomic_store(&signaling, 0);
+    if (target_mutex != NULL) {
+        resume_notification();
+        atomic_store(&signaling, 0);
+    } else {
+        // Lock-free 4-state address path (sigWaking -> sigDone): release the
+        // waiter from wait_on_address while wake is still active and verify
+        // that parkFast blocks in waitFastDone until after wake returns.
+        atomic_store(&signaling, 1);
+        atomic_store(&resume_wait, 1);
+        usleep(2000);
+        atomic_store(&address_woken, 1);
+        atomic_store(&signaling, 0);
+    }
     // The test rendezvous substitutes for a wait in the kernel.
     errno = ENOENT;
     return -1;
@@ -163,7 +178,10 @@ int llgo_lifetime_cond_destroy(pthread_cond_t *cond) {
 }
 
 void llgo_lifetime_check(void) {
-    if (!atomic_load(&destroyed)) {
+    if (atomic_load(&signaling)) {
+        fail("address waiter returned while its wake call is active");
+    }
+    if (!atomic_load(&destroyed) && !atomic_load(&address_woken)) {
         fail("channel waiter lifetime was not exercised");
     }
     atomic_store(&waiting, 0);

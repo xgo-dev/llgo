@@ -1,4 +1,4 @@
-//go:build !darwin && (!llgo || !wasm || (wasip1 && llgo.wasi_threads))
+//go:build !darwin && !(linux && !baremetal) && !windows && (!llgo || !wasm || (wasip1 && llgo.wasi_threads))
 
 package runtime
 
@@ -31,6 +31,14 @@ func (s *chanSignal) init() {
 	s.mutex.Init(nil)
 	s.cond.Init(nil)
 }
+
+func (s *chanSignal) initFast()              { s.init() }
+func (s *chanSignal) useFast() bool          { return false }
+func (s *chanSignal) ensureMutexInit()       {}
+func (s *chanSignal) resetFast()             {}
+func (s *chanSignal) parkFast(*uint32, bool) {}
+func (s *chanSignal) readyFast()             {}
+func (s *chanSignal) parkIdleFast()          {}
 
 func (s *chanSignal) lock() {
 	s.mutex.Lock()

@@ -183,8 +183,9 @@ func runGoroutine(mp *m) (unsafe.Pointer, *runtimeContext) {
 	casgstatus(gp, _Grunning, _Gdead)
 	setpstatus(pp, _Pidle)
 
-	savedWaiter := gp.chanWaiter
-	*gp = g{chanWaiter: savedWaiter}
+	// Both waiter caches are empty of goroutine references after an operation.
+	// Keep their storage with the worker until its context is destroyed.
+	*gp = g{chanWaiter: gp.chanWaiter, selectCache: gp.selectCache}
 	mp.curg = nil
 	setg(nil)
 

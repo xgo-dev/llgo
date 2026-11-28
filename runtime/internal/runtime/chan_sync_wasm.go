@@ -16,6 +16,14 @@ func (s *chanSignal) init() {
 	s.waiter = CurrentSchedulerWaiter()
 }
 
+func (s *chanSignal) initFast()              { s.init() }
+func (s *chanSignal) useFast() bool          { return false }
+func (s *chanSignal) ensureMutexInit()       { s.waiter = CurrentSchedulerWaiter() }
+func (s *chanSignal) resetFast()             {}
+func (s *chanSignal) parkFast(*uint32, bool) {}
+func (s *chanSignal) readyFast()             {}
+func (s *chanSignal) parkIdleFast()          {}
+
 func (*chanSignal) lock()   {}
 func (*chanSignal) unlock() {}
 

@@ -25,6 +25,10 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
 )
 
+// mPoolSlot holds per-worker parking state. On backends where sig.useFast() is
+// true (Darwin macOS 14.4+, Linux, Windows), assignment uses the lock-free
+// sig.resetFast / parkIdleFast / readyFast handshake without touching hasWork;
+// portable backends synchronize work handoff via hasWork under sig.lock().
 type mPoolSlot struct {
 	next    *runtimeContext
 	sig     chanSignal
@@ -113,8 +117,7 @@ func mPoolStart(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callerg
 		fatal("runtime: pooled worker retained dirty goroutine state")
 	}
 
-	savedWaiter := ctx.g.chanWaiter
-	ctx.g = g{chanWaiter: savedWaiter}
+	ctx.g = g{chanWaiter: ctx.g.chanWaiter, selectCache: ctx.g.selectCache}
 	ctx.platform.systemG = false
 
 	gp := &ctx.g
@@ -139,10 +142,28 @@ func mPoolStart(fn goroutineFunc, arg unsafe.Pointer, stackSize uintptr, callerg
 	retainG()
 
 	slot := &ctx.platform.pool
+	if slot.sig.useFast() {
+		slot.sig.readyFast()
+		return true
+	}
 	slot.sig.lock()
 	slot.hasWork = true
 	slot.sig.ready()
 	slot.sig.unlock()
+	return true
+}
+
+func mPoolPushIdle(ctx *runtimeContext) bool {
+	mPool.mu.Lock()
+	if mPool.idle >= mPool.maxIdle {
+		mPool.mu.Unlock()
+		return false
+	}
+	ctx.platform.pool.next = mPool.head
+	mPool.head = ctx
+	mPool.idle++
+	atomic.Store(&mPool.idleCount, uint32(mPool.idle))
+	mPool.mu.Unlock()
 	return true
 }
 
@@ -153,22 +174,23 @@ func mPoolPark(ctx *runtimeContext) bool {
 	ensureMPool()
 	slot := &ctx.platform.pool
 	if !slot.pooled {
-		slot.sig.init()
+		slot.sig.initFast()
 		slot.pooled = true
+	}
+	if slot.sig.useFast() {
+		slot.sig.resetFast()
+		if !mPoolPushIdle(ctx) {
+			return false
+		}
+		slot.sig.parkIdleFast()
+		return true
 	}
 	slot.sig.lock()
 	slot.hasWork = false
-	mPool.mu.Lock()
-	if mPool.idle >= mPool.maxIdle {
-		mPool.mu.Unlock()
+	if !mPoolPushIdle(ctx) {
 		slot.sig.unlock()
 		return false
 	}
-	slot.next = mPool.head
-	mPool.head = ctx
-	mPool.idle++
-	atomic.Store(&mPool.idleCount, uint32(mPool.idle))
-	mPool.mu.Unlock()
 
 	for !slot.hasWork {
 		slot.sig.parkIdle()

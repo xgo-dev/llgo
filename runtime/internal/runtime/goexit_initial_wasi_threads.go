@@ -9,6 +9,7 @@ import c "github.com/xgo-dev/llgo/runtime/internal/clite"
 // before its workers; this parked thread no longer participates in Go GC.
 func parkInitialWasiThread(gp *g) {
 	releaseStartArg(gp)
+	freeChanWaiter(gp)
 	freeSelectCache(gp)
 	casgstatus(gp, _Grunning, _Gdead)
 	releaseGAndCheckDeadlock()
