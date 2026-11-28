@@ -124,9 +124,9 @@ func embeddedPCLNFixture(t *testing.T) (string, pclnmap.Data) {
 
 func TestEmbeddedPCLNPublication(t *testing.T) {
 	ir, original := embeddedPCLNFixture(t)
-	initial := pclnpost.ExternalAnalysis{PointerSize: original.PointerSize,
+	initial := pclnpost.ExternalAnalysis{PointerSize: original.PointerSize, TextEnd: 4096,
 		EntrySites: []pclnpost.ExternalSite{{PCOffset: 16, ID: funcInfoSymbolID("main.live")}}}
-	for _, stage := range []string{"success", "disabled", "unchanged", "initial analysis", "initial join", "mkdir", "IR", "compile", "link", "final analysis", "final join", "liveness", "publish"} {
+	for _, stage := range []string{"success", "disabled", "unchanged", "initial analysis", "initial join", "mkdir", "IR", "compile", "link", "final analysis", "final join", "liveness", "shared liveness", "publish"} {
 		t.Run(stage, func(t *testing.T) {
 			dir := t.TempDir()
 			output := filepath.Join(dir, "app")
@@ -134,6 +134,11 @@ func TestEmbeddedPCLNPublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			plan := &mainLinkPlan{embeddedPCLN: &original, entryIR: ir, linkInputs: []string{"old-entry.o", "go-packages.a"}}
+			if stage == "shared liveness" {
+				plan.entryIR += `
+@__llgo_funcinfo_entry_reserve = private constant [4096 x i8] zeroinitializer, section "__DATA,__llgo_fie,regular,live_support"
+`
+			}
 			if stage == "disabled" {
 				plan.embeddedPCLN = nil
 			}
@@ -154,7 +159,7 @@ func TestEmbeddedPCLNPublication(t *testing.T) {
 					if (path == output && stage == "initial join") || (path != output && stage == "final join") {
 						a.EntrySites = nil
 					}
-					if stage == "unchanged" || (path != output && stage == "liveness") {
+					if stage == "unchanged" || (path != output && (stage == "liveness" || stage == "shared liveness")) {
 						a.EntrySites = append(slices.Clone(a.EntrySites), pclnpost.ExternalSite{PCOffset: 32, ID: funcInfoSymbolID("main.dead")})
 						a.PCLineSites = []pclnpost.ExternalSite{{PCOffset: 33, ID: 7, OwnerSymbol: "main.dead"}}
 					}
@@ -191,7 +196,7 @@ func TestEmbeddedPCLNPublication(t *testing.T) {
 				},
 			}
 			err := pruneEmbeddedPCLNWith(plan, output, true, linker)
-			wantError := stage != "success" && stage != "disabled" && stage != "unchanged"
+			wantError := stage != "success" && stage != "disabled" && stage != "unchanged" && stage != "shared liveness"
 			if (err != nil) != wantError {
 				t.Fatalf("error = %v, want failure %v", err, wantError)
 			}
