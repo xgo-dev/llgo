@@ -139,6 +139,15 @@ operation in the callee retains its own feature requirements.
 SDE run also checks all 16 transferred lanes with Go's optional CPU features
 disabled.
 
+Linux Rosetta can hide AVX from Go while still executing YMM transfers.
+On a CPU identified as `VirtualApple`, LLGo checks the XMM and YMM state bits
+in XCR0 when OSXSAVE is advertised. When Rosetta also hides OSXSAVE, recent
+versions enumerate both components in CPUID leaf 0xD. With this evidence,
+the FMV dispatcher can select the existing `+avx` body for a caller with a
+fixed YMM transfer. Source-level AVX and AVX2 guards still use Go's effective
+feature flags. Older translators that expose neither signal keep the baseline
+path.
+
 Runtime tests cover scalar-reference arithmetic, distinct upper/lower halves,
 mask bitmaps, partial stores at a guard page, initialization, many arguments,
 multiple results, source mutation during calls, interfaces, closures, recovery

@@ -41,9 +41,15 @@ func TestSIMDFMVOutlineCallers(t *testing.T) {
 	} else if !archsimd.X86.AVX() {
 		t.Skip("requires YMM register support")
 	}
-	var v archsimd.Int32x8
+	input := [8]int32{1, -2, 3, -4, 5, -6, 7, -8}
+	v := archsimd.LoadInt32x8Array(&input)
 	var traces [2]outlineTrace
 	fmvOutlineCalls(&v, &traces, fmvOutlineCallback)
+	var output [8]int32
+	v.StoreArray(&output)
+	if output != input {
+		t.Fatalf("callback returned %v, want %v", output, input)
+	}
 	for i, trace := range traces {
 		frames := runtime.CallersFrames(trace.pcs[:])
 		for j, name := range []string{".fmvOutlineCallback", ".fmvOutlineCalls", ".TestSIMDFMVOutlineCallers"} {
