@@ -7,6 +7,38 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
+// Return the call in the original body and the call that actually reaches the
+// target. A narrow body must pass the address to a width-enabled adapter;
+// a wide body must retain the original call directly.
+func checkFixedCall(t *testing.T, body, target llvm.Value, width int) (site, inner llvm.Value) {
+	t.Helper()
+	adapted := targetWidth(body, "v1") < width
+	for bb := body.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
+		for call := bb.FirstInstruction(); !call.IsNil(); call = llvm.NextInstruction(call) {
+			if call.IsACallInst().IsNil() && call.IsAInvokeInst().IsNil() {
+				continue
+			}
+			callee := call.CalledValue()
+			if !adapted && callee == target {
+				return call, call
+			}
+			if !adapted || call.ArgOperandsCount() == 0 || call.Operand(0) != target || callee.IsAFunction().IsNil() {
+				continue
+			}
+			if targetWidth(callee, "v1") != width {
+				t.Fatalf("wrong adapter width:\n%s", callee.String())
+			}
+			for op := callee.FirstBasicBlock().FirstInstruction(); !op.IsNil(); op = llvm.NextInstruction(op) {
+				if !op.IsACallInst().IsNil() && op.CalledValue() == callee.Param(0) {
+					return call, op
+				}
+			}
+		}
+	}
+	t.Fatalf("%s did not reach %s with a %d-bit call:\n%s", body.Name(), target.Name(), width, body.String())
+	return
+}
+
 func TestWideCallWidths(t *testing.T) {
 	const ir = `target triple = "x86_64-unknown-linux-gnu"
 declare <8 x float> @ymm(<8 x float>)
@@ -57,9 +89,9 @@ scalar:
 		}
 		checkCachedGuard(t, mod, tc.mask, body)
 		code := body.String()
-		if !strings.Contains(code, "ret i32 3") ||
-			!strings.Contains(code, "call <8 x float> @ymm") ||
-			!strings.Contains(code, "call <16 x float> %indirect") {
+		checkFixedCall(t, body, mod.NamedFunction("ymm"), 256)
+		checkFixedCall(t, body, body.Param(2), 512)
+		if !strings.Contains(code, "ret i32 3") {
 			t.Fatal(code)
 		}
 	}
@@ -110,7 +142,8 @@ exit:
 		if !strings.Contains(body.String(), "call i1 @"+tc.query+"()") || !strings.Contains(body.String(), "br i1") {
 			t.Fatal("width changed the Go control flow", body.String())
 		}
-		if !strings.Contains(body.String(), "call void @wide(") || strings.Contains(body.String(), "alloca ") {
+		checkFixedCall(t, body, m.NamedFunction("wide"), 512)
+		if strings.Contains(body.String(), "alloca ") {
 			t.Fatal(body.String())
 		}
 	}
@@ -190,8 +223,42 @@ define void @helper(ptr %p) {
 		t.Fatal("missing native wide call from helper")
 	}
 	narrow := m.NamedFunction("helper" + symbolPrefix + "guard_base")
-	if narrow.IsNil() || targetWidth(narrow, "v1") != baselineWidth("v1") || !strings.Contains(narrow.String(), "call void @consume(") {
-		t.Fatal("baseline body lost the wide call or acquired ZMM features")
+	if narrow.IsNil() || targetWidth(narrow, "v1") != baselineWidth("v1") {
+		t.Fatal("missing baseline body without ZMM features")
 	}
+	checkFixedCall(t, narrow, m.NamedFunction("consume"), 512)
 	checkEntryCachedGuard(t, m, "helper", 0, narrow)
+}
+
+func TestRegisterAdapterSharing(t *testing.T) {
+	m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+%pair = type { [2 x <8 x i32>], i16 }
+declare %pair @direct(ptr nest, <8 x i32>)
+define void @root(ptr %ctx, ptr %p, ptr %closure, ptr %plain) {
+ %x = load <8 x i32>, ptr %p
+ %a = call %pair @direct(ptr nest %ctx, <8 x i32> %x)
+ store %pair %a, ptr %p
+ %b = call %pair %closure(ptr nest %ctx, <8 x i32> %x)
+ store %pair %b, ptr %p
+ %c = call %pair %plain(ptr %ctx, <8 x i32> %x)
+ store %pair %c, ptr %p
+ ret void
+}`)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err, m.String())
+	}
+	body := m.NamedFunction("root" + symbolPrefix + "guard_base")
+	direct, _ := checkFixedCall(t, body, m.NamedFunction("direct"), 256)
+	closure, nested := checkFixedCall(t, body, body.Param(2), 256)
+	plain, ordinary := checkFixedCall(t, body, body.Param(3), 256)
+	if direct.CalledValue() != closure.CalledValue() || closure.CalledValue() == plain.CalledValue() {
+		t.Fatal("adapter sharing did not follow the target ABI", body.String())
+	}
+	nest := llvm.AttributeKindID("nest")
+	if nested.GetCallSiteEnumAttribute(1, nest).IsNil() || !ordinary.GetCallSiteEnumAttribute(1, nest).IsNil() {
+		t.Fatal("closure context attribute changed", nested.String(), ordinary.String())
+	}
 }

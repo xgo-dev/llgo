@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"strings"
 
+	"github.com/xgo-dev/llgo/internal/build/funcinfo"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -13,6 +14,21 @@ type sourceInfo struct {
 	functions map[string][][]llvm.Value
 	lines     map[string][][]llvm.Value
 	usedIDs   map[uint64]bool
+}
+
+// The Go callback must see the original caller and its call-site PC. Keep the
+// physical frame unwindable and let the normal Go stack walker elide it.
+func (a *wideABI) markAdapterFrame(fn llvm.Value) {
+	ctx := a.mod.Context()
+	fn.AddTargetDependentFunctionAttr("frame-pointer", "non-leaf")
+	if a.abi == x86Win64 {
+		fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("uwtable"), 2))
+	}
+	num := func(n uint64) llvm.Metadata { return llvm.ConstInt(ctx.Int32Type(), n, false).AsMetadata() }
+	name := ctx.MDString(fn.Name())
+	a.mod.AddNamedMetadataOperand("llgo.funcinfo", ctx.MDNode([]llvm.Metadata{
+		num(funcinfo.MetadataFlagsVersion), name, name, ctx.MDString(""), num(0), num(0), num(uint64(funcinfo.RecordFlagWrapper)),
+	}))
 }
 
 // Runtime tables intentionally use strings, so LLVM's generic function clone

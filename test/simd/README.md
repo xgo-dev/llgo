@@ -132,11 +132,13 @@ call, its caller must have hardware and OS support for the register width.
 The runtime records the OS-enabled YMM and ZMM widths before applying Go's
 feature overrides. For example, with `GOAMD64=v1` and `GODEBUG=cpu.all=off`,
 a caller can still use the fixed ZMM ABI on an AVX-512F machine with ZMM
-state enabled. The baseline body retains the original call and its control
-flow. If an unguarded call executes in a body compiled below the required
-register width, its result is unspecified. LLVM can split an argument across
-narrower registers while the callee expects one wide register. Execution may
-return incorrect lanes or encounter an illegal instruction.
+state enabled. A body with sufficient width calls the original entry directly.
+At a narrower call site, LLGo passes the vector bits in 128-bit pieces to an
+internal function. It packs the arguments into wide registers, calls the same
+entry and splits the returned vectors. Direct calls and function values with
+the same machine signature and compatible call attributes can share this code.
+The wide transfer executes only when control reaches that call. On hardware
+without the required register support it can raise an illegal instruction.
 `TestSIMD512FixedRegisterCall` exercises both branches. The Sapphire Rapids
 SDE run also checks all 16 transferred lanes with Go's optional CPU features
 disabled.

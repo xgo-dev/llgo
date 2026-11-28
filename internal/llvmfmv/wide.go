@@ -13,6 +13,7 @@ type wideABI struct {
 	mod      llvm.Module
 	widths   map[llvm.Type]int
 	outlines map[outlineKey]llvm.Value
+	adapters map[adapterKey]llvm.Value
 	data     llvm.TargetData
 	abi      x86ABI
 }
@@ -133,7 +134,8 @@ var (
 func newWideABI(mod llvm.Module) *wideABI {
 	return &wideABI{
 		mod: mod, widths: make(map[llvm.Type]int),
-		data: llvm.NewTargetData(mod.DataLayout()), abi: x86ABIFor(mod),
+		adapters: make(map[adapterKey]llvm.Value),
+		data:     llvm.NewTargetData(mod.DataLayout()), abi: x86ABIFor(mod),
 	}
 }
 

@@ -32,14 +32,18 @@ unwind:
 		t.Fatal(err, m.String())
 	}
 	for _, suffix := range []string{"guard_base", "guard_zmm"} {
-		body := m.NamedFunction("caller" + symbolPrefix + suffix).String()
-		for _, want := range []string{"invoke x86_vectorcallcc <16 x i32> %", "ptr byval(i32) align 4", "i16 signext", "unwind label %unwind"} {
-			if !strings.Contains(body, want) {
-				t.Fatalf("%s lost %q:\n%s", suffix, want, body)
+		body := m.NamedFunction("caller" + symbolPrefix + suffix)
+		site, inner := checkFixedCall(t, body, body.Param(0), 512)
+		if site.IsAInvokeInst().IsNil() || !strings.Contains(site.String(), "unwind label %unwind") {
+			t.Fatal("lost the exceptional edge", site.String())
+		}
+		for _, want := range []string{"x86_vectorcallcc <16 x i32> %", "ptr byval(i32) align 4", "i16 signext"} {
+			if !strings.Contains(inner.String(), want) {
+				t.Fatalf("%s lost %q:\n%s", suffix, want, inner.String())
 			}
 		}
-		if strings.Contains(body, "@llvm.trap(") || strings.Contains(body, "alloca ") {
-			t.Fatal(body)
+		if strings.Contains(body.String(), "@llvm.trap(") || strings.Contains(body.String(), "alloca ") {
+			t.Fatal(body.String())
 		}
 	}
 }
@@ -191,9 +195,28 @@ define void @caller() {
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err, m.String())
 	}
-	wide := m.NamedFunction("caller" + symbolPrefix + "guard_zmm")
-	if !strings.Contains(wide.String(), `[ "deopt"(i32 7) ]`) {
-		t.Fatal(wide.String())
+	for _, suffix := range []string{"guard_base", "guard_zmm"} {
+		body := m.NamedFunction("caller" + symbolPrefix + suffix)
+		site, _ := checkFixedCall(t, body, m.NamedFunction("wide"), 512)
+		if !strings.Contains(site.String(), `[ "deopt"(i32 7) ]`) {
+			t.Fatal(site.String())
+		}
+	}
+}
+
+func TestRegisterAdapterBundlePreflight(t *testing.T) {
+	m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+declare void @wide(<8 x i32>)
+define void @caller() {
+ call void @wide(<8 x i32> zeroinitializer) [ "custom"() ]
+ ret void
+}`)
+	before := m.String()
+	if err := Run(m, "v1"); err == nil || !strings.Contains(err.Error(), "bundle") {
+		t.Fatalf("unexpected result for an unsupported operand bundle: %v", err)
+	}
+	if m.String() != before {
+		t.Fatal("adapter preflight mutated the input module")
 	}
 }
 

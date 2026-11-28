@@ -3,7 +3,7 @@ package llvmfmv
 import "github.com/xgo-dev/llvm"
 
 // OS-enabled register state is detected before applying CPU feature overrides.
-// These bits select a machine ABI and never imply a Go predicate.
+// These bits select bodies that can issue direct wide calls and never imply a Go predicate.
 const (
 	machineYMM = 1 << 17
 	machineZMM = 1 << 18
@@ -57,7 +57,7 @@ func machineFeatures(fn llvm.Value, baseline string) uint64 {
 func (a *wideABI) planFunction(fn, view llvm.Value, baseline string, contexts map[llvm.BasicBlock]uint64) functionPlan {
 	floor := a.registerFloor(fn, baseline)
 	var widths [2]bool // YMM, ZMM
-	var calls [2]bool  // fixed register calls still need their ABI under GODEBUG
+	var calls [2]bool  // prefer direct wide calls even with Go predicates disabled
 	var isa uint64
 	for bb := view.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
 		facts := contexts[bb]
@@ -103,6 +103,7 @@ func (a *wideABI) planFunction(fn, view llvm.Value, baseline string, contexts ma
 				witnesses := level.witnesses
 				if calls[i] {
 					witnesses |= level.machine
+					plan.adapt = true
 				}
 				plan.versions = append(plan.versions, localVersion{profile{level.bits, bits}, witnesses})
 			}

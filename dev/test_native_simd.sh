@@ -64,7 +64,7 @@ for profile in O0-off O2-off O2-thin O2-full; do
     if [[ "$suite" == arch ]]; then
       selection=$("$binary" -test.v -test.run='^TestSIMD(FMVOutlineCallers|512FixedRegisterCall|512AESRound)$')
       if [[ "$selection" == *"--- PASS: TestSIMDFMVOutlineCallers ("* ]]; then
-        GODEBUG=cpu.all=off LLGO_TEST_MASKED_YMM=1 "$binary" -test.v -test.run='^TestSIMDFMVOutlineCallers$'
+        GODEBUG=cpu.all=off LLGO_TEST_MASKED_YMM=1 "$binary" -test.v -test.run='^TestSIMD(FMVOutlineCallers|256FixedRegisterIndirect)$'
       fi
       if [[ "$selection" == *"--- PASS: TestSIMD512AESRound ("* ]]; then
         GODEBUG=cpu.all=off LLGO_TEST_MASKED_AES=1 "$binary" -test.v -test.run='^TestSIMD512AESRound$'

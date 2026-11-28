@@ -22,6 +22,7 @@ type functionPlan struct {
 	fn       llvm.Value
 	versions []localVersion // ascending priority, with the baseline implicit
 	outline  bool           // a guarded family outside the common x86 levels
+	adapt    bool           // at least one target signature is wider than the baseline body
 }
 
 func planVersions(a *wideABI, baseline string) error {
@@ -64,20 +65,34 @@ func planVersions(a *wideABI, baseline string) error {
 
 	var plans []functionPlan
 	for _, fn := range functions {
-		if fn.IsDeclaration() || !supported(fn) {
+		if fn.IsDeclaration() {
 			continue
 		}
 		view := folds.view(fn)
-		var contexts map[llvm.BasicBlock]uint64
-		if candidates[fn] {
-			contexts = blockGuards(view, queries)
+		// Functions ineligible for FMV still have to honor a callee's register ABI.
+		plan := functionPlan{fn: fn, adapt: true}
+		if supported(fn) {
+			var contexts map[llvm.BasicBlock]uint64
+			if candidates[fn] {
+				contexts = blockGuards(view, queries)
+			}
+			plan = a.planFunction(fn, view, baseline, contexts)
 		}
-		plan := a.planFunction(fn, view, baseline, contexts)
-		if len(plan.versions) == 0 && !plan.outline {
+		if plan.adapt {
+			calls := a.mismatchedCalls(view, baseline)
+			plan.adapt = len(calls) != 0
+			for _, call := range calls {
+				if err := validateAdapterCall(call); err != nil {
+					return fmt.Errorf("SIMD register call in %s: %w", fn.Name(), err)
+				}
+			}
+		}
+		if len(plan.versions) != 0 || plan.outline {
+			if err := a.validateOutlines(view, queries, machineFeatures(fn, baseline)); err != nil {
+				return err
+			}
+		} else if !plan.adapt {
 			continue
-		}
-		if err := a.validateOutlines(view, queries, machineFeatures(fn, baseline)); err != nil {
-			return err
 		}
 		plans = append(plans, plan)
 		if len(plan.versions) == 0 {
@@ -111,8 +126,16 @@ func planVersions(a *wideABI, baseline string) error {
 }
 
 func (p functionPlan) emit(a *wideABI, source *sourceInfo, queries map[llvm.Value]uint64, baseline string) {
+	finishBody := func(fn llvm.Value, enabled uint64) {
+		if len(p.versions) != 0 || p.outline {
+			a.outlineBody(fn, baseline, queries, enabled)
+		}
+		if p.adapt {
+			a.adaptCalls(fn, baseline)
+		}
+	}
 	if len(p.versions) == 0 {
-		a.outlineBody(p.fn, baseline, queries, machineFeatures(p.fn, baseline))
+		finishBody(p.fn, machineFeatures(p.fn, baseline))
 		return
 	}
 	clone := func(suffix string, cap profile) llvm.Value {
@@ -134,7 +157,7 @@ func (p functionPlan) emit(a *wideABI, source *sourceInfo, queries map[llvm.Valu
 			}
 			foldTrue(v, fold)
 		}
-		a.outlineBody(v, baseline, queries, machineFeatures(p.fn, baseline)|cap.isa)
+		finishBody(v, machineFeatures(p.fn, baseline)|cap.isa)
 		return v
 	}
 	plan := dispatchPlan{baseline: clone(symbolPrefix+"guard_base", profile{})}
