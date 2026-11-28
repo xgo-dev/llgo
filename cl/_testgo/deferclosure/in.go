@@ -20,13 +20,14 @@ package main
 // CHECK-LABEL: define void @main.testDeferClosureValue(){{.*}} {
 // The captured 42 is stored in the closure environment before the function pair is deferred.
 // CHECK: [[VALUE_CAPTURE:%.*]] = alloca i64
-// CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_CAPTURE]], i8 0, i64 8, i1 false)
+// CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_CAPTURE]], i8 0, i64 8, i1 true)
 // CHECK: store volatile i64 42, ptr [[VALUE_CAPTURE]]
 // CHECK: [[VALUE_COPY:%.*]] = load i64, ptr [[VALUE_CAPTURE]]
 // CHECK: call void @llvm.memset.p0.i64(ptr [[VALUE_ENV:%[0-9]+]], i8 0, i64 8, i1 false)
 // CHECK: store i64 [[VALUE_COPY]], ptr %{{.*}}
 // CHECK: [[VALUE_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferClosureValue$1", ptr undef }, ptr [[VALUE_ENV]], 1
-// CHECK: [[VALUE_PREV_DEFER:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
+// CHECK: [[VALUE_DEFER_SLOT:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.ThreadDeferSlot"()
+// CHECK-NEXT: [[VALUE_PREV_DEFER:%.*]] = load ptr, ptr [[VALUE_DEFER_SLOT]]
 // CHECK: store { ptr, ptr } [[VALUE_FN]], ptr %{{.*}}
 // When unwound, the deferred function pair is removed and invoked with its environment.
 // CHECK: [[VALUE_NODE_DATA:%.*]] = load { ptr, i64, { ptr, ptr } }, ptr [[VALUE_NODE:%[-A-Za-z0-9_.]+]]
@@ -51,7 +52,7 @@ package main
 // CHECK: store volatile { ptr, ptr } { ptr @"main.testDeferFieldAccess$1", ptr null }, ptr [[FIELD_STORE_SLOT]]
 // CHECK: [[FIELD_LOAD_SLOT:%.*]] = getelementptr inbounds nuw %main.FuncHolder, ptr [[FIELD_HOLDER]], i32 0, i32 0
 // CHECK: [[FIELD_FN:%.*]] = load volatile { ptr, ptr }, ptr [[FIELD_LOAD_SLOT]]
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.ThreadDeferSlot"()
 // CHECK: store { ptr, ptr } [[FIELD_FN]], ptr %{{.*}}
 // CHECK: [[FIELD_NODE_DATA:%.*]] = load { ptr, i64, { ptr, ptr } }, ptr [[FIELD_NODE:%[-A-Za-z0-9_.]+]]
 // CHECK: [[FIELD_RUN_FN:%.*]] = extractvalue { ptr, i64, { ptr, ptr } } [[FIELD_NODE_DATA]], 2
@@ -71,7 +72,7 @@ package main
 // CHECK-LABEL: define void @main.testDeferMethodLiteral(){{.*}} {
 // CHECK: [[METHOD_HANDLER:%.*]] = alloca %main.Handler
 // CHECK: call void @"main.(*Handler).SetHandler"(ptr [[METHOD_HANDLER]], { ptr, ptr } { ptr @"main.testDeferMethodLiteral$1", ptr null })
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.ThreadDeferSlot"()
 // The deferred receiver and second literal are recorded independently.
 // CHECK: store ptr [[METHOD_HANDLER]], ptr [[METHOD_RECEIVER_SLOT:%.*]]
 // CHECK: store ptr @"main.testDeferMethodLiteral$2", ptr [[METHOD_CODE_SLOT:%.*]]
@@ -94,7 +95,7 @@ package main
 // CHECK: [[STRUCT_ENV:%.*]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 16)
 // CHECK: store %"{{.*}}String" [[STRUCT_COPY]], ptr %{{.*}}
 // CHECK: [[STRUCT_FN:%.*]] = insertvalue { ptr, ptr } { ptr @"main.testDeferStructClosure$1", ptr undef }, ptr [[STRUCT_ENV]], 1
-// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.GetThreadDefer"()
+// CHECK: call ptr @"{{.*}}/runtime/internal/runtime.ThreadDeferSlot"()
 // CHECK: store ptr [[STRUCT_PROCESSOR]], ptr %{{.*}}
 // CHECK: store { ptr, ptr } [[STRUCT_FN]], ptr %{{.*}}
 // CHECK: [[STRUCT_NODE_DATA:%.*]] = load { ptr, i64, ptr, { ptr, ptr } }, ptr [[STRUCT_NODE:%[-A-Za-z0-9_.]+]]

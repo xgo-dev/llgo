@@ -28,9 +28,16 @@ Prior experiments (`test-defer-dont-free` branch) confirmed the crash disappeare
      current-G read path does not call `pthread_getspecific`.
 
 2. **SSA codegen synchronization**
-   - `ssa/eh.go` calls `runtime.SetThreadDefer` whenever it updates the current
-     goroutine's defer head (on first allocation and when restoring the
-     previous link during unwind).
+   - `ssa/eh.go` calls `runtime.ThreadDeferSlot` once per defer activation to
+     obtain `&getg().defer_`, then loads the previous head, installs the new
+     frame, and restores the previous link on exit/unwind through that cached
+     slot pointer.
+   - Reusing the slot pointer across the activation relies on the invariant
+     that the `*g` observed at frame install remains the current goroutine's
+     `*g` until the frame is unlinked (i.e. `setg` only transitions at thread
+     startup/exit or scheduler boundaries outside active Go defer frames).
+     `llgo.deferData()` still calls `runtime.GetThreadDefer` to read the head
+     value directly.
    - Defer argument nodes and the `runtime.Defer` struct itself are allocated with `aggregateAllocU`, ensuring new memory comes from GC-managed heaps, and nodes are released via `runtime.FreeDeferNode`.
 
 3. **Locality directives**

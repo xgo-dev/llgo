@@ -7,6 +7,7 @@ import (
 	"github.com/xgo-dev/llgo/runtime/internal/clite/emscripten"
 )
 
+//go:noinline
 func fatal(s string) {
 	print("fatal error: ", s, "\n")
 	exitPanic()
@@ -18,4 +19,5 @@ func exitPanic() {
 	// exit(2). Force the process to terminate so fatal scheduler errors retain
 	// Go's observable non-zero-exit behavior.
 	emscripten.ForceExit(c.Int(2))
+	c.Unreachable()
 }

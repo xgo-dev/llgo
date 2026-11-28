@@ -116,3 +116,54 @@ func TestSIMD512MixedGuard(t *testing.T) {
 		}
 	}
 }
+
+//go:noinline
+func savedGuard(dst, src *[16]int32, enabled bool) bool {
+	ready := archsimd.X86.AVX512() && enabled
+	if ready {
+		doubleSIMD512Kernel(dst, src)
+	}
+	return ready
+}
+
+func TestSIMDSavedGuard(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		in, dst := [16]int32{3, 5}, [16]int32{7}
+		want := dst
+		take := enabled && archsimd.X86.AVX512()
+		if take {
+			want = [16]int32{6, 10}
+		}
+		if got := savedGuard(&dst, &in, enabled); got != take || dst != want {
+			t.Fatalf("enabled=%t: path %t, result %v; want %t, %v", enabled, got, dst, take, want)
+		}
+	}
+}
+
+//go:noinline
+func allowWide(count *int, enabled bool) bool {
+	*count++
+	return enabled && archsimd.X86.AVX512()
+}
+
+//go:noinline
+func viaPredicateHelper(dst, src *[16]int32, count *int, enabled bool) {
+	if allowWide(count, enabled) {
+		doubleSIMD512Kernel(dst, src)
+	}
+}
+
+func TestSIMDPredicateHelper(t *testing.T) {
+	var count int
+	for i, enabled := range []bool{true, false, true} {
+		in, dst := [16]int32{-2, 9}, [16]int32{11}
+		want := dst
+		if enabled && archsimd.X86.AVX512() {
+			want = [16]int32{-4, 18}
+		}
+		viaPredicateHelper(&dst, &in, &count, enabled)
+		if count != i+1 || dst != want {
+			t.Fatalf("enabled=%t: count %d, dst %v; want %d, %v", enabled, count, dst, i+1, want)
+		}
+	}
+}

@@ -28,6 +28,7 @@ func init() {
 	hashkey[1] = uintptr(fastrand()) | 1
 	hashkey[2] = uintptr(fastrand()) | 1
 	hashkey[3] = uintptr(fastrand()) | 1
+	initAESHash()
 }
 
 /* TODO(xsw):
@@ -113,8 +114,10 @@ func memclrHasPointers(ptr unsafe.Pointer, n uintptr) {
 func memclrNoHeapPointers(ptr unsafe.Pointer, n uintptr) {
 }
 
+//go:noinline
 func throw(s string) {
 	print("fatal error: ", s, "\n")
+	exitPanic()
 }
 
 func atomicOr8(ptr *uint8, v uint8) uint8 {

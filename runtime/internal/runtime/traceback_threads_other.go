@@ -7,6 +7,9 @@ var TracebackCreator func([]uintptr) int
 func registerTraceback(gp, parent *g) {}
 func attachTraceback(gp *g)           {}
 func unregisterTraceback(gp *g)       {}
+func detachTraceback(gp *g)           {}
+func releaseTracebackThread()         {}
+func allThreadsControlled() bool      { return false }
 func releaseFaultSnapshot()           {}
 
 func TracebackWaiting(bool) {}

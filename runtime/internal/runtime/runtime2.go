@@ -43,12 +43,19 @@ type g struct {
 	bubbleBlocked bool
 	defer_        *Defer
 	panic_        unsafe.Pointer
-	panicPCs      panicPCStore
 	recoverFrame  unsafe.Pointer
 	recoverPanic  unsafe.Pointer
-	m             *m
+	// One idle ordinary channel waiter and one idle select cache; active waiters are never cached.
+	chanWaiter  *singleChanWaiter
+	selectCache *selectCache
+	m           *m
+
+	goexit       bool
+	isMain       bool
+	paniconfault bool
 
 	atomicstatus    uint32
+	lockedOSThread  uint32
 	goid            uint64
 	parentGoid      uint64
 	tracebackThread unsafe.Pointer
@@ -58,21 +65,17 @@ type g struct {
 
 	context *runtimeContext
 
-	// One idle ordinary channel waiter; active/select waiters are never cached.
-	chanWaiter *chanWaiter
-
-	goexit       bool
-	isMain       bool
-	paniconfault bool
+	panicPCs panicPCStore
 }
 
 // m represents the host execution resource running Go code. Platform-specific
 // scheduler state is confined to mOS so it does not leak into the common core.
 type m struct {
-	curg *g
-	p    *p
-	id   int64
-	os   mOS
+	curg         *g
+	p            *p
+	id           int64
+	os           mOS
+	touchedLocal bool
 }
 
 // p represents the scheduling resources attached to an M. Native backends bind

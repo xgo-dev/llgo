@@ -25,9 +25,6 @@ const (
 	LLGoFiles   = "_wrap/runtime_windows.c; _wrap/profile_windows.c; _wrap/syscall_windows.S; _wrap/stdcall_windows_go127.c; _wrap/debugtrap.c"
 )
 
-//go:linkname c_maxprocs C.llgo_maxprocs
-func c_maxprocs() int32
-
 //go:linkname c_debugtrap C.llgo_debugtrap
 func c_debugtrap()
 

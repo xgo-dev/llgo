@@ -20,21 +20,21 @@ package main
 // CHECK: [[ZSP_VALUE:%[0-9]+]] = alloca ptr
 // CHECK: store ptr %0, ptr [[ZSP_VALUE]]
 // CHECK-NEXT: [[ZSP_COPY:%[0-9]+]] = load ptr, ptr [[ZSP_VALUE]]
-// CHECK-NEXT: [[ZSP_ENV:%[0-9]+]] = call ptr @"{{.*}}/runtime/internal/runtime.AllocU"(i64 8)
-// CHECK: store ptr [[ZSP_COPY]], ptr %{{[0-9]+}}
-// CHECK: [[ZSP_CLOSURE:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.zeroSizedPointerCapture$1", ptr undef }, ptr [[ZSP_ENV]], 1
+// CHECK-NEXT: [[ZSP_NIL:%[0-9]+]] = icmp eq ptr [[ZSP_COPY]], null
+// CHECK-NEXT: [[ZSP_ENV:%[0-9]+]] = select i1 [[ZSP_NIL]], ptr @"__llgo.directClosureNilEnv$", ptr [[ZSP_COPY]]
+// CHECK-NEXT: [[ZSP_CLOSURE:%[0-9]+]] = insertvalue { ptr, ptr } { ptr @"main.zeroSizedPointerCapture$1", ptr undef }, ptr [[ZSP_ENV]], 1
 // CHECK-NEXT: ret { ptr, ptr } [[ZSP_CLOSURE]]
-// ARM64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr swiftself
-// AMD64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr nest
-// CHECK: [[ZSP_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
-// CHECK-NEXT: [[ZSP_POINTER:%[0-9]+]] = load ptr, ptr [[ZSP_SLOT]]
-// CHECK-NEXT: [[ZSP_IS_NIL:%[0-9]+]] = icmp eq ptr [[ZSP_POINTER]], null
+// ARM64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define i1 @"main.zeroSizedPointerCapture$1"(ptr nest %0){{.*}} {
+// CHECK: [[ZSP_SENTINEL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[ZSP_PTR:%[0-9]+]] = select i1 [[ZSP_SENTINEL]], ptr null, ptr %0
+// CHECK-NEXT: [[ZSP_IS_NIL:%[0-9]+]] = icmp eq ptr [[ZSP_PTR]], null
 // CHECK-NEXT: ret i1 [[ZSP_IS_NIL]]
-// ARM64-LABEL: define i1 @"main.(*nilReceiver).IsNil$bound"(ptr swiftself
-// AMD64-LABEL: define i1 @"main.(*nilReceiver).IsNil$bound"(ptr nest
-// CHECK: [[BOUND_ENV:%[0-9]+]] = load { ptr }, ptr %{{[0-9]+}}
-// CHECK-NEXT: [[BOUND_RECEIVER:%[0-9]+]] = extractvalue { ptr } [[BOUND_ENV]], 0
-// CHECK-NEXT: [[BOUND_RESULT:%[0-9]+]] = call i1 @"main.(*nilReceiver).IsNil"(ptr [[BOUND_RECEIVER]])
+// ARM64-LABEL: define i1 @"main.(*nilReceiver).IsNil$bound"(ptr swiftself %0){{.*}} {
+// AMD64-LABEL: define i1 @"main.(*nilReceiver).IsNil$bound"(ptr nest %0){{.*}} {
+// CHECK: [[BOUND_SENTINEL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[BOUND_RECV:%[0-9]+]] = select i1 [[BOUND_SENTINEL]], ptr null, ptr %0
+// CHECK-NEXT: [[BOUND_RESULT:%[0-9]+]] = call i1 @"main.(*nilReceiver).IsNil"(ptr [[BOUND_RECV]])
 // CHECK-NEXT: ret i1 [[BOUND_RESULT]]
 // ARM64-LABEL: define i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr swiftself
 // AMD64-LABEL: define i1 @"main.interface{IsNil() bool}.IsNil$bound"(ptr nest

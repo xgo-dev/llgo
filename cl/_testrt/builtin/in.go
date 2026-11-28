@@ -171,7 +171,5 @@ func main() {
 
 // ARM64-LABEL: define void @"main.main$3"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.main$3"(ptr nest %0){{.*}} {
-// CHECK: [[CAPTURE:%.*]] = load { ptr }, ptr %0
-// CHECK: [[N_ADDR:%.*]] = extractvalue { ptr } [[CAPTURE]], 0
-// CHECK: [[N:%.*]] = load i64, ptr [[N_ADDR]]
+// CHECK: [[N:%.*]] = load i64, ptr %0
 // CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintInt"(i64 [[N]])

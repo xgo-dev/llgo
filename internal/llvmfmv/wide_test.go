@@ -29,13 +29,13 @@ scalar:
 		mask   uint64
 		suffix string
 	}{
-		{0, "width_base"},
-		{featureAVX, "ymm"},
-		{featureAVX2, "ymm"},
-		{predicateBits[X86Query("FMA")], "ymm"},
-		{featureAVX2 | predicateBits[X86Query("AVX512VBMI2")], "ymm"},
-		{predicateBits[X86Query("AVX512")] | predicateBits[X86Query("AVX512VBMI2")], "zmm"},
-		{predicateBits[X86Query("AVX512")], "zmm"},
+		{0, "guard_base"},
+		{featureAVX, "guard_ymm"},
+		{featureAVX2, "guard_ymm"},
+		{predicateBits[X86Query("FMA")], "guard_ymm"},
+		{featureAVX2 | predicateBits[X86Query("AVX512VBMI2")], "guard_zmm"},
+		{predicateBits[X86Query("AVX512")] | predicateBits[X86Query("AVX512VBMI2")], "guard_zmm"},
+		{predicateBits[X86Query("AVX512")], "guard_zmm"},
 	} {
 		mod := parseModule(t, ir)
 		if err := Run(mod, "v1"); err != nil {
@@ -54,14 +54,14 @@ scalar:
 		checkCachedGuard(t, mod, tc.mask, body)
 		code := body.String()
 		if !strings.Contains(code, "ret i32 3") ||
-			strings.Contains(code, "call <8 x float> @ymm") != (tc.suffix != "width_base") ||
-			strings.Contains(code, "call <16 x float> %indirect") != (tc.suffix == "zmm") {
+			strings.Contains(code, "call <8 x float> @ymm") != (tc.suffix != "guard_base") ||
+			strings.Contains(code, "call <16 x float> %indirect") != (tc.suffix == "guard_zmm") {
 			t.Fatal(code)
 		}
 	}
 }
 
-func TestGuardedZMMCallRequiresGoAVX512(t *testing.T) {
+func TestZMMCallDispatch(t *testing.T) {
 	const ir = `target triple = "x86_64-unknown-linux-gnu"
 declare i1 @vbmi2() "llgo.cpu.query"="x86.avx512vbmi2"
 declare i1 @opaque()
@@ -70,45 +70,49 @@ define void @root(ptr %p) {
  %ok = call i1 @QUERY()
  br i1 %ok, label %yes, label %exit
 yes:
- %v = load <16 x float>, ptr %p
- call void @wide(<16 x float> %v)
+ call void @wide(<16 x float> zeroinitializer)
  br label %exit
 exit:
  ret void
 }`
-	for _, query := range []string{"vbmi2", "opaque"} {
-		for _, bundle := range []bool{false, true} {
-			m := parseModule(t, strings.Replace(ir, "QUERY", query, 1))
-			if err := Run(m, "v1"); err != nil {
-				t.Fatal(err)
+	ext := predicateBits[X86Query("AVX512VBMI2")]
+	bundle := predicateBits[X86Query("AVX512")]
+	for _, tc := range []struct {
+		query  string
+		mask   uint64
+		suffix string
+	}{
+		{"vbmi2", ext, "guard_zmm"},
+		{"vbmi2", ext | bundle, "guard_zmm"},
+		{"vbmi2", bundle, "guard_zmm"},
+		{"vbmi2", 0, "guard_base"},
+		{"opaque", ext, "guard_zmm"},
+		{"opaque", 0, "guard_base"},
+		{"opaque", bundle, "guard_zmm"},
+	} {
+		m := parseModule(t, strings.Replace(ir, "QUERY", tc.query, 1))
+		if err := Run(m, "v1"); err != nil {
+			t.Fatal(err)
+		}
+		if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+			t.Fatal(err)
+		}
+		body := m.NamedFunction("root" + symbolPrefix + tc.suffix)
+		if body.IsNil() {
+			t.Fatalf("missing %s", tc.suffix)
+		}
+		checkCachedGuard(t, m, tc.mask, body)
+		if !strings.Contains(body.String(), "call i1 @"+tc.query+"()") || !strings.Contains(body.String(), "br i1") {
+			t.Fatal("width changed the Go control flow", body.String())
+		}
+		switch tc.suffix {
+		case "guard_base":
+			if strings.Contains(body.String(), "@llvm.trap(") {
+				t.Fatal(body.String())
 			}
-			if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
-				t.Fatal(err)
-			}
-			mask := featureAVX2 | predicateBits[X86Query("AVX512VBMI2")]
-			if bundle {
-				mask |= predicateBits[X86Query("AVX512")]
-			}
-			entry, suffix := "root", "width_base"
-			if query == "vbmi2" && !bundle {
-				base := m.NamedFunction(entry + symbolPrefix + "guard_base")
-				checkCachedGuard(t, m, mask, base)
-				entry = base.Name()
-			}
-			if bundle {
-				suffix = "zmm"
-				if query == "vbmi2" {
-					suffix = "guard_avx512vbmi2"
-				}
-			}
-			body := m.NamedFunction(entry + symbolPrefix + suffix)
-			if body.IsNil() {
-				t.Fatalf("missing %s %s", entry, suffix)
-			}
-			checkCachedBody(t, m, entry, mask, body)
-			code := body.String()
-			if strings.Contains(code, "call void @wide(") != bundle || strings.Contains(code, "@llvm.trap(") == bundle {
-				t.Fatal(code)
+		case "guard_zmm":
+			if !strings.Contains(body.String(), "call void @wide(") {
+				t.Fatal(body.String())
 			}
 		}
 	}
@@ -131,12 +135,13 @@ define void @guard() { ret void }
 
 func TestWideStackForwarding(t *testing.T) {
 	const ir = `
-declare i1 @avx2() "llgo.cpu.query"="x86.avx2"
+declare i1 @fma() "llgo.cpu.query"="x86.fma"
+declare <8 x float> @llvm.fma.v8f32(<8 x float>, <8 x float>, <8 x float>)
 define <8 x float> @many(i32 %a, i32 %b, i32 %c, i32 %d, i32 %e, i32 %f, <8 x float> %x) {
- %ok = call i1 @avx2()
+ %ok = call i1 @fma()
  br i1 %ok, label %yes, label %no
 yes:
- %y = fadd <8 x float> %x, %x
+ %y = call <8 x float> @llvm.fma.v8f32(<8 x float> %x, <8 x float> %x, <8 x float> %x)
  ret <8 x float> %y
 no:
  ret <8 x float> %x
@@ -155,4 +160,40 @@ no:
 			}
 		}
 	}
+}
+
+// An external caller enters with the fixed ZMM ABI. The pointer-only helper
+// selects its own implementation, including its path through the narrow body.
+func TestWideSignatureCallsOrdinaryHelper(t *testing.T) {
+	m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
+declare void @consume(<16 x i32>)
+define void @entry(<16 x i32> %x, ptr %p) {
+ store <16 x i32> %x, ptr %p
+ call void @helper(ptr %p)
+ ret void
+}
+define void @helper(ptr %p) {
+ %x = load <16 x i32>, ptr %p
+ call void @consume(<16 x i32> %x)
+ ret void
+}`)
+	if err := Run(m, "v1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
+		t.Fatal(err)
+	}
+	entry := m.NamedFunction("entry")
+	if targetWidth(entry, "v1") != 512 || !strings.Contains(entry.String(), "call void @helper(ptr %p)") {
+		t.Fatalf("wide public entry did not use the ordinary helper:\n%s", entry.String())
+	}
+	wide := m.NamedFunction("helper" + symbolPrefix + "guard_zmm")
+	if wide.IsNil() || !strings.Contains(wide.String(), "call void @consume(") || targetWidth(wide, "v1") != 512 {
+		t.Fatal("missing native wide call from helper")
+	}
+	narrow := m.NamedFunction("helper" + symbolPrefix + "guard_base")
+	if narrow.IsNil() || strings.Contains(narrow.String(), "@llvm.trap") || strings.Contains(narrow.String(), "call void @consume(") {
+		t.Fatal("unconditional wide ABI call must cross a local target boundary in the narrow implementation")
+	}
+	checkEntryCachedGuard(t, m, "helper", 0, narrow)
 }

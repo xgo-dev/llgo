@@ -21,7 +21,7 @@ package main
 
 // ARM64-LABEL: define void @"main.init#1$2"(ptr swiftself %0){{.*}} {
 // AMD64-LABEL: define void @"main.init#1$2"(ptr nest %0){{.*}} {
-// CHECK: load { ptr }, ptr %0
+// CHECK: load i64, ptr %0
 
 // Arrays: all three elements participate in equality, and inequality negates
 // the aggregate result rather than changing element semantics.

@@ -9,10 +9,11 @@ package main
 // CHECK: @[[D4_HELLO:[0-9]+]] = private unnamed_addr constant [5 x i8] c"hello"
 // CHECK: @[[D4_WORLD:[0-9]+]] = private unnamed_addr constant [5 x i8] c"world"
 // CHECK-LABEL: define void @main.fail(){{.*}} {
-// CHECK: [[D4_FAIL_PREV:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
+// CHECK: [[D4_FAIL_SLOT:%[0-9]+]] = call ptr @"{{.*}}ThreadDeferSlot"()
+// CHECK-NEXT: [[D4_FAIL_PREV:%[0-9]+]] = load ptr, ptr [[D4_FAIL_SLOT]]
 // CHECK: [[D4_FAIL_FRAME:%[0-9]+]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[D4_FAIL_PREV]], ptr %{{[0-9]+}}
-// CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[D4_FAIL_FRAME]])
+// CHECK: store ptr [[D4_FAIL_FRAME]], ptr [[D4_FAIL_SLOT]]
 // CHECK: [[D4_FAIL_HEAD:%[0-9]+]] = getelementptr inbounds nuw %"{{.*}}Defer", ptr [[D4_FAIL_FRAME]], i32 0, i32 5
 // CHECK: [[D4_RECOVER_STATE:%[0-9]+]] = call %"{{.*}}recoverState" @"{{.*}}StartRecoverFrame"(ptr @"main.fail$1")
 // CHECK-NEXT: call void @"main.fail$1"()
@@ -33,7 +34,7 @@ package main
 // CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" [[D4_RUN_PAYLOAD]])
 // CHECK: [[D4_FAIL_SAVED:%[0-9]+]] = load %"{{.*}}Defer", ptr [[D4_FAIL_FRAME]]
 // CHECK-NEXT: [[D4_FAIL_RESTORE:%[0-9]+]] = extractvalue %"{{.*}}Defer" [[D4_FAIL_SAVED]], 2
-// CHECK-NEXT: call void @"{{.*}}SetThreadDefer"(ptr [[D4_FAIL_RESTORE]])
+// CHECK-NEXT: store ptr [[D4_FAIL_RESTORE]], ptr [[D4_FAIL_SLOT]]
 // CHECK-LABEL: define void @"main.fail$1"(){{.*}} {
 // CHECK: call void @"{{.*}}BindRecoverFrame"(ptr @"main.fail$1", ptr [[D4_RECOVER_TOKEN:%[0-9]+]])
 // CHECK-NEXT: [[D4_RECOVERED:%[0-9]+]] = call %"{{.*}}eface" @"{{.*}}Recover"(ptr [[D4_RECOVER_TOKEN]])
@@ -47,10 +48,11 @@ package main
 // CHECK-NEXT: [[D4_RECOVER_STRING:%[0-9]+]] = load %"{{.*}}String", ptr [[D4_RECOVER_DATA]]
 // CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" [[D4_RECOVER_STRING]])
 // CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK: [[D4_MAIN_PREV:%[0-9]+]] = call ptr @"{{.*}}GetThreadDefer"()
+// CHECK: [[D4_MAIN_SLOT:%[0-9]+]] = call ptr @"{{.*}}ThreadDeferSlot"()
+// CHECK-NEXT: [[D4_MAIN_PREV:%[0-9]+]] = load ptr, ptr [[D4_MAIN_SLOT]]
 // CHECK: [[D4_MAIN_FRAME:%[0-9]+]] = alloca %"{{.*}}Defer", align 8
 // CHECK: store ptr [[D4_MAIN_PREV]], ptr %{{[0-9]+}}
-// CHECK: call void @"{{.*}}SetThreadDefer"(ptr [[D4_MAIN_FRAME]])
+// CHECK: store ptr [[D4_MAIN_FRAME]], ptr [[D4_MAIN_SLOT]]
 // CHECK: store %"{{.*}}String" { ptr @[[D4_HELLO]], i64 5 }, ptr %{{[0-9]+}}
 // CHECK: call void @main.fail()
 // CHECK-NEXT: call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @{{[0-9]+}}, i64 9 })
@@ -60,7 +62,7 @@ package main
 // CHECK: call void @"main.main$1"()
 // CHECK: [[D4_MAIN_SAVED:%[0-9]+]] = load %"{{.*}}Defer", ptr [[D4_MAIN_FRAME]]
 // CHECK-NEXT: [[D4_MAIN_RESTORE:%[0-9]+]] = extractvalue %"{{.*}}Defer" [[D4_MAIN_SAVED]], 2
-// CHECK-NEXT: call void @"{{.*}}SetThreadDefer"(ptr [[D4_MAIN_RESTORE]])
+// CHECK-NEXT: store ptr [[D4_MAIN_RESTORE]], ptr [[D4_MAIN_SLOT]]
 // CHECK-NOT: FreeDeferNode
 // CHECK-LABEL: define void @"main.main$1"(){{.*}} {
 // CHECK: call void @"{{.*}}PrintString"(%"{{.*}}String" { ptr @{{[0-9]+}}, i64 2 })

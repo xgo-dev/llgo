@@ -115,6 +115,7 @@ var sourcePatchPkgs = map[string]struct{}{
 	"internal/sync":                    {},
 	"iter":                             {},
 	"math/bits":                        {},
+	"net/http":                         {},
 	"os":                               {},
 	"reflect":                          {},
 	"runtime":                          {},

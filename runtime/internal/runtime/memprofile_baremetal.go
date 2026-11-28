@@ -3,12 +3,12 @@
 package runtime
 
 // Baremetal accounting uses a non-atomic native-word counter.
-type memProfileCounter = uintptr
+var memProfileCounters [memProfileNumBuckets]uintptr
 
-func memProfileAddObject(p *memProfileCounter) {
-	*p = *p + 1
+func memProfileAddBucket(idx int) {
+	memProfileCounters[idx]++
 }
 
-func memProfileLoadObjects(p *memProfileCounter) uint64 {
-	return uint64(*p)
+func memProfileLoadBucket(idx int) uint64 {
+	return uint64(memProfileCounters[idx])
 }

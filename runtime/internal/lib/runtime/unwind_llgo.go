@@ -99,6 +99,17 @@ func spliceCallers(cur []uintptr) []uintptr {
 		return cur
 	}
 	snap = trimPlumbingPCs(snap)
+	if runtimeFPChain&fpHasWrappers != 0 && rtdebug.PanicPCsAreFault() {
+		// The signal handler saved physical PCs. Filter after unwinding so
+		// symbol lookups never run in the interrupted context.
+		logical := make([]uintptr, 0, len(snap))
+		for i, pc := range snap {
+			if !elideFaultWrapper(snap, i) {
+				logical = append(logical, pc)
+			}
+		}
+		snap = logical
+	}
 	if len(snap) == 0 {
 		return cur
 	}
@@ -247,10 +258,12 @@ func panicTraceback(skip int) bool {
 // corrupt chain, not a giant frame; stop rather than walk off the stack.
 const maxFPStride = 1 << 20
 
+const fpHasWrappers = 2
+
 // runtimeFPChain is emitted next to the funcinfo table (one per binary,
 // internal/build emitFuncInfoTable) and records whether this binary's Go
-// functions were compiled with the frame-pointer attribute
-// (ssa.Program.NeedsFramePointer).
+// functions have the frame-pointer attribute (bit 0) and whether the linker
+// saw generated wrapper records (bit 1).
 //
 //go:linkname runtimeFPChain C.__llgo_fp_chain
 var runtimeFPChain uint8
@@ -260,7 +273,7 @@ var runtimeFPChain uint8
 // binary, and the funcinfo tables are present (without them symbolization
 // would fall back to dlsym anyway).
 func fpUnwindAvailable() bool {
-	return runtimePCLNReady() && runtimeFPChain != 0 && runtimeFuncInfoTable != nil && runtimeFuncInfoCount > 0
+	return runtimePCLNReady() && runtimeFPChain&1 != 0 && runtimeFuncInfoTable != nil && runtimeFuncInfoCount > 0
 }
 
 // Stop after the last Go activation, retaining native frames before it. A

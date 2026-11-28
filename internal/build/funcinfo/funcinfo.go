@@ -63,9 +63,10 @@ const (
 	EncodedRecordSize       = 28
 	EncodedPCLineRecordSize = 24
 
-	RecordFlagWrapper  uint32 = 1
-	EncodedLineWrapper        = uint32(1 << 31)
-	EncodedLineMask           = EncodedLineWrapper - 1
+	MetadataFlagsVersion        = 2
+	RecordFlagWrapper    uint32 = 1
+	EncodedLineWrapper          = uint32(1 << 31)
+	EncodedLineMask             = EncodedLineWrapper - 1
 )
 
 type Table struct {

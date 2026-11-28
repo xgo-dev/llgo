@@ -7,12 +7,12 @@ package main
 // CHECK-LABEL: define void @main.main(){{.*}} {
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$1"
 // CHECK: call void @"{{.*}}NewProc"(ptr @"main._llgo_routine$2"
-// ARM64-LABEL: define void @"main.main$1"(ptr swiftself
-// AMD64-LABEL: define void @"main.main$1"(ptr nest
-// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" [[GOROUTINE_TEXT:%[0-9]+]])
-// CHECK: [[GOROUTINE_SLOT:%[0-9]+]] = getelementptr inbounds nuw { ptr }, ptr %{{[0-9]+}}, i32 0, i32 0
-// CHECK-NEXT: [[GOROUTINE_DONE:%[0-9]+]] = load ptr, ptr [[GOROUTINE_SLOT]]
-// CHECK-NEXT: call void @"{{.*}}ChanClose"(ptr [[GOROUTINE_DONE]])
+// ARM64-LABEL: define void @"main.main$1"(ptr swiftself %0, %"{{.*}}String" %1){{.*}} {
+// AMD64-LABEL: define void @"main.main$1"(ptr nest %0, %"{{.*}}String" %1){{.*}} {
+// CHECK: call void @"{{.*}}/runtime/internal/runtime.PrintString"(%"{{.*}}String" %1)
+// CHECK: [[DONE_IS_NIL:%[0-9]+]] = icmp eq ptr %0, @"__llgo.directClosureNilEnv$"
+// CHECK-NEXT: [[DONE_CH:%[0-9]+]] = select i1 [[DONE_IS_NIL]], ptr null, ptr %0
+// CHECK-NEXT: call void @"{{.*}}ChanClose"(ptr [[DONE_CH]])
 // CHECK-LABEL: define ptr @"main._llgo_routine$1"(ptr
 // CHECK: [[ROUTINE1_ARGS:%[0-9]+]] = load { %"{{.*}}String" }, ptr [[ROUTINE1_ROOT:%[0-9]+]]
 // CHECK-NEXT: [[ROUTINE1_TEXT:%[0-9]+]] = extractvalue { %"{{.*}}String" } [[ROUTINE1_ARGS]], 0

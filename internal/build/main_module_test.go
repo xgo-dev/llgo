@@ -945,6 +945,56 @@ func TestGenMainModuleWASIThreadsInstallsLocalContextWithoutUserLocality(t *test
 	)
 }
 
+func TestGenMainModuleGCInit(t *testing.T) {
+	llvm.InitializeAllTargets()
+	t.Setenv(llgoStdioNobuf, "")
+	for _, tc := range []struct {
+		name       string
+		goos, arch string
+		mode       BuildMode
+		tags       string
+		rtInit     bool
+	}{
+		{"linux-exe", "linux", "amd64", BuildModeExe, "", true},
+		{"darwin-exe", "darwin", "arm64", BuildModeExe, "", true},
+		{"windows-exe", "windows", "arm64", BuildModeExe, "", true},
+		{"linux-cshared", "linux", "amd64", BuildModeCShared, "", true},
+		{"darwin-carchive", "darwin", "arm64", BuildModeCArchive, "", true},
+		{"windows-cshared", "windows", "arm64", BuildModeCShared, "", true},
+		{"nogc", "linux", "amd64", BuildModeExe, "nogc", true},
+		{"baremetal", "linux", "arm", BuildModeExe, "baremetal", true},
+		{"wasip1", "wasip1", "wasm", BuildModeExe, "", true},
+		{"js-wasm", "js", "wasm", BuildModeExe, "", true},
+		{"no-rtinit", "linux", "amd64", BuildModeExe, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := &context{
+				prog: llssa.NewProgram(nil),
+				buildConf: &Config{
+					BuildMode: tc.mode,
+					Goos:      tc.goos,
+					Goarch:    tc.arch,
+					Tags:      tc.tags,
+				},
+			}
+			defer ctx.prog.Dispose()
+			pkg := &packages.Package{PkgPath: "main", ExportFile: "main.a"}
+			ir := genMainModule(ctx, llssa.PkgRuntime, pkg, &genConfig{rtInit: tc.rtInit}).LPkg.String()
+			wantCall := `call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.InitGC"()`
+			got := strings.Contains(ir, wantCall)
+			if got != tc.rtInit {
+				t.Fatalf("runtime.InitGC emitted = %v, want %v:\n%s", got, tc.rtInit, ir)
+			}
+			if tc.rtInit {
+				assertInOrder(t, ir,
+					wantCall,
+					`call void @"github.com/xgo-dev/llgo/runtime/internal/runtime.init"()`,
+				)
+			}
+		})
+	}
+}
+
 func installLocalContextTestRuntime(prog llssa.Program) {
 	runtimePkg := types.NewPackage(llssa.PkgRuntime, "runtime")
 	contextName := types.NewTypeName(token.NoPos, runtimePkg, "LocalContext", nil)

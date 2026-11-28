@@ -13,16 +13,13 @@ func (pkg Package) SpecializeSIMD() error {
 	}
 }
 
-// MarkSIMDFMV records compiler-checked source identities for the early LLVM
-// transform. An available variant is a cross-package ABI promise: the defining
-// package emits it, and guarded callers may refer to it without LTO.
-func (f Function) MarkSIMDFMV(available bool, query string) {
+// MarkSIMDFMV records a source query and the execution contract of an
+// explicitly selected Midway implementation.
+func (f Function) MarkSIMDFMV(width int, query string) {
 	if f.Prog.Target().GOARCH != "amd64" {
 		return
 	}
-	if available {
-		f.impl.AddFunctionAttr(f.Prog.ctx.CreateStringAttribute(llvmfmv.EntryAttribute, ""))
-	}
+	llvmfmv.MarkMidwayFloor(f.impl, width)
 	if query != "" {
 		f.impl.AddFunctionAttr(f.Prog.ctx.CreateStringAttribute(llvmfmv.QueryAttribute, query))
 	}

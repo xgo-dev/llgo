@@ -24,12 +24,22 @@ import (
 // overflow the platform timespec conversion.
 const maxTimerCondWait = int64(24 * 60 * 60 * 1e9)
 
+type timerWaitState uint8
+
+const (
+	timerNotWaiting timerWaitState = iota
+	timerWaitIndefinitely
+	timerWaitUntil
+)
+
 var (
-	timerSchedulerOnce psync.Once
-	timerSchedulerMu   psync.Mutex
-	timerSchedulerCond psync.Cond
-	timerSchedulerHeap []*timerState
-	timerSchedulerMap  wordmap.Map[unsafe.Pointer, *timerState]
+	timerSchedulerOnce   psync.Once
+	timerSchedulerMu     psync.Mutex
+	timerSchedulerCond   psync.Cond
+	timerSchedulerHeap   []*timerState
+	timerSchedulerMap    wordmap.Map[unsafe.Pointer, *timerState]
+	timerSchedulerWait   timerWaitState
+	timerSchedulerWakeAt int64
 )
 
 func initTimerScheduler() {
@@ -42,20 +52,15 @@ func ensureTimerScheduler() {
 	timerSchedulerOnce.Do(initTimerScheduler)
 }
 
-// timerSchedulerHeadLocked returns a value snapshot of the current head. The
-// deadline must be copied separately because reset can mutate the head timer in
-// place while timerSchedulerMu is held.
-func timerSchedulerHeadLocked() (*timerState, int64) {
-	if len(timerSchedulerHeap) == 0 {
-		return nil, 0
-	}
-	st := timerSchedulerHeap[0]
-	return st, st.r.when
-}
-
-func signalTimerSchedulerIfHeadChangedLocked(old *timerState, oldWhen int64) {
-	current, currentWhen := timerSchedulerHeadLocked()
-	if current != old || currentWhen != oldWhen {
+// wakeTimerSchedulerLocked only interrupts an active wait when the scheduler
+// must recheck the heap sooner. The waiter may finish a timed wait even if
+// that deadline has since been removed.
+func wakeTimerSchedulerLocked(when int64) {
+	if timerSchedulerWait == timerWaitIndefinitely ||
+		(timerSchedulerWait == timerWaitUntil && when < timerSchedulerWakeAt) {
+		// A pending wake will recheck all mutations made before it reacquires
+		// the lock. Avoid further notifications until the next wait begins.
+		timerSchedulerWait = timerNotWaiting
 		timerSchedulerCond.Signal()
 	}
 }
@@ -69,7 +74,6 @@ func startRuntimeTimer(r *runtimeTimer) {
 	}
 	ensureTimerScheduler()
 	timerSchedulerMu.Lock()
-	oldHead, oldHeadWhen := timerSchedulerHeadLocked()
 	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	if st == nil {
 		st = &timerState{r: r, heapIndex: -1}
@@ -80,7 +84,7 @@ func startRuntimeTimer(r *runtimeTimer) {
 	st.callback = snapshotRuntimeTimer(r)
 	st.active = true
 	timerHeapAdd(st)
-	signalTimerSchedulerIfHeadChangedLocked(oldHead, oldHeadWhen)
+	wakeTimerSchedulerLocked(r.when)
 	timerSchedulerMu.Unlock()
 }
 
@@ -93,14 +97,14 @@ func stopRuntimeTimer(r *runtimeTimer) bool {
 	}
 	ensureTimerScheduler()
 	timerSchedulerMu.Lock()
-	oldHead, oldHeadWhen := timerSchedulerHeadLocked()
 	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	wasActive := st != nil && st.active
 	if wasActive {
 		timerHeapRemove(st.heapIndex)
-		st.active = false
 		timerSchedulerMap.Delete(unsafe.Pointer(r))
-		signalTimerSchedulerIfHeadChangedLocked(oldHead, oldHeadWhen)
+		// A parked scheduler can retain st conservatively on its stack.
+		// Release the timer and callback even if the scheduler stays asleep.
+		*st = timerState{heapIndex: -1}
 	}
 	timerSchedulerMu.Unlock()
 	return wasActive
@@ -124,7 +128,6 @@ func resetRuntimeTimer(r *runtimeTimer, when, period int64, update func()) bool 
 	}
 	ensureTimerScheduler()
 	timerSchedulerMu.Lock()
-	oldHead, oldHeadWhen := timerSchedulerHeadLocked()
 	st := timerSchedulerMap.Get(unsafe.Pointer(r))
 	wasActive := st != nil && st.active
 	if st == nil {
@@ -141,7 +144,7 @@ func resetRuntimeTimer(r *runtimeTimer, when, period int64, update func()) bool 
 	st.callback = snapshotRuntimeTimer(r)
 	st.active = true
 	timerHeapAdd(st)
-	signalTimerSchedulerIfHeadChangedLocked(oldHead, oldHeadWhen)
+	wakeTimerSchedulerLocked(r.when)
 	timerSchedulerMu.Unlock()
 	return wasActive
 }
@@ -151,14 +154,19 @@ func timerSchedulerLoop() {
 	timerSchedulerMu.Lock()
 	for {
 		if len(timerSchedulerHeap) == 0 {
+			timerSchedulerWait = timerWaitIndefinitely
 			timerSchedulerCond.Wait(&timerSchedulerMu)
+			timerSchedulerWait = timerNotWaiting
 			continue
 		}
 
 		st := timerSchedulerHeap[0]
 		now := runtimeNano()
 		if wait := timerSchedulerWaitDuration(st.r.when, now); wait > 0 {
+			timerSchedulerWait = timerWaitUntil
+			timerSchedulerWakeAt = now + wait
 			timerSchedulerTimedWait(wait)
+			timerSchedulerWait = timerNotWaiting
 			continue
 		}
 
@@ -170,8 +178,10 @@ func timerSchedulerLoop() {
 			st.r.when = timerNextWhen(when, period, now)
 			timerHeapAdd(st)
 		} else {
-			st.active = false
 			timerSchedulerMap.Delete(unsafe.Pointer(st.r))
+			// The scheduler uses the callback snapshot after unlocking.
+			// Release the references in st before it can park again.
+			*st = timerState{heapIndex: -1}
 		}
 
 		delay := now - when

@@ -1,6 +1,10 @@
 package runtime
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+
+	llruntime "github.com/xgo-dev/llgo/runtime/internal/runtime"
+)
 
 // Initialize before application package initialization. Reading the environment
 // lazily on the first query would incorrectly observe an os.Setenv in init.
@@ -23,30 +27,12 @@ func GOMAXPROCS(n int) int {
 }
 
 func initialGOMAXPROCS() int {
-	if n := parseGOMAXPROCS(gomaxprocsEnv()); n > 0 {
+	if n := llruntime.ParseGOMAXPROCS(gomaxprocsEnv()); n > 0 {
 		return n
 	}
 	return gomaxprocsDefault()
 }
 
 func gomaxprocsDefault() int {
-	if n := int(c_maxprocs()); n > 0 {
-		return n
-	}
-	return 1
-}
-
-// Match the positive int32 startup environment accepted by the Go runtime.
-// An invalid, zero, negative or overflowing value selects the default.
-func parseGOMAXPROCS(value string) int {
-	const maxEnvironmentValue = 1<<31 - 1
-	n := 0
-	for i := 0; i < len(value); i++ {
-		digit := int(value[i]) - '0'
-		if digit < 0 || digit > 9 || n > (maxEnvironmentValue-digit)/10 {
-			return 0
-		}
-		n = n*10 + digit
-	}
-	return n
+	return llruntime.CPUCount()
 }

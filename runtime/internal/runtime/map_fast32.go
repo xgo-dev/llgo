@@ -8,15 +8,14 @@ import (
 	"unsafe"
 
 	"github.com/xgo-dev/llgo/runtime/abi"
-	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	"github.com/xgo-dev/llgo/runtime/internal/runtime/goarch"
 )
 
-// As in hashMapKey64, the hasher only borrows the key's stack slot.
-func hashMapKey32(t *maptype, key uint32, seed uintptr) uintptr {
-	p := c.Alloca(unsafe.Sizeof(key))
-	*(*uint32)(p) = key
-	return t.Hasher(p, seed)
+// All fast32 map keys are 4-byte regular-memory scalars/pointers whose ABI
+// hasher is memhash32; hash the register value directly without stack storage
+// or an indirect closure dispatch.
+func hashMapKey32(key uint32, seed uintptr) uintptr {
+	return memhash32Val(key, seed)
 }
 
 func mapaccess1_fast32(t *maptype, h *hmap, key uint32) unsafe.Pointer {
@@ -31,7 +30,7 @@ func mapaccess1_fast32(t *maptype, h *hmap, key uint32) unsafe.Pointer {
 		// One-bucket table. No need to hash.
 		b = (*bmap)(h.buckets)
 	} else {
-		hash := hashMapKey32(t, key, uintptr(h.hash0))
+		hash := hashMapKey32(key, uintptr(h.hash0))
 		m := bucketMask(h.B)
 		b = (*bmap)(add(h.buckets, (hash&m)*uintptr(t.BucketSize)))
 		if c := h.oldbuckets; c != nil {
@@ -76,7 +75,7 @@ func mapaccess2_fast32(t *maptype, h *hmap, key uint32) (unsafe.Pointer, bool) {
 		// One-bucket table. No need to hash.
 		b = (*bmap)(h.buckets)
 	} else {
-		hash := hashMapKey32(t, key, uintptr(h.hash0))
+		hash := hashMapKey32(key, uintptr(h.hash0))
 		m := bucketMask(h.B)
 		b = (*bmap)(add(h.buckets, (hash&m)*uintptr(t.BucketSize)))
 		if c := h.oldbuckets; c != nil {
@@ -118,7 +117,7 @@ func mapassign_fast32(t *maptype, h *hmap, key uint32) unsafe.Pointer {
 	if h.flags&hashWriting != 0 {
 		fatal("concurrent map writes")
 	}
-	hash := hashMapKey32(t, key, uintptr(h.hash0))
+	hash := hashMapKey32(key, uintptr(h.hash0))
 
 	// Set hashWriting after calling t.hasher for consistency with mapassign.
 	h.flags ^= hashWriting
@@ -213,7 +212,7 @@ func mapassign_fast32ptr(t *maptype, h *hmap, key unsafe.Pointer) unsafe.Pointer
 	if h.flags&hashWriting != 0 {
 		fatal("concurrent map writes")
 	}
-	hash := t.Hasher(noescape(unsafe.Pointer(&key)), uintptr(h.hash0))
+	hash := hashMapKey32(uint32(uintptr(key)), uintptr(h.hash0))
 
 	// Set hashWriting after calling t.hasher for consistency with mapassign.
 	h.flags ^= hashWriting
@@ -300,7 +299,7 @@ func mapdelete_fast32(t *maptype, h *hmap, key uint32) {
 		fatal("concurrent map writes")
 	}
 
-	hash := hashMapKey32(t, key, uintptr(h.hash0))
+	hash := hashMapKey32(key, uintptr(h.hash0))
 
 	// Set hashWriting after calling t.hasher for consistency with mapdelete
 	h.flags ^= hashWriting
@@ -428,7 +427,7 @@ func evacuate_fast32(t *maptype, h *hmap, oldbucket uintptr) {
 				if !h.sameSizeGrow() {
 					// Compute hash to make our evacuation decision (whether we need
 					// to send this key/elem to bucket x or bucket y).
-					hash := t.Hasher(k, uintptr(h.hash0))
+					hash := memhash32(k, uintptr(h.hash0))
 					if hash&newbit != 0 {
 						useY = 1
 					}

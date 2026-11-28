@@ -52,10 +52,10 @@ func TestNestedPointerCaptureAllocations(t *testing.T) {
 		want  uint64
 		alloc float64
 	}{
-		{"read", func() func() uint64 { return nestedAllocReadPointer(&nestedAllocValue) }, 7, 1},
-		{"restore", func() func() uint64 { return nestedAllocRestore(&nestedAllocValue) }, 8, 1},
+		{"read", func() func() uint64 { return nestedAllocReadPointer(&nestedAllocValue) }, 7, singlePtrClosureEnvAllocs},
+		{"restore", func() func() uint64 { return nestedAllocRestore(&nestedAllocValue) }, 8, singlePtrClosureEnvAllocs},
 		{"two pointers", func() func() uint64 { return nestedAllocTwo(&nestedAllocValue, &nestedAllocValue) }, 8, 1},
-		{"shared binding", func() func() uint64 { return nestedAllocShared(&nestedAllocValue) }, 7, 2},
+		{"shared binding", func() func() uint64 { return nestedAllocShared(&nestedAllocValue) }, 7, 1 + singlePtrClosureEnvAllocs},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			nestedAllocValue = 7
