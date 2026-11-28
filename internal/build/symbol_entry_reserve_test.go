@@ -55,30 +55,46 @@ func TestSymbolEntryReservationGrowth(t *testing.T) {
 	// A large foreign-code gap needs many buckets despite only two Go entries.
 	analysis := pclnpost.ExternalAnalysis{TextStart: 0x1000, TextEnd: 0x4001000,
 		EntrySites: []pclnpost.ExternalSite{{PCOffset: 0x1000}, {PCOffset: 0x4000000}}}
-	grown, changed, err := growSymbolEntryReserve(source, analysis)
+	grown, changed, err := sizeSymbolEntryReserve(source, analysis, false)
 	if err != nil || !changed {
 		t.Fatalf("grow reservation = %v, %v", changed, err)
 	}
 	if !strings.HasPrefix(grown, "@unrelated = constant [32 x i8] zeroinitializer\n") || strings.Count(grown, "[32 x i8]") != 1 {
 		t.Fatalf("reservation growth changed unrelated data or left a stale type: %s", grown)
 	}
-	if next, changed, err := growSymbolEntryReserve(grown, analysis); err != nil || changed || next != grown {
+	if next, changed, err := sizeSymbolEntryReserve(grown, analysis, false); err != nil || changed || next != grown {
 		t.Fatalf("grown reservation is not sufficient: changed=%v, err=%v", changed, err)
 	}
-	if _, changed, err := growSymbolEntryReserve("@ordinary = global i32 0", analysis); err != nil || changed {
+	if _, changed, err := sizeSymbolEntryReserve("@ordinary = global i32 0", analysis, false); err != nil || changed {
 		t.Fatalf("ordinary entry IR = %v, %v", changed, err)
 	}
-	if _, _, err := growSymbolEntryReserve("@__llgo_funcinfo_entry_reserve = private constant i64 0", analysis); err == nil {
+	if _, _, err := sizeSymbolEntryReserve("@__llgo_funcinfo_entry_reserve = private constant i64 0", analysis, false); err == nil {
 		t.Fatal("unexpected reservation declaration accepted")
 	}
-	if _, _, err := growSymbolEntryReserve("@__llgo_funcinfo_entry_reserve = private constant [18446744073709551616 x i8] zeroinitializer", analysis); err == nil {
+	if _, _, err := sizeSymbolEntryReserve("@__llgo_funcinfo_entry_reserve = private constant [18446744073709551616 x i8] zeroinitializer", analysis, false); err == nil {
 		t.Fatal("overflowing reservation capacity accepted")
 	}
-	if _, _, err := growSymbolEntryReserve(source, pclnpost.ExternalAnalysis{}); err == nil {
+	if _, _, err := sizeSymbolEntryReserve(source, pclnpost.ExternalAnalysis{}, false); err == nil {
 		t.Fatal("invalid linked text range accepted")
 	}
-	if _, _, err := growSymbolEntryReserve(source, pclnpost.ExternalAnalysis{TextStart: 1, TextEnd: ^uint64(0)}); err == nil {
+	if _, _, err := sizeSymbolEntryReserve(source, pclnpost.ExternalAnalysis{TextStart: 1, TextEnd: ^uint64(0)}, false); err == nil {
 		t.Fatal("text offsets exceeding the runtime's 32-bit format accepted")
+	}
+}
+
+func TestSharedSymbolEntryReservation(t *testing.T) {
+	const source = `@__llgo_funcinfo_entry_reserve = private constant [4096 x i8] zeroinitializer, section "__DATA,__llgo_fie,regular,live_support"`
+	analysis := pclnpost.ExternalAnalysis{TextStart: 0x1000, TextEnd: 0x2000,
+		EntrySites: []pclnpost.ExternalSite{{PCOffset: 16}}}
+	packed, changed, err := sizeSymbolEntryReserve(source, analysis, true)
+	if err != nil || !changed || !strings.Contains(packed, "[512 x i8]") {
+		t.Fatalf("pack shared reservation: %s, %v, %v", packed, changed, err)
+	}
+	if next, changed, err := sizeSymbolEntryReserve(packed, analysis, true); err != nil || changed || next != packed {
+		t.Fatalf("repacking a stable shared reservation: %s, %v, %v", next, changed, err)
+	}
+	if next, changed, err := sizeSymbolEntryReserve(packed, analysis, false); err != nil || changed || next != packed {
+		t.Fatalf("verify packed reservation: %s, %v, %v", next, changed, err)
 	}
 }
 
@@ -154,7 +170,7 @@ func TestSymbolEntryReservationPublication(t *testing.T) {
 					if err != nil {
 						return err
 					}
-					if _, grow, err := growSymbolEntryReserve(string(raw), initial); err != nil || grow {
+					if _, grow, err := sizeSymbolEntryReserve(string(raw), initial, false); err != nil || grow {
 						t.Fatalf("compiler received insufficient reservation: %v, %v", grow, err)
 					}
 					return os.WriteFile(object, []byte("entry"), 0o600)

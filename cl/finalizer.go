@@ -8,12 +8,19 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// Exact pointer/callback types can use the linear-GC dispatcher without
-// retaining reflection metadata. Other collectors and debugger builds use the
-// public entry point.
+// Exact pointer/callback types can avoid the generic finalizer dispatcher and
+// its reflection metadata.
 func (p *context) directFinalizer(call *ssa.CallCommon) (obj, fn *ssa.MakeInterface, result types.Type, ok bool) {
-	if !p.prog.GCRootsEnabled() || p.options.DebuggerFrames ||
-		p.prog.Target() == nil || p.prog.Target().GOARCH != "wasm" {
+	target := p.prog.Target()
+	if target == nil || p.options.DebuggerFrames {
+		return
+	}
+	wasm := target.GOARCH == "wasm"
+	if wasm && !p.prog.GCRootsEnabled() {
+		return
+	}
+	if !wasm && (target.Target != "" || target.GOOS != "darwin" && target.GOOS != "linux" ||
+		target.GOARCH != "amd64" && target.GOARCH != "arm64") {
 		return
 	}
 	callee := call.StaticCallee()
@@ -52,8 +59,16 @@ func (p *context) directFinalizer(call *ssa.CallCommon) (obj, fn *ssa.MakeInterf
 	if !goClosure || !llssa.IsClosure(closure) {
 		return
 	}
-	if function, direct := fn.X.(*ssa.Function); direct {
-		if _, _, kind := p.funcName(function); kind != goFunc {
+	switch f := fn.X.(type) {
+	case *ssa.Function:
+		if _, _, kind := p.funcName(f); kind != goFunc {
+			return
+		}
+	case *ssa.MakeClosure:
+	default:
+		// Native call lowering requires a known non-nil closure. Keep the
+		// public entry point for function values from variables and interfaces.
+		if !wasm {
 			return
 		}
 	}
@@ -62,6 +77,9 @@ func (p *context) directFinalizer(call *ssa.CallCommon) (obj, fn *ssa.MakeInterf
 	case 1:
 		result = sig.Results().At(0).Type()
 		if _, aggregate := result.Underlying().(*types.Interface); !aggregate {
+			return obj, fn, nil, false
+		}
+		if !wasm && !types.Identical(result, types.Universe.Lookup("error").Type()) {
 			return obj, fn, nil, false
 		}
 	default:
