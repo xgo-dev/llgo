@@ -26,6 +26,7 @@ class WorkerReuseTests(unittest.TestCase):
                 "args = sys.argv[1:]\n"
                 "kind = ('compile' if '-c' in args else\n"
                 "        'language' if '-test.skip' in args else\n"
+                "        'reflect-alloc' if '^TestReflectTypeAssert$/^mismatch$' in args else\n"
                 "        'gc' if '^TestGCConcurrentTypedMutation$' in args else\n"
                 "        'stack' if '^TestEscapeTypedStack' in args else\n"
                 "        'lifetime' if any('TestUintptrEscapes' in x for x in args) else 'run')\n"
@@ -34,6 +35,7 @@ class WorkerReuseTests(unittest.TestCase):
                 "if os.getenv('FAIL_TOOL') == kind: sys.exit(7)\n"
                 "if kind == 'compile': pathlib.Path(args[args.index('-o')+1]).touch()\n"
                 "else: assert pathlib.Path(args[1]).is_file()\n"
+                "if kind == 'reflect-alloc': print('--- PASS: TestReflectTypeAssert/mismatch')\n"
                 "print('PASS')\n"
             )
             for name in ("compiler", "node"):
@@ -44,8 +46,10 @@ class WorkerReuseTests(unittest.TestCase):
             # Load the real function definitions without running the full suite.
             script = SCRIPT.read_text().split('require_tool "${llgo_cmd}"')[0]
             script += '\nrepo_root="$1"\nrun_worker_go_test "$2"\n'
+            driver = directory / "worker-test.sh"
+            driver.write_text(script)
             result = subprocess.run(
-                ["bash", "-c", script, str(SCRIPT), str(ROOT), target],
+                ["bash", str(driver), str(ROOT), target],
                 env={**os.environ, "LLGO": str(directory / "compiler"),
                      "NODE": str(directory / "node"), "TRACE": str(trace),
                      "FAIL_TOOL": failure},
@@ -59,13 +63,15 @@ class WorkerReuseTests(unittest.TestCase):
             with self.subTest(target=target):
                 result, calls = self.run_worker(target)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual([call[0] for call in calls], ["compile", "language", "gc", "stack", "lifetime", "run"])
-                compile_args, language_args, gc_args, stack_args, lifetime_args, run_args = [call[1] for call in calls]
-                for args in (language_args, gc_args, stack_args, lifetime_args, run_args):
+                self.assertEqual([call[0] for call in calls], ["compile", "language", "reflect-alloc", "gc", "stack", "lifetime", "run"])
+                compile_args, language_args, alloc_args, gc_args, stack_args, lifetime_args, run_args = [call[1] for call in calls]
+                for args in (language_args, alloc_args, gc_args, stack_args, lifetime_args, run_args):
                     self.assertIn(f"{target}-runner.mjs", args[0])
                     self.assertEqual(compile_args[compile_args.index("-o") + 1], args[1])
                 self.assertEqual(language_args[language_args.index("-test.skip") + 1],
-                                 "^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop|TestDeferCaptureStorageGC|TestUnsafeViewsEscapeAndGC)$")
+                                 "^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop|TestDeferCaptureStorageGC|TestUnsafeViewsEscapeAndGC)$|^TestReflectTypeAssert$/^mismatch$")
+                self.assertEqual(alloc_args[alloc_args.index("-test.run") + 1],
+                                 "^TestReflectTypeAssert$/^mismatch$")
                 self.assertEqual(gc_args[gc_args.index("-test.run") + 1],
                                  "^TestGCConcurrentTypedMutation$")
                 self.assertIn("-test.timeout=480s", gc_args)
@@ -77,15 +83,23 @@ class WorkerReuseTests(unittest.TestCase):
                 self.assertIn("-test.timeout=480s", lifetime_args)
                 self.assertEqual(run_args[run_args.index("-test.run") + 1],
                                  "^TestRuntimeNumGoroutineIncludesNewProc$")
-                self.assertEqual([call[2] for call in calls], ["2", "2", "2", "2", "2", "2"])
+                self.assertEqual([call[2] for call in calls], ["2"] * len(calls))
                 skip = language_args[language_args.index("-test.skip") + 1]
+                # Go matches each slash-separated component independently.
+                # The sibling subtests stay in the shared language process.
+                group_skip, alloc_skip = skip.rsplit("|", 1)
+                self.assertEqual(alloc_skip, alloc_args[alloc_args.index("-test.run") + 1])
+                parent, subtest = alloc_skip.split("/")
+                self.assertTrue(re.fullmatch(parent, "TestReflectTypeAssert"))
+                self.assertTrue(re.fullmatch(subtest, "mismatch"))
+                self.assertIsNone(re.search(subtest, "primitive"))
                 isolated = [args[args.index("-test.run") + 1]
                             for args in (gc_args, stack_args, lifetime_args, run_args)]
                 # Check the real suite inventory: every test still runs exactly
                 # once, either in the main process or an isolated stress group.
                 for source in (ROOT / "test/go").glob("*_test.go"):
                     for name in re.findall(r"^func (Test\w+)\(.*\*testing\.T", source.read_text(), re.M):
-                        runs = int(re.search(skip, name) is None)
+                        runs = int(re.search(group_skip, name) is None)
                         runs += sum(re.search(pattern, name) is not None for pattern in isolated)
                         self.assertEqual(runs, 1, f"{source.name}: {name}")
 
@@ -95,7 +109,7 @@ class WorkerReuseTests(unittest.TestCase):
         self.assertEqual([call[0] for call in calls], ["compile"])
 
     def test_isolated_process_failure_fails_acceptance(self):
-        stages = ["compile", "language", "gc", "stack", "lifetime", "run"]
+        stages = ["compile", "language", "reflect-alloc", "gc", "stack", "lifetime", "run"]
         for failure in stages[1:]:
             with self.subTest(failure=failure):
                 result, calls = self.run_worker("emscripten", failure)

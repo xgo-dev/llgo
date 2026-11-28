@@ -133,7 +133,9 @@ func recordCallerLocation(entry uintptr, name, file string, line int, metadata c
 		return
 	}
 	updateCurrentFrame(entry, name, file, line, metadata)
-	recordPCLocation(0, entry, name, file, line, metadata)
+	if physicalCallerLookup {
+		recordPCLocation(0, entry, name, file, line, metadata)
+	}
 }
 
 func updateCurrentFrame(entry uintptr, name, file string, line int, metadata callerLocationMetadata) {
@@ -424,6 +426,9 @@ func PanicActive() bool {
 }
 
 func BindCallerLocation(pc uintptr, rawName string) {
+	if !physicalCallerLookup {
+		return
+	}
 	store := callerLocationStoreCurrent
 	if store == nil || pc == 0 {
 		return
@@ -470,6 +475,9 @@ func FrameForPC(pc uintptr) (CallerFrame, bool) {
 		if frame, ok := syntheticFrameForPC(pc); ok {
 			return frame, true
 		}
+	}
+	if !physicalCallerLookup {
+		return CallerFrame{}, false
 	}
 	store := callerLocationStoreCurrent
 	if store == nil || pc == 0 {

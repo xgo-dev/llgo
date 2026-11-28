@@ -113,8 +113,8 @@ func main() {
 // CHECK: [[RECOVER_TOKEN:%[0-9]+]] = alloca i8
 // CHECK-NEXT: call void @"{{.*}}.BindRecoverFrame"(ptr @"main.main$1", ptr [[RECOVER_TOKEN]])
 // CHECK-NEXT: [[RECOVERED:%[0-9]+]] = call %"{{.*}}.eface" @"{{.*}}.Recover"(ptr [[RECOVER_TOKEN]])
-// CHECK-NEXT: [[RECOVER_EMPTY:%[0-9]+]] = call i1 @"{{.*}}.EfaceEqual"(%"{{.*}}.eface" [[RECOVERED]], %"{{.*}}.eface" zeroinitializer)
-// CHECK-NEXT: [[RECOVER_NONEMPTY:%[0-9]+]] = xor i1 [[RECOVER_EMPTY]], true
+// CHECK-NEXT: [[RECOVER_TYPE:%[0-9]+]] = extractvalue %"{{.*}}.eface" [[RECOVERED]], 0
+// CHECK-NEXT: [[RECOVER_NONEMPTY:%[0-9]+]] = icmp ne ptr [[RECOVER_TYPE]], null
 // CHECK-NEXT: br i1 [[RECOVER_NONEMPTY]], label %{{.*}}, label %{{.*}}
 // CHECK: call void @"{{.*}}.PrintString"(%"{{.*}}.String" { ptr [[PRINT_DEFER1]], i64 10 })
 // CHECK: call void @"{{.*}}.Panic"(%"{{.*}}.eface" { ptr @_llgo_string, ptr @"_llgo_ifacebox${{.*}}" })

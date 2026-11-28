@@ -47,6 +47,7 @@ func formatFloat(buf *floatBuffer, v float64, imaginary bool) int {
 		format = c.Str("%+g")
 	}
 	p := (*c.Char)(unsafe.Pointer(buf))
+	requirePrintfFloat()
 	c.Snprintf(p, floatFormatSize, format, v)
 	n := int(c.Strlen(p))
 	if legacyFloatFormat {

@@ -111,17 +111,17 @@ func windowsCallbackFFIType(t *abi.Type) *ffi.Type {
 }
 
 func newWindowsCallbackEntry(fn any, callbackFn callbackValue, ft *abi.FuncType, cleanstack bool) *windowsCallbackEntry {
-	goArgTypes := make([]*ffi.Type, 0, len(ft.In)+1)
+	goArgTypes := make([]*ffi.Type, 0, ft.InCount+1)
 	explicitEnv := false
 	if callbackFn.env != nil && ffi.ClosureEnvExplicit {
 		explicitEnv = true
 		goArgTypes = append(goArgTypes, ffi.TypePointer)
 	}
 
-	cArgTypes := make([]*ffi.Type, 0, len(ft.In))
-	cArgIndex := make([]int, len(ft.In))
+	cArgTypes := make([]*ffi.Type, 0, ft.InCount)
+	cArgIndex := make([]int, ft.InCount)
 	frameSize := uintptr(0)
-	for i, t := range ft.In {
+	for i, t := range ft.In() {
 		argType := windowsCallbackFFIType(t)
 		goArgTypes = append(goArgTypes, argType)
 		if t.Size_ == 0 {
@@ -136,10 +136,10 @@ func newWindowsCallbackEntry(fn any, callbackFn callbackValue, ft *abi.FuncType,
 		// pathological signatures containing many sub-word arguments.
 		frameSize += unsafe.Sizeof(uintptr(0))
 	}
-	if len(ft.Out) != 1 || ft.Out[0].Size_ != unsafe.Sizeof(uintptr(0)) {
+	if ft.OutCount != 1 || ft.Out()[0].Size_ != unsafe.Sizeof(uintptr(0)) {
 		panic("compileCallback: expected function with one uintptr-sized result")
 	}
-	if kind := ft.Out[0].Kind(); kind == abi.Float32 || kind == abi.Float64 {
+	if kind := ft.Out()[0].Kind(); kind == abi.Float32 || kind == abi.Float64 {
 		panic("compileCallback: float results not supported")
 	}
 	// Go's 386 callback ABI returns through a stack slot, while amd64 and
@@ -152,7 +152,7 @@ func newWindowsCallbackEntry(fn any, callbackFn callbackValue, ft *abi.FuncType,
 		panic("compileCallback: function argument frame too large")
 	}
 
-	goResultType := finalizerFFIType(ft.Out[0])
+	goResultType := finalizerFFIType(ft.Out()[0])
 	goSig, err := ffi.NewSignatureWithABI(callbackABI(ft), goResultType, goArgTypes...)
 	if err != nil {
 		panic("libffi error: " + err.Error())

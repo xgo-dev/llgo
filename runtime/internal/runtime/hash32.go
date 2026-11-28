@@ -16,6 +16,9 @@ import (
 )
 
 func memhash32Val(t uint32, seed uintptr) uintptr {
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
+	}
 	a, b := mix32(uint32(seed), uint32(4^hashkey[0]))
 	a ^= t
 	b ^= t
@@ -25,6 +28,9 @@ func memhash32Val(t uint32, seed uintptr) uintptr {
 }
 
 func memhash64Val(v uint64, seed uintptr) uintptr {
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
+	}
 	a, b := mix32(uint32(seed), uint32(8^hashkey[0]))
 	if goarch.BigEndian {
 		a ^= uint32(v >> 32)
@@ -47,6 +53,9 @@ func memhash64(p unsafe.Pointer, seed uintptr) uintptr {
 }
 
 func memhash(p unsafe.Pointer, seed, s uintptr) uintptr {
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
+	}
 	if useAeshash && s > 16 {
 		return memhashAES(p, seed, s)
 	}

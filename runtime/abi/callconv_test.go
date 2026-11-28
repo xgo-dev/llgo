@@ -11,7 +11,7 @@ func TestNativeFunctionCallConvention(t *testing.T) {
 		{"Go", Type{Kind_: uint8(Func)}, false},
 		{"cdecl", Type{Kind_: uint8(Func) | KindDirectIface, TFlag: TFlagNative}, false},
 		{"stdcall", Type{Kind_: uint8(Func) | KindDirectIface | KindStdcall, TFlag: TFlagNative}, true},
-		{"Go with unrelated bit", Type{Kind_: uint8(Func) | KindStdcall}, false},
+		{"Go closure descriptor", Type{Kind_: uint8(Func), TFlag: TFlagNamed | TFlagClosureFunc}, false},
 		{"native struct", Type{Kind_: uint8(Struct) | KindStdcall, TFlag: TFlagNative}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -19,6 +19,38 @@ func TestNativeFunctionCallConvention(t *testing.T) {
 				t.Fatalf("IsStdcall() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestNamedClosureDescriptors(t *testing.T) {
+	storage := &namedClosureTypeUncommon{
+		NamedClosureType: NamedClosureType{
+			StructType: StructType{Type: Type{
+				Kind_: uint8(Struct),
+				TFlag: TFlagNamed | TFlagClosure | TFlagUncommon,
+			}},
+		},
+		u: UncommonType{Mcount: 1},
+	}
+	public := &ClosureFuncType{
+		FuncType: FuncType{Type: Type{
+			Kind_: uint8(Func),
+			TFlag: TFlagNamed | TFlagUncommon | TFlagClosureFunc,
+		}},
+		Closure: &storage.StructType,
+	}
+	storage.PublicFunc = &public.FuncType
+	if storage.PublicFuncType() != &public.FuncType || public.PhysicalClosure() != &storage.StructType {
+		t.Fatal("function descriptors do not round trip")
+	}
+	if public.IsClosure() || public.IsStdcall() || public.Uncommon() != storage.Uncommon() ||
+		public.Uncommon().Mcount != 1 {
+		t.Fatal("public function has incorrect flags or method metadata")
+	}
+
+	native := &FuncType{Type: Type{Kind_: uint8(Func) | KindStdcall, TFlag: TFlagNative}}
+	if !native.IsStdcall() || native.PhysicalClosure() != nil {
+		t.Fatal("stdcall function was treated as a Go closure")
 	}
 }
 
@@ -48,6 +80,9 @@ func TestCallbackDescriptorIdentity(t *testing.T) {
 		}
 		if got := tc.typ.NativeFuncAlias(); got != tc.alias {
 			t.Errorf("%s: NativeFuncAlias() = %p, want %p", tc.name, got, tc.alias)
+		}
+		if tc.typ.Kind() == Func && tc.typ.FuncType().PhysicalClosure() != nil {
+			t.Errorf("%s: qualified signature was treated as a named closure", tc.name)
 		}
 		if got := tc.typ.IsClosure(); got != tc.closure {
 			t.Errorf("%s: IsClosure() = %t, want %t", tc.name, got, tc.closure)

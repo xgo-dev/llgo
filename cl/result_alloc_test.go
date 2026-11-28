@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"github.com/xgo-dev/llgo/ssa/ssatest"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -155,7 +156,7 @@ func pointer(q *uint64) (r Pointers) { putPointer(&r, q); return }
 	if body := llvmFunction(t, pkg.String(), "resultalloc.scalar"); strings.Contains(body, "runtime.Alloc") {
 		t.Fatalf("pointer-free result should use stack storage with explicit roots:\n%s", body)
 	}
-	if body := llvmFunction(t, pkg.String(), "resultalloc.pointer"); strings.Contains(body, "runtime.AllocZ") || !strings.Contains(pkg.String(), "__llgo_gcroot_stack_pointer_") {
+	if body := llvmFunction(t, pkg.String(), "resultalloc.pointer"); strings.Contains(body, "runtime.AllocZ") || !ssatest.HasStackFieldRootMap(pkg.String()) {
 		t.Fatalf("pointer-containing result needs typed stack roots:\n%s", body)
 	}
 }

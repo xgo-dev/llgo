@@ -610,6 +610,33 @@ func TestGenMainModuleEmscriptenWorkerEntry(t *testing.T) {
 	}
 }
 
+func TestGenMainModuleEmscriptenDirectEntry(t *testing.T) {
+	llvm.InitializeAllTargets()
+	prog := llssa.NewProgram(nil)
+	defer prog.Dispose()
+	pkg := &packages.Package{ID: "example.com/main", PkgPath: "example.com/main", ExportFile: "main.a"}
+	archive := &aPackage{Package: pkg, NeedRt: true, linkSnapshot: &packageLinkSnapshot{}}
+	ctx := &context{
+		prog: prog,
+		buildConf: &Config{BuildMode: BuildModeExe, Goos: "js", Goarch: "wasm",
+			Target: "emscripten", PCLNMode: PCLNNone},
+		pkgs:                 map[*packages.Package]Package{pkg: archive},
+		emscriptenDirectMain: true,
+	}
+	preparation, err := planMainLink(ctx, pkg, []*aPackage{archive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mod := genMainModule(ctx, llssa.PkgRuntime, pkg, &preparation.gen)
+	ir := mod.LPkg.String()
+	for _, symbol := range []string{llssa.PkgRuntime + ".init", "EnterLocalContext", "RunWasmMain"} {
+		if strings.Contains(ir, symbol) {
+			t.Fatalf("direct entry retains %q:\n%s", symbol, ir)
+		}
+	}
+	assertInOrder(t, ir, `call void @"example.com/main.init"()`, `call void @"example.com/main.main"()`)
+}
+
 func TestGenMainModuleLibrary(t *testing.T) {
 	llvm.InitializeAllTargets()
 	t.Setenv(llgoStdioNobuf, "")

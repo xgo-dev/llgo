@@ -230,6 +230,9 @@ func Panic(v any) {
 	Rethrow(gp.defer_)
 }
 func Goexit() {
+	if wasmSchedulerProof {
+		requireWasmScheduler()
+	}
 	gp := getg()
 	gp.abortPanics()
 	gp.goexit = true

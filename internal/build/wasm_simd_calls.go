@@ -10,7 +10,7 @@ import (
 	"github.com/xgo-dev/llvm"
 )
 
-func needsEmscriptenSIMDCallBridge(ctx *context) bool {
+func usesEmscriptenJSSjLj(ctx *context) bool {
 	provider := ctx.crossCompile.WasmProvider
 	if provider != crosscompile.WasmProviderEmscripten && provider != crosscompile.WasmProviderGoJS {
 		return false
@@ -70,7 +70,7 @@ func emscriptenNativeSjLj(args []string) bool {
 // retain their vector ABI. Run after optimization so inlined calls are covered.
 // Remaining vector-call bodies cannot be inlined later into a setjmp function.
 func lowerEmscriptenSIMDCalls(ctx *context, mod llvm.Module) int {
-	if !needsEmscriptenSIMDCallBridge(ctx) {
+	if !usesEmscriptenJSSjLj(ctx) {
 		return 0
 	}
 	setjmp := mod.NamedFunction("setjmp")

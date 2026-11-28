@@ -10,6 +10,7 @@ require (
 	github.com/goplus/mod v0.22.1
 	github.com/mattn/go-tty v0.0.8
 	github.com/qiniu/x v1.19.3
+	github.com/tdewolff/minify/v2 v2.24.19
 	github.com/xgo-dev/llgo/runtime v0.0.0-00010101000000-000000000000
 	github.com/xgo-dev/llvm v0.10.4
 	github.com/xgo-dev/plan9asm v0.6.2
@@ -23,6 +24,7 @@ require (
 require (
 	github.com/creack/goselect v0.1.2 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/tdewolff/parse/v2 v2.8.16 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 )
 

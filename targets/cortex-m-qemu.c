@@ -1,4 +1,4 @@
-// Cortex-M startup and semihosted stdio for the lm3s6965 QEMU target.
+// Cortex-M startup and semihosted stdio for QEMU targets.
 #include <errno.h>
 #include <stdint.h>
 #include <sys/types.h>

@@ -116,7 +116,10 @@ run_worker_go_test() {
 	# Reuse one complete module, but give forced-GC lifetime groups their own
 	# process alarm so conservative heap growth cannot exhaust the shared one.
 	local lifetime_tests='TestUintptrEscapes.*|TestRuntimeKeepAlive.*|TestGCViews|TestNestedPointerCaptureGCAndLoop|TestDeferCaptureStorageGC|TestUnsafeViewsEscapeAndGC'
-	local language_skip="^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|${lifetime_tests})$"
+	# AllocsPerRun reads process-wide counters. GOMAXPROCS(1) records the
+	# requested setting but does not stop other browser workers from allocating.
+	local alloc_test='^TestReflectTypeAssert$/^mismatch$'
+	local language_skip="^(TestRuntimeNumGoroutineIncludesNewProc|TestGCConcurrentTypedMutation|TestEscapeTypedStack.*|${lifetime_tests})$|${alloc_test}"
 	# Bound compilation separately from guest execution, as for the reused
 	# groups below. All groups execute the same module and iteration counts.
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 "${llgo_cmd}" test \
@@ -128,6 +131,12 @@ run_worker_go_test() {
 			-test.v -test.count=1 -test.timeout=480s -test.skip "${language_skip}"
 	) 2>&1 | tee "${output}"
 	grep -Fxq "PASS" "${output}"
+	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
+		"${node_cmd}" "${repo_root}/targets/${target}-runner.mjs" "${module}" \
+		-test.v -test.count=1 -test.timeout=180s -test.run "${alloc_test}" \
+		2>&1 | tee "${output}.reflect-alloc"
+	grep -Fq -- '--- PASS: TestReflectTypeAssert/mismatch' "${output}.reflect-alloc"
+	grep -Fxq "PASS" "${output}.reflect-alloc"
 	run_with_timeout_limit 600 env LLGO_WASM_WORKERS=2 \
 		"${node_cmd}" "${repo_root}/targets/${target}-runner.mjs" "${module}" \
 		-test.v -test.count=1 -test.timeout=480s \

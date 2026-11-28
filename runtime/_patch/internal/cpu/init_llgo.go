@@ -1,4 +1,4 @@
-//go:build (amd64 || 386 || arm64 || wasm) && !baremetal
+//go:build (amd64 || 386 || arm64) && !baremetal
 
 package cpu
 
@@ -7,6 +7,8 @@ import _ "unsafe"
 // The standard runtime calls Initialize before package initialization. LLGo's
 // hosted runtime uses the normal import graph: initialize this package before
 // any consumer can read its feature flags, including archsimd and user inits.
+// Go's Wasm detector has no options and its early runtime setup does not read
+// GODEBUG from the host. Wasm needs no initialization hook here.
 func init() {
 	llgoPrepareCPU()
 	Initialize(llgoCPUEnvironment())

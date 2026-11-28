@@ -5,11 +5,13 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"go/version"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -19,6 +21,41 @@ import (
 	"github.com/xgo-dev/llgo/internal/packages"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 )
+
+func TestSourcePatchBuiltinFormatter(t *testing.T) {
+	if version.Lang(runtime.Version()) != "go1.27" {
+		t.Skip("requires the Go 1.27 fmt source")
+	}
+	goroot := runtime.GOROOT()
+	srcDir := filepath.Join(goroot, "src", "fmt")
+	generated := filepath.Join(srcDir, "z_llgo_patch_builtin_format.go")
+	for _, test := range []struct {
+		name    string
+		enabled bool
+		base    map[string][]byte
+		want    bool
+	}{
+		{name: "ordinary build"},
+		{name: "size build", enabled: true, want: true},
+		{name: "user source overlay", enabled: true, base: map[string][]byte{filepath.Join(srcDir, "print.go"): []byte("package fmt")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, overlay, files, err := applySourcePatchForPkg(test.base, nil, env.LLGoRuntimeDir(), goroot, "fmt", sourcePatchBuildContext{
+				goos: runtime.GOOS, goarch: runtime.GOARCH, goversion: runtime.Version(), builtinFormats: test.enabled,
+				buildFlags: []string{"-tags=llgo"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if installed := slices.Contains(files, generated); installed != test.want {
+				t.Fatalf("generated formatter listed = %v, want %v", installed, test.want)
+			}
+			if installed := len(overlay[generated]) != 0; installed != test.want {
+				t.Fatalf("generated formatter in overlay = %v, want %v", installed, test.want)
+			}
+		})
+	}
+}
 
 func TestWasmRuntimeSourcePatchTypeChecks(t *testing.T) {
 	for _, test := range []struct {

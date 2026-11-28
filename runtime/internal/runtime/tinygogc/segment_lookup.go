@@ -16,8 +16,6 @@ type heapSegment struct {
 	first, last uintptr // [first, last) are usable blocks; last is the sentinel
 }
 
-const maxHeapSegments = 128
-
 var heapSegmentCount int
 
 // libc arenas need not be returned in address order. Keep a separate sorted

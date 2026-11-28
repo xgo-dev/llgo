@@ -24,6 +24,9 @@ const (
 )
 
 func memhash(p unsafe.Pointer, seed, s uintptr) uintptr {
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
+	}
 	if useAeshash && s > 16 {
 		return memhashAES(p, seed, s)
 	}
@@ -73,11 +76,17 @@ func memhash(p unsafe.Pointer, seed, s uintptr) uintptr {
 }
 
 func memhash32Val(v uint32, seed uintptr) uintptr {
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
+	}
 	a := uintptr(v)
 	return mix(m5^4, mix(a^m2, a^seed^hashkey[0]^m1))
 }
 
 func memhash64Val(v uint64, seed uintptr) uintptr {
+	if EmbeddedStartupProof {
+		RequireEmbeddedStartup()
+	}
 	a := uintptr(v)
 	return mix(m5^8, mix(a^m2, a^seed^hashkey[0]^m1))
 }

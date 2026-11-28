@@ -189,6 +189,9 @@ const (
 	// can call an environment-free Go entry without an ABI adapter.
 	TFlagDirectGoCallback TFlag = TFlagClosure
 
+	// On a named Go Func descriptor, this bit marks a storage backpointer.
+	TFlagClosureFunc TFlag = TFlagClosure
+
 	// TFlagNative means this declaration has a legacy cdecl/stdcall
 	// storage and calling ABI. Go size and alignment queries may still
 	// report the ordinary Go layout. Unlabeled wrappers are not marked;
@@ -282,29 +285,71 @@ func (p *FuncType) Variadic() bool {
 	return p.TFlag&TFlagVariadic != 0
 }
 
+// In and Out expose the two parts of the immutable signature table. The
+// compiler and reflect.FuncOf allocate both parts consecutively.
+func (p *FuncType) In() []*Type {
+	if p.InCount == 0 {
+		return nil
+	}
+	return signatureSlice(p.Types, p.InCount)
+}
+
+func (p *FuncType) Out() []*Type {
+	if p.OutCount == 0 {
+		return nil
+	}
+	first := (**Type)(unsafe.Add(unsafe.Pointer(p.Types), uintptr(p.InCount)*unsafe.Sizeof(p.Types)))
+	return signatureSlice(first, p.OutCount)
+}
+
+func signatureSlice(data **Type, count int) []*Type {
+	header := struct {
+		data **Type
+		len  int
+		cap  int
+	}{data, count, count}
+	return *(*[]*Type)(unsafe.Pointer(&header))
+}
+
 type StructField struct {
-	Name_  string  // name is always non-empty
+	Name_  *byte   // encoded name and optional tag
 	Typ    *Type   // type of field
 	Offset uintptr // byte offset of field
-
-	Tag_      string
-	Embedded_ bool
-}
-
-// Embedded reports whether the field is embedded.
-func (f *StructField) Embedded() bool {
-	return f.Embedded_
-}
-
-// Exported reports whether the field is exported.
-func (f *StructField) Exported() bool {
-	return IsExported(f.Name_)
 }
 
 type StructType struct {
 	Type
 	PkgPath_ string
 	Fields   []StructField
+}
+
+// NamedClosureType is the storage descriptor for a defined Go function type.
+// The public descriptor and the physical type share the physical method table.
+type NamedClosureType struct {
+	StructType
+	PublicFunc *FuncType
+}
+
+// ClosureFuncType is the public descriptor paired with a named closure.
+type ClosureFuncType struct {
+	FuncType
+	Closure *StructType
+}
+
+// PublicFuncType returns the signature reflected for a closure.
+func (t *StructType) PublicFuncType() *FuncType {
+	if t.HasName() {
+		return (*NamedClosureType)(unsafe.Pointer(t)).PublicFunc
+	}
+	return t.Fields[0].Typ.FuncType()
+}
+
+// PhysicalClosure returns the compiler-emitted storage descriptor, if present.
+func (t *FuncType) PhysicalClosure() *StructType {
+	if t.HasName() && !t.HasNativeLayout() && t.TFlag&TFlagClosureFunc != 0 {
+		return (*ClosureFuncType)(unsafe.Pointer(t)).Closure
+	}
+	return nil
 }
 
 type InterfaceType struct {
@@ -498,6 +543,11 @@ type structTypeUncommon struct {
 	u UncommonType
 }
 
+type namedClosureTypeUncommon struct {
+	NamedClosureType
+	u UncommonType
+}
+
 // ChanDir returns the direction of t if t is a channel type, otherwise InvalidDir (0).
 func (t *Type) ChanDir() ChanDir {
 	if t.Kind() == Chan {
@@ -514,6 +564,9 @@ func (t *Type) Uncommon() *UncommonType {
 	}
 	switch t.Kind() {
 	case Struct:
+		if t.IsClosure() && t.HasName() {
+			return &(*namedClosureTypeUncommon)(unsafe.Pointer(t)).u
+		}
 		return &(*structTypeUncommon)(unsafe.Pointer(t)).u
 	case Pointer:
 		type u struct {
@@ -522,6 +575,9 @@ func (t *Type) Uncommon() *UncommonType {
 		}
 		return &(*u)(unsafe.Pointer(t)).u
 	case Func:
+		if closure := t.FuncType().PhysicalClosure(); closure != nil {
+			return &(*namedClosureTypeUncommon)(unsafe.Pointer(closure)).u
+		}
 		type u struct {
 			FuncType
 			u UncommonType
@@ -649,7 +705,10 @@ func (t *Type) NumMethod() int {
 		tt := (*InterfaceType)(unsafe.Pointer(t))
 		return len(tt.Methods)
 	}
-	return len(t.ExportedMethods())
+	if u := t.Uncommon(); u != nil {
+		return int(u.Xcount)
+	}
+	return 0
 }
 
 func (t *Type) GcSlice(begin, end uintptr) []byte {
