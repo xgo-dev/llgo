@@ -19,7 +19,9 @@
 package llgoext
 
 import (
+	"runtime"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -81,6 +83,9 @@ func runtimeGMPForTesting() (goid, parentGoid uint64, mid int64, pid int32, gsta
 
 //go:linkname runtimeSchedulerMultiplexesForTesting github.com/xgo-dev/llgo/runtime/internal/runtime.SchedulerMultiplexesGoroutinesForTesting
 func runtimeSchedulerMultiplexesForTesting() bool
+
+//go:linkname runtimeMPoolIdleForTesting github.com/xgo-dev/llgo/runtime/internal/runtime.MPoolIdleForTesting
+func runtimeMPoolIdleForTesting() int
 
 const (
 	runtimeGRunning = 2
@@ -179,6 +184,130 @@ func TestRuntimeGMPLinks(t *testing.T) {
 		mProcs[state.mid] = state.pid
 		seenP[state.pid] = true
 	}
+}
+
+func waitForIdlePoolWorker(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtimeMPoolIdleForTesting() > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("timed out waiting for a pooled worker thread to park idle")
+}
+
+func TestRuntimePoolReuse(t *testing.T) {
+	if !runtimeSchedulerMultiplexesForTesting() {
+		t.Skip("backend does not pool worker threads")
+	}
+
+	// Verify concurrently active goroutines still run on distinct M/P pairs
+	// (the pool only reuses threads after a goroutine has exited).
+	ready := make(chan runtimeGMPState, 2)
+	release := make(chan struct{})
+	done := make(chan struct{}, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			ready <- currentRuntimeGMPState()
+			<-release
+			done <- struct{}{}
+		}()
+	}
+	s1 := <-ready
+	s2 := <-ready
+	close(release)
+	<-done
+	<-done
+	checkRunningRuntimeGMP(t, s1)
+	checkRunningRuntimeGMP(t, s2)
+	if s1.goid == s2.goid || s1.mid == s2.mid || s1.pid == s2.pid {
+		t.Fatalf("concurrent goroutines shared G/M/P: %+v vs %+v", s1, s2)
+	}
+
+	// Verify sequential goroutines deterministically reuse idle pooled M/P pairs
+	// while keeping unique goids and stable M->P binding.
+	const total = 24
+	seenG := make(map[uint64]bool, total)
+	seenM := make(map[int64]int32)
+	for i := 0; i < total; i++ {
+		if i > 0 {
+			waitForIdlePoolWorker(t)
+		}
+		ch := make(chan runtimeGMPState, 1)
+		go func() {
+			ch <- currentRuntimeGMPState()
+		}()
+		state := <-ch
+		checkRunningRuntimeGMP(t, state)
+		if seenG[state.goid] {
+			t.Fatalf("duplicate goid %d across sequential goroutines", state.goid)
+		}
+		seenG[state.goid] = true
+		if prevP, ok := seenM[state.mid]; ok && prevP != state.pid {
+			t.Fatalf("reused M %d changed P from %d to %d", state.mid, prevP, state.pid)
+		}
+		seenM[state.mid] = state.pid
+	}
+	if len(seenM) >= total {
+		t.Fatalf("expected pooled M reuse across %d sequential goroutines, saw %d distinct Ms", total, len(seenM))
+	}
+}
+
+func TestRuntimePoolLockOSThread(t *testing.T) {
+	if !runtimeSchedulerMultiplexesForTesting() {
+		t.Skip("backend does not pool worker threads")
+	}
+
+	// Ensure the pool has at least one idle thread ready.
+	warm := make(chan int64, 1)
+	go func() { warm <- currentRuntimeGMPState().mid }()
+	<-warm
+	waitForIdlePoolWorker(t)
+
+	// A goroutine that calls LockOSThread and exits without UnlockOSThread must
+	// terminate its OS thread instead of returning it to the worker pool.
+	lockedCh := make(chan int64, 1)
+	go func() {
+		runtime.LockOSThread()
+		lockedCh <- currentRuntimeGMPState().mid
+	}()
+	lockedMid := <-lockedCh
+
+	// Wait for idle workers and run subsequent goroutines, proving both that
+	// pool reuse occurred and that lockedMid was never reused.
+	seen := make(map[int64]bool)
+	reused := false
+	for i := 0; i < 24; i++ {
+		if i > 0 {
+			waitForIdlePoolWorker(t)
+		}
+		ch := make(chan int64, 1)
+		go func() {
+			ch <- currentRuntimeGMPState().mid
+		}()
+		got := <-ch
+		if got == lockedMid {
+			t.Fatalf("locked OS thread M %d was reused after goroutine exited without UnlockOSThread", lockedMid)
+		}
+		if seen[got] {
+			reused = true
+		}
+		seen[got] = true
+	}
+	if !reused {
+		t.Fatal("expected pooled worker reuse while verifying locked OS thread termination")
+	}
+
+	// Matching LockOSThread/UnlockOSThread allows the thread to be pooled again.
+	unlockedDone := make(chan struct{})
+	go func() {
+		runtime.LockOSThread()
+		runtime.UnlockOSThread()
+		close(unlockedDone)
+	}()
+	<-unlockedDone
 }
 
 type runtimeDeferProbeResult struct {
