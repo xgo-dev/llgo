@@ -444,8 +444,9 @@ func TestServerElasticWorkerPoolNoSelfCallDeadlock(t *testing.T) {
 		readers[i] = br
 	}
 
-	// Let all 40 idle connections park into the shared idle watcher.
-	time.Sleep(25 * time.Millisecond)
+	// Allow the 150ms hot grace and an extra sweep interval before resuming
+	// the connections through the shared idle watcher.
+	time.Sleep(300 * time.Millisecond)
 
 	var wg sync.WaitGroup
 	errs := make(chan error, concurrency)
@@ -605,8 +606,7 @@ func TestServerBackgroundReadNonSocketSyscallConnFallback(t *testing.T) {
 	}
 }
 
-func TestClientSyncTransportKeepAliveRetryTimeoutAndLargePost(t *testing.T) {
-	var hits atomic.Int32
+func TestClientTransportKeepAliveRetryTimeoutAndLargePost(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/slow-header":
@@ -620,7 +620,6 @@ func TestClientSyncTransportKeepAliveRetryTimeoutAndLargePost(t *testing.T) {
 			}
 			w.Write(body)
 		default:
-			hits.Add(1)
 			io.WriteString(w, "ok")
 		}
 	}))
@@ -634,8 +633,7 @@ func TestClientSyncTransportKeepAliveRetryTimeoutAndLargePost(t *testing.T) {
 	defer tr.CloseIdleConnections()
 	client := &http.Client{Transport: tr}
 
-	// 1. Keep-alive GET reuse should stay low-goroutine on LLGo.
-	baseG := runtime.NumGoroutine()
+	// 1. Exercise keep-alive GETs across concurrent connections.
 	const conns = 16
 	var wg sync.WaitGroup
 	errs := make(chan error, conns)
@@ -663,20 +661,14 @@ func TestClientSyncTransportKeepAliveRetryTimeoutAndLargePost(t *testing.T) {
 	for err := range errs {
 		t.Fatalf("keep-alive GET failed: %v", err)
 	}
-	if runtime.Compiler == "llgo" {
-		time.Sleep(25 * time.Millisecond)
-		if g := runtime.NumGoroutine(); g > baseG+24 {
-			t.Fatalf("expected sync client transport to avoid per-conn readLoop/writeLoop threads: goroutines=%d baseline=%d", g, baseG)
-		}
-	}
 
-	// 2. ResponseHeaderTimeout fires cleanly on sync path.
+	// 2. ResponseHeaderTimeout fires while waiting for the response.
 	if resp, err := client.Get(srv.URL + "/slow-header"); err == nil {
 		resp.Body.Close()
 		t.Fatal("expected ResponseHeaderTimeout error, got nil")
 	}
 
-	// 3. Large POST (> 64 KiB) promotes transparently to async readLoop/writeLoop.
+	// 3. A large POST echoes the full body.
 	payload := strings.Repeat("0123456789abcdef", 8192) // 128 KiB
 	trLarge := &http.Transport{MaxIdleConnsPerHost: 4}
 	defer trLarge.CloseIdleConnections()
@@ -709,8 +701,7 @@ func TestClientSyncTransportKeepAliveRetryTimeoutAndLargePost(t *testing.T) {
 	io.Copy(io.Discard, r2.Body)
 	r2.Body.Close()
 
-	// 5. Unknown-length / chunked POST (ContentLength == 0 with non-NoBody reader)
-	// promotes to async and echoes cleanly.
+	// 5. An unknown-length POST uses chunked encoding and echoes cleanly.
 	chunkedReq, err := http.NewRequest("POST", srv.URL+"/echo", io.NopCloser(strings.NewReader("chunked-body")))
 	if err != nil {
 		t.Fatalf("new chunked req: %v", err)
@@ -783,7 +774,7 @@ func TestServerIdleClearsHandlerReadDeadlineAndHandlesPartialPrefix(t *testing.T
 	}
 }
 
-func TestClientSyncTransportRejectsUnsolicitedBufferedBytes(t *testing.T) {
+func TestClientTransportRejectsUnsolicitedBufferedBytes(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -864,7 +855,7 @@ func (b *blockingBodyReader) Close() error {
 	return nil
 }
 
-func TestClientSyncTransportEarlyRejectSmallStreamingPost(t *testing.T) {
+func TestClientTransportEarlyRejectSmallStreamingPost(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -910,7 +901,7 @@ func TestClientSyncTransportEarlyRejectSmallStreamingPost(t *testing.T) {
 	}
 }
 
-func TestClientSyncTransportGot1xxErrorTerminalOnReusedConn(t *testing.T) {
+func TestClientTransportGot1xxErrorTerminalOnReusedConn(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -991,7 +982,7 @@ func TestClientSyncTransportGot1xxErrorTerminalOnReusedConn(t *testing.T) {
 	}
 }
 
-func TestClientSyncTransportEarlyBodyCloseReturnsPromptly(t *testing.T) {
+func TestClientTransportEarlyBodyCloseReturnsPromptly(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -1031,5 +1022,179 @@ func TestClientSyncTransportEarlyBodyCloseReturnsPromptly(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 20*time.Millisecond {
 		t.Fatalf("early Response.Body.Close blocked for %v (want < 20ms)", elapsed)
+	}
+}
+
+func TestServerIdleTimeoutExpiresPartialPrefix(t *testing.T) {
+	idle := make(chan struct{})
+	prefixSent := make(chan struct{})
+	defer close(prefixSent)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{
+		IdleTimeout: 100 * time.Millisecond,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			if state == http.StateIdle {
+				close(idle)
+				<-prefixSent
+			}
+		},
+	}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	select {
+	case <-idle:
+	case <-time.After(3 * time.Second):
+		t.Fatal("server never entered the idle state")
+	}
+	if _, err := io.WriteString(conn, "GE"); err != nil {
+		t.Fatal(err)
+	}
+	// Send the partial prefix before the server begins its keep-alive wait.
+	prefixSent <- struct{}{}
+	if _, err := br.ReadByte(); !errors.Is(err, io.EOF) {
+		t.Fatalf("connection with a partial request prefix should close at IdleTimeout, got %v", err)
+	}
+}
+
+func TestClientTransportEarlyRejectWhileWritingHeaders(t *testing.T) {
+	ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	release := make(chan struct{})
+	defer close(release)
+	serverErr := make(chan error, 1)
+	go func() {
+		conn, err := ln.AcceptTCP()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer conn.Close()
+		if err := conn.SetReadBuffer(1024); err != nil {
+			serverErr <- err
+			return
+		}
+		var firstByte [1]byte
+		if _, err := io.ReadFull(conn, firstByte[:]); err != nil {
+			serverErr <- err
+			return
+		}
+		// Leave the connection open while rejecting the request, without
+		// draining the remaining headers from the receive buffer.
+		_, err = io.WriteString(conn, "HTTP/1.1 413 Content Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+		serverErr <- err
+		<-release
+	}()
+
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			if err := conn.(*net.TCPConn).SetWriteBuffer(1024); err != nil {
+				conn.Close()
+				return nil, err
+			}
+			return conn, nil
+		},
+	}
+	defer tr.CloseIdleConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", "http://"+ln.Addr().String()+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Large", strings.Repeat("a", 1<<20))
+	resp, err := tr.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("early response while writing request headers: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server: %v", err)
+	}
+}
+
+func TestClientTransportCancelCompletedRequestAndReuseConn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/no-body" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		io.WriteString(w, "ok")
+	}))
+	defer srv.Close()
+
+	for _, path := range []string{"/body", "/no-body"} {
+		t.Run(path[1:], func(t *testing.T) {
+			tr := &http.Transport{MaxConnsPerHost: 1}
+			defer tr.CloseIdleConnections()
+			client := &http.Client{Transport: tr, Timeout: 3 * time.Second}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			first, err := http.NewRequestWithContext(ctx, "GET", srv.URL+path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := client.Do(first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var reused bool
+			trace := &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused }}
+			next, err := http.NewRequestWithContext(httptrace.WithClientTrace(context.Background(), trace), "GET", srv.URL+"/body", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cancel()
+			resp, err = client.Do(next)
+			if err != nil {
+				t.Fatalf("request after canceling the completed request: %v", err)
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil || string(body) != "ok" || !reused {
+				t.Fatalf("next request: body=%q err=%v reused=%t", body, err, reused)
+			}
+		})
 	}
 }

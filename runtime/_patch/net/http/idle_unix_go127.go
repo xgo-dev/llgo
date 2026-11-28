@@ -67,8 +67,8 @@ const (
 	httpIdleProbeNs       = 500_000_000 // 500ms liveness check for external rwc.Close
 	httpIdleWorkerTTL     = 500 * time.Millisecond
 	httpIdleWarmWorkerTTL = 10 * time.Second
-	httpHotSweepTickNs    = 50_000_000 // 50ms lazy grace sweep while hot conns exist
-	httpHotIdleTicks      = 3          // evict hot conn after ~100..150ms idle
+	httpHotSweepTickNs    = int64(httpIdleHotGrace / httpHotIdleTicks)
+	httpHotIdleTicks      = 3 // evict hot conn after ~100..150ms idle
 	httpHotEvictBit       = uint64(1) << 63
 	httpHotClosedVal      = uint64(0)
 	httpIdleStateParkng   = 1
@@ -877,7 +877,7 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 					c.r.lock()
 					c.r.aborted = false
 					c.r.unlock()
-					if peekErr == nil || c.bufr.Buffered() > 0 {
+					if peekErr == nil {
 						if readHeaderTO > 0 {
 							c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
 						} else {
@@ -889,7 +889,9 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 						if !idleDeadline.IsZero() && !time.Now().Before(idleDeadline) {
 							return
 						}
-						needPark = true
+						// An incomplete prefix in bufr must finish under the original
+						// idle deadline. The poller only sees bytes in the socket.
+						needPark = c.bufr.Buffered() == 0
 					} else {
 						return
 					}
@@ -925,7 +927,7 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 			}
 		}
 
-		// Standard fallback for TLS, custom net.Conn, buffered pipelined reads, or poller init failure.
+		// Wait for a complete prefix before starting the next request's timeouts.
 		if !idleDeadline.IsZero() {
 			c.rwc.SetReadDeadline(idleDeadline)
 		} else {
