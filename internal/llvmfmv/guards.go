@@ -199,7 +199,7 @@ func blockGuards(fn llvm.Value, queries map[llvm.Value]uint64) map[llvm.BasicBlo
 		term := block.LastInstruction()
 		for i := 0; i < term.SuccessorsCount(); i++ {
 			f := known[block]
-			if term.InstructionOpcode() == llvm.Br && term.SuccessorsCount() == 2 {
+			if term.InstructionOpcode() == llvm.CondBr {
 				f |= positiveGuard(term.Operand(0), i == 0, queries)
 			}
 			next := term.Successor(i)
