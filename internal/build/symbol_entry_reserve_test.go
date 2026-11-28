@@ -90,6 +90,9 @@ func TestSharedSymbolEntryReservation(t *testing.T) {
 	if err != nil || !changed || !strings.Contains(packed, "[512 x i8]") {
 		t.Fatalf("pack shared reservation: %s, %v, %v", packed, changed, err)
 	}
+	if next, changed, err := sizeSymbolEntryReserve(packed, analysis, true); err != nil || changed || next != packed {
+		t.Fatalf("repacking a stable shared reservation: %s, %v, %v", next, changed, err)
+	}
 	if next, changed, err := sizeSymbolEntryReserve(packed, analysis, false); err != nil || changed || next != packed {
 		t.Fatalf("verify packed reservation: %s, %v, %v", next, changed, err)
 	}
