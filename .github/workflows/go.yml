@@ -470,6 +470,29 @@ jobs:
           done
           go tool covdata textfmt -i="$cover_dir" -o=coverage-dev-pruning-link.txt
 
+      - name: Verify compact metadata in optimized executables
+        shell: bash
+        run: |
+          set -euo pipefail
+          cover_dir="$(mktemp -d)"
+          go build -tags=dev -cover -covermode=atomic \
+            -coverpkg=./cmd/llgo,./cl,./ssa,./internal/abi,./internal/build,./internal/pclnpost \
+            -o "$cover_dir/llgo" ./cmd/llgo
+          for fixture in wasm-reflect-type-queries wasm-type-fields-reflect; do
+            package="./internal/build/testdata/$fixture"
+            GOCOVERDIR="$cover_dir" "$cover_dir/llgo" build -Oz -deadcodedrop -globaldce=false \
+              -lto=full -debug-artifact=none -o "$cover_dir/probe" "$package"
+            go run "$package" > "$cover_dir/ref" 2>&1
+            "$cover_dir/probe" > "$cover_dir/out" 2>&1
+            diff -u "$cover_dir/ref" "$cover_dir/out"
+          done
+          go tool covdata textfmt -i="$cover_dir" -o=coverage-dev-metadata-link.txt
+          go test -tags=dev -timeout 20m -covermode=atomic \
+            -coverpkg=./cl,./ssa,./internal/abi,./internal/build,./internal/pclnpost \
+            -coverprofile=coverage-dev-metadata-unit.txt \
+            -run 'EmbeddedPCLN|FuncInfoTable|SymbolEntr|LargeAggregateTemporaryRoots|DiscardedWasmBoundaryResult|StringConcatLoweringWithRoots|GCRoot' \
+            ./cl ./ssa ./internal/abi ./internal/build ./internal/pclnpost
+
       - name: Run dev LTO GlobalDCE tests and demos with coverage
         run: |
           set -euo pipefail
@@ -545,7 +568,7 @@ jobs:
           version: "11.3.1"
           token: ${{secrets.CODECOV_TOKEN}}
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-dev-pruning-unit.txt,coverage-dev-pruning-link.txt,coverage-dev-globaldce-unit.txt,coverage-dev-size-codecs.txt,coverage-dev-native-size.txt,coverage-dev-esp32c3-size.txt,coverage-dev-lto-globaldce-cl.txt,coverage-dev-lto-globaldce-symbols.txt,coverage-dev-lto-plugin-cl.txt
+          files: coverage-dev-pruning-unit.txt,coverage-dev-pruning-link.txt,coverage-dev-metadata-link.txt,coverage-dev-metadata-unit.txt,coverage-dev-globaldce-unit.txt,coverage-dev-size-codecs.txt,coverage-dev-native-size.txt,coverage-dev-esp32c3-size.txt,coverage-dev-lto-globaldce-cl.txt,coverage-dev-lto-globaldce-symbols.txt,coverage-dev-lto-plugin-cl.txt
           flags: dev-lto-globaldce
           disable_search: true
 

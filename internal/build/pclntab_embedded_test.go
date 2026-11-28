@@ -126,7 +126,7 @@ func TestEmbeddedPCLNPublication(t *testing.T) {
 	ir, original := embeddedPCLNFixture(t)
 	initial := pclnpost.ExternalAnalysis{PointerSize: original.PointerSize, TextEnd: 4096,
 		EntrySites: []pclnpost.ExternalSite{{PCOffset: 16, ID: funcInfoSymbolID("main.live")}}}
-	for _, stage := range []string{"success", "disabled", "unchanged", "initial analysis", "initial join", "mkdir", "IR", "compile", "link", "final analysis", "final join", "liveness", "shared liveness", "publish"} {
+	for _, stage := range []string{"success", "disabled", "unchanged", "initial analysis", "initial join", "mkdir", "IR", "compile", "link", "final analysis", "final join", "liveness", "shared liveness", "shared growth", "publish"} {
 		t.Run(stage, func(t *testing.T) {
 			dir := t.TempDir()
 			output := filepath.Join(dir, "app")
@@ -134,7 +134,7 @@ func TestEmbeddedPCLNPublication(t *testing.T) {
 				t.Fatal(err)
 			}
 			plan := &mainLinkPlan{embeddedPCLN: &original, entryIR: ir, linkInputs: []string{"old-entry.o", "go-packages.a"}}
-			if stage == "shared liveness" {
+			if stage == "shared liveness" || stage == "shared growth" {
 				plan.entryIR += `
 @__llgo_funcinfo_entry_reserve = private constant [4096 x i8] zeroinitializer, section "__DATA,__llgo_fie,regular,live_support"
 `
@@ -153,6 +153,9 @@ func TestEmbeddedPCLNPublication(t *testing.T) {
 			linker := embeddedPCLNLinker{
 				analyze: func(path string) (pclnpost.ExternalAnalysis, error) {
 					a := initial
+					if path != output && stage == "shared growth" {
+						a.TextEnd = 1 << 28
+					}
 					if (path == output && stage == "initial analysis") || (path != output && stage == "final analysis") {
 						return a, fail
 					}
@@ -196,7 +199,7 @@ func TestEmbeddedPCLNPublication(t *testing.T) {
 				},
 			}
 			err := pruneEmbeddedPCLNWith(plan, output, true, linker)
-			wantError := stage != "success" && stage != "disabled" && stage != "unchanged" && stage != "shared liveness"
+			wantError := stage != "success" && stage != "disabled" && stage != "unchanged" && stage != "shared liveness" && stage != "shared growth"
 			if (err != nil) != wantError {
 				t.Fatalf("error = %v, want failure %v", err, wantError)
 			}
