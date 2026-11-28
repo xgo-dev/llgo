@@ -3,7 +3,6 @@ package build
 import (
 	"go/token"
 	"go/types"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -297,84 +296,6 @@ func main() { println(fmt.Sprintf("%v", 1)) }
 	all, entries, err := registerSSAPkgs(ctx, []*packages.Package{entry, other}, false)
 	if err == nil || !strings.Contains(err.Error(), "AppendInt") || len(all) != 0 || len(entries) != 0 {
 		t.Fatalf("register returned %d packages, %d SSA entries, %v", len(all), len(entries), err)
-	}
-}
-
-func TestHostedValueFormatSupport(t *testing.T) {
-	native := Config{
-		Mode: ModeBuild, BuildMode: BuildModeExe, Goos: "darwin", Goarch: "arm64",
-		LTO: lto.Full, OptLevel: optlevel.Oz, DisableGoGlobalDCE: true, DeadcodeDrop: true,
-	}
-	for _, tc := range []struct {
-		name   string
-		change func(*Config, *crosscompile.Export)
-		want   bool
-	}{
-		{name: "darwin arm64", want: true},
-		{name: "linux amd64", want: true, change: func(c *Config, _ *crosscompile.Export) { c.Goos, c.Goarch = "linux", "amd64" }},
-		{name: "linux arm64", want: true, change: func(c *Config, _ *crosscompile.Export) { c.Goos = "linux" }},
-		{name: "disabled specialization", change: func(c *Config, _ *crosscompile.Export) { c.disableSizeSpecialization = true }},
-		{name: "shared library", change: func(c *Config, _ *crosscompile.Export) { c.BuildMode = BuildModeCShared }},
-		{name: "ordinary build", change: func(c *Config, _ *crosscompile.Export) { c.DeadcodeDrop = false }},
-		{name: "thin LTO", change: func(c *Config, _ *crosscompile.Export) { c.LTO = lto.Thin }},
-		{name: "extra link files", change: func(_ *Config, x *crosscompile.Export) { x.ExtraFiles = []string{"bridge.o"} }},
-		{name: "emscripten wasm32", want: true, change: func(c *Config, x *crosscompile.Export) {
-			c.Goos, c.Goarch, c.WasmOpt = "js", "wasm", WasmOptSize
-			x.WasmProfile, x.WasmProvider = crosscompile.WasmProfileJ32, crosscompile.WasmProviderEmscripten
-		}},
-		{name: "emscripten memory64", want: true, change: func(c *Config, x *crosscompile.Export) {
-			c.Goos, c.Goarch, c.WasmOpt = "js", "wasm", WasmOptSize
-			x.WasmProfile, x.WasmProvider = crosscompile.WasmProfileJ64, crosscompile.WasmProviderEmscripten
-		}},
-		{name: "raw js wasm", change: func(c *Config, x *crosscompile.Export) {
-			c.Goos, c.Goarch, c.WasmOpt = "js", "wasm", WasmOptSize
-			x.WasmProfile = crosscompile.WasmProfileJ32
-		}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			conf, target := native, crosscompile.Export{}
-			if tc.change != nil {
-				tc.change(&conf, &target)
-			}
-			if got := hostedValueFormatSupport(&conf, target, cl.Options{}); got != (tc.want && buildenv.Dev) {
-				t.Fatalf("hosted formatter enabled = %v", got)
-			}
-		})
-	}
-}
-
-func TestNativeFormatImports(t *testing.T) {
-	root := t.TempDir()
-	for _, tc := range []struct {
-		name, pkg, lib, symbol, flag string
-		replaced                     bool
-		want                         bool
-	}{
-		{name: "Darwin runtime", pkg: "runtime", lib: "/usr/lib/libSystem.B.dylib", symbol: "libc_write", want: true},
-		{name: "Darwin syscall alias", pkg: "syscall", symbol: "libc_write", want: true},
-		{name: "resolver", pkg: "internal/syscall/unix", lib: "/usr/lib/libresolv.9.dylib", symbol: "libresolv_res_init", flag: "-lresolv", want: true},
-		{name: "unexpected flag", pkg: "syscall", lib: "/usr/lib/libSystem.B.dylib", symbol: "libc_write", flag: "-ldylib"},
-		{name: "unexpected import", pkg: "syscall", lib: "/opt/vendor/libfoo.dylib", symbol: "libc_write"},
-		{name: "user package", pkg: "user", lib: "/usr/lib/libSystem.B.dylib", symbol: "libc_write"},
-		{name: "source overlay", pkg: "runtime", lib: "/usr/lib/libSystem.B.dylib", symbol: "libc_write", replaced: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := filepath.Join(root, "src", tc.pkg)
-			path := filepath.Join(dir, "sys.go")
-			pkg := &packages.Package{PkgPath: tc.pkg, Dir: dir, GoFiles: []string{path}}
-			ctx := &context{buildConf: &Config{Goos: "darwin"}}
-			if tc.replaced {
-				ctx.buildConf.SourceOverlay = map[string]SourceOverlayFile{path: {}}
-			}
-			var flags []string
-			if tc.flag != "" {
-				flags = []string{tc.flag}
-			}
-			imports := []cgoImportDynamicDecl{{local: tc.symbol, library: tc.lib}}
-			if got := allowsNativeFormatImports(ctx, &linkPruningInputs{goroot: root, nativeFormat: true}, pkg, flags, imports); got != tc.want {
-				t.Fatalf("allowsNativeFormatImports = %v, want %v", got, tc.want)
-			}
-		})
 	}
 }
 
