@@ -600,3 +600,23 @@ func TestTypecheckDAGCycleAndEdgeImports(t *testing.T) {
 		t.Fatalf("cyclic DAG fallback did not process both packages: a=%v b=%v", a.Types, b.Types)
 	}
 }
+
+func TestLoadExWithPreloadedMetadata(t *testing.T) {
+	dir := t.TempDir()
+	writeLoadTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/preloaded\ngo 1.24\n")
+	writeLoadTestFile(t, filepath.Join(dir, "main.go"), "package main\nfunc main() {}\n")
+
+	cfg := loadTestConfig(dir)
+	driverCfg := MetadataConfig(nil, cfg)
+	initial, err := LoadMetadata(&driverCfg, ".")
+	if err != nil {
+		t.Fatalf("LoadMetadata failed: %v", err)
+	}
+	pkgs, err := LoadExWithPreloadedMetadata(nil, nil, cfg, "", nil, initial)
+	if err != nil {
+		t.Fatalf("LoadExWithPreloadedMetadata failed: %v", err)
+	}
+	if len(pkgs) != 1 || pkgs[0].Name != "main" {
+		t.Fatalf("unexpected loaded packages: %v", pkgs)
+	}
+}

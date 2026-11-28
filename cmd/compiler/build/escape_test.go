@@ -183,16 +183,9 @@ func main() {
 						return os.Remove(strings.TrimSuffix(filename, ".manifest") + ".a")
 					}
 				}
-				if !strings.HasSuffix(filename, ".json") {
-					return nil
-				}
-				var envelope frontendEnvelope
-				if json.Unmarshal(data, &envelope) != nil {
-					return nil
-				}
-				if phase == "repair" {
-					var record frontendExport
-					if json.Unmarshal(envelope.Payload, &record) != nil {
+				if phase == "repair" && strings.HasSuffix(filename, ".llgoex") {
+					record, err := unmarshalFrontendExport(data)
+					if err != nil {
 						return nil
 					}
 					for _, fn := range record.Functions {
@@ -201,7 +194,16 @@ func main() {
 							return os.WriteFile(filename, []byte("{"), 0600)
 						}
 					}
-				} else if phase == "typefallback" {
+					return nil
+				}
+				if !strings.HasSuffix(filename, ".json") {
+					return nil
+				}
+				var envelope frontendEnvelope
+				if json.Unmarshal(data, &envelope) != nil {
+					return nil
+				}
+				if phase == "typefallback" {
 					var record frontendTypeExport
 					if json.Unmarshal(envelope.Payload, &record) == nil &&
 						(record.PkgID == "example.com/escape/dep" || (record.Package != nil && record.Package.ID == "example.com/escape/dep")) {

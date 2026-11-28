@@ -1,8 +1,11 @@
 package build
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -22,9 +25,143 @@ type sourceGoConfig struct {
 	toolTags     []string
 }
 
+type cachedSourceGoConfig struct {
+	Version      int
+	GOROOT       string
+	GOVERSION    string
+	GOEXPERIMENT string
+	GOFLAGS      string
+	CGO_ENABLED  string
+	ToolTags     []string
+}
+
+const sourceGoConfigCacheVersion = 1
+
+func findUpwardFileStat(dir, filename string) string {
+	if dir == "" {
+		dir, _ = os.Getwd()
+	}
+	cur := filepath.Clean(dir)
+	for {
+		cand := filepath.Join(cur, filename)
+		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+			return fmt.Sprintf("%s:%d:%d", cand, fi.Size(), fi.ModTime().UnixNano())
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return ""
+		}
+		cur = parent
+	}
+}
+
+func lookPathInCommandEnv(commands commandEnv, exe string) (string, bool) {
+	if filepath.IsAbs(exe) || strings.ContainsRune(exe, filepath.Separator) {
+		if _, err := os.Stat(exe); err == nil {
+			return exe, true
+		}
+		return "", false
+	}
+	pathVal := ""
+	if len(commands.environ) > 0 {
+		pathVal = commands.lookup("PATH")
+	} else {
+		pathVal = os.Getenv("PATH")
+	}
+	if pathVal == "" {
+		return "", false
+	}
+	names := []string{exe}
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(exe), ".exe") {
+		names = []string{exe + ".exe", exe}
+	}
+	for _, dir := range filepath.SplitList(pathVal) {
+		if dir == "" {
+			dir = "."
+		}
+		for _, name := range names {
+			cand := filepath.Join(dir, name)
+			if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+				return cand, true
+			}
+		}
+	}
+	return "", false
+}
+
+func commandEnvLookup(commands commandEnv, name string) string {
+	if len(commands.environ) > 0 {
+		return commands.lookup(name)
+	}
+	return os.Getenv(name)
+}
+
+func sourceGoConfigCachePath(commands commandEnv, experiment string, buildFlags []string) string {
+	if !cacheEnabled() {
+		return ""
+	}
+	goBin, ok := lookPathInCommandEnv(commands, "go")
+	if !ok {
+		return ""
+	}
+	fi, err := os.Stat(goBin)
+	if err != nil {
+		return ""
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "v=%d\x00gobin=%s:%d:%d\x00exp=%s\x00", sourceGoConfigCacheVersion, goBin, fi.Size(), fi.ModTime().UnixNano(), experiment)
+	for _, f := range buildFlags {
+		fmt.Fprintf(h, "flag=%s\x00", f)
+	}
+	for _, name := range []string{
+		"GOROOT", "GOEXPERIMENT", "GOFLAGS", "CGO_ENABLED", "GOOS", "GOARCH",
+		"GOTOOLCHAIN", "GOWORK", "GOENV", "GOMODCACHE", "GOPATH", "GO111MODULE",
+		"GO386", "GOAMD64", "GOARM", "GOARM64", "GOMIPS", "GOMIPS64", "GOPPC64", "GORISCV64", "GOWASM",
+	} {
+		fmt.Fprintf(h, "%s=%s\x00", name, commandEnvLookup(commands, name))
+	}
+	fmt.Fprintf(h, "gomod=%s\x00", findUpwardFileStat(commands.dir, "go.mod"))
+	fmt.Fprintf(h, "gowork=%s\x00", findUpwardFileStat(commands.dir, "go.work"))
+	goenvPath := commandEnvLookup(commands, "GOENV")
+	if goenvPath == "" {
+		if cfgDir, err := os.UserConfigDir(); err == nil {
+			goenvPath = filepath.Join(cfgDir, "go", "env")
+		}
+	}
+	if goenvPath != "" && goenvPath != "off" {
+		if efi, err := os.Stat(goenvPath); err == nil {
+			fmt.Fprintf(h, "goenvfile=%s:%d:%d\x00", goenvPath, efi.Size(), efi.ModTime().UnixNano())
+		}
+	}
+	return filepath.Join(newCacheManager().root, "meta", "goenv-"+hex.EncodeToString(h.Sum(nil))+".json")
+}
+
 func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ...string) (sourceGoConfig, error) {
 	if experiment != "" {
 		commands.environ = withEnv(commands.environ, "GOEXPERIMENT="+experiment)
+	}
+	cachePath := sourceGoConfigCachePath(commands, experiment, buildFlags)
+	if cachePath != "" {
+		if raw, err := os.ReadFile(cachePath); err == nil {
+			var cached cachedSourceGoConfig
+			if json.Unmarshal(raw, &cached) == nil && cached.Version == sourceGoConfigCacheVersion &&
+				cached.GOROOT != "" && cached.GOVERSION != "" {
+				goExe := "go"
+				if runtime.GOOS == "windows" {
+					goExe += ".exe"
+				}
+				if _, err := os.Stat(filepath.Join(cached.GOROOT, "bin", goExe)); err == nil {
+					return sourceGoConfig{
+						GOROOT:       cached.GOROOT,
+						GOVERSION:    cached.GOVERSION,
+						GOEXPERIMENT: cached.GOEXPERIMENT,
+						GOFLAGS:      cached.GOFLAGS,
+						CGO_ENABLED:  cached.CGO_ENABLED,
+						toolTags:     cached.ToolTags,
+					}, nil
+				}
+			}
+		}
 	}
 	var cfg sourceGoConfig
 	cmd := commands.configure(exec.Command("go", "env", "-json", "GOROOT", "GOVERSION", "GOEXPERIMENT", "GOFLAGS", "CGO_ENABLED"))
@@ -76,6 +213,19 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 		}
 	}
 	cfg.GOEXPERIMENT = strings.Join(experiments, ",")
+	if cachePath != "" {
+		if raw, err := json.Marshal(cachedSourceGoConfig{
+			Version:      sourceGoConfigCacheVersion,
+			GOROOT:       cfg.GOROOT,
+			GOVERSION:    cfg.GOVERSION,
+			GOEXPERIMENT: cfg.GOEXPERIMENT,
+			GOFLAGS:      cfg.GOFLAGS,
+			CGO_ENABLED:  cfg.CGO_ENABLED,
+			ToolTags:     cfg.toolTags,
+		}); err == nil {
+			_ = writeFileAtomicBytes(cachePath, raw)
+		}
+	}
 	return cfg, nil
 }
 

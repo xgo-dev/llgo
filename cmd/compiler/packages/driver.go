@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/tools/go/packages"
@@ -117,8 +118,41 @@ func LoadMetadata(cfg *Config, patterns ...string) ([]*Package, error) {
 	if runtime.GOOS == "windows" {
 		goName += ".exe"
 	}
-	if _, err := exec.LookPath(filepath.Join(goBin, goName)); err != nil {
+	selectedGo, err := exec.LookPath(filepath.Join(goBin, goName))
+	if err != nil {
 		return nil, fmt.Errorf("selected Go executable: %w", err)
+	}
+	// Fast path: when the current process PATH already resolves "go" to the
+	// exact selected GOROOT/bin/go binary (and no custom external driver needs
+	// PATH rewriting), run go/packages directly in-process to avoid re-execing
+	// the full compiler binary and JSON round-tripping the entire package graph.
+	if canLoadMetadataInProcess(selectedGo, request.Env) {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		inProcCfg := *cfg
+		inProcCfg.Context = ctx
+		inProcCfg.Env = request.Env
+		if cfg.Dir != "" {
+			inProcCfg.Env = replaceEnvironment(inProcCfg.Env, "PWD", cfg.Dir)
+		}
+		if cfg.Logf != nil {
+			var logMu sync.Mutex
+			origLogf := cfg.Logf
+			inProcCfg.Logf = func(format string, args ...any) {
+				logMu.Lock()
+				origLogf(format, args...)
+				logMu.Unlock()
+			}
+		}
+		raw, err := packages.Load(&inProcCfg, patterns...)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err != nil {
+			return nil, err
+		}
+		return convertGoPackages(raw), nil
 	}
 	request.Env = replaceEnvironment(request.Env, "PATH", goBin+string(os.PathListSeparator)+environmentValue(cfg.Env, "PATH"))
 	// TODO(golang/go#68495): Use packages.Load directly once x/tools can select
@@ -177,6 +211,19 @@ func LoadMetadata(cfg *Config, patterns ...string) ([]*Package, error) {
 type requestWithPatterns struct {
 	metadataRequest
 	Patterns []string
+}
+
+func canLoadMetadataInProcess(selectedGo string, env []string) bool {
+	if driver := environmentValue(env, "GOPACKAGESDRIVER"); driver != "" && driver != "off" {
+		return false
+	}
+	pathGo, err := exec.LookPath("go")
+	if err != nil {
+		return false
+	}
+	fi1, err1 := os.Stat(selectedGo)
+	fi2, err2 := os.Stat(pathGo)
+	return err1 == nil && err2 == nil && os.SameFile(fi1, fi2)
 }
 
 func runMetadataDriver(input io.Reader, output io.Writer) error {

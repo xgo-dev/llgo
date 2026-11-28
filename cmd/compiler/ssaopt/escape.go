@@ -44,6 +44,7 @@ type EscapeConfig struct {
 	Cache           *goescape.Cache
 	Imports         map[*ssa.Function]goescape.Summary
 	ImportKeys      map[*ssa.Function]string
+	OpaquePkgs      map[*ssa.Package]bool
 	ExtraRoots      []*ssa.Function
 	// Linkname optionally resolves preloaded Program-level linkname directives
 	// (pure-Go string lookup) when a package was loaded without populating
@@ -86,19 +87,28 @@ func PrepareEscapeAnalysis(prog *ssa.Program, cfg EscapeConfig) *goescape.Result
 	var roots []*ssa.Function
 	for fn := range ssautil.AllFunctions(prog) {
 		if len(fn.Blocks) > 0 {
-			roots = append(roots, fn)
+			if _, imported := cfg.Imports[fn]; !imported {
+				roots = append(roots, fn)
+			}
 		}
 	}
 	for _, pkg := range prog.AllPackages() {
+		if cfg.OpaquePkgs[pkg] {
+			continue
+		}
 		for _, fn := range collectPackageMethods(pkg) {
 			if len(fn.Blocks) > 0 {
-				roots = append(roots, fn)
+				if _, imported := cfg.Imports[fn]; !imported {
+					roots = append(roots, fn)
+				}
 			}
 		}
 	}
 	for _, fn := range cfg.ExtraRoots {
 		if fn != nil && len(fn.Blocks) > 0 {
-			roots = append(roots, fn)
+			if _, imported := cfg.Imports[fn]; !imported {
+				roots = append(roots, fn)
+			}
 		}
 	}
 	external := func(fn *ssa.Function) (goescape.Summary, bool) {
@@ -418,6 +428,9 @@ func forceEscapeHeap(
 
 func shouldInspectEscapeBody(fn *ssa.Function, cfg EscapeConfig) bool {
 	if fn == nil {
+		return false
+	}
+	if _, imported := cfg.Imports[fn]; imported {
 		return false
 	}
 	if fn.TypeParams().Len() != 0 && len(fn.TypeArgs()) == 0 {

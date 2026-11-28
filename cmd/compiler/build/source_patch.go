@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -20,6 +21,296 @@ import (
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	"golang.org/x/tools/go/ast/astutil"
 )
+
+const sourcePatchCacheMagic = "LLGOSP01"
+
+type sourcePatchFileStat struct {
+	Path    string
+	Size    int64
+	ModTime int64
+}
+
+type sourcePatchCacheRecord struct {
+	Dirs     []depfileDirStat
+	Files    []sourcePatchFileStat
+	Overlay  map[string][]byte
+	PkgFiles map[string][]string
+}
+
+func sourcePatchCacheKey(runtimeDir, goroot string, ctx sourcePatchBuildContext) string {
+	var b strings.Builder
+	b.WriteString(sourcePatchCacheMagic)
+	b.WriteByte('\x00')
+	if exe, err := os.Executable(); err == nil {
+		if fi, err := os.Stat(exe); err == nil {
+			b.WriteString(exe)
+			b.WriteByte(':')
+			b.WriteString(strconv.FormatInt(fi.Size(), 10))
+			b.WriteByte(':')
+			b.WriteString(strconv.FormatInt(fi.ModTime().UnixNano(), 10))
+		}
+	}
+	b.WriteByte('\x00')
+	b.WriteString(runtimeDir)
+	b.WriteByte('\x00')
+	b.WriteString(goroot)
+	b.WriteByte('\x00')
+	b.WriteString(ctx.goos)
+	b.WriteByte('\x00')
+	b.WriteString(ctx.goarch)
+	b.WriteByte('\x00')
+	b.WriteString(ctx.goversion)
+	b.WriteByte('\x00')
+	b.WriteString(strings.Join(ctx.toolTags, ","))
+	b.WriteByte('\x00')
+	b.WriteString(strings.Join(ctx.buildFlags, "\x1f"))
+	b.WriteByte('\x00')
+	b.WriteString(strings.Join(ctx.targetTags, ","))
+	b.WriteByte('\x00')
+	if ctx.cgoEnabled != nil {
+		if *ctx.cgoEnabled {
+			b.WriteByte('1')
+		} else {
+			b.WriteByte('0')
+		}
+	} else {
+		b.WriteByte('-')
+	}
+	b.WriteByte('\x00')
+	b.WriteString(strings.Join(llruntime.SourcePatchPkgPaths(), ","))
+	return digestBytes([]byte(b.String()))
+}
+
+func marshalSourcePatchCache(rec *sourcePatchCacheRecord) []byte {
+	var buf bytes.Buffer
+	buf.WriteString(sourcePatchCacheMagic)
+	writeBinUvarint(&buf, uint64(len(rec.Dirs)))
+	for _, d := range rec.Dirs {
+		writeBinStr(&buf, d.Path)
+		writeBinBool(&buf, d.Exists)
+		writeBinStr(&buf, d.Hash)
+	}
+	writeBinUvarint(&buf, uint64(len(rec.Files)))
+	for _, f := range rec.Files {
+		writeBinStr(&buf, f.Path)
+		writeBinVarint(&buf, f.Size)
+		writeBinVarint(&buf, f.ModTime)
+	}
+	ovKeys := make([]string, 0, len(rec.Overlay))
+	for k := range rec.Overlay {
+		ovKeys = append(ovKeys, k)
+	}
+	sort.Strings(ovKeys)
+	writeBinUvarint(&buf, uint64(len(ovKeys)))
+	for _, k := range ovKeys {
+		writeBinStr(&buf, k)
+		writeBinBytes(&buf, rec.Overlay[k])
+	}
+	pfKeys := make([]string, 0, len(rec.PkgFiles))
+	for k := range rec.PkgFiles {
+		pfKeys = append(pfKeys, k)
+	}
+	sort.Strings(pfKeys)
+	writeBinUvarint(&buf, uint64(len(pfKeys)))
+	for _, k := range pfKeys {
+		writeBinStr(&buf, k)
+		writeBinStrs(&buf, rec.PkgFiles[k])
+	}
+	return buf.Bytes()
+}
+
+func unmarshalSourcePatchCache(raw []byte) (*sourcePatchCacheRecord, error) {
+	if len(raw) < len(sourcePatchCacheMagic) || string(raw[:len(sourcePatchCacheMagic)]) != sourcePatchCacheMagic {
+		return nil, errors.New("invalid source patch cache magic")
+	}
+	r := &binReader{data: raw, pos: len(sourcePatchCacheMagic)}
+	nd, err := r.readUvarint()
+	if err != nil || nd > uint64(len(raw)-r.pos) {
+		return nil, errors.New("corrupt source patch dirs")
+	}
+	rec := &sourcePatchCacheRecord{}
+	if nd > 0 {
+		rec.Dirs = make([]depfileDirStat, nd)
+		for i := uint64(0); i < nd; i++ {
+			if rec.Dirs[i].Path, err = r.readStr(); err != nil {
+				return nil, err
+			}
+			if rec.Dirs[i].Exists, err = r.readBool(); err != nil {
+				return nil, err
+			}
+			if rec.Dirs[i].Hash, err = r.readStr(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	nf, err := r.readUvarint()
+	if err != nil || nf > uint64(len(raw)-r.pos) {
+		return nil, errors.New("corrupt source patch files")
+	}
+	if nf > 0 {
+		rec.Files = make([]sourcePatchFileStat, nf)
+		for i := uint64(0); i < nf; i++ {
+			if rec.Files[i].Path, err = r.readStr(); err != nil {
+				return nil, err
+			}
+			if rec.Files[i].Size, err = r.readVarint(); err != nil {
+				return nil, err
+			}
+			if rec.Files[i].ModTime, err = r.readVarint(); err != nil {
+				return nil, err
+			}
+		}
+	}
+	no, err := r.readUvarint()
+	if err != nil || no > uint64(len(raw)-r.pos) {
+		return nil, errors.New("corrupt source patch overlay")
+	}
+	if no > 0 {
+		rec.Overlay = make(map[string][]byte, no)
+		for i := uint64(0); i < no; i++ {
+			k, err := r.readStr()
+			if err != nil {
+				return nil, err
+			}
+			v, err := r.readBytes()
+			if err != nil {
+				return nil, err
+			}
+			if v == nil {
+				v = []byte{}
+			}
+			rec.Overlay[k] = v
+		}
+	}
+	np, err := r.readUvarint()
+	if err != nil || np > uint64(len(raw)-r.pos) {
+		return nil, errors.New("corrupt source patch pkg files")
+	}
+	if np > 0 {
+		rec.PkgFiles = make(map[string][]string, np)
+		for i := uint64(0); i < np; i++ {
+			k, err := r.readStr()
+			if err != nil {
+				return nil, err
+			}
+			v, err := r.readStrs()
+			if err != nil {
+				return nil, err
+			}
+			rec.PkgFiles[k] = v
+		}
+	}
+	if r.pos != len(raw) {
+		return nil, errors.New("trailing bytes in source patch cache")
+	}
+	return rec, nil
+}
+
+func (r *binReader) readStrs() ([]string, error) {
+	return readBinStrs(r)
+}
+
+func validateSourcePatchCache(rec *sourcePatchCacheRecord) bool {
+	if rec == nil {
+		return false
+	}
+	for _, d := range rec.Dirs {
+		entries, err := os.ReadDir(d.Path)
+		if !d.Exists {
+			if !os.IsNotExist(err) {
+				return false
+			}
+			continue
+		}
+		if err != nil || hashDirEntries(entries) != d.Hash {
+			return false
+		}
+	}
+	for _, f := range rec.Files {
+		fi, err := os.Stat(f.Path)
+		if err != nil || fi.Size() != f.Size || fi.ModTime().UnixNano() != f.ModTime {
+			return false
+		}
+	}
+	return true
+}
+
+func collectSourcePatchCacheInputs(runtimeDir, goroot string) ([]depfileDirStat, []sourcePatchFileStat, bool) {
+	var dirs []string
+	var filePaths []string
+	seenFiles := make(map[string]bool)
+	addFile := func(p string) {
+		if !seenFiles[p] {
+			seenFiles[p] = true
+			filePaths = append(filePaths, p)
+		}
+	}
+	for _, pkgPath := range llruntime.SourcePatchPkgPaths() {
+		patchPath := pkgPath
+		switch pkgPath {
+		case "runtime/internal/atomic":
+			patchPath = "internal/runtime/atomic"
+		case "runtime/internal/syscall":
+			patchPath = "internal/runtime/syscall"
+		}
+		patchDir := filepath.Join(runtimeDir, "_patch", filepath.FromSlash(patchPath))
+		dirs = append(dirs, patchDir)
+		entries, err := os.ReadDir(patchDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, nil, false
+		}
+		hasPatchGo := false
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") && !strings.HasSuffix(e.Name(), "_test.go") {
+				hasPatchGo = true
+				addFile(filepath.Join(patchDir, e.Name()))
+			}
+		}
+		if !hasPatchGo {
+			continue
+		}
+		srcDir := filepath.Join(goroot, "src", filepath.FromSlash(pkgPath))
+		dirs = append(dirs, srcDir)
+		srcEntries, err := os.ReadDir(srcDir)
+		if err != nil {
+			if os.IsNotExist(err) || errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) {
+				continue
+			}
+			return nil, nil, false
+		}
+		for _, e := range srcEntries {
+			if e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if (strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")) ||
+				(strings.HasSuffix(name, ".s") && !strings.HasSuffix(name, "_test.s")) {
+				addFile(filepath.Join(srcDir, name))
+			}
+		}
+	}
+	dirStats, err := statDepfileDirs(dirs)
+	if err != nil {
+		return nil, nil, false
+	}
+	sort.Strings(filePaths)
+	fileStats := make([]sourcePatchFileStat, 0, len(filePaths))
+	for _, p := range filePaths {
+		fi, err := os.Stat(p)
+		if err != nil {
+			return nil, nil, false
+		}
+		fileStats = append(fileStats, sourcePatchFileStat{
+			Path:    p,
+			Size:    fi.Size(),
+			ModTime: fi.ModTime().UnixNano(),
+		})
+	}
+	return dirStats, fileStats, true
+}
 
 func cloneOverlay(src map[string][]byte) map[string][]byte {
 	if len(src) == 0 {
@@ -43,6 +334,17 @@ type sourcePatchBuildContext struct {
 }
 
 func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot string, ctx sourcePatchBuildContext) (map[string][]byte, map[string][]string, error) {
+	var cachePath string
+	if cacheEnabled() && len(base) == 0 && runtimeDir != "" && goroot != "" {
+		if root := cacheRootFunc(); root != "" {
+			cachePath = filepath.Join(root, "meta", "srcpatch-"+sourcePatchCacheKey(runtimeDir, goroot, ctx)+".bin")
+			if raw, err := os.ReadFile(cachePath); err == nil {
+				if rec, err := unmarshalSourcePatchCache(raw); err == nil && validateSourcePatchCache(rec) {
+					return rec.Overlay, rec.PkgFiles, nil
+				}
+			}
+		}
+	}
 	var out map[string][]byte
 	pkgFiles := make(map[string][]string)
 	for _, pkgPath := range llruntime.SourcePatchPkgPaths() {
@@ -57,7 +359,25 @@ func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot
 		pkgFiles[pkgPath] = files
 	}
 	if out == nil {
+		if cachePath != "" {
+			if dirs, files, ok := collectSourcePatchCacheInputs(runtimeDir, goroot); ok {
+				_ = writeFileAtomicBytes(cachePath, marshalSourcePatchCache(&sourcePatchCacheRecord{
+					Dirs:  dirs,
+					Files: files,
+				}))
+			}
+		}
 		return base, nil, nil
+	}
+	if cachePath != "" {
+		if dirs, files, ok := collectSourcePatchCacheInputs(runtimeDir, goroot); ok {
+			_ = writeFileAtomicBytes(cachePath, marshalSourcePatchCache(&sourcePatchCacheRecord{
+				Dirs:     dirs,
+				Files:    files,
+				Overlay:  out,
+				PkgFiles: pkgFiles,
+			}))
+		}
 	}
 	return out, pkgFiles, nil
 }

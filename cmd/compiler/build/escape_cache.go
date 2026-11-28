@@ -49,9 +49,10 @@ func (ctx *context) prepareEscapeAnalysis(event func(int, int)) *goescape.Result
 	}
 	var imports map[*ssa.Function]goescape.Summary
 	var keys map[*ssa.Function]string
+	var opaquePkgs map[*ssa.Package]bool
 	var roots []*ssa.Function
 	if ctx.frontend != nil {
-		imports, keys, roots = ctx.frontend.imports, ctx.frontend.importKeys, ctx.frontend.methods
+		imports, keys, opaquePkgs, roots = ctx.frontend.imports, ctx.frontend.importKeys, ctx.frontend.opaquePkgs, ctx.frontend.methods
 	}
 	var patchPkgs map[string]*ssa.Package
 	var patchTypes map[string]*types.Package
@@ -87,6 +88,7 @@ func (ctx *context) prepareEscapeAnalysis(event func(int, int)) *goescape.Result
 		Cache:           cache,
 		Imports:         imports,
 		ImportKeys:      keys,
+		OpaquePkgs:      opaquePkgs,
 		ExtraRoots:      roots,
 		Linkname:        linkname,
 	})

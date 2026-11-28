@@ -764,7 +764,7 @@ func digestLLGoFileInputs(ctx *context, inputs []llgoFileInput, overlay map[stri
 				depKey = cacheKey.envIdentity + "\x00" + cacheKey.path + "\x00" + cacheKey.compilerArgs
 				depPath = ctx.ensureCacheManager().DepfilePath(depKey)
 				if raw, err := os.ReadFile(depPath); err == nil {
-					if df, err := unmarshalDepfile(raw); err == nil && df.Key == depKey && validateDepfile(df) {
+					if df, err := unmarshalDepfile(raw); err == nil && df.Key == depKey && validateDepfileCached(df, ctx.depfileCheckCache()) {
 						preprocessedHash = df.PreprocessedHash
 						ok = true
 					}

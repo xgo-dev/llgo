@@ -72,7 +72,7 @@ func (c *context) collectFingerprint(pkg *aPackage) error {
 	}
 
 	pkg.Manifest = m.Build()
-	pkg.Fingerprint = m.Fingerprint()
+	pkg.Fingerprint = digestBytes([]byte(pkg.Manifest))
 	return nil
 }
 
@@ -242,12 +242,116 @@ func packageGoSourceInputs(p *packages.Package, sourcePatches []string) []string
 func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error {
 	p := pkg.Package
 
-	m.pkg.PkgPath = p.PkgPath
-	m.pkg.PkgID = p.ID
-	m.pkg.GoVersion = c.buildConf.GoVersion
-	if m.pkg.GoVersion == "" && p.Module != nil {
-		m.pkg.GoVersion = p.Module.GoVersion
+	// Reuse memoized static file digests computed once per package (e.g. during
+	// parallel frontendCache.precomputeLocals) and only refresh dynamic fields.
+	var cached *packageSection
+	if c.frontend != nil {
+		c.pkgInputsMu.RLock()
+		cached = pkg.cachedPkgInputs
+		c.pkgInputsMu.RUnlock()
 	}
+	if cached == nil {
+		var sec packageSection
+		sec.PkgPath = p.PkgPath
+		sec.PkgID = p.ID
+		sec.GoVersion = c.buildConf.GoVersion
+		if sec.GoVersion == "" && p.Module != nil {
+			sec.GoVersion = p.Module.GoVersion
+		}
+		if p.PkgPath == llvmgen.PkgRuntime {
+			// Only the runtime embeds this setting; goroutine callers have a
+			// configuration-independent ABI. Match SetPthreadStackSize in Build.
+			sec.PthreadStackSize = max(0, c.buildConf.PthreadStackSize)
+		}
+
+		// Go source files
+		goFilesList, err := digestFilesWithOverlay(packageGoSourceInputs(p, c.patchFiles[p.PkgPath]), c.buildConf.Overlay)
+		if err != nil {
+			return fmt.Errorf("digest go files: %w", err)
+		}
+		sec.GoFiles = goFilesList
+
+		embedFiles, err := digestEmbedFiles(p.EmbedFiles)
+		if err != nil {
+			return fmt.Errorf("digest embed files: %w", err)
+		}
+		sec.EmbedFiles = embedFiles
+
+		// Alt package files (if any)
+		if pkg.AltPkg != nil {
+			altPath := pkg.AltPkg.Package.PkgPath
+			altList, err := digestFilesWithOverlay(packageGoSourceInputs(pkg.AltPkg.Package, c.patchFiles[altPath]), c.buildConf.Overlay)
+			if err != nil {
+				return fmt.Errorf("digest alt go files: %w", err)
+			}
+			sec.AltGoFiles = altList
+			altEmbedFiles, err := digestEmbedFiles(pkg.AltPkg.Package.EmbedFiles)
+			if err != nil {
+				return fmt.Errorf("digest alt embed files: %w", err)
+			}
+			sec.AltEmbedFiles = altEmbedFiles
+		}
+
+		// Other files (C, assembly, etc.)
+		otherFiles := append([]string{}, p.OtherFiles...)
+		sfiles, err := pkgSFiles(c, p)
+		if err != nil {
+			return fmt.Errorf("list sfiles: %w", err)
+		}
+		otherFiles = append(otherFiles, sfiles...)
+		if len(otherFiles) > 0 {
+			otherList, err := digestFilesWithOverlay(otherFiles, c.buildConf.Overlay)
+			if err != nil {
+				return fmt.Errorf("digest other files: %w", err)
+			}
+			sec.OtherFiles = otherList
+		}
+
+		// ModeGen returns the in-memory Go LLVM module before C/C++/assembly
+		// LLGoFiles are compiled or archived, so it must not require the target
+		// native compiler merely to fingerprint unused link inputs.
+		if c.mode != ModeGen {
+			llgoInputs, err := llgoPkgFileInputs(c, p)
+			if err != nil {
+				return fmt.Errorf("list LLGoFiles: %w", err)
+			}
+			llgoInputs = append([]llgoFileInput(nil), llgoInputs...)
+			if pkg.AltPkg != nil {
+				altInputs, err := llgoPkgFileInputs(c, pkg.AltPkg.Package)
+				if err != nil {
+					return fmt.Errorf("list alternate LLGoFiles: %w", err)
+				}
+				llgoInputs = append(llgoInputs, altInputs...)
+			}
+			llgoFiles, err := digestLLGoFileInputs(c, llgoInputs, c.buildConf.Overlay)
+			if err != nil {
+				return fmt.Errorf("digest LLGoFiles: %w", err)
+			}
+			sec.LLGoFiles = llgoFiles
+		}
+
+		// Rewrite vars
+		if len(pkg.rewriteVars) > 0 {
+			rewrites := make(map[string]string, len(pkg.rewriteVars))
+			for k, v := range pkg.rewriteVars {
+				rewrites[k] = v
+			}
+			sec.RewriteVars = sec.RewriteVars.AddMap(rewrites)
+		}
+
+		cached = &sec
+		if c.frontend != nil {
+			c.pkgInputsMu.Lock()
+			if pkg.cachedPkgInputs == nil {
+				pkg.cachedPkgInputs = cached
+			} else {
+				cached = pkg.cachedPkgInputs
+			}
+			c.pkgInputsMu.Unlock()
+		}
+	}
+
+	m.pkg = *cached
 	if c.frontend != nil {
 		m.pkg.FrontendInputs = c.frontend.keys[p.ID]
 	}
@@ -255,86 +359,6 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 	if pkg.AltPkg != nil && c.progSSA != nil {
 		m.pkg.DeadInits = append(m.pkg.DeadInits, c.frontendOptions.UnusedGlobalInits.CacheKeys(c.progSSA.Package(pkg.AltPkg.Types))...)
 		slices.Sort(m.pkg.DeadInits)
-	}
-	if p.PkgPath == llvmgen.PkgRuntime {
-		// Only the runtime embeds this setting; goroutine callers have a
-		// configuration-independent ABI. Match SetPthreadStackSize in Build.
-		m.pkg.PthreadStackSize = max(0, c.buildConf.PthreadStackSize)
-	}
-
-	// Go source files
-	goFilesList, err := digestFilesWithOverlay(packageGoSourceInputs(p, c.patchFiles[p.PkgPath]), c.buildConf.Overlay)
-	if err != nil {
-		return fmt.Errorf("digest go files: %w", err)
-	}
-	m.pkg.GoFiles = goFilesList
-
-	embedFiles, err := digestEmbedFiles(p.EmbedFiles)
-	if err != nil {
-		return fmt.Errorf("digest embed files: %w", err)
-	}
-	m.pkg.EmbedFiles = embedFiles
-
-	// Alt package files (if any)
-	if pkg.AltPkg != nil {
-		altPath := pkg.AltPkg.Package.PkgPath
-		altList, err := digestFilesWithOverlay(packageGoSourceInputs(pkg.AltPkg.Package, c.patchFiles[altPath]), c.buildConf.Overlay)
-		if err != nil {
-			return fmt.Errorf("digest alt go files: %w", err)
-		}
-		m.pkg.AltGoFiles = altList
-		altEmbedFiles, err := digestEmbedFiles(pkg.AltPkg.Package.EmbedFiles)
-		if err != nil {
-			return fmt.Errorf("digest alt embed files: %w", err)
-		}
-		m.pkg.AltEmbedFiles = altEmbedFiles
-	}
-
-	// Other files (C, assembly, etc.)
-	otherFiles := append([]string{}, p.OtherFiles...)
-	sfiles, err := pkgSFiles(c, p)
-	if err != nil {
-		return fmt.Errorf("list sfiles: %w", err)
-	}
-	otherFiles = append(otherFiles, sfiles...)
-	if len(otherFiles) > 0 {
-		otherList, err := digestFilesWithOverlay(otherFiles, c.buildConf.Overlay)
-		if err != nil {
-			return fmt.Errorf("digest other files: %w", err)
-		}
-		m.pkg.OtherFiles = otherList
-	}
-
-	// ModeGen returns the in-memory Go LLVM module before C/C++/assembly
-	// LLGoFiles are compiled or archived, so it must not require the target
-	// native compiler merely to fingerprint unused link inputs.
-	if c.mode != ModeGen {
-		llgoInputs, err := llgoPkgFileInputs(c, p)
-		if err != nil {
-			return fmt.Errorf("list LLGoFiles: %w", err)
-		}
-		llgoInputs = append([]llgoFileInput(nil), llgoInputs...)
-		if pkg.AltPkg != nil {
-			altInputs, err := llgoPkgFileInputs(c, pkg.AltPkg.Package)
-			if err != nil {
-				return fmt.Errorf("list alternate LLGoFiles: %w", err)
-			}
-			llgoInputs = append(llgoInputs, altInputs...)
-		}
-		llgoFiles, err := digestLLGoFileInputs(c, llgoInputs, c.buildConf.Overlay)
-		if err != nil {
-			return fmt.Errorf("digest LLGoFiles: %w", err)
-		}
-		m.pkg.LLGoFiles = llgoFiles
-	}
-
-	// Rewrite vars
-	if len(pkg.rewriteVars) > 0 {
-		rewrites := make(map[string]string, len(pkg.rewriteVars))
-		for k, v := range pkg.rewriteVars {
-			rewrites[k] = v
-		}
-		m.pkg.RewriteVars = m.pkg.RewriteVars.AddMap(rewrites)
 	}
 
 	// Add metadata fields if available (for cache saving)
@@ -452,12 +476,25 @@ func (c *context) getLLVMVersion() string {
 	return c.llvmVersion
 }
 
-// detectLLVMVersion detects LLVM version from clang --version.
+// detectLLVMVersion detects LLVM version from clang --version, caching the
+// single-line banner on disk keyed by the resolved compiler binary stat.
 func detectLLVMVersion(ctx *context) string {
 	// Get compiler path from cross compile config
 	cc := ctx.crossCompile.CC
 	if cc == "" {
 		cc = "clang"
+	}
+	var cachePath string
+	if cacheEnabled() {
+		if ccBin, ok := lookPathInCommandEnv(ctx.commands, cc); ok {
+			if fi, err := os.Stat(ccBin); err == nil {
+				key := digestBytes([]byte(fmt.Sprintf("ccver1\x00%s\x00%d\x00%d", ccBin, fi.Size(), fi.ModTime().UnixNano())))
+				cachePath = filepath.Join(ctx.ensureCacheManager().root, "meta", "ccver-"+key+".txt")
+				if raw, err := os.ReadFile(cachePath); err == nil && len(raw) > 0 {
+					return strings.TrimSpace(string(raw))
+				}
+			}
+		}
 	}
 	versionCmd := exec.Command(cc, "--version")
 	ctx.commands.configure(versionCmd)
@@ -469,7 +506,11 @@ func detectLLVMVersion(ctx *context) string {
 	if idx := strings.IndexByte(line, '\n'); idx >= 0 {
 		line = line[:idx]
 	}
-	return strings.TrimSpace(line)
+	line = strings.TrimSpace(line)
+	if cachePath != "" && line != "" {
+		_ = writeFileAtomicBytes(cachePath, []byte(line))
+	}
+	return line
 }
 
 // targetTriple returns the target triple for cache directory.

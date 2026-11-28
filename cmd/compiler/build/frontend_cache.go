@@ -21,7 +21,7 @@ import (
 	"github.com/xgo-dev/llgo/ssa"
 )
 
-const frontendExportVersion = 5
+const frontendExportVersion = 6
 
 type frontendFunction struct {
 	ID       string
@@ -67,6 +67,7 @@ type frontendCache struct {
 	fnIDs          map[*ssa.Function]string
 	imports        map[*ssa.Function]goescape.Summary
 	importKeys     map[*ssa.Function]string
+	opaquePkgs     map[*ssa.Package]bool
 	ambiguous      map[string]bool
 	uncacheable    map[Package]bool
 	fingerprintErr map[Package]bool
@@ -165,7 +166,7 @@ func frontendDigest(data []byte) string {
 }
 
 func (f *frontendCache) path(key string) string {
-	return filepath.Join(f.ctx.ensureCacheManager().root, "frontend", key+".json")
+	return filepath.Join(f.ctx.ensureCacheManager().root, "frontend", key+".llgoex")
 }
 
 func (f *frontendCache) manifestTemplate() *manifestBuilder {
@@ -310,22 +311,21 @@ func (f *frontendCache) loadByKey(cacheRoot, key string) *frontendExport {
 	if key == "" {
 		return nil
 	}
-	path := filepath.Join(cacheRoot, "frontend", key+".json")
+	path := filepath.Join(cacheRoot, "frontend", key+".llgoex")
 	info, err := os.Stat(path)
 	if err != nil || info.Size() > goescape.MaxCacheBytes {
 		return nil
 	}
 	data, err := os.ReadFile(path)
-	var envelope frontendEnvelope
-	if err != nil || json.Unmarshal(data, &envelope) != nil || frontendDigest(envelope.Payload) != envelope.Digest {
+	if err != nil {
 		return nil
 	}
-	var record frontendExport
-	if json.Unmarshal(envelope.Payload, &record) != nil || record.Version != frontendExportVersion ||
+	record, err := unmarshalFrontendExport(data)
+	if err != nil || record.Version != frontendExportVersion ||
 		record.Input != key || record.Archive == "" || record.Link == nil || len(record.Functions) == 0 {
 		return nil
 	}
-	return &record
+	return record
 }
 
 type frontendLoadResult struct {
@@ -404,15 +404,11 @@ func (f *frontendCache) store(pkg Package) error {
 		return err
 	}
 	copy.Link = link
-	data, err := json.Marshal(copy)
-	if err != nil {
+	encoded, err := marshalFrontendExport(&copy)
+	if err != nil || len(encoded) > goescape.MaxCacheBytes {
 		return err
 	}
-	wrapped, err := json.Marshal(frontendEnvelope{Digest: frontendDigest(data), Payload: data})
-	if err != nil || len(wrapped) > goescape.MaxCacheBytes {
-		return err
-	}
-	if err := writeManifest(f.path(record.Input), string(wrapped)); err != nil {
+	if err := writeFileAtomicBytes(f.path(record.Input), encoded); err != nil {
 		return err
 	}
 	if f.loader != nil {

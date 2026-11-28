@@ -628,6 +628,16 @@ func NewSignature(recv *Var, params, results *Tuple, variadic bool) *Signature {
 // NewSignatureType constructs a (possibly generic) standard Go Signature
 // (CallConv = Go), matching go/types.NewSignatureType's 6-parameter form.
 func NewSignatureType(recv *Var, recvTypeParams, typeParams []*TypeParam, params, results *Tuple, variadic bool) *Signature {
+	for i, tp := range recvTypeParams {
+		if tp != nil {
+			tp.index = i
+		}
+	}
+	for i, tp := range typeParams {
+		if tp != nil {
+			tp.index = i
+		}
+	}
 	return &Signature{
 		callConv:       Go,
 		recv:           recv,

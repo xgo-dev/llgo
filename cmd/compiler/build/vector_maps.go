@@ -21,8 +21,43 @@ func validateVectorMaps(prog llvmgen.Program, groups ...[]*packages.Package) err
 				return
 			}
 			seen[pkg] = true
+			// Fast path: check unique non-basic types from TypesInfo maps first
+			// instead of walking every AST node across all packages. Only run
+			// the source-ordered AST walk when an invalid vector map is found
+			// so diagnostics keep exact source positions.
+			hasErr := false
+			for _, tv := range pkg.TypesInfo.Types {
+				if tv.Type == nil {
+					continue
+				}
+				if _, isBasic := tv.Type.(*types.Basic); isBasic {
+					continue
+				}
+				if validate(tv.Type) != nil {
+					hasErr = true
+					break
+				}
+			}
+			if !hasErr {
+				for _, obj := range pkg.TypesInfo.Defs {
+					if obj == nil || obj.Type() == nil {
+						continue
+					}
+					if _, isBasic := obj.Type().(*types.Basic); isBasic {
+						continue
+					}
+					if validate(obj.Type()) != nil {
+						hasErr = true
+						break
+					}
+				}
+			}
+			if !hasErr {
+				return
+			}
 			// Walk source order for a stable, positioned diagnostic, including
 			// unused type declarations and instantiated generic containers.
+			posValidate := prog.VectorMapValidator()
 			for _, file := range pkg.Syntax {
 				ast.Inspect(file, func(node ast.Node) bool {
 					if firstErr != nil {
@@ -33,7 +68,7 @@ func validateVectorMaps(prog llvmgen.Program, groups ...[]*packages.Package) err
 						return true
 					}
 					if typ := pkg.TypesInfo.TypeOf(expr); typ != nil {
-						if err := validate(typ); err != nil {
+						if err := posValidate(typ); err != nil {
 							firstErr = fmt.Errorf("%s: %w", pkg.Fset.Position(expr.Pos()), err)
 							return false
 						}

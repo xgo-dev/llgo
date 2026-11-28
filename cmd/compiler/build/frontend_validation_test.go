@@ -197,9 +197,9 @@ func TestFrontendTypeExportsKeepSourceDependentDeclarations(t *testing.T) {
 		want         bool
 	}{
 		{"plain", "var X int", true},
-		{"generic function", "func F[T any](x T) T{return x}", false},
-		{"generic type", "type T[P any] struct{X P}", false},
-		{"generic alias", "type T[P any] = []P", false},
+		{"generic function", "func F[T any](x T) T{return x}", true},
+		{"generic type", "type T[P any] struct{X P}", true},
+		{"generic alias", "type T[P any] = []P", true},
 		{"environment rewrite", "//llgo:env LLGO_TEST\nvar X int", false},
 		{"missing source", "var X int", false},
 	} {

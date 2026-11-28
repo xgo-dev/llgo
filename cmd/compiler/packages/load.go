@@ -203,21 +203,14 @@ func LoadExWithGoVersion(dedup Deduper, sizes func(sizes types.Sizes, compiler, 
 	return LoadExWithSourceOverlay(dedup, sizes, cfg, goVersion, nil, patterns...)
 }
 
-// LoadExWithSourceOverlay supplies an additional source view to LLGo's parser
-// without changing the metadata driver's overlay. This lets a Go -overlay
-// JSON select deleted and added files while native source patches and virtual
-// files reach the parser without generating a conflicting go/packages overlay.
-func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compiler, arch string) types.Sizes, cfg *Config, goVersion string, sourceOverlay map[string][]byte, patterns ...string) ([]*Package, error) {
+// MetadataConfig computes the go/packages metadata driver configuration that
+// LoadExWithSourceOverlay uses when fetching package metadata via LoadMetadata.
+func MetadataConfig(dedup Deduper, cfg *Config) Config {
 	var driverCfg Config
 	if cfg != nil {
 		driverCfg = *cfg
 	}
 	origMode := driverCfg.Mode
-
-	// When type information or custom syntax parsing is requested, we do not let
-	// packages.Load typecheck or parse directly. We request files, imports, embed patterns,
-	// and module metadata via LoadMetadata, and perform custom parsing
-	// and typechecking ourselves.
 	driverCfg.Mode = (origMode &^ (NeedTypes | NeedTypesSizes | NeedTypesInfo | NeedSyntax)) | NeedCompiledGoFiles | NeedImports | NeedName | NeedFiles
 	if origMode&(NeedEmbedPatterns|NeedEmbedFiles|NeedTypes|NeedTypesInfo|NeedSyntax) != 0 {
 		driverCfg.Mode |= NeedEmbedPatterns | NeedEmbedFiles
@@ -235,6 +228,15 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	if origMode&NeedModule != 0 || origMode&(NeedTypes|NeedTypesInfo) != 0 {
 		driverCfg.Mode |= NeedModule
 	}
+	return driverCfg
+}
+
+// LoadExWithSourceOverlay supplies an additional source view to LLGo's parser
+// without changing the metadata driver's overlay. This lets a Go -overlay
+// JSON select deleted and added files while native source patches and virtual
+// files reach the parser without generating a conflicting go/packages overlay.
+func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compiler, arch string) types.Sizes, cfg *Config, goVersion string, sourceOverlay map[string][]byte, patterns ...string) ([]*Package, error) {
+	driverCfg := MetadataConfig(dedup, cfg)
 
 	// TODO(golang/go#68495): Restore packages.Load here and in coverage reloads
 	// once per-load Go executable selection makes the adapter unnecessary.
@@ -242,6 +244,17 @@ func LoadExWithSourceOverlay(dedup Deduper, sizes func(sizes types.Sizes, compil
 	if err != nil {
 		return nil, err
 	}
+	return LoadExWithPreloadedMetadata(dedup, sizes, cfg, goVersion, sourceOverlay, initial)
+}
+
+// LoadExWithPreloadedMetadata finishes loading packages whose metadata was
+// already fetched with LoadMetadata using MetadataConfig(dedup, cfg).
+func LoadExWithPreloadedMetadata(dedup Deduper, sizes func(sizes types.Sizes, compiler, arch string) types.Sizes, cfg *Config, goVersion string, sourceOverlay map[string][]byte, initial []*Package) ([]*Package, error) {
+	var origMode LoadMode
+	if cfg != nil {
+		origMode = cfg.Mode
+	}
+	driverCfg := MetadataConfig(dedup, cfg)
 	if dedup != nil && dedup.prepare != nil {
 		if err := dedup.prepare(initial, &driverCfg); err != nil {
 			return nil, err

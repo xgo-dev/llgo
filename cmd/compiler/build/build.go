@@ -570,7 +570,7 @@ func Build(inv Invocation) ([]Package, error) {
 	}()
 	result, err := buildInvocation(inv, &plan)
 	if errors.Is(err, errFrontendSourceRequired) && (inv.Config == nil || !inv.Config.frontendSourceOnly) {
-		for attempt := 0; attempt < 3 && errors.Is(err, errFrontendSourceRequired); attempt++ {
+		for attempt := 0; attempt < 5 && errors.Is(err, errFrontendSourceRequired); attempt++ {
 			if plan.sourceOverlayFile != "" {
 				os.Remove(plan.sourceOverlayFile)
 				plan.sourceOverlayFile = ""
@@ -581,7 +581,7 @@ func Build(inv Invocation) ([]Package, error) {
 				inv.Config = inv.Config.clone()
 			}
 			var reqErr *frontendSourceRequiredError
-			if attempt < 2 && errors.As(err, &reqErr) && len(reqErr.pkgIDs) > 0 {
+			if attempt < 4 && errors.As(err, &reqErr) && len(reqErr.pkgIDs) > 0 {
 				if inv.Config.frontendSourcePkgs == nil {
 					inv.Config.frontendSourcePkgs = make(map[string]bool, len(reqErr.pkgIDs))
 				}
@@ -967,6 +967,19 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if typeLoader != nil {
 		dedup.SetImportTypes(typeLoader.load)
 	}
+	// Start fetching runtime/alt package metadata concurrently with main package
+	// loading. The small fixed set of possible alt packages depends only on target
+	// config, so go list for the runtime module overlaps cleanly with user loading.
+	altCfg := runtimePackageConfig(cfg, env.LLGoRuntimeDir())
+	// The runtime submodule may otherwise select a different toolchain from its go.mod.
+	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourcePatchGoVersion)
+	altPrefetchCh := startPrefetchAltMetadata(dedup, &altCfg, prefetchAltPkgPaths(conf, llvmgen.PkgRuntime))
+	defer func() {
+		if altPrefetchCh != nil {
+			<-altPrefetchCh
+		}
+	}()
+
 	loadSpan := buildTrace.startCoordinator("load packages", map[string]any{
 		"patterns": slices.Clone(patterns),
 	})
@@ -1032,13 +1045,20 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	altPkgPaths := altPkgs(initial, conf, llvmgen.PkgRuntime)
-	altCfg := runtimePackageConfig(cfg, env.LLGoRuntimeDir())
-	// The runtime submodule may otherwise select a different toolchain from its go.mod.
-	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourcePatchGoVersion)
 	loadAltSpan := buildTrace.startCoordinator("load runtime packages", map[string]any{
 		"packages": slices.Clone(altPkgPaths),
 	})
-	altPkgs, err := packages.LoadExWithSourceOverlay(dedup, sizes, &altCfg, "", conf.Overlay, altPkgPaths...)
+	var altPkgs []*packages.Package
+	var prefetched altMetadataPrefetchResult
+	if altPrefetchCh != nil {
+		prefetched = <-altPrefetchCh
+		altPrefetchCh = nil
+	}
+	if selected, ok := selectPrefetchedAltMetadata(prefetched, altPkgPaths); ok {
+		altPkgs, err = packages.LoadExWithPreloadedMetadata(dedup, sizes, &altCfg, "", conf.Overlay, selected)
+	} else {
+		altPkgs, err = packages.LoadExWithSourceOverlay(dedup, sizes, &altCfg, "", conf.Overlay, altPkgPaths...)
+	}
 	loadAltSpan.done()
 	if err != nil {
 		return nil, err
@@ -2002,6 +2022,9 @@ type context struct {
 	llgoFileHashMu    sync.RWMutex
 	llgoFileHashCache map[llgoFileHashKey]string
 	llgoFileErrCache  map[llgoFileHashKey]error
+	depfileChecksOnce sync.Once
+	depfileChecks     *depfileCheckCache
+	pkgInputsMu       sync.RWMutex
 
 	// plan9asm package policy parsed from env.
 	plan9asmOnce  sync.Once
@@ -4244,6 +4267,82 @@ const (
 	altPkgPathPrefix = abi.PatchPathPrefix
 )
 
+func (c *context) depfileCheckCache() *depfileCheckCache {
+	if c == nil {
+		return nil
+	}
+	c.depfileChecksOnce.Do(func() {
+		c.depfileChecks = newDepfileCheckCache()
+	})
+	return c.depfileChecks
+}
+
+type altMetadataPrefetchResult struct {
+	pkgs []*packages.Package
+	err  error
+}
+
+var knownAltPkgTargets = []string{
+	"internal/abi",
+	"internal/reflectlite",
+	"reflect",
+	"runtime",
+	"syscall/js",
+}
+
+func prefetchAltPkgPaths(conf *Config, base ...string) []string {
+	paths := append([]string(nil), base...)
+	for _, pkgPath := range knownAltPkgTargets {
+		if pkgPath == "syscall/js" && (conf == nil || (conf.Goos != "js" && conf.Goarch != "wasm")) {
+			continue
+		}
+		if hasAltPkgForTarget(conf, pkgPath) {
+			paths = append(paths, altPkgPathPrefix+pkgPath)
+		}
+	}
+	return paths
+}
+
+func startPrefetchAltMetadata(dedup packages.Deduper, altCfg *packages.Config, patterns []string) chan altMetadataPrefetchResult {
+	if len(patterns) == 0 || altCfg == nil {
+		return nil
+	}
+	driverCfg := packages.MetadataConfig(dedup, altCfg)
+	ch := make(chan altMetadataPrefetchResult, 1)
+	go func() {
+		pkgs, err := packages.LoadMetadata(&driverCfg, patterns...)
+		ch <- altMetadataPrefetchResult{pkgs: pkgs, err: err}
+	}()
+	return ch
+}
+
+func selectPrefetchedAltMetadata(res altMetadataPrefetchResult, want []string) ([]*packages.Package, bool) {
+	if res.err != nil || len(res.pkgs) == 0 || len(want) == 0 {
+		return nil, false
+	}
+	byPath := make(map[string]*packages.Package, len(res.pkgs))
+	for _, pkg := range res.pkgs {
+		if pkg == nil {
+			continue
+		}
+		if pkg.PkgPath != "" {
+			byPath[pkg.PkgPath] = pkg
+		}
+		if pkg.ID != "" {
+			byPath[pkg.ID] = pkg
+		}
+	}
+	selected := make([]*packages.Package, 0, len(want))
+	for _, path := range want {
+		pkg := byPath[path]
+		if pkg == nil || len(pkg.Errors) > 0 {
+			return nil, false
+		}
+		selected = append(selected, pkg)
+	}
+	return selected, true
+}
+
 func altPkgs(initial []*packages.Package, conf *Config, alts ...string) []string {
 	packages.Visit(initial, nil, func(p *packages.Package) {
 		if p.Types != nil && !p.IllTyped {
@@ -4353,13 +4452,14 @@ type aPackage struct {
 	ssaInstructions int64
 	linkSnapshot    *packageLinkSnapshot
 
-	LinkArgs     []string
-	ObjFiles     []string               // file-backed archive members: .o or .ll
-	ObjBuffers   []packageArchiveBuffer // LLVM-produced in-memory archive members
-	ArchiveFile  string                 // archive file: .a (output of archiver, used for linking)
-	Meta         *meta.PackageMeta
-	rewriteVars  map[string]string
-	tempObjFiles []string // process-private C/C++/assembly objects consumed by ArchiveFile
+	LinkArgs        []string
+	ObjFiles        []string               // file-backed archive members: .o or .ll
+	ObjBuffers      []packageArchiveBuffer // LLVM-produced in-memory archive members
+	ArchiveFile     string                 // archive file: .a (output of archiver, used for linking)
+	Meta            *meta.PackageMeta
+	rewriteVars     map[string]string
+	tempObjFiles    []string // process-private C/C++/assembly objects consumed by ArchiveFile
+	cachedPkgInputs *packageSection
 
 	pcln *packagePCLN // source mappings read from ArchiveFile before linking
 

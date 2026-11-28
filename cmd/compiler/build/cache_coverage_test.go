@@ -278,6 +278,14 @@ func TestDepfileCacheRoundTripValidationAndErrors(t *testing.T) {
 	if !validateDepfile(rec) {
 		t.Fatal("expected valid depfile")
 	}
+	checkCache := newDepfileCheckCache()
+	if !validateDepfileCached(rec, checkCache) {
+		t.Fatal("expected valid depfile with checkCache")
+	}
+	// Second check should hit in-memory memoized cache for files, dirs, and missing
+	if !validateDepfileCached(rec, checkCache) {
+		t.Fatal("expected valid depfile on second checkCache hit")
+	}
 	raw, err := marshalDepfile(rec)
 	if err != nil {
 		t.Fatalf("marshalDepfile: %v", err)
@@ -899,7 +907,7 @@ func TestFrontendTypesAndPrepareEdgeCases(t *testing.T) {
 	if err := os.MkdirAll(feDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(feDir, "fe-edge.json"), []byte("{}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(feDir, "fe-edge.llgoex"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

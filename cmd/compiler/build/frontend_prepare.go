@@ -82,10 +82,17 @@ func (f *frontendCache) indexTypes() {
 func (f *frontendCache) prepare() error {
 	span := f.ctx.buildTrace.startCoordinator("load frontend exports", nil)
 	defer span.done()
-	f.indexTypes()
+	// indexTypes only reads dedup/entries into f.types while loadAll computes
+	// package input keys and decodes on-disk .llgoex records; overlap them.
+	indexDone := make(chan struct{})
+	go func() {
+		defer close(indexDone)
+		f.indexTypes()
+	}()
 	selected := make(map[*ssa.Package]bool)
 	ordered := f.orderedPackages()
 	loaded := f.loadAll(ordered)
+	<-indexDone
 	for i, pkg := range ordered {
 		record := loaded[i].record
 		if record != nil && pkg.Name != "main" && !f.ctx.packageCacheDisabled(pkg.ID) {
@@ -389,7 +396,7 @@ func (f *frontendCache) certify() error {
 			if owner.frontendOpaque == nil {
 				continue
 			}
-			inventory := make(map[string]frontendFunction)
+			inventory := make(map[string]frontendFunction, len(owner.frontendOpaque.Functions))
 			for _, fn := range owner.frontendOpaque.Functions {
 				inventory[fn.ID] = fn
 			}
@@ -404,34 +411,67 @@ func (f *frontendCache) certify() error {
 				f.source(owner, selected, "missing-inventory:"+id)
 			}
 		}
+		nonCached := make(map[Package]bool)
+		for _, pkg := range f.orderedPackages() {
+			if !pkg.CacheHit || pkg.Name == "main" {
+				nonCached[pkg] = true
+			}
+		}
+		liveInstances := f.liveGenericInstances(nonCached)
 		for fn := range f.instances {
 			owner := f.owners[f.functionPackage(fn)]
-			if owner == nil || owner.frontendOpaque == nil {
+			if owner == nil {
 				continue
 			}
-			f.source(owner, selected, "generic-instance:"+fn.String())
+			if liveInstances[fn] {
+				if owner.frontendOpaque != nil || f.ctx.dedup.IsExported(owner.ID) || len(fn.Blocks) == 0 {
+					f.source(owner, selected, "generic-instance:"+fn.String())
+				}
+				continue
+			}
+			if owner.frontendOpaque == nil {
+				continue
+			}
+			id := f.functionID(fn)
+			if _, found := inventories[f.functionPackage(fn)][id]; !found || f.uncacheable[owner] {
+				f.source(owner, selected, "missing-generic-inventory:"+id)
+			}
 		}
 		if len(selected) == 0 {
 			break
 		}
 		f.build(selected)
+		if f.err != nil {
+			return f.err
+		}
 		if err := f.materialize(); err != nil {
 			return err
 		}
 	}
-	f.imports, f.importKeys = make(map[*ssa.Function]goescape.Summary), make(map[*ssa.Function]string)
+	f.imports, f.importKeys, f.opaquePkgs = make(map[*ssa.Function]goescape.Summary), make(map[*ssa.Function]string), make(map[*ssa.Package]bool)
+	instancesByID := make(map[string]*ssa.Function, len(f.instances))
+	for fn := range f.instances {
+		id := f.functionID(fn)
+		if id != "" && !f.ambiguous[id] {
+			instancesByID[id] = fn
+		}
+	}
 	for ssaPkg, owner := range f.owners {
 		if owner.frontendOpaque == nil {
 			continue
 		}
+		f.opaquePkgs[ssaPkg] = true
 		facts := make(map[*ssa.Function]cl.FrontendFacts)
 		for _, item := range owner.frontendOpaque.Functions {
 			fn := f.functions[item.ID]
+			if fn == nil {
+				fn = instancesByID[item.ID]
+			}
 			if fn == nil || f.functionPackage(fn) != ssaPkg {
 				continue
 			}
 			facts[fn] = item.Facts
-			if item.Escape != nil && goescape.ValidSummary(fn, *item.Escape) && len(fn.Blocks) == 0 {
+			if item.Escape != nil && goescape.ValidSummary(fn, *item.Escape) && (len(fn.Blocks) == 0 || item.CacheKey != "") {
 				f.imports[fn], f.importKeys[fn] = *item.Escape, item.CacheKey
 			}
 		}
@@ -484,16 +524,32 @@ func (f *frontendCache) capture(result *goescape.Result) {
 		}
 		graph := frontcache.NewTypeGraph(f.types, f.ctx.progSSA.Fset)
 		record := &frontendExport{Version: frontendExportVersion, Input: f.keys[pkg.ID]}
+		seenIDs := make(map[string]bool)
+		appendFn := func(fn *ssa.Function) {
+			id := f.functionID(fn)
+			if id == "" || seenIDs[id] {
+				return
+			}
+			seenIDs[id] = true
+			item := frontendFunction{ID: id, Facts: f.ctx.callerTracking.ExportFrontendFacts(f.functionPackage(fn), fn), CacheKey: result.ComponentKey(fn)}
+			if summary, ok := result.Summary(fn); ok && goescape.ValidSummary(fn, summary) {
+				item.Escape = &summary
+			}
+			record.Functions = append(record.Functions, item)
+		}
 		for _, fn := range f.functions {
 			owner := f.owners[f.functionPackage(fn)]
 			if owner != pkg || frontendInstance(fn) {
 				continue
 			}
-			item := frontendFunction{ID: f.functionID(fn), Facts: f.ctx.callerTracking.ExportFrontendFacts(f.functionPackage(fn), fn), CacheKey: result.ComponentKey(fn)}
-			if summary, ok := result.Summary(fn); ok && goescape.ValidSummary(fn, summary) {
-				item.Escape = &summary
+			appendFn(fn)
+		}
+		for fn := range f.instances {
+			owner := f.owners[f.functionPackage(fn)]
+			if owner != pkg {
+				continue
 			}
-			record.Functions = append(record.Functions, item)
+			appendFn(fn)
 		}
 		sort.Slice(record.Functions, func(i, j int) bool { return record.Functions[i].ID < record.Functions[j].ID })
 		for ssaPkg, owner := range f.owners {
@@ -518,71 +574,150 @@ func (f *frontendCache) capture(result *goescape.Result) {
 	}
 }
 
-// rootInlineSourcePackages identifies the small set of dependency packages
-// whose inlineable bodies are transitively called from the current invocation's
-// initial root packages. Persisting this hint lets subsequent -Os incremental
-// builds skip parsing unrelated dependencies via .llgotypes without retrying.
-func (f *frontendCache) rootInlineSourcePackages() []string {
-	bodyBudget, _, depth := cl.FrontendInlinePolicy()
-	costs := make(map[string]int)
-	for _, record := range f.records {
-		for _, fn := range record.Functions {
-			costs[fn.ID] = fn.Facts.InlineCost
-		}
-	}
-	roots := make(map[Package]bool, len(f.ctx.initial))
-	for _, initPkg := range f.ctx.initial {
-		if pkg := f.ctx.pkgs[initPkg]; pkg != nil {
-			roots[pkg] = true
-		}
-	}
-	targets := make(map[*ssa.Function]*ssa.Function)
-	active := make(map[*ssa.Function]bool)
-	needed := make(map[string]bool)
-	var visit func(*ssa.Function, int)
-	visit = func(fn *ssa.Function, level int) {
-		if fn == nil || active[fn] || level > depth {
+// liveGenericInstances returns the subset of generic instantiations that are
+// transitively referenced by non-cached packages' built SSA bodies (including
+// interface-boxed generic types). Generic instances materialized solely from
+// opaque cached packages' record.RuntimeTypes do not require rebuilding their
+// defining packages.
+func (f *frontendCache) liveGenericInstances(nonCached map[Package]bool) map[*ssa.Function]bool {
+	live := make(map[*ssa.Function]bool)
+	visited := make(map[*ssa.Function]bool)
+	seenTypes := make(map[types.Type]bool)
+	var operands []*ssa.Value
+	var walk func(*ssa.Function)
+	walkType := func(typ types.Type) {
+		if typ == nil || seenTypes[typ] {
 			return
 		}
-		active[fn] = true
-		defer delete(active, fn)
+		seenTypes[typ] = true
+		mset := f.ctx.progSSA.MethodSets.MethodSet(typ)
+		for i := 0; i < mset.Len(); i++ {
+			if m := f.ctx.progSSA.MethodValue(mset.At(i)); m != nil && frontendInstance(m) {
+				walk(m)
+			}
+		}
+	}
+	walk = func(fn *ssa.Function) {
+		if fn == nil || visited[fn] {
+			return
+		}
+		visited[fn] = true
+		if frontendInstance(fn) {
+			live[fn] = true
+		}
+		for _, anon := range fn.AnonFuncs {
+			walk(anon)
+		}
 		for _, block := range fn.Blocks {
 			for _, instr := range block.Instrs {
-				call, ok := instr.(ssa.CallInstruction)
-				if !ok {
-					continue
+				if mi, ok := instr.(*ssa.MakeInterface); ok {
+					walkType(mi.X.Type())
+				} else if ta, ok := instr.(*ssa.TypeAssert); ok {
+					walkType(ta.AssertedType)
 				}
-				callee := call.Common().StaticCallee()
-				target, resolved := targets[callee]
-				if !resolved {
-					target = cl.ResolveInlineTarget(callee, f.ctx.patches)
-					targets[callee] = target
-				}
-				if target == nil {
-					continue
-				}
-				if cost, ok := costs[f.functionID(target)]; ok && cost <= bodyBudget {
-					if owner := f.owners[target.Pkg]; owner != nil && !roots[owner] && owner.Name != "main" {
-						needed[owner.ID] = true
+				operands = instr.Operands(operands[:0])
+				for _, op := range operands {
+					if op == nil || *op == nil {
+						continue
 					}
-					visit(target, level+1)
+					if target, ok := (*op).(*ssa.Function); ok {
+						walk(target)
+					}
 				}
 			}
 		}
 	}
 	for _, fn := range f.functions {
 		owner := f.owners[f.functionPackage(fn)]
-		if owner != nil && roots[owner] && len(fn.Blocks) > 0 {
-			visit(fn, 0)
+		if (owner == nil || nonCached[owner]) && len(fn.Blocks) > 0 {
+			walk(fn)
 		}
 	}
 	for fn := range f.instances {
-		if len(fn.Blocks) == 0 {
-			continue
-		}
 		owner := f.owners[f.functionPackage(fn)]
-		if owner != nil && roots[owner] {
-			visit(fn, 0)
+		if owner != nil && nonCached[owner] && len(fn.Blocks) > 0 {
+			walk(fn)
+		}
+	}
+	return live
+}
+
+// rootInlineSourcePackages identifies the small set of dependency packages
+// whose source bodies are needed by the current invocation's initial root
+// packages (either for cross-package -Os inlining or direct generic
+// instantiation). Persisting this hint lets subsequent incremental builds skip
+// parsing unrelated dependencies via .llgotypes without retrying.
+func (f *frontendCache) rootInlineSourcePackages() []string {
+	roots := make(map[Package]bool, len(f.ctx.initial))
+	for _, initPkg := range f.ctx.initial {
+		if pkg := f.ctx.pkgs[initPkg]; pkg != nil {
+			roots[pkg] = true
+		}
+	}
+	needed := make(map[string]bool)
+	for fn := range f.liveGenericInstances(roots) {
+		if owner := f.owners[f.functionPackage(fn)]; owner != nil && !roots[owner] && owner.Name != "main" {
+			needed[owner.ID] = true
+		}
+	}
+	inlineActive := !f.ctx.frontendOptions.DisableInlineBodyImports &&
+		!devIncrementalModeEnabled() &&
+		(f.ctx.buildConf == nil || f.ctx.buildConf.OptLevel != optlevel.O0)
+	if inlineActive {
+		bodyBudget, _, depth := cl.FrontendInlinePolicy()
+		costs := make(map[string]int)
+		for _, record := range f.records {
+			for _, fn := range record.Functions {
+				costs[fn.ID] = fn.Facts.InlineCost
+			}
+		}
+		targets := make(map[*ssa.Function]*ssa.Function)
+		active := make(map[*ssa.Function]bool)
+		var visit func(*ssa.Function, int)
+		visit = func(fn *ssa.Function, level int) {
+			if fn == nil || active[fn] || level > depth {
+				return
+			}
+			active[fn] = true
+			defer delete(active, fn)
+			for _, block := range fn.Blocks {
+				for _, instr := range block.Instrs {
+					call, ok := instr.(ssa.CallInstruction)
+					if !ok {
+						continue
+					}
+					callee := call.Common().StaticCallee()
+					target, resolved := targets[callee]
+					if !resolved {
+						target = cl.ResolveInlineTarget(callee, f.ctx.patches)
+						targets[callee] = target
+					}
+					if target == nil {
+						continue
+					}
+					if cost, ok := costs[f.functionID(target)]; ok && cost <= bodyBudget {
+						if owner := f.owners[target.Pkg]; owner != nil && !roots[owner] && owner.Name != "main" {
+							needed[owner.ID] = true
+						}
+						visit(target, level+1)
+					}
+				}
+			}
+		}
+		for _, fn := range f.functions {
+			owner := f.owners[f.functionPackage(fn)]
+			if owner != nil && roots[owner] && len(fn.Blocks) > 0 {
+				visit(fn, 0)
+			}
+		}
+		for fn := range f.instances {
+			if len(fn.Blocks) == 0 {
+				continue
+			}
+			owner := f.owners[f.functionPackage(fn)]
+			if owner != nil && roots[owner] {
+				visit(fn, 0)
+			}
 		}
 	}
 	out := make([]string, 0, len(needed))

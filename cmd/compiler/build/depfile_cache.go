@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 )
 
 const depfileMagic = "LLGODEP5"
@@ -137,37 +138,130 @@ func statDepfileDirs(dirs []string) ([]depfileDirStat, error) {
 	return stats, nil
 }
 
+type depfileFileCheckResult struct {
+	size int64
+	hash string
+	ok   bool
+}
+
+type depfileDirCheckResult struct {
+	exists bool
+	hash   string
+	ok     bool
+}
+
+// depfileCheckCache memoizes header file/dir/missing checks within a single
+// build invocation so multiple C files sharing system SDK headers do not
+// re-read and re-hash the same headers repeatedly.
+type depfileCheckCache struct {
+	mu      sync.RWMutex
+	files   map[string]depfileFileCheckResult
+	dirs    map[string]depfileDirCheckResult
+	missing map[string]bool
+}
+
+func newDepfileCheckCache() *depfileCheckCache {
+	return &depfileCheckCache{
+		files:   make(map[string]depfileFileCheckResult),
+		dirs:    make(map[string]depfileDirCheckResult),
+		missing: make(map[string]bool),
+	}
+}
+
+func (c *depfileCheckCache) checkFile(path string) depfileFileCheckResult {
+	if c != nil {
+		c.mu.RLock()
+		res, ok := c.files[path]
+		c.mu.RUnlock()
+		if ok {
+			return res
+		}
+	}
+	var res depfileFileCheckResult
+	if fi, err := os.Stat(path); err == nil {
+		if data, err := os.ReadFile(path); err == nil {
+			res = depfileFileCheckResult{size: fi.Size(), hash: digestBytes(data), ok: true}
+		}
+	}
+	if c != nil {
+		c.mu.Lock()
+		c.files[path] = res
+		c.mu.Unlock()
+	}
+	return res
+}
+
+func (c *depfileCheckCache) checkDir(path string) depfileDirCheckResult {
+	if c != nil {
+		c.mu.RLock()
+		res, ok := c.dirs[path]
+		c.mu.RUnlock()
+		if ok {
+			return res
+		}
+	}
+	var res depfileDirCheckResult
+	entries, err := os.ReadDir(path)
+	if err == nil {
+		res = depfileDirCheckResult{exists: true, hash: hashDirEntries(entries), ok: true}
+	} else if os.IsNotExist(err) {
+		res = depfileDirCheckResult{exists: false, ok: true}
+	}
+	if c != nil {
+		c.mu.Lock()
+		c.dirs[path] = res
+		c.mu.Unlock()
+	}
+	return res
+}
+
+func (c *depfileCheckCache) checkMissing(path string) bool {
+	if c != nil {
+		c.mu.RLock()
+		res, ok := c.missing[path]
+		c.mu.RUnlock()
+		if ok {
+			return res
+		}
+	}
+	_, err := os.Stat(path)
+	notExist := os.IsNotExist(err)
+	if c != nil {
+		c.mu.Lock()
+		c.missing[path] = notExist
+		c.mu.Unlock()
+	}
+	return notExist
+}
+
 func validateDepfile(df *depfileRecord) bool {
+	return validateDepfileCached(df, nil)
+}
+
+func validateDepfileCached(df *depfileRecord, cache *depfileCheckCache) bool {
 	if df == nil || df.PreprocessedHash == "" {
 		return false
 	}
 	for _, f := range df.Files {
-		fi, err := os.Stat(f.Path)
-		if err != nil {
+		if f.Hash == "" {
 			return false
 		}
-		if fi.Size() != f.Size || f.Hash == "" {
-			return false
-		}
-		data, err := os.ReadFile(f.Path)
-		if err != nil || digestBytes(data) != f.Hash {
+		res := cache.checkFile(f.Path)
+		if !res.ok || res.size != f.Size || res.hash != f.Hash {
 			return false
 		}
 	}
 	for _, d := range df.Dirs {
-		entries, err := os.ReadDir(d.Path)
-		if !d.Exists {
-			if !os.IsNotExist(err) {
-				return false
-			}
-			continue
+		res := cache.checkDir(d.Path)
+		if !res.ok || res.exists != d.Exists {
+			return false
 		}
-		if err != nil || hashDirEntries(entries) != d.Hash {
+		if d.Exists && res.hash != d.Hash {
 			return false
 		}
 	}
 	for _, p := range df.Missing {
-		if _, err := os.Stat(p); !os.IsNotExist(err) {
+		if !cache.checkMissing(p) {
 			return false
 		}
 	}

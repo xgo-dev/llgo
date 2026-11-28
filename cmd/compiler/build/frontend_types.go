@@ -18,7 +18,6 @@ import (
 
 	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
 	"github.com/xgo-dev/llgo/cmd/compiler/goescape"
-	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
 	"github.com/xgo-dev/llgo/directive"
 )
@@ -87,29 +86,24 @@ func newFrontendTypeLoader(ctx *context, patterns []string) *frontendTypeLoader 
 			}
 		}
 	}
-	inlineActive := !ctx.frontendOptions.DisableInlineBodyImports &&
-		!devIncrementalModeEnabled() &&
-		ctx.buildConf.OptLevel != optlevel.O0
-	if inlineActive {
-		dir := ""
-		if ctx.conf != nil {
-			dir = ctx.conf.Dir
+	dir := ""
+	if ctx.conf != nil {
+		dir = ctx.conf.Dir
+	}
+	if dir == "" {
+		dir, _ = os.Getwd()
+	} else if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	sortedPatterns := append([]string(nil), patterns...)
+	sort.Strings(sortedPatterns)
+	hintInput := ns + "|dir=" + dir + "|patterns=" + strings.Join(sortedPatterns, ",")
+	l.inlineHintKey = frontendDigest([]byte(hintInput))
+	for _, id := range l.loadInlineHint() {
+		if l.forceSource == nil {
+			l.forceSource = make(map[string]bool)
 		}
-		if dir == "" {
-			dir, _ = os.Getwd()
-		} else if abs, err := filepath.Abs(dir); err == nil {
-			dir = abs
-		}
-		sortedPatterns := append([]string(nil), patterns...)
-		sort.Strings(sortedPatterns)
-		hintInput := ns + "|dir=" + dir + "|patterns=" + strings.Join(sortedPatterns, ",")
-		l.inlineHintKey = frontendDigest([]byte(hintInput))
-		for _, id := range l.loadInlineHint() {
-			if l.forceSource == nil {
-				l.forceSource = make(map[string]bool)
-			}
-			l.forceSource[id] = true
-		}
+		l.forceSource[id] = true
 	}
 	return l
 }
@@ -153,7 +147,9 @@ func (l *frontendTypeLoader) eligible(pkg *packages.Package) bool {
 	if pkg == nil || pkg.Name == "main" || pkg.PkgPath == "unsafe" || pkg.ID != pkg.PkgPath || pkg.ForTest != "" {
 		return false
 	}
-	if pkg.PkgPath == "runtime" || strings.HasPrefix(pkg.PkgPath, "runtime/") || strings.HasPrefix(pkg.PkgPath, "github.com/xgo-dev/llgo/runtime") {
+	if pkg.PkgPath == "runtime" || strings.HasPrefix(pkg.PkgPath, "runtime/") ||
+		pkg.PkgPath == "github.com/xgo-dev/llgo/runtime/internal/runtime" ||
+		strings.HasPrefix(pkg.PkgPath, altPkgPathPrefix) {
 		return false
 	}
 	if l.ctx != nil && l.ctx.buildConf != nil {
@@ -263,7 +259,7 @@ func (l *frontendTypeLoader) load(pkg *packages.Package, fset *token.FileSet) bo
 	if _, err := os.Stat(paths.Archive); err != nil {
 		return false
 	}
-	if _, err := os.Stat(filepath.Join(cm.root, "frontend", record.Frontend+".json")); err != nil {
+	if _, err := os.Stat(filepath.Join(cm.root, "frontend", record.Frontend+".llgoex")); err != nil {
 		return false
 	}
 
@@ -352,29 +348,15 @@ func (l *frontendTypeLoader) capture(pkg Package, record *frontendExport, index 
 	if pkg == nil || !l.eligible(pkg.Package) || pkg.AltPkg != nil || l.selected[pkg.ID] || pkg.Types == nil {
 		return
 	}
-	// Never discard bodies that can be used by the generic instantiator.
-	// Packages containing cross-package inline candidates are still exported via
-	// .llgotypes; only the small set actually needed by the current root's
-	// callers is parsed from source via inlineHint / targeted retry.
+	// Packages containing generic declarations or cross-package inline
+	// candidates are still exported via .llgotypes (exportdata v4 preserves
+	// full type parameters and constraints). Only the small set actually
+	// instantiated or inlined by the current root's callers is parsed from
+	// source via persisted source hints / targeted retry.
 	for _, name := range pkg.Types.Scope().Names() {
 		obj := pkg.Types.Scope().Lookup(name)
 		if v, ok := obj.(*types.Var); ok && v.Locality() != directive.LocalityNone {
 			return
-		}
-		typ := obj.Type()
-		switch v := typ.(type) {
-		case *types.Signature:
-			if v.TypeParams().Len() != 0 {
-				return
-			}
-		case *types.Named:
-			if v.TypeParams().Len() != 0 {
-				return
-			}
-		case *types.Alias:
-			if v.TypeParams().Len() != 0 {
-				return
-			}
 		}
 	}
 	for _, file := range pkg.Syntax {

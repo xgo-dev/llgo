@@ -206,16 +206,16 @@ func (t *Types) Key(typ types.Type) string {
 			b.WriteByte(';')
 		}
 	case *types.TypeParam:
-		// Parameters are not persisted as concrete runtime types. This
-		// identity is sufficient to bind their original declaration.
+		// Parameters are scoped to their enclosing generic declaration and are
+		// never looked up globally in Types.Lookup. Omit token.Pos so
+		// source-parsed and .llgotypes-loaded generic declarations produce
+		// identical function and signature identities.
 		b.WriteString("parameter:")
 		writeQuote(t.qualifier(v.Obj().Pkg()))
 		b.WriteByte(':')
 		writeQuote(v.Obj().Name())
 		b.WriteByte(':')
 		b.WriteString(strconv.Itoa(v.Index()))
-		b.WriteByte(':')
-		writeQuote(Position(t.fset, v.Obj().Pos()))
 	default:
 		return ""
 	}
