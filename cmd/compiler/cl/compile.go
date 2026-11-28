@@ -199,6 +199,7 @@ type context struct {
 	loaded               map[*types.Package]*pkgInfo // loaded packages
 	bvals                map[ssa.Value]llvmgen.Expr  // block values
 	optPlan              *ssaopt.FunctionPlan
+	concatPlans          stringConcatPlans
 	methodNilDerefChecks map[*ssa.UnOp]none
 	recvNilDerefChecks   map[*ssa.UnOp]token.Pos
 	nilCheckBlock        *ssa.BasicBlock
@@ -978,6 +979,7 @@ func (p *context) compileFuncDecl(pkg llvmgen.Package, f *ssa.Function) (llvmgen
 			oldRecoverSlots, oldImplicitDeferResults := p.recoverSlots, p.implicitDeferResults
 			oldSkipRunDefers := p.skipRunDefers
 			oldGCRoots, oldGCClosureRoot := p.gcRoots, p.gcClosureRoot
+			oldConcatPlans := p.concatPlans
 			oldSafepointEntry, oldSafepoints := p.safepointEntry, p.safepoints
 			p.fn = fn
 			p.goFn = f
@@ -999,6 +1001,7 @@ func (p *context) compileFuncDecl(pkg llvmgen.Package, f *ssa.Function) (llvmgen
 				p.implicitDeferResults = oldImplicitDeferResults
 				p.skipRunDefers = oldSkipRunDefers
 				p.gcRoots, p.gcClosureRoot = oldGCRoots, oldGCClosureRoot
+				p.concatPlans = oldConcatPlans
 				p.safepointEntry, p.safepoints = oldSafepointEntry, oldSafepoints
 			}()
 			p.phis = nil
@@ -1025,6 +1028,7 @@ func (p *context) compileFuncDecl(pkg llvmgen.Package, f *ssa.Function) (llvmgen
 			p.bvals = make(map[ssa.Value]llvmgen.Expr)
 			p.mapLitLoops = collectLargeMapLits(f)
 			p.applyMapLitPlans(p.mapLitLoops)
+			p.prepareStringConcatPlans(f)
 			p.optPlan = p.optPlanFor(f)
 			if p.optPlan != nil {
 				p.methodNilDerefChecks = p.optPlan.MethodNilDerefChecks
@@ -1301,25 +1305,45 @@ func isGlobal(v *types.Var) bool {
 	return scope != nil && scope.Parent() == types.Universe
 }
 
-func (p *context) debugRef(b llvmgen.Builder, v *ssa.DebugRef) {
-	object := v.Object()
-	variable, ok := object.(*types.Var)
-	if !ok {
-		// Not a local variable.
-		return
-	}
-	if variable.IsField() {
-		// skip *ssa.FieldAddr
-		return
-	}
-	if isGlobal(variable) {
-		// avoid generate local variable debug info of global variable in function
-		return
+func (p *context) debugRefVariable(ref *ssa.DebugRef) *types.Var {
+	variable, _ := ref.Object().(*types.Var)
+	if variable == nil || variable.IsField() || isGlobal(variable) {
+		return nil
 	}
 	if p.debugAllocObjects[variable] {
 		// The variable already has a declaration tied to its real storage.
 		// At any optimization level, a value DebugRef for an aggregate would
 		// replace it with a snapshot instead of tracking later memory writes.
+		return nil
+	}
+	return variable
+}
+
+// needsDebugValue protects source variables before executable lowering omits
+// their values. Optimized builds may still discard these debug-only uses.
+func (p *context) needsDebugValue(v ssa.Value) bool {
+	if !p.options.DebugSymbols || p.prog.Target().OptLevel != optlevel.O0 {
+		return false
+	}
+	refs := v.Referrers()
+	if refs == nil {
+		return false
+	}
+	for _, use := range *refs {
+		ref, ok := use.(*ssa.DebugRef)
+		if !ok || ref.IsAddr || ref.Parent().Origin() != nil {
+			continue
+		}
+		if variable := p.debugRefVariable(ref); variable != nil && variable.Name() != "_" {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *context) debugRef(b llvmgen.Builder, v *ssa.DebugRef) {
+	variable := p.debugRefVariable(v)
+	if variable == nil {
 		return
 	}
 	if stable, ok := p.debugStableParams[variable]; ok {
@@ -1898,6 +1922,14 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 			b.DeferStackDrain()
 		}
 	case *ssa.BinOp:
+		if parts, planned := p.concatPlans[v]; planned {
+			if parts == nil {
+				return
+			}
+			useStackBuffer := p.stackStorage(v) && concatMayFitStackBuffer(parts)
+			ret = b.StringConcat(p.compileValues(b, parts, 0), p.type_(v.Type(), llvmgen.GoDecl), useStackBuffer)
+			break
+		}
 		if value, ok := foldConstComparison(v); ok {
 			ret = p.prog.BoolVal(value)
 			break
@@ -2262,6 +2294,12 @@ func (p *context) compileInstrOrValue(b llvmgen.Builder, iv instrOrValue, asValu
 	case *ssa.MakeSlice:
 		t := p.type_(v.Type(), llvmgen.GoDecl)
 		nLen := p.compileValue(b, v.Len)
+		// Only dynamic-length *ssa.MakeSlice uses MakeSliceRounded; constant-length
+		// make([]T, k) lowers to an array Alloc whose capacity equals k.
+		if freshNilAppendAllocation(v) {
+			ret = b.MakeSliceRounded(t, nLen)
+			break
+		}
 		nCap := p.compileValue(b, v.Cap)
 		ret = b.MakeSliceEx(t, nLen, nCap, !p.stackStorage(v))
 	case *ssa.MakeMap:

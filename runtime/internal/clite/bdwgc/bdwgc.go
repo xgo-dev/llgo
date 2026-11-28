@@ -96,6 +96,11 @@ func Realloc(ptr c.Pointer, size uintptr) c.Pointer
 //go:linkname Base C.GC_base
 func Base(ptr c.Pointer) c.Pointer
 
+// Size returns the actual allocated size in bytes of the collector block at ptr.
+//
+//go:linkname Size C.GC_size
+func Size(ptr c.Pointer) uintptr
+
 //go:linkname Free C.GC_free
 func Free(ptr c.Pointer)
 

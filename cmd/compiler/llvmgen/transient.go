@@ -13,11 +13,8 @@ func (f Function) SetEscapeStackBytes(size uint64) {
 }
 
 func (f Function) reserveEscapeStack(typ Type) bool {
-	// Helpers reserve greedily in lowering order, without hotness weighting.
-	size, alignment := f.Prog.SizeOf(typ), f.Prog.AlignOf(typ)
-	if f.Prog.GCRootsEnabled() {
-		size += f.Prog.StackRootBytes(typ)
-	}
+	size := f.Prog.SizeOf(typ) + f.Prog.StackRootBytes(typ)
+	alignment := f.Prog.AlignOf(typ)
 	if alignment == 0 || alignment&(alignment-1) != 0 || f.escapeStackBytes > llabi.MaxEscapeStackBytes {
 		return false
 	}
@@ -28,6 +25,54 @@ func (f Function) reserveEscapeStack(typ Type) bool {
 	}
 	f.escapeStackBytes += padding + size
 	return true
+}
+
+func (p Program) stringConcatTable(n int) Type {
+	return p.Type(types.NewArray(types.Typ[types.String], int64(n)), GoDecl)
+}
+
+// ReserveStringConcatTable charges the operand table and its GC roots during
+// concat planning. Lowering helpers share the remaining stack budget. Escape
+// analysis already accounts for the result buffer at the final addition.
+func (f Function) ReserveStringConcatTable(n int) bool {
+	return f.reserveEscapeStack(f.Prog.stringConcatTable(n))
+}
+
+// StringConcat concatenates at least two parts and preserves the Go result type.
+// Three or more parts require a successful ReserveStringConcatTable.
+// useStackBuffer enables a separately budgeted result buffer only for a result
+// proven not to escape its invocation or loop iteration. Larger results still
+// allocate on the heap.
+func (b Builder) StringConcat(parts []Expr, resultType Type, useStackBuffer bool) Expr {
+	if len(parts) == 2 {
+		return b.stringCat(parts[0], parts[1], resultType, useStackBuffer)
+	}
+	p := b.Prog
+	table := b.uninitializedStackSlot(p.stringConcatTable(len(parts)))
+	data := Expr{table.impl, p.Pointer(p.String())}
+	for i, part := range parts {
+		b.Store(b.Advance(data, p.Val(i)), part)
+	}
+	var buffer Expr
+	if useStackBuffer {
+		buffer = b.stringStackBuffer()
+	} else {
+		buffer = p.Nil(p.VoidPtr())
+	}
+	result := b.InlineCall(b.Pkg.rtFunc("StringConcat"), data, p.Val(len(parts)), buffer)
+	if p.GCRootsEnabled() {
+		// A registered table lives until function return. Release the input
+		// references now that the result owns its bytes.
+		b.zeroinit(table, p.IntVal(p.SizeOf(p.Elem(table.Type)), p.Uintptr()))
+	}
+	return Expr{result.impl, resultType}
+}
+
+func (b Builder) stringCat(x, y Expr, resultType Type, useStackBuffer bool) Expr {
+	if useStackBuffer {
+		return Expr{b.InlineCall(b.Pkg.rtFunc("StringCatBuffer"), x, y, b.stringStackBuffer()).impl, resultType}
+	}
+	return Expr{b.InlineCall(b.Pkg.rtFunc("StringCat"), x, y).impl, resultType}
 }
 
 func (b Builder) stringStackBuffer() Expr {

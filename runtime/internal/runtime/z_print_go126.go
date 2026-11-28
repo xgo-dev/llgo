@@ -18,20 +18,4 @@
 
 package runtime
 
-import c "github.com/xgo-dev/llgo/runtime/internal/clite"
-
-func formatFloat(v float64) string {
-	if s, ok := formatSpecialFloat(v); ok {
-		return s
-	}
-	return formatFloatWithC(v, c.Str("%g"))
-}
-
-func formatComplex(v complex128) string {
-	re := formatFloat(real(v))
-	im := formatFloat(imag(v))
-	if im[0] != '-' && im[0] != '+' {
-		im = "+" + im
-	}
-	return "(" + re + im + "i)"
-}
+const legacyFloatFormat = false

@@ -72,6 +72,7 @@ func main() {
 	println(math.Copysign(0, -1))
 	println(1e7, -1e7, 1.001e2, 4.4e-1, 8e-2)
 	println(complex(1e7, -1e7), complex(4.4e-1, 8e-2))
+	println(complex(math.Inf(-1), math.NaN()), complex(math.NaN(), math.Copysign(0, -1)))
 	a := printFloatPair([2]float64{1, 2})
 	b := printFloatPair([2]float64{3, 4})
 	println(a[0], a[1], b[0], b[1])

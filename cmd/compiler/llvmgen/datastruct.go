@@ -601,6 +601,27 @@ func (b Builder) MakeSliceEx(t Type, len, cap Expr, heap bool) (ret Expr) {
 	return b.makeSlice(t, len, cap, heap, -1)
 }
 
+// MakeSliceRounded allocates backing storage for append([]T(nil), make([]T, n)...),
+// rounding capacity up to the allocator's size class on the common natural-alignment
+// path while falling back to standard MakeSlice for 64-on-32 lengths, over-aligned
+// elements, or zero-sized elements.
+func (b Builder) MakeSliceRounded(t Type, length Expr) (ret Expr) {
+	prog := b.Prog
+	telem := prog.Index(t)
+	if prog.SizeOf(length.Type) > prog.SizeOf(prog.Int()) ||
+		prog.AlignOf(telem) > uint64(prog.GoWordSize()) ||
+		prog.SizeOf(telem) == 0 {
+		return b.makeSlice(t, length, length, true, -1)
+	}
+	length = b.FitIntSize(length)
+	ret = b.InlineCall(b.Pkg.rtFunc("MakeSliceRounded"),
+		length,
+		prog.IntVal(prog.SizeOf(telem), prog.Int()),
+		prog.BoolVal(prog.abi.HasPointers(telem.raw.Type)))
+	ret.Type = t
+	return
+}
+
 // MakeSliceStackCapacity preserves runtime length checks while using a
 // statically bounded backing array whose lifetime was proved by the frontend.
 func (b Builder) MakeSliceStackCapacity(t Type, len, cap Expr, capacity int64) Expr {
@@ -1359,15 +1380,18 @@ func (b Builder) chanOp(s *SelectState) Expr {
 
 // -----------------------------------------------------------------------------
 
-// AppendFreshSliceToNil forwards a fresh, exclusively used slice whose length
-// equals its capacity. The caller must give its backing array result lifetime.
+// AppendFreshSliceToNil forwards a fresh, exclusively used slice (preserving
+// its capacity, which may exceed length when allocated via MakeSliceRounded).
+// The caller must give its backing array result lifetime.
 // An empty append preserves nil, unlike make of a zero-length slice.
 func (b Builder) AppendFreshSliceToNil(t Type, fresh Expr) Expr {
 	length := b.SliceLen(fresh)
+	capacity := b.SliceCap(fresh)
 	data := b.SliceData(fresh)
 	empty := llvm.CreateICmp(b.impl, llvm.IntEQ, length.impl, b.Prog.Zero(length.Type).impl)
 	data.impl = llvm.CreateSelect(b.impl, empty, b.Prog.Nil(data.Type).impl, data.impl)
-	ret := b.unsafeSlice(data, length.impl, length.impl)
+	capVal := llvm.CreateSelect(b.impl, empty, b.Prog.Zero(capacity.Type).impl, capacity.impl)
+	ret := b.unsafeSlice(data, length.impl, capVal)
 	ret.Type = t
 	return ret
 }

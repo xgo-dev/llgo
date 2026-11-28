@@ -96,7 +96,13 @@ func AssertNilDerefPtr(ptr unsafe.Pointer) unsafe.Pointer {
 func PanicWrapNilPointer(b bool, recvType, methodName string) {
 	if b {
 		recvType = panicWrapRecvType(recvType)
-		panic(plainError("value method " + recvType + "." + methodName + " called using nil *" + panicWrapTypeName(recvType) + " pointer"))
+		// Call the copy loop directly so small executables can drop the three-part path.
+		parts := [...]string{
+			"value method ", recvType, ".", methodName,
+			" called using nil *", panicWrapTypeName(recvType), " pointer",
+		}
+		msg := concatStringParts((*String)(unsafe.Pointer(&parts[0])), len(parts), nil)
+		panic(*(*plainError)(unsafe.Pointer(&msg)))
 	}
 }
 

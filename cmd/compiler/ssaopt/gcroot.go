@@ -84,8 +84,13 @@ func (GCRootPass) Run(fn *ssa.Function, cfg Config, plan *FunctionPlan) error {
 	}
 
 	planned := gcrootplan.Plan(fn, func(value ssa.Value) bool {
-		if _, isFreeVar := value.(*ssa.FreeVar); isFreeVar {
+		switch v := value.(type) {
+		case *ssa.FreeVar:
 			return false
+		case *ssa.BinOp:
+			if isOmittedStringAdd(v, cfg) {
+				return false
+			}
 		}
 		if call, ok := value.(*ssa.Call); ok {
 			if callee, ok := call.Call.Value.(*ssa.Function); ok && callee.Intrinsic() == ssa.IntrinsicFuncAddr {
@@ -372,4 +377,36 @@ func GCRootOwner(value ssa.Value) ssa.Value {
 			return value
 		}
 	}
+}
+
+func isStringType(t types.Type) bool {
+	if b, ok := t.Underlying().(*types.Basic); ok {
+		return b.Info()&types.IsString != 0
+	}
+	return false
+}
+
+func isOmittedStringAdd(v *ssa.BinOp, cfg Config) bool {
+	if v == nil || v.Op != token.ADD || !isStringType(v.Type()) {
+		return false
+	}
+	user, ok := singleNonDebugReferrer(v).(*ssa.BinOp)
+	if !ok || user.Op != token.ADD || !isStringType(user.Type()) {
+		return false
+	}
+	if user.Block() != v.Block() {
+		return false
+	}
+	if !cfg.Optimizing() {
+		if refs := v.Referrers(); refs != nil {
+			for _, use := range *refs {
+				if ref, ok := use.(*ssa.DebugRef); ok && !ref.IsAddr {
+					if variable, ok := ref.Object().(*types.Var); ok && variable != nil && variable.Name() != "_" && !variable.IsField() {
+						return false
+					}
+				}
+			}
+		}
+	}
+	return true
 }
