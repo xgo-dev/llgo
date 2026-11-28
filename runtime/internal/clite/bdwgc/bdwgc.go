@@ -78,6 +78,12 @@ func Malloc(size uintptr) c.Pointer
 //go:linkname MallocAtomic C.GC_malloc_atomic
 func MallocAtomic(size uintptr) c.Pointer
 
+// MallocMany returns a freelist of zeroed normal (pointer-bearing) objects
+// linked through their first word, amortizing the global allocation lock.
+//
+//go:linkname MallocMany C.GC_malloc_many
+func MallocMany(size uintptr) c.Pointer
+
 // Memalign allocates scanned storage; the result may be an interior pointer.
 //
 //go:linkname Memalign C.GC_memalign

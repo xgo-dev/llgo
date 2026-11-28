@@ -32,10 +32,15 @@ func AllocU(size uintptr) unsafe.Pointer {
 	if size == 0 {
 		return unsafe.Pointer(&zerobase)
 	}
-	ret := bdwgc.Malloc(size)
+	ret := allocNormalMedium(size)
 	if ret == nil {
-		panic("out of memory")
+		ret = bdwgc.Malloc(size)
+		if ret == nil {
+			panic("out of memory")
+		}
 	}
+	// Profiles count requested bytes. The medium cache rounds requests up to
+	// its size classes, so collector usage can be higher.
 	recordMemProfileAlloc(size)
 	return ret
 }
@@ -78,14 +83,17 @@ func allocUAligned(size, alignment uintptr) unsafe.Pointer {
 
 // AllocZ allocates zero-initialized memory.
 func AllocZ(size uintptr) unsafe.Pointer {
-	// AllocU uses GC_malloc, whose non-atomic allocations are already cleared.
-	// Keep its zero-size sentinel, failure check, and allocation accounting.
+	// GC_malloc and GC_malloc_many both return cleared scanned objects.
+	// The medium cache clears each object's freelist link before returning it.
 	return AllocU(size)
 }
 
 func AllocRoot(size uintptr) unsafe.Pointer {
 	if size == 0 {
 		return unsafe.Pointer(&zerobase)
+	}
+	if ret := allocRootCached(size); ret != nil {
+		return ret
 	}
 	ret := bdwgc.MallocUncollectable(size)
 	if ret == nil {
@@ -95,7 +103,10 @@ func AllocRoot(size uintptr) unsafe.Pointer {
 }
 
 func FreeRoot(ptr unsafe.Pointer) {
-	if ptr == unsafe.Pointer(&zerobase) {
+	if ptr == nil || ptr == unsafe.Pointer(&zerobase) {
+		return
+	}
+	if freeRootCached(ptr) {
 		return
 	}
 	bdwgc.Free(ptr)

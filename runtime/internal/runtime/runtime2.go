@@ -75,6 +75,7 @@ type m struct {
 	p            *p
 	id           int64
 	os           mOS
+	allocCache   mediumAllocCache
 	touchedLocal bool
 }
 
