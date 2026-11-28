@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
+
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/packages"
@@ -123,7 +125,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			roots = guardedInitializerRoots(ctx, roots, pkg.AltPkg.Package, goroot, blankImports, isSymbolRoot)
 		}
 	}
-	roots = appendSymbolRoots(ctx.progSSA, roots, assembly)
+	roots = fmtspecialize.AppendSymbolRoots(ctx.progSSA, roots, assembly)
 	// A literal slice can keep a shared object alive even when nobody reads
 	// the slice. Allow omission only when the owner's data is private to its
 	// variable initializers, including reads through another package or alias.

@@ -490,3 +490,34 @@ func main() {`+tc.body+"}"+rawAlias)
 		})
 	}
 }
+
+func TestOptionalInitializersStandardFileDescriptorSource(t *testing.T) {
+	for _, tc := range []struct {
+		name, decl, init string
+		match            bool
+	}{
+		{"system descriptor", "", `NewFile(uintptr(syscall.Stdout), "/dev/stdout")`, true},
+		{"wrong system descriptor", "", `NewFile(uintptr(syscall.Stdin), "/dev/stdout")`, false},
+		{"local descriptor", "var fd = 1", `NewFile(uintptr(fd), "/dev/stdout")`, false},
+		{"computed descriptor", "func fd() int { return syscall.Stdout }", `NewFile(uintptr(fd()), "/dev/stdout")`, false},
+		{"different constructor signature", "", `NewFile(uintptr(syscall.Stdout), "/dev/stdout", true)`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := ssa.NewProgram(token.NewFileSet(), ssa.SanityCheckFunctions)
+			sys := checkFormatTestPackage(t, prog.Fset, "syscall", "package syscall; var Stdout, Stdin = 1, 0", types.Config{})
+			prog.CreatePackage(sys.Types, sys.Syntax, sys.TypesInfo, true)
+			args := "uintptr, string"
+			if tc.name == "different constructor signature" {
+				args += ", bool"
+			}
+			src := "package os\nimport \"syscall\"\ntype File struct{}\nfunc NewFile(" + args + ") *File {return new(File)}\n" + tc.decl + "\nvar Stdout = " + tc.init
+			pkg := checkFormatTestPackage(t, prog.Fset, "os", src, types.Config{Importer: codecInitTestImporter{"syscall": sys.Types}, DisableUnusedImportCheck: true})
+			osPkg := prog.CreatePackage(pkg.Types, pkg.Syntax, pkg.TypesInfo, true)
+			prog.Build()
+			groups := optionalStandardFileInitializers(osPkg.Func("init"))
+			if tc.match && (len(groups) != 1 || groups[0].Global.Name() != "Stdout") || !tc.match && len(groups) != 0 {
+				t.Fatalf("standard file groups = %v", groups)
+			}
+		})
+	}
+}

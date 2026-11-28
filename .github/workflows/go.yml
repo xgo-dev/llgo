@@ -454,7 +454,7 @@ jobs:
           set -euo pipefail
           go test -tags=dev -covermode=atomic -coverpkg=./cl,./internal/build \
             -coverprofile=coverage-dev-pruning-unit.txt \
-            -run 'OptionalInitializers|DeferredErrorType|UnusedGlobalInit|ConfigureDarwinExecutableCwd|WasiSizePruning|EmbeddedSizePruning|WasmMetadataEligibility|OptionalMap|OptionalSlice' \
+            -run 'ClosedLink|NativeFormatImports|HostedValueFormatSupport|OptionalInitializers|DeferredErrorType|UnusedGlobalInit|ConfigureDarwinExecutableCwd|WasiSizePruning|EmbeddedSizePruning|WasmMetadataEligibility|OptionalMap|OptionalSlice' \
             ./internal/build ./cl
           cover_dir="$(mktemp -d)"
           go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build \
