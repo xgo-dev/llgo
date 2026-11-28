@@ -96,7 +96,15 @@ func init() {
 func signalPipe() {
 	const sigPipe = 13 // SIGPIPE on the supported Unix hosts.
 
-	ensureSignalInit()
+	// OS signal delivery initializes the queue before it installs handlers.
+	// A stdout write can use the inherited SIGPIPE policy before that queue
+	// exists, including in programs that never use os/signal.
+	if latomic.LoadUint32(&sigInitState) != sigInitDone {
+		if !sigPipeInheritedIgnored {
+			dieWithSIGPIPE()
+		}
+		return
+	}
 	sigMu.Lock()
 	defer sigMu.Unlock()
 	st := sigStates[sigPipe]
@@ -111,18 +119,23 @@ func signalPipe() {
 		}
 		return
 	default:
-		if c_signalDiePipe() != 0 {
-			panic("runtime: failed to terminate with SIGPIPE")
-		}
+		dieWithSIGPIPE()
 	}
 }
 
+func dieWithSIGPIPE() {
+	if c_signalDiePipe() != 0 {
+		panic("runtime: failed to terminate with SIGPIPE")
+	}
+}
+
+const (
+	sigInitUninit uint32 = iota
+	sigInitDone
+	sigInitBusy
+)
+
 func ensureSignalInit() {
-	const (
-		sigInitUninit uint32 = iota
-		sigInitDone
-		sigInitBusy
-	)
 	for {
 		switch state := latomic.LoadUint32(&sigInitState); state {
 		case sigInitDone:

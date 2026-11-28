@@ -141,8 +141,8 @@ func TestHasTypeParam(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			if got := hasTypeParam(tc.typ); got != tc.want {
-				t.Fatalf("hasTypeParam(%s) = %v, want %v", tc.name, got, tc.want)
+			if got := HasTypeParam(tc.typ); got != tc.want {
+				t.Fatalf("HasTypeParam(%s) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
 	}

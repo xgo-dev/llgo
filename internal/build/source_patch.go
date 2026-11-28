@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -32,17 +33,31 @@ func cloneOverlay(src map[string][]byte) map[string][]byte {
 }
 
 type sourcePatchBuildContext struct {
-	goos       string
-	goarch     string
-	goversion  string
-	toolTags   []string
-	buildFlags []string
-	targetTags []string
-	cgoEnabled *bool
+	goos           string
+	goarch         string
+	goversion      string
+	toolTags       []string
+	buildFlags     []string
+	targetTags     []string
+	builtinFormats bool
+	deferErrorType bool
+	cgoEnabled     *bool
 }
 
 func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot string, ctx sourcePatchBuildContext) (map[string][]byte, map[string][]string, error) {
 	var out map[string][]byte
+	if ctx.goos == "darwin" && slices.Contains(ctx.targetTags, "llgo.size.native") {
+		path := filepath.Join(goroot, "src", "os", "executable_darwin.go")
+		if source, err := os.ReadFile(path); err == nil && base[path] == nil {
+			if updated := rewriteDarwinExecutableCwd(source); updated != nil {
+				out = cloneOverlay(base)
+				if out == nil {
+					out = make(map[string][]byte)
+				}
+				out[path] = updated
+			}
+		}
+	}
 	pkgFiles := make(map[string][]string)
 	for _, pkgPath := range llruntime.SourcePatchPkgPaths() {
 		changed, next, files, err := applySourcePatchForPkg(base, out, runtimeDir, goroot, pkgPath, ctx)
@@ -54,6 +69,20 @@ func buildSourcePatchOverlayForGOROOT(base map[string][]byte, runtimeDir, goroot
 		}
 		out = next
 		pkgFiles[pkgPath] = files
+	}
+	if ctx.deferErrorType {
+		if path, source := deferredErrorTypeSource(goroot, base); source != nil {
+			if out == nil {
+				out = cloneOverlay(base)
+				if out == nil {
+					out = make(map[string][]byte)
+				}
+			}
+			out[path] = source
+			cacheFile := filepath.Join(filepath.Dir(path), errorTypeCacheFile)
+			out[cacheFile] = []byte(errorTypeCacheSource)
+			pkgFiles["errors"] = append(pkgFiles["errors"], cacheFile)
+		}
 	}
 	if out == nil {
 		return base, nil, nil
@@ -272,6 +301,18 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		out[target] = src.data
 		files = append(files, src.filename)
 		changed = true
+	}
+	if pkgPath == "fmt" && ctx.builtinFormats {
+		printFile := filepath.Join(srcDir, "print.go")
+		if source, err := os.ReadFile(printFile); err == nil && base[printFile] == nil {
+			baremetal := slices.Contains(sourcePatchBuildTags(ctx.buildFlags, ctx.targetTags), "baremetal")
+			if generated := fmtspecialize.BuiltinFormatSource(source, baremetal); len(generated) != 0 {
+				ensureOverlay()
+				target := filepath.Join(srcDir, "z_llgo_patch_builtin_format.go")
+				out[target] = generated
+				files = append(files, target)
+			}
+		}
 	}
 	return changed, out, files, nil
 }

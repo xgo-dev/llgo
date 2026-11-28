@@ -94,17 +94,37 @@ coverage hooks, debugger frames and non-WASI targets retain the full runtime.
 Package cache keys include this decision; development-only DCE flags retain
 their existing policy.
 
-Constant fmt.Printf/Sprintf calls with no formatting arguments can use a literal
-path. Fprintf retains its original caller
-identity for user Writers. Only escaped percent signs are decoded. Other formats
-use the general formatter; Writer.Write calls, counts, errors and current Stdout
-are preserved. Neither optimization applies at -O0 or with debugger frames.
+Constant `fmt.Printf` and `fmt.Sprintf` calls with no formatting arguments
+can use a literal path that decodes `%%`. At `-Oz`, the compiler can also
+specialize constant formats with built-in strings, booleans and integers
+passed as individual arguments. It accepts `%s`, `%t`, `%b`, `%d`, `%o`,
+`%x`, `%X` and `%v`, with optional zero padding and widths through 99.
+`Println` and `Sprintln` specialize the same scalar argument types.
+
+Eligible closed size builds also use the concrete default-value renderer for
+constant `Printf` formats containing `%v`, `%%` and equivalent unmodified
+scalar verbs (`%d`, `%s`, `%t`, `%g`), and typed `Println` calls.
+Formatting methods, unresolved interfaces and spread arguments keep the
+general formatter. The scalar verb path continues to handle widths and flags
+in its supported subset. `Fprintf` preserves
+its caller identity for arbitrary Writers. Stdout calls use the current
+`os.Stdout` and preserve byte counts and errors. The literal and scalar
+specializations are disabled at `-O0` and with logical debugger frames.
 
 WASI `fmt.Print`, `Printf` and `Println` pass a private writer to the existing
 formatting functions. Its underlying pointer is the `os.Stdout` value captured
 before formatting. The writer exposes only `Write`, which avoids retaining
 other `*os.File` methods when formatting is their only reachability path. The
 write still uses `os.File.Write`, and debugger builds use the standard source.
+
+On closed WASI Wasm32 executables built with `-Oz`, a constant
+`fmt.Sprintf("%v", value)` can use a generated formatter for the operand's
+concrete type. The same pass runs in dev builds for Emscripten J32/J64 and
+macOS arm64 with `-Oz -lto=full -deadcodedrop -globaldce=false`. It supports
+scalars, arrays, slices, structs, maps with compound keys, pointers, channels,
+and `unsafe.Pointer`. The runtime helper provides typed sorting and buffer
+operations. Formatting methods and unresolved interfaces keep the generic
+path.
 
 For size comparisons, report linked bytes and final optimized bytes separately,
 with the same Binaryen version and flags for each compiler. Include JavaScript,

@@ -43,6 +43,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/buildenv"
 	"github.com/xgo-dev/llgo/internal/cabi"
 	"github.com/xgo-dev/llgo/internal/clang"
@@ -148,52 +149,53 @@ type OutFmtDetails struct {
 type ModuleHook func(pkg Package)
 
 type Config struct {
-	Goos               string
-	Goarch             string
-	GO386              string // 386 floating-point implementation: sse2 or softfloat
-	GOAMD64            string // amd64 microarchitecture level: v1 through v4
-	GOARM              string // arm architecture and floating-point implementation
-	GOARM64            string // arm64 ISA version and optional lse/crypto extensions
-	GOEXPERIMENT       string // Go experiments; empty inherits cmd/go configuration, "none" disables defaults
-	Target             string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
-	OptLevel           optlevel.Level
-	WasmOpt            WasmOptMode
-	WasmStrip          WasmStripMode
-	LTO                lto.Mode
-	LTOPlugin          lto.PassPlugin
-	BinPath            string
-	AppExt             string  // ".exe" on Windows, empty on Unix
-	OutFile            string  // output file, or directory for ModeBuild package executables
-	OutFmts            OutFmts // Output format specifications (only for Target != "")
-	CompileOnly        bool    // compile test binary but do not run it (only valid for ModeTest)
-	RetainTestBinary   bool    // profiling keeps the test executable in the invocation directory
-	Emulator           bool    // run in emulator mode
-	Port               string  // target port for flashing
-	BaudRate           int     // baudrate for serial communication
-	RunArgs            []string
-	Exec               []string      // Explicit execution wrapper, before the artifact and RunArgs.
-	RunnerTimeout      time.Duration // Host execution limit; zero disables it.
-	Mode               Mode
-	BuildMode          BuildMode // Build mode: exe, c-archive, c-shared
-	GenExpect          bool      // only valid for ModeCmpTest
-	Verbose            bool
-	PrintPackages      bool // print package paths after successful compilation
-	PrintCommands      bool
-	GenLL              bool // generate pkg .ll files
-	DeadcodeDrop       bool // enable Go dead code drop (development builds only)
-	CollectPackageMeta bool // collect package metadata without enabling dead code drop
-	CheckLLFiles       bool // check .ll files valid
-	CheckLinkArgs      bool // check linkargs valid
-	ForceEspClang      bool // force to use esp-clang
-	frontendSourceOnly bool
-	ForceRebuild       bool // force rebuilding of packages that are already up-to-date
-	Tags               string
-	SizeReport         bool   // print size report after successful build
-	SizeFormat         string // size report format: text,json (default text)
-	SizeLevel          string // size aggregation level: full,module,package (default module)
-	CompilerHash       string // content hash for the running compiler (development builds only)
-	GoVersion          string // Go language version accepted by the frontend (for example, "go1.22")
-	NoErrorColumn      bool   // omit source columns from frontend diagnostics
+	Goos                      string
+	Goarch                    string
+	GO386                     string // 386 floating-point implementation: sse2 or softfloat
+	GOAMD64                   string // amd64 microarchitecture level: v1 through v4
+	GOARM                     string // arm architecture and floating-point implementation
+	GOARM64                   string // arm64 ISA version and optional lse/crypto extensions
+	GOEXPERIMENT              string // Go experiments; empty inherits cmd/go configuration, "none" disables defaults
+	Target                    string // target name (e.g., "rp2040", "wasi") - takes precedence over Goos/Goarch
+	OptLevel                  optlevel.Level
+	WasmOpt                   WasmOptMode
+	WasmStrip                 WasmStripMode
+	LTO                       lto.Mode
+	LTOPlugin                 lto.PassPlugin
+	BinPath                   string
+	AppExt                    string  // ".exe" on Windows, empty on Unix
+	OutFile                   string  // output file, or directory for ModeBuild package executables
+	OutFmts                   OutFmts // Output format specifications (only for Target != "")
+	CompileOnly               bool    // compile test binary but do not run it (only valid for ModeTest)
+	RetainTestBinary          bool    // profiling keeps the test executable in the invocation directory
+	Emulator                  bool    // run in emulator mode
+	Port                      string  // target port for flashing
+	BaudRate                  int     // baudrate for serial communication
+	RunArgs                   []string
+	Exec                      []string      // Explicit execution wrapper, before the artifact and RunArgs.
+	RunnerTimeout             time.Duration // Host execution limit; zero disables it.
+	Mode                      Mode
+	BuildMode                 BuildMode // Build mode: exe, c-archive, c-shared
+	GenExpect                 bool      // only valid for ModeCmpTest
+	Verbose                   bool
+	PrintPackages             bool // print package paths after successful compilation
+	PrintCommands             bool
+	GenLL                     bool // generate pkg .ll files
+	DeadcodeDrop              bool // enable Go dead code drop (development builds only)
+	CollectPackageMeta        bool // collect package metadata without enabling dead code drop
+	CheckLLFiles              bool // check .ll files valid
+	CheckLinkArgs             bool // check linkargs valid
+	ForceEspClang             bool // force to use esp-clang
+	frontendSourceOnly        bool
+	disableSizeSpecialization bool
+	ForceRebuild              bool // force rebuilding of packages that are already up-to-date
+	Tags                      string
+	SizeReport                bool   // print size report after successful build
+	SizeFormat                string // size report format: text,json (default text)
+	SizeLevel                 string // size aggregation level: full,module,package (default module)
+	CompilerHash              string // content hash for the running compiler (development builds only)
+	GoVersion                 string // Go language version accepted by the frontend (for example, "go1.22")
+	NoErrorColumn             bool   // omit source columns from frontend diagnostics
 
 	EscapeDiagnostics           int // -m count for explicitly selected packages
 	DependencyEscapeDiagnostics int // -m count for dependencies selected by all=
@@ -548,6 +550,8 @@ const (
 
 var llssaInitOnce sync.Once
 
+var errGeneratedSizeSource = errors.New("generated size specialization failed")
+
 func Do(args []string, conf *Config) ([]Package, error) {
 	return Build(Invocation{Args: args, Config: conf})
 }
@@ -561,7 +565,12 @@ func Build(inv Invocation) ([]Package, error) {
 		}
 	}()
 	result, err := buildInvocation(inv, &plan)
-	if errors.Is(err, errFrontendSourceRequired) && (inv.Config == nil || !inv.Config.frontendSourceOnly) {
+	for err != nil {
+		reload := errors.Is(err, errFrontendSourceRequired) && (inv.Config == nil || !inv.Config.frontendSourceOnly)
+		generic := errors.Is(err, errGeneratedSizeSource) && (inv.Config == nil || !inv.Config.disableSizeSpecialization)
+		if !reload && !generic {
+			break
+		}
 		if plan.sourceOverlayFile != "" {
 			os.Remove(plan.sourceOverlayFile)
 			plan.sourceOverlayFile = ""
@@ -571,7 +580,11 @@ func Build(inv Invocation) ([]Package, error) {
 		} else {
 			inv.Config = inv.Config.clone()
 		}
-		inv.Config.frontendSourceOnly = true
+		inv.Config.frontendSourceOnly = inv.Config.frontendSourceOnly || reload
+		inv.Config.disableSizeSpecialization = inv.Config.disableSizeSpecialization || generic
+		if generic && (inv.Config.Verbose || inv.Config.PrintCommands) {
+			fmt.Fprintf(os.Stderr, "llgo: retain generic size build: %v\n", err)
+		}
 		if filename := inv.Config.BuildTrace; filename != "" {
 			if !filepath.IsAbs(filename) {
 				base := inv.Dir
@@ -597,7 +610,7 @@ func Build(inv Invocation) ([]Package, error) {
 func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, resultErr error) {
 	var fallback *multiBuildFallback
 	defer func() {
-		if resultErr == nil || fallback == nil || inv.disableMultiFallback || errors.Is(resultErr, errFrontendSourceRequired) {
+		if resultErr == nil || fallback == nil || inv.disableMultiFallback || errors.Is(resultErr, errFrontendSourceRequired) || errors.Is(resultErr, errGeneratedSizeSource) {
 			return
 		}
 		result, resultErr = fallback.run()
@@ -890,14 +903,30 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	commands.environ = sourceGo.apply(commands.environ)
 	var llgoFiles map[string][]string
 	sourceCgoEnabled := sourceGo.CGO_ENABLED == "1"
+	sourceTargetTags := slices.Clone(export.BuildTags)
+	if embeddedSizePruningConfig(conf, export, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.embedded")
+	}
+	if typedJSONSupport(conf, export, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.json")
+	}
+	if wasiGuardedStaticData(conf, export, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.wasi")
+	}
+	if linuxSizeCodecBuild(conf, export, frontendOptions) ||
+		conf.Goos == "darwin" && hostedValueFormatSupport(conf, export, frontendOptions) {
+		sourceTargetTags = append(sourceTargetTags, "llgo.size.native")
+	}
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
-		goos:       conf.Goos,
-		goarch:     conf.Goarch,
-		goversion:  sourcePatchGoVersion,
-		toolTags:   sourceGo.toolTags,
-		buildFlags: cfg.BuildFlags,
-		targetTags: export.BuildTags,
-		cgoEnabled: &sourceCgoEnabled,
+		goos:           conf.Goos,
+		goarch:         conf.Goarch,
+		goversion:      sourcePatchGoVersion,
+		toolTags:       sourceGo.toolTags,
+		buildFlags:     cfg.BuildFlags,
+		targetTags:     sourceTargetTags,
+		builtinFormats: !conf.disableSizeSpecialization && prepareValueFormatSupport(conf, export, frontendOptions),
+		deferErrorType: !conf.disableSizeSpecialization && sizeCodecBuild(conf, frontendOptions),
+		cgoEnabled:     &sourceCgoEnabled,
 	})
 	if err != nil {
 		return nil, err
@@ -990,6 +1019,10 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		return nil, err
 	}
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
+	formatSupport := !conf.disableSizeSpecialization && dedup.Check("fmt") != nil && prepareValueFormatSupport(conf, export, frontendOptions)
+	if formatSupport {
+		altPkgPaths = append(altPkgPaths, fmtspecialize.RuntimePath)
+	}
 	altCfg := runtimePackageConfig(cfg, env.LLGoRuntimeDir())
 	// The runtime submodule may otherwise select a different toolchain from its go.mod.
 	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourcePatchGoVersion)
@@ -1024,6 +1057,30 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	}
 	prog.SetDebugInfoOptimized(passOpt && conf.OptLevel != optlevel.O0)
 	progSSA := ssa.NewProgram(initial[0].Fset, buildMode)
+	// Register codec declarations before creating SSA packages.
+	var binaryCodecPackages map[*types.Package]bool
+	var binaryCodecLibrary *types.Package
+	if codec := dedup.Check("encoding/binary"); codec != nil {
+		shortBuffer, err := prepareBinaryCodecSupport(conf, frontendOptions, sourcePatchGOROOT, codec.Package)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+		}
+		if shortBuffer != "" {
+			binaryCodecLibrary = codec.Types
+		}
+		binaryCodecPackages, err = specializeBinaryCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs, shortBuffer)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+		}
+	}
+	var jsonCodecPackages map[*types.Package]bool
+	if codec := dedup.Check("encoding/json"); codec != nil {
+		jsonCodecPackages, err = specializeJSONCodecs(conf, frontendOptions, sourcePatchGOROOT, codec.Package, initial, altPkgs)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+		}
+	}
+
 	patches := make(cl.Patches, len(altPkgPaths))
 	altEntries, altByteArrays := registerAltSSAPkgs(progSSA, patches, altPkgs[1:], conf, verbose)
 	prepareSpan := buildTrace.startCoordinator("prepare shared backend state", nil)
@@ -1046,22 +1103,28 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	ctx := &context{conf: cfg, progSSA: progSSA, prog: prog, dedup: dedup,
 		patches: patches, callerTracking: cl.NewCallerTracking(),
 		initial: initial, mode: mode,
-		fingerprinting:   make(map[string]bool),
-		pkgs:             map[*packages.Package]Package{},
-		pkgByID:          map[string]Package{},
-		cacheManager:     newCacheManager(),
-		patchFiles:       llgoFiles,
-		output:           output,
-		passOpt:          passOpt,
-		buildConf:        conf,
-		crossCompile:     export,
-		commands:         commands,
-		frontendOptions:  frontendOptions,
-		staticByteArrays: altByteArrays,
-		cTransformer:     cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
-		buildTrace:       buildTrace,
-		goVersion:        sourcePatchGoVersion,
-		defaultGODEBUG:   defaultGODEBUG,
+		fingerprinting:      make(map[string]bool),
+		pkgs:                map[*packages.Package]Package{},
+		pkgByID:             map[string]Package{},
+		cacheManager:        newCacheManager(),
+		patchFiles:          llgoFiles,
+		output:              output,
+		passOpt:             passOpt,
+		buildConf:           conf,
+		crossCompile:        export,
+		commands:            commands,
+		frontendOptions:     frontendOptions,
+		staticByteArrays:    altByteArrays,
+		binaryCodecLibrary:  binaryCodecLibrary,
+		binaryCodecPackages: binaryCodecPackages,
+		jsonCodecPackages:   jsonCodecPackages,
+		cTransformer:        cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
+		buildTrace:          buildTrace,
+		goVersion:           sourcePatchGoVersion,
+		defaultGODEBUG:      defaultGODEBUG,
+	}
+	if formatSupport {
+		ctx.formatRuntime = dedup.Check(fmtspecialize.RuntimePath)
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
@@ -1108,9 +1171,20 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	} else {
 		buildSSAPkgs(ctx, ssaEntries)
 	}
+	var asmRoots *linkPruningInputs
+	var formatInputs *linkPruningInputs
+	var preparedInitializers bool
 	if ctx.frontend == nil {
 		if err := recordPackageSSAInstructions(ctx); err != nil {
 			return nil, err
+		}
+		if ctx.valueFormatPlan != nil || len(ctx.jsonCodecPackages) != 0 {
+			// Resolve the rewrite before collecting initializer and feature usage.
+			configureWasmRuntimeFree(ctx)
+			asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, true)
+			formatInputs = configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
+			configureCodecInits(ctx, formatInputs)
+			preparedInitializers = true
 		}
 		callerSpan := buildTrace.startCoordinator("precompute caller tracking", nil)
 		ctx.callerTracking.Precompute(ctx.progSSA.AllPackages())
@@ -1143,11 +1217,13 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		configureWasmReflectBridges(ctx)
 		configureWasmFuncInfoEntries(ctx)
 	}
-	configureWasmRuntimeFree(ctx)
-
 	allPkgs := append([]*aPackage{}, pkgs...)
-	asmRoots := ctx.wasiSizePruningInputs(sourcePatchGOROOT)
-	configureUnusedGlobalInits(ctx, asmRoots)
+	if !preparedInitializers {
+		configureWasmRuntimeFree(ctx)
+		asmRoots = ctx.sizePruningInputs(sourcePatchGOROOT, wasiGuardedStaticData(conf, export, frontendOptions))
+		formatInputs = configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
+	}
+	configureOptionalInitializers(ctx, sourcePatchGOROOT, formatInputs)
 	configureWasiReleaseDCE(ctx, asmRoots)
 	if ctx.frontend != nil {
 		if err := ctx.frontend.certify(); err != nil {
@@ -1564,18 +1640,21 @@ func goCompatibleWasmRunner(conf *Config) string {
 
 func newLinkExecutionContext(ctx *context, plan *mainLinkPlan) *context {
 	return &context{
-		prog:                 ctx.prog,
-		mode:                 ctx.mode,
-		buildConf:            ctx.buildConf,
-		crossCompile:         ctx.crossCompile,
-		commands:             ctx.commands,
-		pclnExternal:         plan.pclnExternal,
-		wasmClosedProgram:    ctx.wasmClosedProgram,
-		frontendOptions:      cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
-		linkRuntimeSites:     &plan.runtimeSites,
-		stripDarwinLTOLocals: plan.stripDarwinLTOLocals,
-		darwinHiddenGlobals:  plan.darwinHiddenGlobals,
-		goVersion:            ctx.goVersion,
+		prog:                  ctx.prog,
+		mode:                  ctx.mode,
+		buildConf:             ctx.buildConf,
+		crossCompile:          ctx.crossCompile,
+		commands:              ctx.commands,
+		pclnExternal:          plan.pclnExternal,
+		wasmClosedProgram:     ctx.wasmClosedProgram,
+		embeddedClosedProgram: ctx.embeddedClosedProgram,
+		nativeClosedProgram:   ctx.nativeClosedProgram,
+		sizePruningRoots:      ctx.sizePruningRoots,
+		frontendOptions:       cl.Options{CompactCallerLocations: ctx.frontendOptions.CompactCallerLocations},
+		linkRuntimeSites:      &plan.runtimeSites,
+		stripDarwinLTOLocals:  plan.stripDarwinLTOLocals,
+		darwinHiddenGlobals:   plan.darwinHiddenGlobals,
+		goVersion:             ctx.goVersion,
 	}
 }
 
@@ -1934,14 +2013,27 @@ type context struct {
 	output         bool
 	passOpt        bool
 
-	buildConf         *Config
-	crossCompile      crosscompile.Export
-	commands          commandEnv
-	frontendOptions   cl.Options
-	staticByteArrays  map[string][]byte
-	wasmRuntimeFree   bool
-	wasmClosedProgram bool // true when native inputs cannot introduce untracked Go references
-	wasiSizeRoots     []string
+	buildConf            *Config
+	crossCompile         crosscompile.Export
+	commands             commandEnv
+	frontendOptions      cl.Options
+	staticByteArrays     map[string][]byte
+	formatRuntime        *packages.Cached
+	valueFormatPlan      *fmtspecialize.ValuePlan
+	stdout               *stdoutPlan
+	valueFormatFunctions map[*types.Package]*fmtspecialize.ValueFunctions
+	valueFormatPackages  map[*types.Package]bool
+	binaryCodecLibrary   *types.Package
+	binaryCodecPackages  map[*types.Package]bool
+	jsonCodecPackages    map[*types.Package]bool
+	codecInitDrops       map[string]bool
+	initializerGuardsOff []string
+	wasmRuntimeFree      bool
+	wasmClosedProgram    bool // true when native inputs cannot introduce untracked Go references
+	sizePruningRoots     []string
+
+	embeddedClosedProgram bool
+	nativeClosedProgram   bool
 
 	cTransformer *cabi.Transformer
 
@@ -2757,6 +2849,9 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	if err != nil {
 		return nil, err
 	}
+	packageInits = slices.DeleteFunc(packageInits, func(name string) bool {
+		return ctx.codecInitDrops[name]
+	})
 	gen := genConfig{
 		defaultGODEBUG: ctx.defaultGODEBUG[pkg.ID],
 		rtInit:         needRuntime && !ctx.wasmRuntimeFree,
@@ -2806,14 +2901,20 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
 		return nil, err
 	}
+	for _, name := range ctx.initializerGuardsOff {
+		cl.DefineInitializerGuard(entryPkg.LPkg, name, false)
+	}
 	if ctx.buildConf.deadcodeDropEnabled() {
 		// Share the native-input visibility proof with initializer pruning.
-		trimMethods := canPruneWasmTypeMetadata(ctx)
+		trimMethods := canPruneWasmTypeMetadata(ctx) || ctx.embeddedClosedProgram || ctx.nativeClosedProgram
 		var roots []string
-		if ctx.buildConf.wasiReleaseDCE {
+		if ctx.buildConf.wasiReleaseDCE || ctx.embeddedClosedProgram || ctx.nativeClosedProgram {
 			// Entry thunks are generated outside package compilation. Record
 			// their references, including WASI worker entry calls.
-			roots = appendModuleDeclarationRoots(slices.Clone(ctx.wasiSizeRoots), entryPkg.LPkg.Module())
+			roots = appendModuleDeclarationRoots(slices.Clone(ctx.sizePruningRoots), entryPkg.LPkg.Module())
+		}
+		if ctx.nativeClosedProgram && (ctx.buildConf.Verbose || ctx.buildConf.PrintCommands) {
+			fmt.Fprintln(os.Stderr, "llgo: prune native type metadata")
 		}
 		if err := applyDeadcodeDropOverrides(preparation.linkedOrder, entryPkg, preparation.gen.rtInit, trimMethods, verbose, roots...); err != nil {
 			return nil, err
@@ -3660,10 +3761,18 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	// package C retains its direct, unqualified definitions in its own module.
 	options.CExportWrappers = needsCExportWrappers(ctx, aPkg)
 	options.StaticByteArrays = aPkg.staticByteArrays
+	options.GuardedInitializers = aPkg.guardedInitializers
 	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
 		aPkg.SSA, syntax, embedMap, needMeta, options)
 	check(err)
+	if pkgPath == "os" {
+		for _, guard := range []string{darwinExecutableCwdGuard, stdoutPollInitGuard} {
+			if !ret.Module().NamedGlobal(guard).IsNil() {
+				cl.DefineInitializerGuard(ret, guard, true)
+			}
+		}
+	}
 
 	aPkg.LPkg = ret
 	if !aPkg.CacheHit {
@@ -4309,19 +4418,22 @@ type aPackage struct {
 	AltPkg *packages.Cached
 	LPkg   llssa.Package
 
+	formatRuntime *packages.Package
+
 	NeedRt          bool
 	NeedPyInit      bool
 	ssaInstructions int64
 	linkSnapshot    *packageLinkSnapshot
 
-	LinkArgs         []string
-	ObjFiles         []string               // file-backed archive members: .o or .ll
-	ObjBuffers       []packageArchiveBuffer // LLVM-produced in-memory archive members
-	ArchiveFile      string                 // archive file: .a (output of archiver, used for linking)
-	Meta             *meta.PackageMeta
-	rewriteVars      map[string]string
-	staticByteArrays map[string][]byte
-	tempObjFiles     []string // process-private C/C++/assembly objects consumed by ArchiveFile
+	LinkArgs            []string
+	ObjFiles            []string               // file-backed archive members: .o or .ll
+	ObjBuffers          []packageArchiveBuffer // LLVM-produced in-memory archive members
+	ArchiveFile         string                 // archive file: .a (output of archiver, used for linking)
+	Meta                *meta.PackageMeta
+	rewriteVars         map[string]string
+	staticByteArrays    map[string][]byte
+	guardedInitializers map[*ssa.BasicBlock][]cl.OptionalInitializer
+	tempObjFiles        []string // process-private C/C++/assembly objects consumed by ArchiveFile
 
 	pcln *packagePCLN // source mappings read from ArchiveFile before linking
 
@@ -4351,7 +4463,11 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 	var all []*aPackage
 	var entries []ssaBuildEntry
 	var errs []*packages.Package
+	var formatErr error
 	packages.Visit(initial, nil, func(p *packages.Package) {
+		if formatErr != nil {
+			return
+		}
 		if p.Types != nil && !p.IllTyped {
 			pkgPath := p.PkgPath
 			// Use p.ID to check duplicates since same pkgPath may have different IDs
@@ -4359,6 +4475,15 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 				return
 			}
 			var altPkg *packages.Cached
+			var formatRuntime *packages.Package
+			if prog.Package(p.Types) == nil {
+				dep, err := ctx.prepareValueFormatSource(p)
+				if err != nil {
+					formatErr = fmt.Errorf("%w: %w", errGeneratedSizeSource, err)
+					return
+				}
+				formatRuntime = dep
+			}
 			ssaPkg, created := createSSAPkg(ctx, prog, p, verbose)
 			if created {
 				entries = append(entries, ssaBuildEntry{id: p.ID, pkg: ssaPkg, syntax: p.Syntax, fixOrder: true})
@@ -4384,6 +4509,7 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 				Package:          p,
 				SSA:              ssaPkg,
 				AltPkg:           altPkg,
+				formatRuntime:    formatRuntime,
 				LPkg:             nil,
 				NeedRt:           false,
 				NeedPyInit:       false,
@@ -4399,6 +4525,9 @@ func registerSSAPkgs(ctx *context, initial []*packages.Package, verbose bool) ([
 			errs = append(errs, p)
 		}
 	})
+	if formatErr != nil {
+		return nil, nil, formatErr
+	}
 	if len(errs) > 0 {
 		for _, errPkg := range errs {
 			for _, err := range errPkg.Errors {
@@ -4503,7 +4632,13 @@ func recordPackageSSAInstructions(ctx *context) error {
 	defer span.done()
 	counts := make(map[*ssa.Package]int64)
 	var total int64
-	literalFormats := canSpecializeLiteralFormats(ctx)
+	formats := canSpecializeFormats(ctx)
+	scalarFormats := formats && ctx.buildConf.OptLevel == optlevel.Oz
+	var valueFormats *fmtspecialize.ValuePlan
+	if scalarFormats && ctx.frontend == nil {
+		valueFormats = fmtspecialize.NewValuePlan(ctx.progSSA, ctx.valueFormatFunctions)
+	}
+	ctx.stdout = newStdoutPlan(ctx)
 	var validateMaps func(types.Type) error
 	if ctx.prog != nil {
 		validateMaps = ctx.prog.VectorMapValidator()
@@ -4512,15 +4647,24 @@ func recordPackageSSAInstructions(ctx *context) error {
 		if fn == nil {
 			continue
 		}
+		if valueFormats != nil {
+			valueFormats.RecordFunction(fn)
+		}
 		if validateMaps != nil {
 			if err := validateSSAVectorMaps(fn, validateMaps); err != nil {
 				return err
 			}
 		}
 		for _, block := range fn.Blocks {
-			if literalFormats {
+			if formats {
 				for _, instruction := range block.Instrs {
-					specializeLiteralFormat(instruction)
+					if valueFormats != nil {
+						valueFormats.Record(instruction, fn.Pkg)
+					}
+					fmtspecialize.RewriteCall(instruction, scalarFormats)
+					if plan := ctx.stdout; plan != nil && plan.entry == fn.Pkg {
+						plan.record(instruction)
+					}
 				}
 			}
 			if fn.Pkg == nil {
@@ -4530,6 +4674,9 @@ func recordPackageSSAInstructions(ctx *context) error {
 			counts[fn.Pkg] += instructions
 			total += instructions
 		}
+	}
+	if valueFormats.HasCalls() {
+		ctx.valueFormatPlan = valueFormats
 	}
 	for _, pkg := range ctx.pkgs {
 		if pkg == nil {

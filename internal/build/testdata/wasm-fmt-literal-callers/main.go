@@ -9,6 +9,7 @@ import (
 
 var dynamicFormat = "literal%%"
 var stdoutFormat = "%v\n"
+var scalarFormat = "id=%016X count=%04d text=%5s ok=%5t oct=%o bin=%b lower=%x default=%v %%\x00\xff"
 
 type writer struct{ frames []string }
 
@@ -94,7 +95,50 @@ func checkStdout() {
 	}
 }
 
+func testScalarFormats() {
+	for _, text := range []string{"", "世界", "longer", "\xff"} {
+		const id = ^uint64(0)
+		const count = -1 << 63
+		got := fmt.Sprintf("id=%016X count=%04d text=%5s ok=%5t oct=%o bin=%b lower=%x default=%v %%\x00\xff",
+			uint64(id), int64(count), text, true, uint8(040), int8(-9), uintptr(0xff), -7)
+		want := fmt.Sprintf(scalarFormat, uint64(id), int64(count), text, true, uint8(040), int8(-9), uintptr(0xff), -7)
+		if got != want {
+			panic("scalar format changed output: " + got + " != " + want)
+		}
+		if line := fmt.Sprintln(text, -7, true); line != text+" -7 true\n" {
+			panic("scalar Sprintln changed output: " + line)
+		}
+	}
+}
+
+func testScalarStdout() {
+	if n, err := fmt.Printf("literal output %%\n"); n != len("literal output %\n") || err != nil {
+		panic("literal Printf returned wrong count or error")
+	}
+	emit := func() (int, error, int, error) {
+		printfN, printfErr := fmt.Printf("%d %s\n", -17, "界")
+		printlnN, printlnErr := fmt.Println("label", 42, true)
+		return printfN, printfErr, printlnN, printlnErr
+	}
+	printfN, printfErr, printlnN, printlnErr := emit()
+	if printfN != len("-17 界\n") || printfErr != nil || printlnN != len("label 42 true\n") || printlnErr != nil {
+		panic("scalar stdout returned wrong count or error")
+	}
+
+	stdout := os.Stdout
+	os.Stdout = nil
+	printfN, printfErr, printlnN, printlnErr = emit()
+	os.Stdout = stdout
+	if printfN != 0 || printfErr != os.ErrInvalid || printlnN != 0 || printlnErr != os.ErrInvalid {
+		panic("scalar stdout did not propagate os.ErrInvalid")
+	}
+}
+
 func main() {
+	testScalarFormats()
+	if len(os.Args) == 2 && os.Args[1] == "check-stdout" {
+		testScalarStdout()
+	}
 	var literal, reference writer
 	write(&literal, false)
 	write(&reference, true)
