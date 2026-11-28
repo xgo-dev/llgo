@@ -81,8 +81,8 @@ func allocUAligned(size, alignment uintptr) unsafe.Pointer {
 
 // AllocZ allocates zero-initialized memory.
 func AllocZ(size uintptr) unsafe.Pointer {
-	// AllocU uses GC_malloc, whose non-atomic allocations are already cleared.
-	// Keep its zero-size sentinel, failure check, and allocation accounting.
+	// GC_malloc and GC_malloc_many both return cleared scanned objects.
+	// The medium cache clears each object's freelist link before returning it.
 	return AllocU(size)
 }
 
