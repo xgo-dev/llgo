@@ -39,14 +39,19 @@ func TestNativeTimerSchedulerParkedDeadline(t *testing.T) {
 var timerProbeHead *timerState
 
 //go:linkname timerSchedulerProbe timerprobe.wait
-func timerSchedulerProbe() (wakeAt, headWhen int64, released bool) {
+func timerSchedulerProbe() (wakeAt, headWhen int64, released, indefinite bool, waitState, heapLen int) {
 	timerSchedulerMu.Lock()
-	if timerSchedulerWait == timerWaitUntil {
+	waitState = int(timerSchedulerWait)
+	heapLen = len(timerSchedulerHeap)
+	switch timerSchedulerWait {
+	case timerWaitUntil:
 		wakeAt = timerSchedulerWakeAt
 		if len(timerSchedulerHeap) > 0 {
 			timerProbeHead = timerSchedulerHeap[0]
 			headWhen = timerProbeHead.r.when
 		}
+	case timerWaitIndefinitely:
+		indefinite = len(timerSchedulerHeap) == 0
 	}
 	if st := timerProbeHead; st != nil {
 		released = st.r == nil && st.callback.f == nil && st.callback.arg == nil
@@ -65,12 +70,30 @@ import (
 )
 
 //go:linkname timerWait timerprobe.wait
-func timerWait() (wakeAt, headWhen int64, released bool)
+func timerWait() (wakeAt, headWhen int64, released, indefinite bool, waitState, heapLen int)
 
 func waitForParkedHead() (int64, int64) {
 	for {
-		if wakeAt, headWhen, _ := timerWait(); headWhen != 0 {
+		if wakeAt, headWhen, _, _, _, _ := timerWait(); headWhen != 0 {
 			return wakeAt, headWhen
+		}
+		runtime.Gosched()
+	}
+}
+
+func waitForIndefiniteWait() {
+	deadline := time.Now().Add(5 * time.Second)
+	var lastWaitState, lastHeapLen int
+	for {
+		_, _, _, indefinite, waitState, heapLen := timerWait()
+		if indefinite {
+			return
+		}
+		lastWaitState = waitState
+		lastHeapLen = heapLen
+		if !time.Now().Before(deadline) {
+			println("waitForIndefiniteWait timed out: timerSchedulerWait=", lastWaitState, "heapLen=", lastHeapLen)
+			panic("scheduler did not enter timerWaitIndefinitely")
 		}
 		runtime.Gosched()
 	}
@@ -84,13 +107,13 @@ func main() {
 	}
 
 	later := time.NewTimer(36*time.Hour)
-	if got, _, _ := timerWait(); got != wakeAt {
+	if got, _, _, _, _, _ := timerWait(); got != wakeAt {
 		panic("a deadline after the capped wake time interrupted the wait")
 	}
 	if !head.Stop() || !later.Stop() {
 		panic("long timers fired early")
 	}
-	if got, deadline, released := timerWait(); got != wakeAt || deadline != 0 || !released {
+	if got, deadline, released, _, _, _ := timerWait(); got != wakeAt || deadline != 0 || !released {
 		panic("stopping the timers changed the parked deadline or retained references")
 	}
 
@@ -103,9 +126,16 @@ func main() {
 		panic("reset did not find the parked timer")
 	}
 	<-firing.C
-	if _, _, released := timerWait(); !released {
+	if _, _, released, _, _, _ := timerWait(); !released {
 		panic("fired one-shot timer retained references")
 	}
+
+	// Synchronize on the scheduler entering timerWaitIndefinitely (empty heap)
+	// before scheduling a new timer so the wake-from-indefinite-wait branch is
+	// deterministically exercised.
+	waitForIndefiniteWait()
+	woken := time.NewTimer(0)
+	<-woken.C
 }
 `
 	if err := os.WriteFile(probe, []byte(program), 0600); err != nil {
