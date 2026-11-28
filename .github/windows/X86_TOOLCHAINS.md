@@ -1,8 +1,8 @@
 # Windows x86 release toolchains
 
-Official upstream LLVM 22 does not publish the native i686 development SDK
+Official upstream LLVM 23 does not publish the native i686 development SDK
 needed for a 32-bit LLGo host. LLGo downloads the Windows x86 LLVM SDK from
-[xgo-dev/espressif-llvm-project-prebuilt's 22.1.4_20261020 release](https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/tag/22.1.4_20261020).
+[xgo-dev/espressif-llvm-project-prebuilt's 23.1.6_20261118.3 release](https://github.com/xgo-dev/espressif-llvm-project-prebuilt/releases/tag/23.1.6_20261118.3).
 ESP payloads for all seven supported hosts have a separate runtime release pin. The producer commits are recorded in
 [`espressif.json`](../../internal/crosscompile/espressif.json).
 
@@ -14,13 +14,13 @@ and extracted directory markers are not trust anchors. The compiler verifies
 the archive on first installation, then reuses its extracted toolchain cache.
 LLGo consumes published runtime assets independently of its development SDKs.
 
-The host SDK deliberately uses upstream LLVM 22.1.8, matching LLGo's other
-host SDKs. The separate ESP tools use Espressif LLVM 22.1.4 and run out of
+The host SDK deliberately uses upstream LLVM 23.1.6, matching LLGo's other
+host SDKs. The separate ESP tools use Espressif LLVM 23.1.6 and run out of
 process; their libraries are not linked into LLGo. The x86 SDK's manifest must
 still identify the pinned source revision, i686 host, and static link mode.
 The compiler embeds the ESP version and SHA-256 pins from this file. Release packages carry the ESP archive; the first embedded build verifies and
 unpacks it locally. Source checkouts without a bundle retain the download fallback. The host compiler recipe uses `sdk.release`, so a
-packaging-only ESP update can retain the existing, validated LLVM 22.1.8 SDK.
+packaging-only ESP update can retain the existing, validated LLVM 23.1.6 SDK.
 
 To update the pins, wait for the producer release build and native Windows
 payload/SDK validation to pass, confirm the complete release asset list, then

@@ -262,7 +262,7 @@ func TestWasmDynamicClosureUsesTwoExplicitTypedEdges(t *testing.T) {
 
 func TestWasm64DynamicClosureCodeGenAfterOptimization(t *testing.T) {
 	Initialize(InitAllTargets | InitAllTargetInfos | InitAllTargetMCs | InitAllAsmPrinters)
-	for _, pipeline := range []string{"default<Oz>", "lto<Oz>"} {
+	for _, pipeline := range []string{"default<O2>", "lto<O2>"} {
 		for _, kind := range []string{"plain", "captured"} {
 			t.Run(pipeline+"/"+kind, func(t *testing.T) {
 				prog := NewProgram(&Target{
@@ -298,6 +298,12 @@ func TestWasm64DynamicClosureCodeGenAfterOptimization(t *testing.T) {
 				newMatrixCaller(pkg, "call", sig, value)
 
 				mod := pkg.Module()
+				for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+					if !fn.IsDeclaration() {
+						fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(llvm.AttributeKindID("optsize"), 0))
+						fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(llvm.AttributeKindID("minsize"), 0))
+					}
+				}
 				pbo := llvm.NewPassBuilderOptions()
 				defer pbo.Dispose()
 				if err := mod.RunPasses(pipeline, prog.TargetMachine(), pbo); err != nil {
@@ -617,7 +623,7 @@ func assertDynamicMatrixCall(t *testing.T, caller, entry Function, name, attrNam
 			t.Fatalf("%s explicit edges have parameter counts %v, want one no-env and one env edge", name, paramCounts)
 		}
 		entry := caller.impl.FirstBasicBlock()
-		if term := entry.LastInstruction(); term.IsNil() || term.InstructionOpcode() != llvm.Br || term.OperandsCount() != 3 {
+		if term := entry.LastInstruction(); term.IsNil() || term.InstructionOpcode() != llvm.CondBr || term.OperandsCount() != 3 {
 			t.Fatalf("%s explicit call has no env != nil branch", name)
 		}
 	} else {

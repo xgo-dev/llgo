@@ -237,7 +237,7 @@ func TestLLDBEnvironmentIsolatesWindowsPython(t *testing.T) {
 		`LLGO_WINDOWS_LLDB_PYTHON_HOME=C:\python311`, "UNCHANGED=1",
 	}
 	snapshot := append([]string(nil), original...)
-	got := lldbEnvironment(original, "windows")
+	got := lldbEnvironment(original, "windows", "amd64")
 	for _, expected := range []string{
 		`PATH=C:\python311;C:\host-tools;C:\Windows`,
 		`PYTHONHOME=C:\python311`, "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8", "UNCHANGED=1",
@@ -255,16 +255,40 @@ func TestLLDBEnvironmentIsolatesWindowsPython(t *testing.T) {
 		t.Fatalf("debugger setup mutated the parent environment: %q", original)
 	}
 	for _, goos := range []string{"darwin", "linux"} {
-		if got := lldbEnvironment(original, goos); !slices.Equal(got, original) {
+		if got := lldbEnvironment(original, goos, "arm64"); !slices.Equal(got, original) {
 			t.Errorf("%s environment changed: %q", goos, got)
 		}
 	}
 	explicit := append(append([]string(nil), original...), `LLGO_WINDOWS_LLDB_PYTHONPATH=C:\lldb\python`)
-	if got := lldbEnvironment(explicit, "windows"); !slices.Contains(got, `PYTHONPATH=C:\lldb\python`) {
+	if got := lldbEnvironment(explicit, "windows", "amd64"); !slices.Contains(got, `PYTHONPATH=C:\lldb\python`) {
 		t.Errorf("explicit debugger module path missing: %q", got)
 	}
 	unconfigured := []string{`PATH=C:\tools`, `PYTHONHOME=C:\custom-debugger-python`}
-	if got := lldbEnvironment(unconfigured, "windows"); !slices.Equal(got, unconfigured) {
+	if got := lldbEnvironment(unconfigured, "windows", "amd64"); !slices.Equal(got, unconfigured) {
 		t.Errorf("unconfigured debugger environment changed: %q", got)
+	}
+}
+
+func TestLLDBEnvironmentWindowsARM64ProcessPlugin(t *testing.T) {
+	for _, override := range []string{"", "LLDB_USE_LLDB_SERVER=1", "lldb_use_lldb_server=0"} {
+		t.Run(override, func(t *testing.T) {
+			original := make([]string, 1, 4)
+			original[0] = `PATH=C:\tools`
+			if override != "" {
+				original = append(original, override)
+			}
+			snapshot := slices.Clone(original[:cap(original)])
+			got := lldbEnvironment(original, "windows", "arm64")
+			if override == "" {
+				if !slices.Contains(got, "LLDB_USE_LLDB_SERVER=0") {
+					t.Fatalf("native Windows process plugin not selected: %q", got)
+				}
+			} else if !slices.Equal(got, original) {
+				t.Fatalf("explicit process plugin selection changed: %q", got)
+			}
+			if !slices.Equal(original[:cap(original)], snapshot) {
+				t.Fatal("debugger setup mutated the parent environment backing array")
+			}
+		})
 	}
 }

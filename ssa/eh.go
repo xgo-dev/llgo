@@ -346,7 +346,7 @@ func isTerminatorInst(v llvm.Value) bool {
 		return false
 	}
 	switch v.InstructionOpcode() {
-	case llvm.Ret, llvm.Br, llvm.Switch, llvm.IndirectBr, llvm.Invoke, llvm.Resume, llvm.Unreachable, llvm.CallBr:
+	case llvm.Ret, llvm.CondBr, llvm.UncondBr, llvm.Switch, llvm.IndirectBr, llvm.Invoke, llvm.Resume, llvm.Unreachable, llvm.CallBr:
 		return true
 	}
 	return false

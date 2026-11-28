@@ -118,14 +118,14 @@ out: ret void
 func TestOutlineExpandLoadKeepsPointerAlignment(t *testing.T) {
 	m := parseModule(t, `target triple = "x86_64-unknown-linux-gnu"
 declare i1 @q()
-declare <64 x i8> @llvm.masked.expandload.v64i8(ptr,<64 x i1>,<64 x i8>)
+declare <64 x i8> @llvm.masked.expandload.v64i8.p0(ptr,<64 x i1>,<64 x i8>)
 define void @caller(ptr %p, ptr %out, i64 %bits) {
 entry:
  %g=call i1 @q()
  br i1 %g,label %yes,label %outblk
 yes:
  %mask=bitcast i64 %bits to <64 x i1>
- %r=call <64 x i8> @llvm.masked.expandload.v64i8(ptr align 4 %p,<64 x i1> %mask,<64 x i8> zeroinitializer)
+ %r=call <64 x i8> @llvm.masked.expandload.v64i8.p0(ptr align 4 %p,<64 x i1> %mask,<64 x i8> zeroinitializer)
  store <64 x i8> %r,ptr %out
  br label %outblk
 outblk: ret void
@@ -137,7 +137,7 @@ outblk: ret void
 		t.Fatal(err, m.String())
 	}
 	leaf := m.NamedFunction("caller" + symbolPrefix + "call")
-	if leaf.IsNil() || !strings.Contains(leaf.String(), "@llvm.masked.expandload.v64i8(ptr align 4") || !strings.Contains(leaf.String(), "<64 x i8> zeroinitializer") {
+	if leaf.IsNil() || !strings.Contains(leaf.String(), "@llvm.masked.expandload.v64i8.p0(ptr align 4") || !strings.Contains(leaf.String(), "<64 x i8> zeroinitializer") {
 		t.Fatal(m.String())
 	}
 }

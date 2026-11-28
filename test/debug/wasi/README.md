@@ -1,6 +1,6 @@
 # WASI source debugger acceptance
 
-Install LLVM 22, LLGo, Node.js 22+, native LLDB 18+ (or Apple LLDB), and build
+Install LLVM 23, LLGo, Node.js 22+, native LLDB 18+ (or Apple LLDB), and build
 the optional [`llgo-wasi-debug` host](host/README.md) with Rust 1.97+. The host
 embeds Wasmtime 50.0.1 and the maintained `wasi-common`/Wiggle 36.0.20 LTS
 preview1 implementation. It supplies real WASI threads without depending on

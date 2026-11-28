@@ -59,8 +59,19 @@ func TestBuilderLinksWithClangWcharABI(t *testing.T) {
 				t.Fatalf("parse C module: %v", err)
 			}
 			wantFlag := fmt.Sprintf(`!{i32 1, !"wchar_size", i32 %d}`, tt.wcharSize)
-			if !strings.Contains(cModule.String(), wantFlag) {
-				t.Fatalf("C module is missing %s:\n%s", wantFlag, cModule.String())
+			cIR := cModule.String()
+			wcharSize := cModule.NamedFunction("c_wchar_size").FirstBasicBlock().LastInstruction().Operand(0)
+			if wcharSize.IsAConstantInt().IsNil() || wcharSize.ZExtValue() != uint64(tt.wcharSize) {
+				t.Fatalf("C module has the wrong wchar_t size:\n%s", cIR)
+			}
+			if strings.Contains(cIR, `!"wchar_size"`) && !strings.Contains(cIR, wantFlag) {
+				t.Fatalf("C module has an unexpected wchar_size flag:\n%s", cIR)
+			}
+			// LLVM 23 omits this flag for the target's default wchar_t ABI.
+			// Keep explicit flags in the link test as well: precompiled C
+			// bitcode and -fshort-wchar modules still carry this ABI contract.
+			if !strings.Contains(cIR, `!"wchar_size"`) {
+				(&Builder{module: cModule}).addModuleFlag(1, "wchar_size", tt.wcharSize)
 			}
 
 			module := ctx.NewModule("go-debug-test")

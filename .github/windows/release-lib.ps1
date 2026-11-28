@@ -112,21 +112,26 @@ function Invoke-ReleaseCapture {
 }
 
 function Get-ReleaseMSVCLinkFlags {
-  param([string]$LibraryDirectory, [string[]]$LibraryFlags = @())
+  param([string]$LibraryDirectory, [string[]]$LibraryFlags = @(),
+        [string[]]$AdditionalLibraryDirectories = @())
 
   # cmd/go only recognizes a quote at the start of an argument. -L"path"
   # preserves literal quotes and breaks the generated //go:cgo_ldflag pragma.
-  $path = $LibraryDirectory.Replace('\', '/')
-  if ($path -match '["\r\n]') { throw "Invalid LLVM library directory: $path" }
-  return (@('"-L' + $path + '"') + $LibraryFlags) -join ' '
+  $searchFlags = @($LibraryDirectory) + $AdditionalLibraryDirectories | ForEach-Object {
+    $path = $_.Replace('\', '/')
+    if ($path -match '["\r\n]') { throw "Invalid LLVM library directory: $path" }
+    '"-L' + $path + '"'
+  }
+  return (@($searchFlags) + $LibraryFlags) -join ' '
 }
 
 function Get-ReleaseArchive {
-  param([string]$URL, [string]$SHA256, [string]$CacheDirectory)
+  param([string]$URL, [string]$SHA256, [string]$CacheDirectory,
+        [ValidateSet('.tar.xz', '.zip')][string]$Extension = '.tar.xz')
 
   if ($SHA256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Invalid release SHA-256' }
   New-Item -ItemType Directory -Force $CacheDirectory | Out-Null
-  $archive = Join-Path $CacheDirectory "$SHA256.tar.xz"
+  $archive = Join-Path $CacheDirectory "$SHA256$Extension"
   if (-not (Test-Path -LiteralPath $archive)) {
     $partial = "$archive.$([Guid]::NewGuid()).partial"
     try {
@@ -233,9 +238,9 @@ function Assert-ReleaseCompilerArtifact {
 }
 
 function Get-ReleaseX86Bootstrap {
-  $version = '20260616'
+  $version = '20261104'
   $archive = Join-Path (Get-ReleaseTemporaryRoot) "llvm-mingw-$version-ucrt-x86_64.zip"
-  $checksum = 'b9b68a4d276e16fa25802aaba458e4638f64b3884c290aaccdc2d87083b6ca35'
+  $checksum = '552191b5754c49a5a20723276a6fc56541ea1922c4c50b7b669022333fc1b40f'
   if (-not (Test-Path $archive)) {
     & curl.exe --fail --location --retry 5 --retry-all-errors --output $archive `
       "https://github.com/mstorsjo/llvm-mingw/releases/download/$version/llvm-mingw-$version-ucrt-x86_64.zip"

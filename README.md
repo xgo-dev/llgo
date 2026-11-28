@@ -452,7 +452,7 @@ winget install XGo.LLGo.MSVC
 
 #### APT / YUM (Linux)
 
-For Debian/Ubuntu without LLVM 22 packages, first enable the matching [apt.llvm.org repository](https://apt.llvm.org/). RPM installation requires Fedora 44 or newer. These repository entries use HTTPS and disable package signature checks (`trusted=yes` / `gpgcheck=0`).
+For Debian/Ubuntu without LLVM 23 packages, first enable the matching [apt.llvm.org repository](https://apt.llvm.org/). RPM installation requires Fedora 44 or newer. These repository entries use HTTPS and disable package signature checks (`trusted=yes` / `gpgcheck=0`).
 
 Debian/Ubuntu:
 

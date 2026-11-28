@@ -17,13 +17,13 @@ replaces that SDK.
 DEB/RPM include LLGo, runtime sources, targets, licenses and the original ESP
 runtime archive. The first embedded build verifies and unpacks that archive
 locally into the user cache. Native compilation continues to use system
-LLVM/Clang/LLD 22 and native libraries. Separate package compilers omit Xtensa
+LLVM/Clang/LLD 23 and native libraries. Separate package compilers omit Xtensa
 initializers because Fedora's LLVM does not expose that experimental backend.
-Their binaries use the system `libLLVM.so.22.1`; Debian/Ubuntu selects
-`llvm-config-22`, while Fedora supplies unversioned LLVM commands.
+Their binaries use the system `libLLVM.so.23.1`; Debian/Ubuntu selects
+`llvm-config-23`, while Fedora supplies unversioned LLVM commands.
 
-Ubuntu 26.04 and Fedora 44 provide LLVM 22 packages. Earlier Debian/Ubuntu
-releases need the matching apt.llvm.org repository enabled first. The release
+Fedora 45 provides LLVM 23 packages. Debian/Ubuntu installations need the
+matching apt.llvm.org repository enabled first. The release
 container uses the same DEB payload and external native dependencies.
 
 CI installs each distribution with declared dependencies, runs a mixed Go/C/C++

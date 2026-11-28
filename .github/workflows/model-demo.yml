@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         uses: ./.github/actions/setup-deps
         with:
-          llvm-version: 22
+          llvm-version: 23
 
       - name: Set up Go
         uses: ./.github/actions/setup-go
@@ -41,7 +41,7 @@ jobs:
       - name: Install llgo
         run: |
           go install ./...
-          echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+          echo "LLGO_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
       - name: Download llama2 model
         run: |

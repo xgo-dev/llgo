@@ -104,10 +104,10 @@ func TestLLVMPassPipeline(t *testing.T) {
 		{level: optlevel.O1, want: "default<O1>"},
 		{level: optlevel.O2, want: "default<O2>"},
 		{level: optlevel.O3, want: "default<O3>"},
-		{level: optlevel.Os, want: "default<Os>"},
-		{level: optlevel.Oz, want: "default<Oz>"},
+		{level: optlevel.Os, want: "default<O2>"},
+		{level: optlevel.Oz, want: "default<O2>"},
 		{level: optlevel.O2, ltoMode: lto.Full, want: "lto-pre-link<O2>"},
-		{level: optlevel.Oz, ltoMode: lto.Thin, want: "thinlto-pre-link<Oz>"},
+		{level: optlevel.Oz, ltoMode: lto.Thin, want: "thinlto-pre-link<O2>"},
 	}
 	for _, tt := range tests {
 		if got := llvmPassPipeline(tt.level, tt.ltoMode); got != tt.want {

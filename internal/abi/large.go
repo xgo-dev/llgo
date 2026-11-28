@@ -411,7 +411,7 @@ func (l *largeAggregateLowerer) canSinkHeaderSnapshot(load, store llvm.Value) bo
 		// Reject all memory accesses, calls and synchronization, including
 		// paths that could change the source or execute this store twice.
 		switch inst.InstructionOpcode() {
-		case llvm.GetElementPtr, llvm.ICmp, llvm.FCmp, llvm.PHI, llvm.Select, llvm.Br:
+		case llvm.GetElementPtr, llvm.ICmp, llvm.FCmp, llvm.PHI, llvm.Select, llvm.CondBr, llvm.UncondBr:
 		default:
 			if inst.IsABinaryOperator().IsNil() && inst.IsACastInst().IsNil() {
 				return false

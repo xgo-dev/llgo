@@ -20,7 +20,7 @@ if (Test-Path $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 $bin = Join-Path $stage 'bin'
 New-Item -ItemType Directory -Force $bin | Out-Null
 
-$llvmVersion = '22.1.8'
+$llvmVersion = '23.1.6'
 $readObj = (Get-Command llvm-readobj.exe).Source
 $llvmRoot = Split-Path (Split-Path (Get-Command llvm-config.exe).Source)
 if ($GoArch -eq 'arm64') {
@@ -33,7 +33,7 @@ if ($GoArch -eq 'arm64') {
   $asset = $sdkName.Replace('+', '%2B') + '.tar.xz'
   Expand-ReleaseXz `
     -URL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$llvmVersion/$asset" `
-    -SHA256 'de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1' `
+    -SHA256 'fa5a25df6a1405fdfb9942f4d5cc73bfc3b8b31cfd43ee2fbd43bd2e3168be01' `
     -CacheDirectory (Join-Path $env:RUNNER_TOOL_CACHE 'llgo-release-downloads/llvm-arm64') `
     -Destination $sdkParent `
     -Entries @("$sdkName/include/*", "$sdkName/lib/*", "$sdkName/bin/llvm-config.exe", "$sdkName/bin/*.dll")
@@ -55,10 +55,10 @@ if ($GoArch -eq '386') {
     -Destination $parent
   $llvmRoot = Join-Path $parent 'llvm-sdk'
   $manifest = Get-Content (Join-Path $llvmRoot 'LLGO-LLVM-MANIFEST.txt')
-  if ($manifest -notcontains 'host_target=i686-w64-mingw32' -or $manifest -notcontains 'llvm_version=22.1.8' -or
-      $manifest -notcontains 'source_revision=ca7933e47d3a3451d81e72ac174dcb5aa28b59d1' -or
+  if ($manifest -notcontains 'host_target=i686-w64-mingw32' -or $manifest -notcontains 'llvm_version=23.1.6' -or
+      $manifest -notcontains 'source_revision=5b10d2d74929eae78912771222c9855af97496f4' -or
       $manifest -notcontains 'link_mode=static') {
-    throw 'The LLVM development SDK is not Windows x86/LLVM 22.1.8'
+    throw 'The LLVM development SDK is not Windows x86/LLVM 23.1.6'
   }
   $null = Assert-ReleasePE -ReadObj $readObj -Path (Join-Path $llvmRoot 'bin/llvm-config.exe') -GoArch '386' -Profile 'mingw'
 }
@@ -89,6 +89,8 @@ if ($GoArch -eq '386') {
     '" --target=' + $target.Triple + ' -fuse-ld=lld -fms-runtime-lib=static'
   $env:CXX = '"' + (Join-Path $bootstrapBin 'clang++.exe').Replace('\', '/') +
     '" --target=' + $target.Triple + ' -fuse-ld=lld -fms-runtime-lib=static'
+  . (Join-Path $PSScriptRoot 'llvm-msvc-deps.ps1')
+  $llvmDeps = Get-LLGoLLVMMSVCDependencies -GoArch $GoArch -LLVMVersion $llvmVersion
   $libraryNames = (Invoke-ReleaseCapture $llvmConfig @('--link-static', '--libnames', 'all')).Trim() -split '\s+'
   $systemNames = (Invoke-ReleaseCapture $llvmConfig @('--link-static', '--system-libs')) -split '\s+' |
     Where-Object { $_ -and $_ -notin @('libxml2s.lib', 'xml2s.lib') }
@@ -100,7 +102,8 @@ if ($GoArch -eq '386') {
     }
     '-l' + [IO.Path]::GetFileNameWithoutExtension($_)
   }
-  $env:CGO_LDFLAGS = Get-ReleaseMSVCLinkFlags -LibraryDirectory (Join-Path $llvmRoot 'lib') -LibraryFlags $libraryFlags
+  $env:CGO_LDFLAGS = Get-ReleaseMSVCLinkFlags -LibraryDirectory (Join-Path $llvmRoot 'lib') `
+    -AdditionalLibraryDirectories @((Join-Path $llvmDeps 'lib')) -LibraryFlags $libraryFlags
 }
 
 $executable = Join-Path $bin 'llgo.exe'
@@ -131,6 +134,10 @@ Copy-Item -LiteralPath (Join-Path $root 'LICENSES/XGo-LLVM-Apache-2.0-WITH-LLVM-
   -Destination (Join-Path $licenses 'LLGO-LLVM-LICENSE.txt')
 if ($GoArch -eq '386') {
   Copy-Item -Path (Join-Path $llvmRoot 'third-party-licenses/*') -Destination $licenses -Recurse
+} else {
+  Copy-Item -Path (Join-Path $llvmDeps 'licenses/*') -Destination $licenses
+  Copy-Item -LiteralPath (Join-Path $llvmDeps 'build-manifest.json') `
+    -Destination (Join-Path $stage 'llvm-msvc-deps-manifest.json')
 }
 @{
   version = $metadata.version
