@@ -553,3 +553,63 @@ func TestDefaultGODEBUGDirectiveOrderAndFIPS140(t *testing.T) {
 		t.Fatalf("Directive order change must invalidate cache key: key1=%q, key2=%q", cacheKey1, cacheKey2)
 	}
 }
+
+func TestDefaultGODEBUGGOENVFileInvalidation(t *testing.T) {
+	root := godebugFixture(t)
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/debugenv\ngo 1.27.0\n")
+	writeFile(t, filepath.Join(root, "main.go"), "package main\nfunc main() {}\n")
+
+	envFile := filepath.Join(root, "goenv")
+	writeFile(t, envFile, "GOFIPS140=off\n")
+
+	environ := withEnv(os.Environ(), "GOENV="+envFile)
+	cfg := &packages.Config{Dir: root, Env: environ}
+	pkgMain := []*packages.Package{{ID: "example.com/debugenv", Name: "main"}}
+
+	key1 := defaultGODEBUGCachePath(cfg, runtime.GOROOT(), pkgMain, nil)
+	if key1 == "" {
+		t.Fatal("expected non-empty cache key")
+	}
+
+	// Modify GOENV file content in place (same path and size)
+	writeFile(t, envFile, "GOFIPS140=latest\n")
+	key2 := defaultGODEBUGCachePath(cfg, runtime.GOROOT(), pkgMain, nil)
+	if key2 == "" {
+		t.Fatal("expected non-empty cache key")
+	}
+	if key1 == key2 {
+		t.Fatalf("modifying GOENV content must invalidate cache key: key1=%q, key2=%q", key1, key2)
+	}
+}
+
+func TestDefaultGODEBUGTestDirectivesWarmBuild(t *testing.T) {
+	root := godebugFixture(t)
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/testwarm\ngo 1.27.0\n")
+	writeFile(t, filepath.Join(root, "value.go"), "package value\n")
+	testFile := filepath.Join(root, "value_test.go")
+
+	const src0 = `//go:debug randseednop=0
+package value
+import ("math/rand"; "testing")
+func seeded() bool { rand.Seed(1); a := rand.Int63(); rand.Seed(1); return a == rand.Int63() }
+var initialized = seeded()
+func TestDefaults(t *testing.T) { if !initialized || !seeded() { t.Fatal("randseednop=0 failed") } }
+`
+	writeFile(t, testFile, src0)
+	if _, err := Build(Invocation{Dir: root, Config: godebugConfig(ModeTest)}); err != nil {
+		t.Fatalf("first test build failed: %v", err)
+	}
+
+	// Now modify _test.go to randseednop=1
+	const src1 = `//go:debug randseednop=1
+package value
+import ("math/rand"; "testing")
+func seeded() bool { rand.Seed(1); a := rand.Int63(); rand.Seed(1); return a == rand.Int63() }
+var initialized = seeded()
+func TestDefaults(t *testing.T) { if initialized || seeded() { t.Fatal("randseednop=1 failed") } }
+`
+	writeFile(t, testFile, src1)
+	if _, err := Build(Invocation{Dir: root, Config: godebugConfig(ModeTest)}); err != nil {
+		t.Fatalf("warm test build after modifying _test.go failed: %v", err)
+	}
+}

@@ -156,6 +156,40 @@ func recordEffectiveGoMod(h io.Writer, dir string, modFile string, overlay map[s
 	fmt.Fprintf(h, "modmissing=%s\x00", modFile)
 }
 
+// recordEffectiveGoEnv records the content digest of the effective GOENV file.
+func recordEffectiveGoEnv(h io.Writer, cmdEnv commandEnv, overlay map[string][]byte) {
+	goenv := commandEnvLookup(cmdEnv, "GOENV")
+	if goenv == "off" {
+		fmt.Fprintf(h, "goenv=off\x00")
+		return
+	}
+	if goenv == "" {
+		if cfgDir, err := os.UserConfigDir(); err == nil {
+			goenv = filepath.Join(cfgDir, "go", "env")
+		}
+	}
+	if goenv == "" {
+		fmt.Fprintf(h, "goenv=none\x00")
+		return
+	}
+	goenv = filepath.Clean(goenv)
+	if overlay != nil {
+		if data, ok := overlay[goenv]; ok {
+			fmt.Fprintf(h, "goenvcontent=%s:%s\x00", goenv, digestBytes(data))
+			return
+		}
+	}
+	if data, err := os.ReadFile(goenv); err == nil {
+		fmt.Fprintf(h, "goenvcontent=%s:%s\x00", goenv, digestBytes(data))
+		return
+	}
+	if fi, err := os.Stat(goenv); err == nil {
+		fmt.Fprintf(h, "goenvstat=%s:%d:%d\x00", goenv, fi.Size(), fi.ModTime().UnixNano())
+		return
+	}
+	fmt.Fprintf(h, "goenvmissing=%s\x00", goenv)
+}
+
 // isolateNestedModuleWorkspace disables implicit parent go.work discovery when
 // building inside a standalone nested Go module that is not listed in that
 // workspace's use directives. Explicit GOWORK settings are always respected.

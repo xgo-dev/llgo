@@ -122,17 +122,7 @@ func sourceGoConfigCachePath(commands commandEnv, experiment string, buildFlags 
 	}
 	recordEffectiveGoMod(h, commands.dir, "", nil)
 	recordEffectiveGoWork(h, commands.dir, commands, buildFlags, nil)
-	goenvPath := commandEnvLookup(commands, "GOENV")
-	if goenvPath == "" {
-		if cfgDir, err := os.UserConfigDir(); err == nil {
-			goenvPath = filepath.Join(cfgDir, "go", "env")
-		}
-	}
-	if goenvPath != "" && goenvPath != "off" {
-		if efi, err := os.Stat(goenvPath); err == nil {
-			fmt.Fprintf(h, "goenvfile=%s:%d:%d\x00", goenvPath, efi.Size(), efi.ModTime().UnixNano())
-		}
-	}
+	recordEffectiveGoEnv(h, commands, nil)
 	return filepath.Join(newCacheManager().root, "meta", "goenv-"+hex.EncodeToString(h.Sum(nil))+".json")
 }
 

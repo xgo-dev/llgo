@@ -25,7 +25,7 @@ type cachedDefaultGODEBUG struct {
 const defaultGODEBUGCacheVersion = 1
 
 func defaultGODEBUGCachePath(cfg *packages.Config, goroot string, roots []*packages.Package, patterns []string) string {
-	if !cacheEnabled() || cfg == nil || goroot == "" {
+	if !cacheEnabled() || cfg == nil || goroot == "" || cfg.Tests {
 		return ""
 	}
 	h := sha256.New()
@@ -42,6 +42,7 @@ func defaultGODEBUGCachePath(cfg *packages.Config, goroot string, roots []*packa
 	}
 	recordEffectiveGoMod(h, cfg.Dir, "", cfg.Overlay)
 	recordEffectiveGoWork(h, cfg.Dir, cmdEnv, cfg.BuildFlags, cfg.Overlay)
+	recordEffectiveGoEnv(h, cmdEnv, cfg.Overlay)
 	// Extract exact //go:debug directives from already-parsed entry syntax so
 	// ordinary code edits hit the cache while //go:debug or go.mod edits miss.
 	mainRoots := make([]*packages.Package, 0, len(roots))
