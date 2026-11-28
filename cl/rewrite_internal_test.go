@@ -1766,6 +1766,8 @@ var VarAlias T = "original_value"
 	}
 }
 
+// buildSSAPackageWithFiles builds raw SSA to exercise individual compiler rewrites.
+// Frontend unsafe layout coverage uses compileRewrittenUnsafe or cltest.CompileIREx.
 func buildSSAPackageWithFiles(t *testing.T, src string) (*ssa.Package, []*ast.File, *gpackages.Importer) {
 	t.Helper()
 

@@ -549,7 +549,7 @@ func (b Builder) Load(ptr Expr) Expr {
 	}
 	b.assertStaticNilDeref(ptr)
 	storageType := b.Prog.Elem(ptr.Type)
-	telem := b.Prog.withoutNativeStorage(storageType)
+	telem := b.Prog.ValueType(storageType)
 	if b.Prog.SizeOf(storageType) == 0 {
 		b.AssertNilDeref(ptr)
 		return b.Prog.Zero(telem)

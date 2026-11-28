@@ -4283,6 +4283,7 @@ func registerAltSSAPkgs(prog *ssa.Program, patches cl.Patches, alts []*packages.
 			if isAlt {
 				payloads = cl.MergeStaticByteArrays(payloads, cl.StripLargeStaticByteArrays(typs, p.Syntax, p.TypesInfo))
 			}
+			cl.RewriteUnsafeOperands(p.Syntax, p.TypesInfo)
 			pkgSSA := prog.CreatePackage(typs, p.Syntax, p.TypesInfo, true)
 			entries = append(entries, ssaBuildEntry{id: p.ID, pkg: pkgSSA, syntax: p.Syntax})
 			if isAlt {
@@ -4717,6 +4718,7 @@ func createSSAPkg(ctx *context, prog *ssa.Program, p *packages.Package, verbose 
 				}
 			}
 		} else {
+			cl.RewriteUnsafeOperands(p.Syntax, p.TypesInfo)
 			pkgSSA = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
 		}
 		return pkgSSA, true

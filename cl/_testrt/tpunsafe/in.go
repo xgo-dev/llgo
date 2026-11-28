@@ -33,13 +33,24 @@ func layoutSize() uintptr {
 
 func main() {
 	m1 := M[bool]{}
-	m1.check(1, 8, 1)
+	var probe1 struct {
+		Pad   byte
+		Value N[bool]
+	}
+	m1.check(uintptr(unsafe.Pointer(&probe1.Value))-uintptr(unsafe.Pointer(&probe1)),
+		uintptr(unsafe.Pointer(&m1.m2))-uintptr(unsafe.Pointer(&m1)),
+		uintptr(unsafe.Pointer(&m1.m2.n2))-uintptr(unsafe.Pointer(&m1.m2)))
 	m2 := M[int64]{}
-	m2.check(8, 16, 8)
+	var probe2 struct {
+		Pad   byte
+		Value N[int64]
+	}
+	m2.check(uintptr(unsafe.Pointer(&probe2.Value))-uintptr(unsafe.Pointer(&probe2)),
+		uintptr(unsafe.Pointer(&m2.m2))-uintptr(unsafe.Pointer(&m2)),
+		uintptr(unsafe.Pointer(&m2.m2.n2))-uintptr(unsafe.Pointer(&m2.m2)))
 }
 
-// Each instantiation folds Alignof/Offsetof to its concrete layout while still
-// addressing the instantiated fields used by the expressions.
+// Each instantiation folds Alignof/Offsetof to its concrete layout.
 func (m *M[T]) check(align, offset1, offset2 uintptr) {
 	if v := unsafe.Alignof(m.m2); v != align {
 		println("have", v, "want", align)
@@ -55,24 +66,12 @@ func (m *M[T]) check(align, offset1, offset2 uintptr) {
 	}
 }
 
-// CHECK-LABEL: define void @main.main(){{.*}} {
-// CHECK-DAG: %[[INT64:[0-9]+]] = alloca %"main.M[int64]", align 8
-// CHECK-NEXT: %[[BOOL:[0-9]+]] = alloca %"main.M[bool]", align 8
-// CHECK-DAG: call void @"main.(*M[bool]).check"(ptr %[[BOOL]], i64 1, i64 8, i64 1)
-// CHECK-DAG: call void @"main.(*M[int64]).check"(ptr %[[INT64]], i64 8, i64 16, i64 8)
-
 // CHECK-LABEL: define linkonce void @"main.(*M[bool]).check"(
-// CHECK-DAG: getelementptr inbounds nuw %"main.M[bool]", ptr %{{[0-9]+}}, i32 0, i32 2
 // CHECK-DAG: icmp ne i64 1, %{{[0-9]+}}
-// CHECK-DAG: getelementptr inbounds nuw %"main.M[bool]", ptr %{{[0-9]+}}, i32 0, i32 2
 // CHECK-DAG: icmp ne i64 8, %{{[0-9]+}}
-// CHECK-DAG: getelementptr inbounds nuw %"main.N[bool]", ptr %{{[0-9]+}}, i32 0, i32 1
 // CHECK-DAG: icmp ne i64 1, %{{[0-9]+}}
 
 // CHECK-LABEL: define linkonce void @"main.(*M[int64]).check"(
-// CHECK-DAG: getelementptr inbounds nuw %"main.M[int64]", ptr %{{[0-9]+}}, i32 0, i32 2
 // CHECK-DAG: icmp ne i64 8, %{{[0-9]+}}
-// CHECK-DAG: getelementptr inbounds nuw %"main.M[int64]", ptr %{{[0-9]+}}, i32 0, i32 2
 // CHECK-DAG: icmp ne i64 16, %{{[0-9]+}}
-// CHECK-DAG: getelementptr inbounds nuw %"main.N[int64]", ptr %{{[0-9]+}}, i32 0, i32 1
 // CHECK-DAG: icmp ne i64 8, %{{[0-9]+}}

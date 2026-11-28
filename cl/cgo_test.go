@@ -23,6 +23,8 @@ func init() {
 	llssa.Initialize(llssa.InitAll | llssa.InitNative)
 }
 
+// buildGoSSAPkg deliberately builds raw SSA for instruction-level tests.
+// Use compileRewrittenUnsafe or cltest.CompileIREx to test frontend rewriting.
 func buildGoSSAPkg(t *testing.T, src string) (*gossa.Package, *token.FileSet, []*ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
