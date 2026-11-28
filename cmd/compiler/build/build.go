@@ -598,7 +598,7 @@ func Build(inv Invocation) ([]Package, error) {
 			} else {
 				inv.Config.frontendSourceOnly = true
 			}
-			if filename := inv.Config.BuildTrace; filename != "" {
+			if filename := inv.Config.BuildTrace; filename != "" && inv.parentBuildTrace == nil {
 				if !filepath.IsAbs(filename) {
 					base := inv.Dir
 					if base == "" {

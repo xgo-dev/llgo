@@ -67,6 +67,7 @@ func initialGroupInvocations(inv Invocation, ctx *context, groups []initialBuild
 	children := make([]Invocation, 0, len(groups))
 	for _, group := range groups {
 		conf := ctx.buildConf.clone()
+		conf.BuildTrace = ""
 		args := make([]string, len(group.pkgs))
 		for i, pkg := range group.pkgs {
 			args[i] = initialGroupLoadArg(ctx, pkg)

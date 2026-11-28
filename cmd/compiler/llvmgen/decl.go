@@ -398,6 +398,9 @@ type aFunction struct {
 	gcRootSlots    []Expr
 	gcStackObjects []gcStackObject
 
+	instantiated bool
+	coalesce     bool
+
 	diFunc DIFunction
 
 	// allocaBuilder is a single reusable builder used to reserve local stack
@@ -468,8 +471,11 @@ func (p Package) newFunc(
 		if !isLLVMName || v.impl.IntrinsicID() == 0 {
 			// An ordinary import or linkname alias may have declared the
 			// symbol before an on-demand shared definition is requested.
-			if instantiated && v.impl.IsDeclaration() {
-				p.setODRLinkage(v.impl, llvm.LinkOnceAnyLinkage)
+			if instantiated {
+				v.instantiated = true
+				if len(v.blks) > 0 {
+					p.setODRLinkage(v.impl, llvm.LinkOnceAnyLinkage)
+				}
 			}
 			return v
 		}
@@ -516,7 +522,7 @@ func (p Package) newFunc(
 			if cached != nil {
 				return cached
 			}
-			ret := newFunction(fn, t, p, p.Prog, nil, false, false)
+			ret := newFunction(fn, t, p, p.Prog, nil, false, false, false)
 			p.fns[name] = ret
 			return ret
 		}
@@ -553,13 +559,10 @@ func (p Package) newFunc(
 			fn.AddFunctionAttr(p.framePointerAttr)
 		}
 	}
-	if instantiated {
-		p.setODRLinkage(fn, llvm.LinkOnceAnyLinkage)
-	}
 	if p.isPreservedName(name) {
 		p.markLLVMUsed(fn)
 	}
-	ret := newFunction(fn, t, p, p.Prog, envType, directEnv, directEnvNullable)
+	ret := newFunction(fn, t, p, p.Prog, envType, directEnv, directEnvNullable, instantiated)
 	p.fns[name] = ret
 	return ret
 }
@@ -569,7 +572,7 @@ func (p Package) FuncOf(name string) Function {
 	return p.fns[name]
 }
 
-func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type, envDirect bool, envDirectNullable bool) Function {
+func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type, envDirect bool, envDirectNullable bool, instantiated bool) Function {
 	params, hasVArg := newParams(t, prog)
 	return &aFunction{
 		Expr:              Expr{fn, t},
@@ -579,6 +582,7 @@ func newFunction(fn llvm.Value, t Type, pkg Package, prog Program, env Type, env
 		env:               env,
 		envDirect:         envDirect,
 		envDirectNullable: envDirectNullable,
+		instantiated:      instantiated,
 		hasVArg:           hasVArg,
 		fakeUses:          make([]llvm.Value, 0, 4),
 		fakeUseSet:        make(map[llvm.Value]struct{}),
@@ -613,7 +617,10 @@ func (p Function) Name() string {
 // linkonce entries. Preserve its linkage so externally visible entries remain
 // available even when no function in this module references them.
 func (p Function) Coalesce() {
-	p.Pkg.setODRLinkage(p.impl, p.impl.Linkage())
+	p.coalesce = true
+	if len(p.blks) > 0 {
+		p.Pkg.setODRLinkage(p.impl, p.impl.Linkage())
+	}
 }
 
 // Params returns the function's ith parameter.
@@ -806,6 +813,13 @@ func (p Function) MakeBlocks(nblk int) []BasicBlock {
 }
 
 func (p Function) addBlock(idx int) BasicBlock {
+	if len(p.blks) == 0 {
+		if p.instantiated {
+			p.Pkg.setODRLinkage(p.impl, llvm.LinkOnceAnyLinkage)
+		} else if p.coalesce {
+			p.Pkg.setODRLinkage(p.impl, p.impl.Linkage())
+		}
+	}
 	label := "_llgo_" + strconv.Itoa(idx)
 	blk := p.Prog.ctx.AddBasicBlock(p.impl, label)
 	ret := &aBasicBlock{blk, blk, p, idx}

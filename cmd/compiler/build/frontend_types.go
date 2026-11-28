@@ -148,7 +148,7 @@ func (l *frontendTypeLoader) eligible(pkg *packages.Package) bool {
 		return false
 	}
 	if pkg.PkgPath == "runtime" || strings.HasPrefix(pkg.PkgPath, "runtime/") ||
-		pkg.PkgPath == "github.com/xgo-dev/llgo/runtime/internal/runtime" ||
+		strings.HasPrefix(pkg.PkgPath, "github.com/xgo-dev/llgo/runtime") ||
 		strings.HasPrefix(pkg.PkgPath, altPkgPathPrefix) {
 		return false
 	}

@@ -51,6 +51,40 @@ func TestUnixODRDefinitionsDoNotGainCOMDAT(t *testing.T) {
 	}
 }
 
+func TestInstantiatedGenericDeclarationRetainsExternalLinkage(t *testing.T) {
+	for _, goos := range []string{"linux", "windows", "darwin"} {
+		t.Run(goos, func(t *testing.T) {
+			prog := NewProgram(&Target{GOOS: goos, GOARCH: "amd64"})
+			defer prog.Dispose()
+			pkg := prog.NewPackage("example.com/p", "example.com/p")
+
+			// 1. Instantiated function declaration without body:
+			// Must have external linkage and no COMDAT so LLVM module verification succeeds.
+			fnDecl := pkg.NewFuncEx("sync/atomic.(*Pointer[os.dirInfo]).Load", NoArgsNoRet, GoDecl, false, true)
+			if got := fnDecl.impl.Linkage(); got != llvm.ExternalLinkage {
+				t.Fatalf("[%s] declaration linkage = %v, want ExternalLinkage", goos, got)
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("[%s] module verification failed with generic declaration: %v\n%s", goos, err, pkg.String())
+			}
+
+			// 2. Instantiated function definition with body in this module:
+			// Must gain linkonce linkage (and COMDAT on Windows).
+			fnDef := pkg.NewFuncEx("sync/atomic.(*Pointer[int]).Load", NoArgsNoRet, GoDecl, false, true)
+			body := fnDef.MakeBody(1)
+			body.Return()
+			body.EndBuild()
+
+			if got := fnDef.impl.Linkage(); got != llvm.LinkOnceAnyLinkage {
+				t.Fatalf("[%s] definition linkage = %v, want LinkOnceAnyLinkage", goos, got)
+			}
+			if err := llvm.VerifyModule(pkg.Module(), llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("[%s] module verification failed with generic definition: %v\n%s", goos, err, pkg.String())
+			}
+		})
+	}
+}
+
 func TestWindowsZeroSizedGlobalUsesModuleLocalSentinel(t *testing.T) {
 	prog := NewProgram(&Target{GOOS: "windows", GOARCH: "amd64"})
 	defer prog.Dispose()
