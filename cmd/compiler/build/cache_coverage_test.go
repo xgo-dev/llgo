@@ -17,9 +17,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xgo-dev/llgo/cmd/compiler/frontcache"
 	"github.com/xgo-dev/llgo/cmd/compiler/llvmgen"
 	"github.com/xgo-dev/llgo/cmd/compiler/optlevel"
 	"github.com/xgo-dev/llgo/cmd/compiler/packages"
+	"github.com/xgo-dev/llgo/directive"
 	"github.com/xgo-dev/llgo/ssa"
 	"github.com/xgo-dev/llgo/types"
 )
@@ -248,9 +250,13 @@ func TestDepfileCacheRoundTripValidationAndErrors(t *testing.T) {
 	if _, err := statDepfiles([]string{missingFile}); err == nil {
 		t.Fatal("expected statDepfiles error on missing file")
 	}
-	// File as directory in statDepfileDirs returns error.
-	if _, err := statDepfileDirs([]string{f1}); err == nil {
-		t.Fatal("expected statDepfileDirs error on regular file")
+	// File as directory in statDepfileDirs returns error on POSIX (ENOTDIR).
+	// On Windows, os.ReadDir on a regular file fails with ERROR_PATH_NOT_FOUND,
+	// which os.IsNotExist classifies as an absent directory.
+	if runtime.GOOS != "windows" {
+		if _, err := statDepfileDirs([]string{f1}); err == nil {
+			t.Fatal("expected statDepfileDirs error on regular file")
+		}
 	}
 
 	fileStats, err := statDepfiles([]string{"", f1, f1})
@@ -683,5 +689,363 @@ func TestFrontendInlineHintTargetedRetryAndHelpers(t *testing.T) {
 	write("main.go", "package main\n\nimport (\n\t\"example.com/inlinehint/dep1\"\n\t\"example.com/inlinehint/dep2\"\n\t\"example.com/inlinehint/dep3\"\n)\n\nfunc main() {\n\tprintln(dep1.Twice(5), dep2.Add(20, 7), dep3.StaySkipped(30))\n}\n")
 	if sp := buildAndRun("10 27 31"); sp == 0 {
 		t.Fatal("warm build after hint update had skipped_parse=0")
+	}
+}
+
+func TestFingerprintDepfileIncludeHelpers(t *testing.T) {
+	// sortDeps tie-breakers (equal ID, equal Version -> Fingerprint).
+	sorted := sortDeps([]depEntry{
+		{ID: "a", Version: "v2", Fingerprint: "2"},
+		{ID: "a", Version: "v1", Fingerprint: "b"},
+		{ID: "a", Version: "v1", Fingerprint: "a"},
+	})
+	if sorted[0].Fingerprint != "a" || sorted[1].Fingerprint != "b" || sorted[2].Version != "v2" {
+		t.Fatalf("unexpected sortDeps order: %+v", sorted)
+	}
+
+	// decodeManifest edge cases (empty, oversized, invalid YAML).
+	if data, err := decodeManifest("   "); err != nil || data.Package != nil {
+		t.Fatalf("decodeManifest(empty) = (%+v, %v)", data, err)
+	}
+	if _, err := decodeManifest(strings.Repeat("a", maxManifestSize+1)); err == nil {
+		t.Fatal("decodeManifest(oversized) expected error")
+	}
+	if _, err := decodeManifest(":\n  - [unclosed"); err == nil {
+		t.Fatal("decodeManifest(invalid yaml) expected error")
+	}
+
+	// digestEmbedFiles success + error.
+	dir := t.TempDir()
+	emb1 := filepath.Join(dir, "b.txt")
+	emb2 := filepath.Join(dir, "a.txt")
+	if err := os.WriteFile(emb1, []byte("beta"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(emb2, []byte("alpha"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	embs, err := digestEmbedFiles([]string{emb1, emb2})
+	if err != nil || len(embs) != 2 || embs[0].Path != emb2 {
+		t.Fatalf("digestEmbedFiles = (%+v, %v)", embs, err)
+	}
+	if _, err := digestEmbedFiles([]string{filepath.Join(dir, "missing.txt")}); err == nil {
+		t.Fatal("digestEmbedFiles(missing) expected error")
+	}
+
+	// depfileEnvIdentity with empty workDir and resolveSearchDir edge cases.
+	ctx := &context{buildConf: &Config{Goos: runtime.GOOS, Goarch: runtime.GOARCH}}
+	if envID := depfileEnvIdentity(ctx, "", nil, []string{"-O2"}); envID == "" {
+		t.Fatal("depfileEnvIdentity returned empty")
+	}
+	if resolveSearchDir("", "") != "" || resolveSearchDir(dir, "") != filepath.Clean(dir) || resolveSearchDir(dir, "sub") != filepath.Join(dir, "sub") {
+		t.Fatal("resolveSearchDir edge cases failed")
+	}
+
+	// collectIncludeSearchDirs with relative input, two-arg flags, joined prefixes, and env vars.
+	sep := string(os.PathListSeparator)
+	env := []string{
+		"INCLUDE=" + sep + "inc_env",
+		"CPATH=" + sep + "cpath_env",
+	}
+	dirs := collectIncludeSearchDirs("sub/src.c", dir, env, []string{
+		"-I", "inc1",
+		"-isystem", "sys1",
+		"-Iinc2",
+		"--include-directory=inc3",
+		"-I",
+	})
+	if len(dirs) < 5 {
+		t.Fatalf("collectIncludeSearchDirs returned too few dirs: %v", dirs)
+	}
+
+	// parseIncludeToken & extractIncludeTargets edge cases (including no trailing newline).
+	for _, bad := range []string{"", "a", "foo", `"unclosed`, `<unclosed`} {
+		if tok, _ := parseIncludeToken(bad); tok != "" {
+			t.Fatalf("parseIncludeToken(%q) = %q, want empty", bad, tok)
+		}
+	}
+	hdr := "#include \"local.h\"\n#include_next <sys.h>\n#import \"imp.h\"\n#if __has_include(\"opt.h\") && __has_include_next(<opt2.h>)\n#include \"eof.h\""
+	quoted, angled := extractIncludeTargets([]byte(hdr))
+	if len(quoted) != 4 || len(angled) != 2 {
+		t.Fatalf("extractIncludeTargets = (%v, %v)", quoted, angled)
+	}
+
+	// collectShadowingMissingPaths empty + populated.
+	if got := collectShadowingMissingPaths(nil, nil, nil); got != nil {
+		t.Fatalf("collectShadowingMissingPaths(empty) = %v, want nil", got)
+	}
+	incDir := filepath.Join(dir, "inc")
+	subDir := filepath.Join(incDir, "sub")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	depHdr := filepath.Join(subDir, "used.h")
+	if err := os.WriteFile(depHdr, []byte("#include \"../parent_miss.h\"\n#include \"./dot.h\"\n#include \"nested.h\"\n#include <angle_miss.h>\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rawDep, _ := os.ReadFile(depHdr)
+	missing := collectShadowingMissingPaths(
+		[]string{dir, incDir},
+		[]string{"", depHdr},
+		map[string][]byte{depHdr: rawDep},
+	)
+	if len(missing) == 0 {
+		t.Fatal("collectShadowingMissingPaths returned no candidates")
+	}
+
+	// parseMakeDepfileForOS (both Unix and Windows backslash/space/$$ rules).
+	if got := parseMakeDepfileForOS("no-colon-here", false); got != nil {
+		t.Fatalf("missing colon = %v, want nil", got)
+	}
+	unixDeps := parseMakeDepfileForOS("out.o: a.c \\\n  dir\\ with\\ space/b.h $$dollar.h\n", false)
+	if len(unixDeps) != 3 {
+		t.Fatalf("unix parseMakeDepfileForOS = %v", unixDeps)
+	}
+	winDeps := parseMakeDepfileForOS("out.o: C:\\Users\\foo\\a.h C:\\dir\\ with\\ space\\b.h C:\\even\\\\ c.h C:\\odd\\\\\\ d.h #end", true)
+	if len(winDeps) < 4 {
+		t.Fatalf("windows parseMakeDepfileForOS = %v", winDeps)
+	}
+}
+
+func TestFrontendTypesAndPrepareEdgeCases(t *testing.T) {
+	cacheDir := t.TempDir()
+	srcDir := t.TempDir()
+	fset := token.NewFileSet()
+	srcPath := filepath.Join(srcDir, "p.go")
+	srcText := "package p\n\ntype MyInt int\nconst C = 1\nvar V = 2\nfunc F() int { return C + V }\n"
+	if err := os.WriteFile(srcPath, []byte(srcText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsedFile, err := parser.ParseFile(fset, srcPath, srcText, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}}
+	checked, err := (&types.Config{}).Check("example.com/edgep", fset, []*ast.File{parsedFile}, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &context{
+		buildConf: &Config{
+			Goos:           runtime.GOOS,
+			Goarch:         runtime.GOARCH,
+			Verbose:        true,
+			GlobalRewrites: map[string]Rewrites{"example.com/rewritten": {"X": "1"}},
+		},
+		cacheManager: &cacheManager{root: cacheDir},
+		pkgByID:      map[string]Package{},
+		progSSA:      ssa.NewProgram(fset, 0),
+	}
+	loader := &frontendTypeLoader{
+		ctx:            ctx,
+		cache:          ctx.cacheManager,
+		namespace:      "ns",
+		keys:           map[string]string{},
+		exports:        map[string]*frontendTypeExport{},
+		selected:       map[string]bool{},
+		exportDataHits: map[string]bool{},
+	}
+
+	// GlobalRewrites makes package ineligible.
+	if loader.eligible(&packages.Package{ID: "example.com/rewritten", PkgPath: "example.com/rewritten", Name: "rewritten"}) {
+		t.Fatal("package with GlobalRewrites must not be eligible")
+	}
+
+	// load() rejects dep.ID != dep.PkgPath and missing source files (empty key).
+	pkgWithTestDep := &packages.Package{
+		ID:      "example.com/edgep",
+		PkgPath: "example.com/edgep",
+		Name:    "p",
+		Imports: map[string]*packages.Package{"d": {ID: "d [d.test]", PkgPath: "d"}},
+	}
+	if loader.load(pkgWithTestDep, fset) {
+		t.Fatal("load should reject dep with ID != PkgPath")
+	}
+	pkgMissingFile := &packages.Package{
+		ID:              "example.com/missingfile",
+		PkgPath:         "example.com/missingfile",
+		Name:            "missingfile",
+		CompiledGoFiles: []string{filepath.Join(srcDir, "does_not_exist.go")},
+	}
+	if loader.load(pkgMissingFile, fset) {
+		t.Fatal("load should reject missing source file")
+	}
+
+	// Build companion archive + frontend record for legacy JSON Package format + Syntax Defs population.
+	depTypes := types.NewPackage("example.com/edgedep", "edgedep")
+	depTypes.MarkComplete()
+	p := &packages.Package{
+		ID:              "example.com/edgep",
+		PkgPath:         "example.com/edgep",
+		Name:            "p",
+		CompiledGoFiles: []string{srcPath},
+		Syntax:          []*ast.File{parsedFile},
+		Imports:         map[string]*packages.Package{"example.com/edgedep": {ID: "example.com/edgedep", PkgPath: "example.com/edgedep", Name: "edgedep", Types: depTypes}},
+	}
+	key := loader.key(p, map[string]bool{})
+	if key == "" {
+		t.Fatal("expected non-empty key")
+	}
+	archFP := "archfp-edge"
+	paths := ctx.cacheManager.PackagePaths(ctx.targetTriple(), p.PkgPath, archFP)
+	if err := os.MkdirAll(filepath.Dir(paths.Archive), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.Archive, []byte("!<arch>\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	feDir := filepath.Join(cacheDir, "frontend")
+	if err := os.MkdirAll(feDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(feDir, "fe-edge.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	writeTypeRecord := func(rec frontendTypeExport) {
+		t.Helper()
+		payload, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env, err := json.Marshal(frontendEnvelope{Digest: frontendDigest(payload), Payload: payload})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(loader.path(key), env, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// exportdata with wrong PkgID -> false.
+	writeTypeRecord(frontendTypeExport{
+		Version: frontendExportVersion, Input: key, Archive: archFP, Frontend: "fe-edge",
+		PkgID: "wrong/id", PkgPath: p.PkgPath, TypesFormat: frontendTypesFormatExportData,
+	})
+	if loader.load(p, fset) {
+		t.Fatal("load accepted mismatched PkgID")
+	}
+	// exportdata with missing .llgotypes sidecar -> false.
+	writeTypeRecord(frontendTypeExport{
+		Version: frontendExportVersion, Input: key, Archive: archFP, Frontend: "fe-edge",
+		PkgID: p.ID, PkgPath: p.PkgPath, TypesFormat: frontendTypesFormatExportData,
+	})
+	if loader.load(p, fset) {
+		t.Fatal("load accepted missing .llgotypes sidecar")
+	}
+
+	// Legacy JSON PackageExport format WITH Syntax -> populates pkg.TypesInfo.Defs for Type/Const/Var/Func!
+	idx := frontcache.NewTypes(map[*types.Package]string{checked: p.ID, depTypes: "example.com/edgedep"}, fset)
+	idx.AddPackage(checked, info)
+	pkgExp := frontcache.ExportPackage(checked, idx, fset)
+	writeTypeRecord(frontendTypeExport{
+		Version: frontendExportVersion, Input: key, Archive: archFP, Frontend: "fe-edge",
+		Package: pkgExp,
+	})
+	if !loader.load(p, fset) {
+		t.Fatal("legacy JSON PackageExport load failed")
+	}
+	if len(p.TypesInfo.Defs) < 4 {
+		t.Fatalf("expected Defs populated from Syntax, got %d", len(p.TypesInfo.Defs))
+	}
+
+	// capture() skips packages with TLS/GLS var (Locality != LocalityNone).
+	tlsPkg := types.NewPackage("example.com/tlspkg", "tlspkg")
+	tlsVar := types.NewVar(token.NoPos, tlsPkg, "slot", types.Typ[types.Uintptr])
+	tlsVar.SetLocality(directive.LocalityThread)
+	tlsPkg.Scope().Insert(tlsVar)
+	tlsPkg.MarkComplete()
+	loader.capture(&aPackage{
+		Package: &packages.Package{ID: "example.com/tlspkg", PkgPath: "example.com/tlspkg", Name: "tlspkg", Types: tlsPkg},
+	}, &frontendExport{Input: "in"}, idx)
+	if loader.exports["example.com/tlspkg"] != nil {
+		t.Fatal("capture should skip package with TLS variable")
+	}
+
+	// store() writes missing .llgotypes sidecar and surfaces writePackageTypesSidecar error on nil Types.
+	loader.exports["example.com/storeerr"] = &frontendTypeExport{
+		Version: frontendExportVersion, Input: "storeerr-key", Frontend: "fe",
+		PkgID: "example.com/storeerr", PkgPath: "example.com/storeerr", TypesFormat: frontendTypesFormatExportData,
+	}
+	if err := loader.store(&aPackage{
+		Package:     &packages.Package{ID: "example.com/storeerr", PkgPath: "example.com/storeerr", Name: "storeerr"},
+		Fingerprint: "fp-storeerr",
+	}); err == nil {
+		t.Fatal("store with nil Types expected error")
+	}
+
+	// frontendCache.loadByKey("") -> nil, and bindFunctions duplicate-ID ambiguity -> uncacheable.
+	fc := &frontendCache{
+		ctx:     ctx,
+		records: map[string]*frontendExport{},
+		owners:  map[*ssa.Package]Package{},
+		types:   idx,
+	}
+	if fc.loadByKey(cacheDir, "") != nil {
+		t.Fatal("loadByKey empty key should return nil")
+	}
+	ssaPkg := ctx.progSSA.CreatePackage(checked, []*ast.File{parsedFile}, info, true)
+	ssaPkg.Build()
+	ownerPkg := &aPackage{Package: p, SSA: ssaPkg}
+	fc.owners[ssaPkg] = ownerPkg
+	dupSig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
+	f1 := &ssa.Function{Prog: ctx.progSSA, Pkg: ssaPkg, Signature: dupSig}
+	f2 := &ssa.Function{Prog: ctx.progSSA, Pkg: ssaPkg, Signature: dupSig}
+	f3 := &ssa.Function{Prog: ctx.progSSA, Pkg: ssaPkg, Signature: dupSig}
+	fc.methods = []*ssa.Function{f1, f2, f3}
+	fc.bindFunctions()
+	if !fc.uncacheable[ownerPkg] {
+		t.Fatal("duplicate function identity should mark owner uncacheable")
+	}
+
+	// writeExportMetaSidecar with nil dep / missing pkgByID dep skips cleanly.
+	pWithNilDep := &aPackage{
+		Package: &packages.Package{
+			ID:      "example.com/edgep",
+			PkgPath: "example.com/edgep",
+			Name:    "p",
+			Imports: map[string]*packages.Package{
+				"nildep":     nil,
+				"missingdep": {ID: "example.com/not-in-pkgbyid", PkgPath: "example.com/not-in-pkgbyid"},
+			},
+		},
+		SSA: ssaPkg,
+	}
+	if err := ctx.writeExportMetaSidecar(filepath.Join(cacheDir, "sidecar.llgoex"), pWithNilDep); err != nil {
+		t.Fatalf("writeExportMetaSidecar unexpected err: %v", err)
+	}
+}
+
+func TestRuntimeABIBlockersAndBoundaryErrors(t *testing.T) {
+	blockers := runtimeABIBlockers(&RuntimeABI{
+		GoType:             RuntimeTypeLayout{Size: 48, Align: 8, Fields: []RuntimeFieldLayout{{Name: "Size", Offset: 0, Size: 8}}},
+		LLGoType:           RuntimeTypeLayout{Size: 56, Align: 8, Fields: []RuntimeFieldLayout{{Name: "Size", Offset: 0, Size: 8}}},
+		GoFuncValueBytes:   8,
+		LLGoFuncValueBytes: 16,
+	})
+	if len(blockers) < 5 {
+		t.Fatalf("expected size + funcval + standing blockers, got %v", blockers)
+	}
+
+	dir := t.TempDir()
+	nonStruct := filepath.Join(dir, "nonstruct.go")
+	if err := os.WriteFile(nonStruct, []byte("package p\ntype Alias int\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := goRuntimeMetadataType(filepath.Join(dir, "missing.go"), "Type"); err == nil {
+		t.Fatal("expected missing file error")
+	}
+	if _, err := goRuntimeMetadataType(nonStruct, "Missing"); err == nil {
+		t.Fatal("expected missing type error")
+	}
+	if _, err := goRuntimeMetadataType(nonStruct, "Alias"); err == nil {
+		t.Fatal("expected non-struct error")
+	}
+	if _, err := runtimeMetadataType(nonStruct, "Missing"); err == nil {
+		t.Fatal("expected runtimeMetadataType missing type error")
+	}
+	if _, err := runtimeMetadataType(nonStruct, "Alias"); err == nil {
+		t.Fatal("expected runtimeMetadataType non-struct error")
 	}
 }
