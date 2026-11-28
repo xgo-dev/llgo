@@ -32,8 +32,8 @@ func TestParseCgoDeclFlags(t *testing.T) {
 			line: "#cgo linux CPPFLAGS: -I/usr/lib/llvm-22/include -D_GNU_SOURCE",
 			want: []cgoDecl{
 				{
-					tag:    "linux",
-					cflags: []string{"-I/usr/lib/llvm-22/include", "-D_GNU_SOURCE"},
+					tag:      "linux",
+					cppflags: []string{"-I/usr/lib/llvm-22/include", "-D_GNU_SOURCE"},
 				},
 			},
 		},
@@ -159,9 +159,9 @@ printf '%s\n' '-I/request/include -DREQUEST="request value"'
 		t.Fatal(err)
 	}
 	want := []cgoDecl{{
-		tag:     "linux",
-		cflags:  []string{"-I/request/include", `-DREQUEST="request value"`},
-		ldflags: []string{"-L/request/lib", "-lrequest"},
+		tag:      "linux",
+		cppflags: []string{"-I/request/include", `-DREQUEST="request value"`},
+		ldflags:  []string{"-L/request/lib", "-lrequest"},
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseCgoDeclWithCommandEnv(pkg-config) = %#v, want %#v", got, want)
@@ -246,9 +246,9 @@ func TestParseCgoDeclWithCommandEnvUsesPkgConfigSetting(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []cgoDecl{{
-		tag:     "windows",
-		cflags:  []string{"-I/request/include", `-DREQUEST="request value"`},
-		ldflags: []string{"-L/request/lib", "-lrequest"},
+		tag:      "windows",
+		cppflags: []string{"-I/request/include", `-DREQUEST="request value"`},
+		ldflags:  []string{"-L/request/lib", "-lrequest"},
 	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseCgoDeclWithCommandEnv(PKG_CONFIG) = %#v, want %#v", got, want)

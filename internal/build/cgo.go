@@ -29,10 +29,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/xgo-dev/llgo/internal/buildtags"
 	llclang "github.com/xgo-dev/llgo/internal/clang"
+	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	xenv "github.com/xgo-dev/llgo/xtool/env"
 	"github.com/xgo-dev/llgo/xtool/safesplit"
@@ -40,6 +42,7 @@ import (
 
 type cgoDecl struct {
 	tag      string
+	cppflags []string
 	cflags   []string
 	cxxflags []string
 	ldflags  []string
@@ -73,34 +76,37 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 			llfiles = nil
 		}
 	}()
-	buildCtx := build.Default
-	if ctx.buildConf.Goos != "" {
-		buildCtx.GOOS = ctx.buildConf.Goos
-	}
-	if ctx.buildConf.Goarch != "" {
-		buildCtx.GOARCH = ctx.buildConf.Goarch
-	}
-	buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
+	buildCtx := cgoBuildContext(ctx)
 
 	srcFiles, preambles, cdecls, err := parseCgoWithCommandEnv(ctx.commands, &buildCtx, pkg, files)
 	if err != nil {
 		return
 	}
-	cflags, cxxflags, ldflags := collectCgoFlags(cdecls)
-	incDirs := make(map[string]none)
-	for _, preamble := range preambles {
-		dir, _ := filepath.Split(preamble.goFile)
-		if _, ok := incDirs[dir]; !ok {
-			incDirs[dir] = none{}
-			cflags = append(cflags, "-I"+dir)
+	hasNative := len(srcFiles) > 0 || len(preambles) > 0 || len(cdecls) > 0
+	var usesOriginalCgo bool
+	if !cgoDisabled(ctx.commands) {
+		usesOriginalCgo, err = packageUsesOriginalCgo(ctx, buildCgoSourcePackage(pkg, files))
+		if err != nil {
+			return nil, nil, err
 		}
 	}
+	if !hasNative && !usesOriginalCgo {
+		return nil, nil, nil
+	}
+	// LLGo native preambles attached to import "unsafe" and sibling C/C++/ObjC
+	// files still compile under CGO_ENABLED=0, whereas CGO_* environment flags
+	// only enter packages that actually use cgo (import "C") with cgo enabled.
+	includeEnvFlags := !cgoDisabled(ctx.commands) && usesOriginalCgo
+	cflags, cxxflags, ldflags, err := cgoCompilationFlags(ctx.commands, preambles, cdecls, includeEnvFlags)
+	if err != nil {
+		return
+	}
 	for _, src := range srcFiles {
-		args := slices.Clone(cflags)
+		args := cflags
 		if src.isCXX {
-			args = append(args, cxxflags...)
+			args = cxxflags
 		}
-		linkFile, compileErr := clFile(ctx, args, src.path, pkg.ExportFile, pkg.PkgPath, verbose)
+		linkFile, compileErr := clFile(ctx, slices.Clone(args), src.path, pkg.ExportFile, pkg.PkgPath, verbose)
 		if compileErr != nil {
 			return nil, nil, compileErr
 		}
@@ -134,13 +140,19 @@ func buildCgo(ctx *context, pkg *aPackage, files []*ast.File, externs []string, 
 	return
 }
 
-func collectCgoFlags(decls []cgoDecl) (cflags, cxxflags, ldflags []string) {
+func collectCgoFlagGroups(decls []cgoDecl) (cppflags, cflags, cxxflags, ldflags []string) {
 	for _, decl := range decls {
+		cppflags = append(cppflags, decl.cppflags...)
 		cflags = append(cflags, decl.cflags...)
 		cxxflags = append(cxxflags, decl.cxxflags...)
 		ldflags = append(ldflags, decl.ldflags...)
 	}
 	return
+}
+
+func collectCgoFlags(decls []cgoDecl) (cflags, cxxflags, ldflags []string) {
+	cppflags, cflags, cxxflags, ldflags := collectCgoFlagGroups(decls)
+	return slices.Concat(cppflags, cflags), cxxflags, ldflags
 }
 
 func collectCgoSymbols(externs []string) map[string]string {
@@ -393,24 +405,196 @@ func parseCgoWithCommandEnv(commands commandEnv, buildCtx *build.Context, pkg *a
 		}
 	}
 
+	preambles, cdecls, err = parseCgoFilePreambles(commands, buildCtx, pkg.Fset, files, "unsafe")
+	return
+}
+
+func cgoBuildContext(ctx *context) build.Context {
+	buildCtx := build.Default
+	if ctx.buildConf != nil {
+		if ctx.buildConf.Goos != "" {
+			buildCtx.GOOS = ctx.buildConf.Goos
+		}
+		if ctx.buildConf.Goarch != "" {
+			buildCtx.GOARCH = ctx.buildConf.Goarch
+		}
+		if ctx.buildConf.toolTags != nil {
+			buildCtx.ToolTags = slices.Clone(ctx.buildConf.toolTags)
+		}
+	}
+	if ctx.conf != nil {
+		buildCtx.BuildTags = parseSourcePatchBuildTags(ctx.conf.BuildFlags)
+	}
+	return buildCtx
+}
+
+func cgoDisabled(commands commandEnv) bool {
+	return commands.lookup("CGO_ENABLED") == "0"
+}
+
+func buildCgoSourcePackage(pkg *aPackage, files []*ast.File) *packages.Package {
+	if pkg == nil {
+		return nil
+	}
+	if pkg.AltPkg != nil && len(files) > 0 && len(pkg.AltPkg.Syntax) > 0 && files[0] == pkg.AltPkg.Syntax[0] {
+		return pkg.AltPkg.Package
+	}
+	return pkg.Package
+}
+
+func packageUsesOriginalCgo(ctx *context, pkg *packages.Package) (bool, error) {
+	if pkg == nil || len(pkg.GoFiles) == 0 {
+		return false, nil
+	}
+	_, files, err := selectedOriginalCgoFiles(ctx, pkg)
+	if err != nil {
+		return false, err
+	}
+	return len(files) > 0, nil
+}
+
+func (c *context) packageUsesOriginalCgo(pkg *aPackage) (bool, error) {
+	if pkg == nil {
+		return false, nil
+	}
+	candidates := []*packages.Package{pkg.Package}
+	if pkg.AltPkg != nil {
+		candidates = append(candidates, pkg.AltPkg.Package)
+	}
+	for _, p := range candidates {
+		usesOriginal, err := packageUsesOriginalCgo(c, p)
+		if err != nil {
+			return false, err
+		}
+		if usesOriginal {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func cgoCompilationFlags(commands commandEnv, preambles []cgoPreamble, decls []cgoDecl, includeEnvFlags bool) (cflags, cxxflags, ldflags []string, err error) {
+	var envCPPFLAGS, envCFLAGS, envCXXFLAGS, envLDFLAGS []string
+	if includeEnvFlags {
+		envCPPFLAGS, err = splitCgoEnvFlags(commands, "CGO_CPPFLAGS")
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		envCFLAGS, err = splitCgoEnvFlags(commands, "CGO_CFLAGS")
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		envCXXFLAGS, err = splitCgoEnvFlags(commands, "CGO_CXXFLAGS")
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		envLDFLAGS, err = splitCgoEnvFlags(commands, "CGO_LDFLAGS")
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	declCPPFlags, declCFlags, declCXXFlags, declLDFlags := collectCgoFlagGroups(decls)
+	// Preserve cmd/go's exact group separation and precedence:
+	//   cgoCPPFLAGS = [CGO_CPPFLAGS, #cgo CPPFLAGS / pkg-config --cflags]
+	//   cgoCFLAGS   = [CGO_CFLAGS,   #cgo CFLAGS]
+	//   cgoCXXFLAGS = [CGO_CXXFLAGS, #cgo CXXFLAGS]
+	//   cgoLDFLAGS  = [CGO_LDFLAGS,  #cgo LDFLAGS / pkg-config --libs]
+	// C / Objective-C / preambles / cgo assembly receive [cgoCPPFLAGS, cgoCFLAGS];
+	// C++ receives [cgoCPPFLAGS, cgoCXXFLAGS].
+	cppflags := slices.Concat(envCPPFLAGS, declCPPFlags)
+	cflags = slices.Concat(cppflags, envCFLAGS, declCFlags)
+	cxxflags = slices.Concat(cppflags, envCXXFLAGS, declCXXFlags)
+	ldflags = slices.Concat(envLDFLAGS, declLDFlags)
+	incDirs := make(map[string]none)
+	for _, preamble := range preambles {
+		dir, _ := filepath.Split(preamble.goFile)
+		if _, ok := incDirs[dir]; !ok {
+			incDirs[dir] = none{}
+			incFlag := "-I" + dir
+			cflags = append(cflags, incFlag)
+			cxxflags = append(cxxflags, incFlag)
+		}
+	}
+	return cflags, cxxflags, ldflags, nil
+}
+
+// splitCgoEnvFlags matches cmd/go's quoted.Split for CGO_CPPFLAGS/CGO_CFLAGS/
+// CGO_CXXFLAGS/CGO_LDFLAGS: whitespace-separated fields with single or double
+// quoted segments and no backslash unescaping.
+func splitCgoEnvFlags(commands commandEnv, key string) ([]string, error) {
+	s := commands.lookup(key)
+	if s == "" {
+		return nil, nil
+	}
+	isSpace := func(c byte) bool {
+		return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+	}
+	var fields []string
+	for len(s) > 0 {
+		for len(s) > 0 && isSpace(s[0]) {
+			s = s[1:]
+		}
+		if len(s) == 0 {
+			break
+		}
+		if s[0] == '"' || s[0] == '\'' {
+			quote := s[0]
+			s = s[1:]
+			i := 0
+			for i < len(s) && s[i] != quote {
+				i++
+			}
+			if i >= len(s) {
+				return nil, fmt.Errorf("parse %s: unterminated %c string", key, quote)
+			}
+			fields = append(fields, s[:i])
+			s = s[i+1:]
+			continue
+		}
+		i := 0
+		for i < len(s) && !isSpace(s[i]) {
+			i++
+		}
+		fields = append(fields, s[:i])
+		s = s[i:]
+	}
+	return fields, nil
+}
+
+func parseCgoFilePreambles(commands commandEnv, buildCtx *build.Context, fset *token.FileSet, files []*ast.File, importPath string) (preambles []cgoPreamble, decls []cgoDecl, err error) {
 	for _, file := range files {
-		for _, decl := range file.Decls {
-			switch decl := decl.(type) {
-			case *ast.GenDecl:
-				if decl.Tok == token.IMPORT {
-					if doc := decl.Doc; doc != nil && len(decl.Specs) == 1 {
-						spec := decl.Specs[0].(*ast.ImportSpec)
-						if spec.Path.Value == "\"unsafe\"" {
-							pos := pkg.Fset.Position(doc.Pos())
-							preamble, flags, err := parseCgoPreambleWithCommandEnv(commands, buildCtx, pos, doc.Text())
-							if err != nil {
-								panic(err)
-							}
-							preambles = append(preambles, preamble)
-							cdecls = append(cdecls, flags...)
-						}
-					}
+		for _, node := range file.Decls {
+			decl, ok := node.(*ast.GenDecl)
+			if !ok || decl.Tok != token.IMPORT {
+				continue
+			}
+			for _, item := range decl.Specs {
+				spec := item.(*ast.ImportSpec)
+				if spec.Path.Value != strconv.Quote(importPath) {
+					continue
 				}
+				doc := spec.Doc
+				if importPath == "unsafe" {
+					// Keep the rewritten-source path's declaration-only rule.
+					// An unsafe spec comment cannot establish C ownership:
+					// ordinary grouped imports may have Go documentation or
+					// imports commented out by source patches attached here.
+					if len(decl.Specs) != 1 {
+						continue
+					}
+					doc = decl.Doc
+				} else if doc == nil && len(decl.Specs) == 1 {
+					doc = decl.Doc
+				}
+				if doc == nil {
+					continue
+				}
+				preamble, flags, err := parseCgoPreambleWithCommandEnv(commands, buildCtx, fset.Position(doc.Pos()), doc.Text())
+				if err != nil {
+					return nil, nil, err
+				}
+				preambles = append(preambles, preamble)
+				decls = append(decls, flags...)
 			}
 		}
 	}
@@ -514,11 +698,16 @@ func parseCgoDeclWithCommandEnv(commands commandEnv, buildCtx *build.Context, li
 			return
 		}
 		cgoDecls = append(cgoDecls, cgoDecl{
-			tag:     tag,
-			cflags:  safesplit.SplitPkgConfigFlags(string(cflags)),
-			ldflags: safesplit.SplitPkgConfigFlags(string(ldflags)),
+			tag:      tag,
+			cppflags: safesplit.SplitPkgConfigFlags(string(cflags)),
+			ldflags:  safesplit.SplitPkgConfigFlags(string(ldflags)),
 		})
-	case "CPPFLAGS", "CFLAGS":
+	case "CPPFLAGS":
+		cgoDecls = append(cgoDecls, cgoDecl{
+			tag:      tag,
+			cppflags: safesplit.SplitPkgConfigFlags(arg),
+		})
+	case "CFLAGS":
 		cgoDecls = append(cgoDecls, cgoDecl{
 			tag:    tag,
 			cflags: safesplit.SplitPkgConfigFlags(arg),

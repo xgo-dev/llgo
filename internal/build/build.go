@@ -285,8 +285,9 @@ type Config struct {
 	coverageProfileInitialized bool
 
 	// Resolved once per invocation, independently of the Go version that built LLGo.
-	sourceGoVersion string
-	toolTags        []string
+	sourceGoVersion    string
+	sourceGoExperiment string
+	toolTags           []string
 	// Preserve inferred optimization levels when invocations are cloned.
 	// Only explicit -Oz requests the optional final optimizer.
 	optLevelDefaulted bool
@@ -872,8 +873,11 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, err
 	}
-	sourcePatchGOROOT, sourcePatchGoVersion := sourceGo.GOROOT, sourceGo.GOVERSION
+	sourcePatchGOROOT, sourceReleaseGoVersion := sourceGo.GOROOT, sourceGo.releaseVersion()
 	conf.GOEXPERIMENT = sourceGo.GOEXPERIMENT
+	if conf.sourceGoVersion == "" {
+		conf.sourceGoExperiment = sourceGo.originalExperiment
+	}
 	conf.sourceGoVersion = sourceGo.GOVERSION
 	conf.toolTags = slices.Clone(sourceGo.toolTags)
 	if slices.Contains(sourceGo.toolTags, "goexperiment.simd") && (conf.Goarch == "amd64" || conf.Goarch == "arm64" || conf.Goarch == "wasm") {
@@ -883,7 +887,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		})
 	}
 	cfg.Env = sourceGo.apply(cfg.Env)
-	cfg.Env = cgoMetadataEnvironment(cfg.Env, sourceGo.GOVERSION, export.Toolchain.TargetTriple)
+	cfg.Env = cgoMetadataEnvironment(cfg.Env, sourceReleaseGoVersion, export.Toolchain.TargetTriple)
 	if err := applyPackageLoadFlags(cfg, sourceGo.GOFLAGS); err != nil {
 		return nil, fmt.Errorf("parse Go package flags: %w", err)
 	}
@@ -893,7 +897,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	conf.Overlay, llgoFiles, err = buildSourcePatchOverlayForGOROOT(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchBuildContext{
 		goos:       conf.Goos,
 		goarch:     conf.Goarch,
-		goversion:  sourcePatchGoVersion,
+		goversion:  sourceReleaseGoVersion,
 		toolTags:   sourceGo.toolTags,
 		buildFlags: cfg.BuildFlags,
 		targetTags: export.BuildTags,
@@ -902,7 +906,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if err != nil {
 		return nil, err
 	}
-	conf.Overlay, err = runtimeSourceOverlay(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourcePatchGoVersion)
+	conf.Overlay, err = runtimeSourceOverlay(conf.Overlay, env.LLGoRuntimeDir(), sourcePatchGOROOT, sourceReleaseGoVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -922,7 +926,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		})
 	}
 
-	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourcePatchGoVersion, mode: conf.Mode})
+	typeLoader := newFrontendTypeLoader(&context{conf: cfg, buildConf: conf, prog: prog, crossCompile: export, commands: commands, goVersion: sourceGo.GOVERSION, mode: conf.Mode})
 	if typeLoader != nil {
 		dedup.SetImportTypes(typeLoader.load)
 	}
@@ -992,7 +996,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	altPkgPaths := altPkgs(initial, conf, llssa.PkgRuntime)
 	altCfg := runtimePackageConfig(cfg, env.LLGoRuntimeDir())
 	// The runtime submodule may otherwise select a different toolchain from its go.mod.
-	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourcePatchGoVersion)
+	altCfg.Env = withResolvedGoToolchain(altCfg.Env, sourceGo.resolvedToolchainVersion())
 	loadAltSpan := buildTrace.startCoordinator("load runtime packages", map[string]any{
 		"packages": slices.Clone(altPkgPaths),
 	})
@@ -1060,11 +1064,14 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		staticByteArrays: altByteArrays,
 		cTransformer:     cabi.NewTransformer(prog, export.LLVMTarget, export.TargetABI, true),
 		buildTrace:       buildTrace,
-		goVersion:        sourcePatchGoVersion,
+		goVersion:        sourceGo.GOVERSION,
 		defaultGODEBUG:   defaultGODEBUG,
+		nativeAsmObjects: make(map[llgoFileHashKey]string),
+		plan9AsmSources:  &sync.Map{},
 	}
 	defer ctx.closePackageMetas()
 	defer ctx.closePackageArchiveBuffers()
+	defer ctx.cleanupNativeAsmObjects()
 	// Isolated backends use independent LLVM contexts. Keep Programs needed by
 	// whole-program consumers alive through deadcode analysis and strong ABI type
 	// override emission, then release them on every normal, error, or panic path.
@@ -1086,7 +1093,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	// default runtime globals must be registered before packages are built
 	// The generated program must report the GOROOT whose standard library is
 	// being compiled, which may differ from the toolchain used to build llgo.
-	addDefaultRuntimeGlobals(conf, sourcePatchGOROOT, sourcePatchGoVersion)
+	addDefaultRuntimeGlobals(conf, sourcePatchGOROOT, sourceGo.GOVERSION)
 	pkgs, pkgEntries, err := registerSSAPkgs(ctx, initial, verbose)
 	if err != nil {
 		return nil, err
@@ -1962,6 +1969,8 @@ type context struct {
 	llgoFilesCache    map[*packages.Package][]llgoFileInput
 	llgoFilesFrozen   bool
 	llgoFileHashCache map[llgoFileHashKey]string
+	nativeAsmObjects  map[llgoFileHashKey]string // build-scoped compiled native assembly .o; owned by coordinator
+	plan9AsmSources   *sync.Map                  // build-scoped preprocessed Plan 9 .s cache: plan9AsmSourceKey -> []byte
 
 	// plan9asm package policy parsed from env.
 	plan9asmOnce  sync.Once
@@ -2074,7 +2083,16 @@ type backendSession struct {
 }
 
 func (c *context) newBackendSession() backendSession {
-	prog := c.prog.NewBackendProgram()
+	return c.newBackendSessionWithOptLevel(optlevel.Unset)
+}
+
+func (c *context) newBackendSessionWithOptLevel(level optlevel.Level) backendSession {
+	var prog llssa.Program
+	if level.IsValid() {
+		prog = c.prog.NewBackendProgramWithOptLevel(level)
+	} else {
+		prog = c.prog.NewBackendProgram()
+	}
 	return backendSession{
 		prog: prog,
 		transformer: cabi.NewTransformer(
@@ -2990,7 +3008,13 @@ func packageCExportDeclarations(pkg llssa.Package) []cExport {
 			continue
 		}
 		var sig *types.Signature
-		if fn := pkg.FuncOf(goName); fn != nil {
+		fn := pkg.FuncOf(goName)
+		if fn == nil {
+			// Runtime-owned/direct exports retain the same compiler export
+			// mapping but register their actual entry under the C name.
+			fn = pkg.FuncOf(cName)
+		}
+		if fn != nil {
 			sig, _ = fn.RawType().(*types.Signature)
 		}
 		exports = append(exports, cExport{goName: goName, cName: cName, sig: sig})
@@ -4931,6 +4955,14 @@ func llgoPkgFileInputs(ctx *context, pkg *packages.Package) ([]llgoFileInput, er
 			}
 		}
 	}
+	if err := validateExplicitAssemblyOwners(inputs); err != nil {
+		return nil, err
+	}
+	native, err := cgoAssemblyInputs(ctx, pkg, inputs)
+	if err != nil {
+		return nil, fmt.Errorf("package %s assembly inputs: %w", pkg.PkgPath, err)
+	}
+	inputs = append(inputs, native...)
 	ctx.llgoFilesCache[pkg] = inputs
 	return inputs, nil
 }
@@ -4968,9 +5000,11 @@ func clFile(ctx *context, args []string, cFile, expFile, pkgPath string, verbose
 	baseName := expFile + filepath.Base(cFile)
 	args = llgoFileCompilerArgs(ctx, args, cFile)
 
-	// If GenLL is enabled, first emit .ll for debugging, then compile to .o
+	// Native assembly has no LLVM IR representation. GenLL still compiles
+	// its real object, but must not publish an empty .ll from ignored flags.
 	printCmds := ctx.shouldPrintCommands(verbose)
-	if ctx.buildConf.GenLL {
+	isAsm := llgoFileIsAssembly(ctx, args, cFile)
+	if ctx.buildConf.GenLL && !isAsm {
 		llFile, err := genLLGoFileOutput(cFile, ".ll")
 		if err != nil {
 			return "", fmt.Errorf("create temporary LLVM IR output for %s: %w", cFile, err)
@@ -4994,6 +5028,21 @@ func clFile(ctx *context, args []string, cFile, expFile, pkgPath string, verbose
 		}
 	}
 
+	// Reuse the native assembly object already compiled during cache
+	// fingerprinting in this build instead of invoking clang a second time.
+	if isAsm && ctx.nativeAsmObjects != nil {
+		cacheKey := llgoFileHashKey{
+			path:         cFile,
+			compilerArgs: strings.Join(args, "\x00"),
+		}
+		if cachedObj, ok := ctx.nativeAsmObjects[cacheKey]; ok {
+			objFile, err := reuseCompiledObject(cFile, cachedObj)
+			if err == nil {
+				return objFile, nil
+			}
+		}
+	}
+
 	// Always compile to .o for linking
 	objFile, err := genLLGoFileOutput(cFile, ".o")
 	if err != nil {
@@ -5010,6 +5059,35 @@ func clFile(ctx *context, args []string, cFile, expFile, pkgPath string, verbose
 		return "", fmt.Errorf("compile %s: %w", cFile, err)
 	}
 	return objFile, nil
+}
+
+func reuseCompiledObject(source, cachedObj string) (string, error) {
+	if info, err := os.Stat(cachedObj); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return "", fmt.Errorf("cached object unavailable: %v", err)
+	}
+	objFile, err := genLLGoFileOutput(source, ".o")
+	if err != nil {
+		return "", err
+	}
+	// Create a package-owned temp path so per-package cleanup can remove it
+	// without invalidating the build-scoped cached object for other packages.
+	if err := os.Remove(objFile); err == nil {
+		if linkErr := os.Link(cachedObj, objFile); linkErr == nil {
+			return objFile, nil
+		}
+	}
+	if err := copyFileAtomic(cachedObj, objFile); err != nil {
+		_ = os.Remove(objFile)
+		return "", err
+	}
+	return objFile, nil
+}
+
+func (c *context) cleanupNativeAsmObjects() {
+	for key, path := range c.nativeAsmObjects {
+		_ = os.Remove(path)
+		delete(c.nativeAsmObjects, key)
+	}
 }
 
 // llgoFileCompilerArgs returns the source-specific arguments shared by the

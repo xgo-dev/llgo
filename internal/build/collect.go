@@ -302,6 +302,13 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 		}
 		m.pkg.OtherFiles = otherList
 	}
+	if c.mode != ModeGen {
+		asmInputs, err := digestPackagePlan9Asm(c, pkg, sfiles)
+		if err != nil {
+			return fmt.Errorf("digest Plan 9 assembly: %w", err)
+		}
+		m.pkg.Plan9AsmFiles = asmInputs
+	}
 
 	// ModeGen returns the in-memory Go LLVM module before C/C++/assembly
 	// LLGoFiles are compiled or archived, so it must not require the target
@@ -324,6 +331,20 @@ func (c *context) collectPackageInputs(m *manifestBuilder, pkg *aPackage) error 
 			return fmt.Errorf("digest LLGoFiles: %w", err)
 		}
 		m.pkg.LLGoFiles = llgoFiles
+	}
+
+	if !cgoDisabled(c.commands) {
+		usesCgo, err := c.packageUsesOriginalCgo(pkg)
+		if err != nil {
+			return fmt.Errorf("inspect cgo inputs: %w", err)
+		}
+		if usesCgo {
+			for _, cgoVar := range []string{"CGO_CPPFLAGS", "CGO_CFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS"} {
+				if v := c.commands.lookup(cgoVar); v != "" {
+					m.pkg.CgoEnvFlags = m.pkg.CgoEnvFlags.Add(cgoVar, v)
+				}
+			}
+		}
 	}
 
 	// Rewrite vars

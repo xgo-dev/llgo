@@ -385,9 +385,20 @@ func NewProgram(target *Target) Program {
 // shared directly; callers must finish preparing them before backend Programs
 // are created and use them read-only afterwards.
 func (p Program) NewBackendProgram() Program {
+	var level optlevel.Level
+	if p.target != nil {
+		level = p.target.OptLevel
+	}
+	return p.NewBackendProgramWithOptLevel(level)
+}
+
+func (p Program) NewBackendProgramWithOptLevel(level optlevel.Level) Program {
 	var target *Target
 	if p.target != nil {
 		targetCopy := *p.target
+		if level.IsValid() {
+			targetCopy.OptLevel = level
+		}
 		target = &targetCopy
 	}
 	backend := NewProgram(target)
@@ -408,7 +419,7 @@ func (p Program) NewBackendProgram() Program {
 	backend.enableLTOPluginMarker = p.enableLTOPluginMarker
 	backend.enableFuncInfoMetadata = p.enableFuncInfoMetadata
 	backend.enableFuncInfoSites = p.enableFuncInfoSites
-	backend.debugInfoOptimized = p.debugInfoOptimized
+	backend.debugInfoOptimized = p.debugInfoOptimized && level != optlevel.O0
 	backend.emitCodeViewDebugInfo = p.emitCodeViewDebugInfo
 	return backend
 }

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
 	llssa "github.com/xgo-dev/llgo/ssa"
 )
 
@@ -52,6 +53,9 @@ type RuntimeFieldLayout struct {
 }
 
 func auditRuntimeABI(runtimeDir, goroot, goVersion string, target *llssa.Target) (*RuntimeABI, error) {
+	if rel := llplan9asm.SDKReleaseVersion(goVersion); rel != "" {
+		goVersion = rel
+	}
 	path, typeName := filepath.Join(goroot, "src/internal/abi/type.go"), "Type"
 	if version.Compare(goVersion, "go1.21") < 0 {
 		path, typeName = filepath.Join(goroot, "src/runtime/type.go"), "_type"

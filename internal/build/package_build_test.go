@@ -33,6 +33,7 @@ import (
 
 	"github.com/xgo-dev/llgo/cl"
 	"github.com/xgo-dev/llgo/internal/env"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
@@ -851,5 +852,79 @@ func TestBuildPackagePropagatesArchiveFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(conf.OutFile); !os.IsNotExist(err) {
 		t.Fatalf("failed package produced an executable: %v", err)
+	}
+}
+
+func TestPreparePackageBuildsSerializesHeavyIsolatedPackages(t *testing.T) {
+	ctx := &context{
+		mode:          ModeBuild,
+		buildConf:     &Config{BuildMode: BuildModeExe},
+		patches:       cl.Patches{},
+		sfilesCache:   map[string][]string{},
+		plan9asmReady: true,
+	}
+	makeTask := func(path string, cost int64, cacheHit bool) *packageBuildTask {
+		pkg := &aPackage{
+			Package: &packages.Package{
+				ID:      path,
+				PkgPath: path,
+				Types:   types.NewPackage(path, "p"),
+			},
+			CacheHit:        cacheHit,
+			ssaInstructions: cost,
+		}
+		ctx.sfilesCache[pkg.Package.ID] = nil
+		return newPackageBuildTask(pkg)
+	}
+
+	normal := makeTask("example.com/normal", exclusiveIsolatedPackageSSACost-1, false)
+	heavyUncached := makeTask("example.com/heavy", exclusiveIsolatedPackageSSACost, false)
+	heavyCached := makeTask("example.com/heavy-cached", exclusiveIsolatedPackageSSACost*3, true)
+	for _, task := range []*packageBuildTask{normal, heavyUncached, heavyCached} {
+		coordinator, err := ctx.packageRequiresCoordinator(task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		task.isolated = !coordinator
+		_, patched := ctx.patches[task.pkg.PkgPath]
+		task.parallel = task.isolated && !patched && task.estimatedBackendCost() < exclusiveIsolatedPackageSSACost
+	}
+	if !normal.isolated || !normal.parallel {
+		t.Fatalf("normal task = (isolated=%v, parallel=%v), want (true, true)", normal.isolated, normal.parallel)
+	}
+	if !heavyUncached.isolated || heavyUncached.parallel {
+		t.Fatalf("heavy uncached task = (isolated=%v, parallel=%v), want (true, false)", heavyUncached.isolated, heavyUncached.parallel)
+	}
+	if !heavyCached.isolated || !heavyCached.parallel {
+		t.Fatalf("heavy cached task = (isolated=%v, parallel=%v), want (true, true)", heavyCached.isolated, heavyCached.parallel)
+	}
+
+	// Explicit optimization flags must never be silently overridden, even on
+	// outlier monolithic packages.
+	ctx.buildConf.Goarch = "amd64"
+	for _, explicit := range []optlevel.Level{optlevel.O1, optlevel.O2, optlevel.O3, optlevel.Os, optlevel.Oz} {
+		ctx.buildConf.OptLevel = explicit
+		ctx.buildConf.optLevelDefaulted = false
+		if got := ctx.isolatedPackageOptLevel(heavyUncached); got != explicit {
+			t.Fatalf("explicit %v heavy uncached opt level = %v, want %v", explicit, got, explicit)
+		}
+	}
+
+	// Only when the optimization level was defaulted (no explicit -O flag) do
+	// non-LTO native outlier uncached packages drop to O0 to bound peak RAM.
+	ctx.buildConf.OptLevel = optlevel.Os
+	ctx.buildConf.optLevelDefaulted = true
+	if got := ctx.isolatedPackageOptLevel(normal); got != optlevel.Os {
+		t.Fatalf("normal opt level = %v, want Os", got)
+	}
+	if got := ctx.isolatedPackageOptLevel(heavyUncached); got != optlevel.O0 {
+		t.Fatalf("defaulted heavy uncached opt level = %v, want O0", got)
+	}
+	if got := ctx.isolatedPackageOptLevel(heavyCached); got != optlevel.Os {
+		t.Fatalf("defaulted heavy cached opt level = %v, want Os", got)
+	}
+	ctx.buildConf.Goarch = "wasm"
+	if got := ctx.isolatedPackageOptLevel(heavyUncached); got != optlevel.Os {
+		t.Fatalf("wasm heavy opt level = %v, want Os", got)
 	}
 }

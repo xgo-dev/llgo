@@ -3,11 +3,14 @@ package build
 import (
 	"encoding/json"
 	"fmt"
+	"go/version"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+
+	llplan9asm "github.com/xgo-dev/llgo/internal/plan9asm"
 )
 
 // sourceGoConfig records the toolchain and effective feature tags used to select
@@ -19,7 +22,22 @@ type sourceGoConfig struct {
 	GOEXPERIMENT string
 	GOFLAGS      string
 	CGO_ENABLED  string
-	toolTags     []string
+	CGO_CPPFLAGS string
+	CGO_CFLAGS   string
+	CGO_CXXFLAGS string
+	CGO_LDFLAGS  string
+	GOPATH       string
+	GOMODCACHE   string
+	GOCACHE      string
+	// Preserve the actual SDK setting separately from its canonical cache key.
+	originalExperiment string
+	// True when `go env GOVERSION` reported a non-standard distro/experiment/devel
+	// build (for example Fedora's "go1.26.11 X:strictfipsruntime"). In that case
+	// setting GOTOOLCHAIN from GOROOT/VERSION ("go1.26.11") would make cmd/go
+	// download a different upstream toolchain whose GOROOT does not match
+	// sourcePatchGOROOT.
+	nonStandardLauncher bool
+	toolTags            []string
 }
 
 func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ...string) (sourceGoConfig, error) {
@@ -27,7 +45,10 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 		commands.environ = withEnv(commands.environ, "GOEXPERIMENT="+experiment)
 	}
 	var cfg sourceGoConfig
-	cmd := commands.configure(exec.Command("go", "env", "-json", "GOROOT", "GOVERSION", "GOEXPERIMENT", "GOFLAGS", "CGO_ENABLED"))
+	cmd := commands.configure(exec.Command("go", "env", "-json",
+		"GOROOT", "GOVERSION", "GOEXPERIMENT", "GOFLAGS",
+		"CGO_ENABLED", "CGO_CPPFLAGS", "CGO_CFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS",
+		"GOPATH", "GOMODCACHE", "GOCACHE"))
 	output, err := cmd.Output()
 	if err != nil {
 		return cfg, sourceGoConfigError("resolve Go source configuration", err)
@@ -38,6 +59,12 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 	if cfg.GOROOT == "" || cfg.GOVERSION == "" {
 		return cfg, fmt.Errorf("Go source configuration is missing GOROOT or GOVERSION")
 	}
+	cfg.nonStandardLauncher = !version.IsValid(cfg.GOVERSION)
+	cfg.GOVERSION, err = llplan9asm.AssemblySDKVersion(cfg.GOROOT)
+	if err != nil {
+		return cfg, fmt.Errorf("read selected SDK version: %w", err)
+	}
+	cfg.originalExperiment = cfg.GOEXPERIMENT
 	// An empty environment value makes cmd/go consult GOENV again. A comma
 	// means the same default experiment set but pins that choice even if GOENV
 	// changes before the next subprocess starts.
@@ -45,7 +72,7 @@ func resolveSourceGoConfig(commands commandEnv, experiment string, buildFlags ..
 	if resolvedExperiment == "" {
 		resolvedExperiment = ","
 	}
-	commands.environ = withResolvedGoToolchain(commands.environ, cfg.GOVERSION)
+	commands.environ = withResolvedGoToolchain(commands.environ, cfg.resolvedToolchainVersion())
 	commands.environ = withEnv(commands.environ, "GOROOT="+cfg.GOROOT, "GOEXPERIMENT="+resolvedExperiment)
 	// Query the resolved compiler while preserving the invocation's module,
 	// workspace, and GOFLAGS settings. The launcher on PATH may be a different
@@ -86,7 +113,31 @@ func sourceGoConfigError(action string, err error) error {
 	return fmt.Errorf("%s: %w", action, err)
 }
 
+func (cfg sourceGoConfig) releaseVersion() string { return llplan9asm.SDKReleaseVersion(cfg.GOVERSION) }
+
+func (cfg sourceGoConfig) resolvedToolchainVersion() string {
+	if cfg.nonStandardLauncher {
+		return ""
+	}
+	return cfg.GOVERSION
+}
+
 func (cfg sourceGoConfig) apply(environ []string) []string {
-	return withEnv(withResolvedGoToolchain(environ, cfg.GOVERSION),
-		"GOROOT="+cfg.GOROOT, "GOEXPERIMENT="+cfg.GOEXPERIMENT, "CGO_ENABLED="+cfg.CGO_ENABLED)
+	environ = withEnv(withResolvedGoToolchain(environ, cfg.resolvedToolchainVersion()),
+		"GOROOT="+cfg.GOROOT,
+		"GOEXPERIMENT="+cfg.GOEXPERIMENT,
+		"CGO_ENABLED="+cfg.CGO_ENABLED,
+		"CGO_CPPFLAGS="+cfg.CGO_CPPFLAGS,
+		"CGO_CFLAGS="+cfg.CGO_CFLAGS,
+		"CGO_CXXFLAGS="+cfg.CGO_CXXFLAGS,
+		"CGO_LDFLAGS="+cfg.CGO_LDFLAGS,
+	)
+	for _, setting := range []struct{ key, value string }{
+		{"GOPATH", cfg.GOPATH}, {"GOMODCACHE", cfg.GOMODCACHE}, {"GOCACHE", cfg.GOCACHE},
+	} {
+		if setting.value != "" {
+			environ = withEnv(environ, setting.key+"="+setting.value)
+		}
+	}
+	return environ
 }

@@ -1,7 +1,6 @@
 package plan9asm
 
 import (
-	"fmt"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -13,6 +12,7 @@ import (
 	"testing"
 
 	llpackages "github.com/xgo-dev/llgo/internal/packages"
+	"github.com/xgo-dev/llvm"
 	extplan9asm "github.com/xgo-dev/plan9asm"
 )
 
@@ -41,13 +41,44 @@ func TestTranslateGOAMD64CPUDetectionLevel(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tr.Module.Dispose()
-			want := byte('1')
-			if level != "" {
-				want = level[1]
+			if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid translated CPU-level module: %v", err)
 			}
-			ir := tr.Module.NamedFunction("internal/cpu.getGOAMD64level").String()
-			if !strings.Contains(ir, fmt.Sprintf("ret i32 %c", want)) {
-				t.Fatalf("wrong CPU baseline for %q:\n%s", level, ir)
+			// Translation may preserve the ABI0 result slot as a real
+			// alloca/store/load. Promote that slot before checking the exact
+			// return value, rather than requiring one unoptimized IR spelling.
+			options := llvm.NewPassBuilderOptions()
+			defer options.Dispose()
+			options.SetVerifyEach(true)
+			if err := tr.Module.RunPasses("function(mem2reg,instcombine,simplifycfg)", llvm.TargetMachine{}, options); err != nil {
+				t.Fatal(err)
+			}
+			if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid optimized CPU-level module: %v", err)
+			}
+			want := uint64(1)
+			if level != "" {
+				want = uint64(level[1] - '0')
+			}
+			fn := tr.Module.NamedFunction("internal/cpu.getGOAMD64level")
+			if fn.IsNil() {
+				t.Fatal("missing CPU baseline function")
+			}
+			returns := 0
+			for block := fn.FirstBasicBlock(); !block.IsNil(); block = llvm.NextBasicBlock(block) {
+				for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+					if inst.InstructionOpcode() != llvm.Ret {
+						continue
+					}
+					returns++
+					if inst.OperandsCount() != 1 || inst.Operand(0).Type() != tr.Module.Context().Int32Type() ||
+						inst.Operand(0).IsAConstantInt().IsNil() || inst.Operand(0).ZExtValue() != want {
+						t.Fatalf("wrong CPU baseline for %q, want i32 %d:\n%s", level, want, fn.String())
+					}
+				}
+			}
+			if returns != 1 {
+				t.Fatalf("CPU baseline must have one exact return, got %d:\n%s", returns, fn.String())
 			}
 		})
 	}
@@ -160,23 +191,32 @@ func Round(value float64) int64
 	FMOVVP F0, ret+8(FP)
 	RET
 `)
+	// Software lowering cannot inherit a hardware control word. Initialize it
+	// before loading F0: FINIT after FMOVD would also clear that live x87 stack.
+	initializedAsm := []byte(strings.Replace(string(asm), "\tFMOVD", "\tFINIT\n\tFMOVD", 1))
 
 	tests := []struct {
 		name       string
 		mode       extplan9asm.X87Mode
+		source     []byte
 		want       string
 		unwanted   string
 		wantErrSub string
 	}{
-		{name: "default hardware", mode: extplan9asm.X87Auto, want: `asm sideeffect "fldl $1; frndint; fstpl $0"`, unwanted: "call double @llvm.floor.f64"},
-		{name: "software fallback", mode: extplan9asm.X87Software, want: "call double @llvm.floor.f64", unwanted: "frndint"},
-		{name: "invalid", mode: extplan9asm.X87Mode(255), wantErrSub: "invalid x87 mode"},
+		{name: "default hardware", mode: extplan9asm.X87Auto, source: asm, want: `asm sideeffect "fldt $3; frndint; fnstsw $2; fstpt $0"`, unwanted: "call i64 @llvm.ctlz.i64"},
+		{name: "software initialized control word", mode: extplan9asm.X87Software, source: initializedAsm, want: "call i64 @llvm.ctlz.i64", unwanted: "asm sideeffect"},
+		{name: "software missing control word", mode: extplan9asm.X87Software, source: asm, wantErrSub: "instruction probe needs function context: result initialization"},
+		{name: "invalid", mode: extplan9asm.X87Mode(255), source: asm, wantErrSub: "invalid x87 mode"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			tr, err := TranslateSourceModuleForPkgWithOptions(pkg, "round_386.s", asm, "windows", "386", TranslateOptions{X87Mode: test.mode})
+			tr, err := TranslateSourceModuleForPkgWithOptions(pkg, "round_386.s", test.source, "windows", "386", TranslateOptions{X87Mode: test.mode})
 			if test.wantErrSub != "" {
-				if err == nil || !strings.Contains(err.Error(), test.wantErrSub) {
+				if err == nil {
+					tr.Module.Dispose()
+					t.Fatalf("expected rejection containing %q", test.wantErrSub)
+				}
+				if !strings.Contains(err.Error(), test.wantErrSub) {
 					t.Fatalf("error = %v, want containing %q", err, test.wantErrSub)
 				}
 				return
@@ -185,6 +225,9 @@ func Round(value float64) int64
 				t.Fatal(err)
 			}
 			defer tr.Module.Dispose()
+			if err := llvm.VerifyModule(tr.Module, llvm.ReturnStatusAction); err != nil {
+				t.Fatalf("invalid x87 module: %v", err)
+			}
 			ir := tr.Module.String()
 			if !strings.Contains(ir, test.want) {
 				t.Fatalf("IR missing %q:\n%s", test.want, ir)
@@ -388,5 +431,79 @@ func TestExtraAsmSigsAndDeclMap(t *testing.T) {
 		if len(sig.ArgRegs) != 1 || sig.ArgRegs[0] != extplan9asm.AX {
 			t.Fatalf("%s arg regs = %#v, want [AX]", name, sig.ArgRegs)
 		}
+	}
+}
+
+func TestWindows386TLSUsesSelectedSDK(t *testing.T) {
+	pkg := mustTestPackage(t, "example.com/tls", "package tls\nfunc Slot() uint32\n")
+	src := []byte("TEXT ·Slot(SB),NOSPLIT,$0-4\n MOVL TLS, AX\n MOVL AX, ret+0(FP)\n RET\n")
+	for _, tc := range []struct {
+		name     string
+		envRoot  string
+		opt      TranslateOptions
+		wantTLSG bool
+		wantFS20 bool
+	}{
+		{
+			name:     "explicit-goroot-overrides-stale-version",
+			opt:      TranslateOptions{SourcePreprocessed: true, SourceGoVersion: "go1.27.3"},
+			envRoot:  "go1.20.14",
+			wantTLSG: false,
+			wantFS20: true,
+		},
+		{
+			name:     "explicit-go1.20-without-goroot",
+			opt:      TranslateOptions{SourcePreprocessed: true, SourceGoVersion: "go1.20.14"},
+			wantTLSG: false,
+			wantFS20: true,
+		},
+		{
+			name:     "explicit-go1.21-not-clobbered-by-env-goroot",
+			envRoot:  "go1.20.14",
+			opt:      TranslateOptions{SourcePreprocessed: true, SourceGoVersion: "go1.21.0"},
+			wantTLSG: true,
+			wantFS20: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opt := tc.opt
+			if tc.name == "explicit-goroot-overrides-stale-version" {
+				opt.GOROOT = t.TempDir()
+				if err := os.WriteFile(filepath.Join(opt.GOROOT, "VERSION"), []byte(tc.envRoot+"\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+			} else if tc.envRoot != "" {
+				root := t.TempDir()
+				if err := os.WriteFile(filepath.Join(root, "VERSION"), []byte(tc.envRoot+"\n"), 0644); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("GOROOT", root)
+			}
+			tr, err := TranslateSourceModuleForPkgWithOptions(pkg, "slot_386.s", src, "windows", "386", opt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tr.Module.Dispose()
+			ir := tr.Module.String()
+			if strings.Contains(ir, "runtime.tls_g") != tc.wantTLSG || !strings.Contains(ir, "addrspace(257)") || strings.Contains(ir, "i64 0, 20") != tc.wantFS20 {
+				t.Fatalf("incorrect TLS lookup for %s:\n%s", tc.name, ir)
+			}
+		})
+	}
+}
+
+func TestWindows386TLSUsesEnvironmentGOROOT(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "VERSION"), []byte("devel go1.20-abc123\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOROOT", root)
+	pkg := mustTestPackage(t, "example.org/tls", "package tls\nfunc Slot() uint32")
+	tr, err := TranslateSourceForPkgWithOptions(pkg, "slot.s", []byte("TEXT ·Slot(SB),4,$0-4\nMOVL TLS,AX\nMOVL AX,ret+0(FP)\nRET"), "windows", "386", TranslateOptions{SourcePreprocessed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(tr.LLVMIR, "runtime.tls_g") || !strings.Contains(tr.LLVMIR, "i64 0, 20") {
+		t.Fatal(tr.LLVMIR)
 	}
 }

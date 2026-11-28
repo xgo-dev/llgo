@@ -54,6 +54,12 @@ func TestResolveGOEXPERIMENT(t *testing.T) {
 			}
 			commands.environ = cfg.apply(commands.environ)
 			roundTrip := mustResolveSourceGo(t, commands, "")
+			if roundTrip.originalExperiment != cfg.GOEXPERIMENT {
+				t.Fatal("canonical command lost its independently observed experiment spelling")
+			}
+			// Source ownership retains the original spelling independently of
+			// the canonical effective configuration/cache identity below.
+			roundTrip.originalExperiment = cfg.originalExperiment
 			if !reflect.DeepEqual(cfg, roundTrip) {
 				t.Fatalf("effective configuration changed after canonicalization:\n%+v\n%+v", cfg, roundTrip)
 			}
@@ -151,10 +157,69 @@ func TestGOEXPERIMENTSnapshotFromGOENV(t *testing.T) {
 			}
 			commands.environ = cfg.apply(commands.environ)
 			after := mustResolveSourceGo(t, commands, "")
+			if cfg.originalExperiment != initial || after.originalExperiment != cfg.GOEXPERIMENT {
+				t.Fatal("lost actual GOENV setting or pinned canonical command setting")
+			}
+			after.originalExperiment = cfg.originalExperiment
 			if !reflect.DeepEqual(cfg, after) {
 				t.Fatalf("GOENV mutation changed the pinned source configuration:\n%+v\n%+v", cfg, after)
 			}
 		})
+	}
+}
+
+func TestSourceGoCGOFlagsSnapshotFromGOENV(t *testing.T) {
+	goenv := filepath.Join(t.TempDir(), "env")
+	writeGoenv := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(goenv, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeGoenv("CGO_CPPFLAGS=-DENV_CPP=1\nCGO_CFLAGS=-DREVIEW_VALUE=30\nCGO_CXXFLAGS=-DENV_CXX=2\nCGO_LDFLAGS=-L/env/lib\n")
+
+	// Start with an environment that explicitly omits all CGO_* keys so values
+	// come strictly from the isolated GOENV file.
+	stripCgoEnv := func(env []string) []string {
+		out := make([]string, 0, len(env))
+		for _, kv := range env {
+			if strings.HasPrefix(kv, "CGO_CPPFLAGS=") ||
+				strings.HasPrefix(kv, "CGO_CFLAGS=") ||
+				strings.HasPrefix(kv, "CGO_CXXFLAGS=") ||
+				strings.HasPrefix(kv, "CGO_LDFLAGS=") {
+				continue
+			}
+			out = append(out, kv)
+		}
+		return out
+	}
+
+	commands := experimentCommands(t, "")
+	commands.environ = withEnv(stripCgoEnv(commands.environ), "GOENV="+goenv)
+	cfg := mustResolveSourceGo(t, commands, "")
+	if cfg.CGO_CPPFLAGS != "-DENV_CPP=1" ||
+		cfg.CGO_CFLAGS != "-DREVIEW_VALUE=30" ||
+		cfg.CGO_CXXFLAGS != "-DENV_CXX=2" ||
+		cfg.CGO_LDFLAGS != "-L/env/lib" {
+		t.Fatalf("resolved GOENV cgo flags = (%q, %q, %q, %q)", cfg.CGO_CPPFLAGS, cfg.CGO_CFLAGS, cfg.CGO_CXXFLAGS, cfg.CGO_LDFLAGS)
+	}
+
+	// Non-empty process environment overrides GOENV, while empty process env
+	// falls back to GOENV (matching cmd/go's cfg.Getenv).
+	procOverride := commands
+	procOverride.environ = withEnv(commands.environ, "CGO_CFLAGS=-DREVIEW_VALUE=40", "CGO_CPPFLAGS=")
+	overrideCfg := mustResolveSourceGo(t, procOverride, "")
+	if overrideCfg.CGO_CFLAGS != "-DREVIEW_VALUE=40" || overrideCfg.CGO_CPPFLAGS != "-DENV_CPP=1" {
+		t.Fatalf("process env override = (CFLAGS=%q, CPPFLAGS=%q), want (-DREVIEW_VALUE=40, -DENV_CPP=1)", overrideCfg.CGO_CFLAGS, overrideCfg.CGO_CPPFLAGS)
+	}
+
+	// Mutating GOENV after cfg.apply must not change the pinned cgo flags.
+	writeGoenv("CGO_CPPFLAGS=-DMUTATED=1\nCGO_CFLAGS=-DMUTATED=2\nCGO_CXXFLAGS=-DMUTATED=3\nCGO_LDFLAGS=-DMUTATED=4\n")
+	commands.environ = cfg.apply(commands.environ)
+	after := mustResolveSourceGo(t, commands, "")
+	after.originalExperiment = cfg.originalExperiment
+	if !reflect.DeepEqual(cfg, after) {
+		t.Fatalf("GOENV mutation changed pinned cgo flags:\n%+v\n%+v", cfg, after)
 	}
 }
 
@@ -387,8 +452,17 @@ func runGoConfigHelper(mode string) {
 		fmt.Println(`{"GOROOT":"test-root"}`)
 	case "list-failure":
 		json.NewEncoder(os.Stdout).Encode(sourceGoConfig{GOROOT: os.Getenv("LLGO_TEST_SOURCE_GOROOT"), GOVERSION: "go1.27.0"})
-	case "selected-root", "invalid-goflags":
+	case "selected-root", "invalid-goflags", "distro-experiment":
 		cfg := sourceGoConfig{GOROOT: runtime.GOROOT(), GOVERSION: runtime.Version()}
+		// The launcher and the selected source SDK may differ.
+		if mode == "selected-root" {
+			cfg.GOVERSION = "go1.20.14"
+		}
+		if mode == "distro-experiment" {
+			// Distro toolchains (e.g. Fedora) report an X: experiment suffix in
+			// `go env GOVERSION` even when GOROOT/VERSION contains the plain release.
+			cfg.GOVERSION = "go1.26.11 X:strictfipsruntime"
+		}
 		if mode == "invalid-goflags" {
 			cfg.GOFLAGS = "'-modfile=unterminated"
 		}
@@ -397,7 +471,11 @@ func runGoConfigHelper(mode string) {
 }
 
 func TestSourceGoConfigErrors(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "bin")
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "VERSION"), []byte("go1.20.14\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(bin, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -444,6 +522,9 @@ func TestSourceGoToolTagsUseResolvedCompiler(t *testing.T) {
 	commands := experimentCommands(t, "")
 	commands.environ = withEnv(commands.environ, "LLGO_TEST_GO_CONFIG_HELPER=selected-root")
 	cfg := mustResolveSourceGo(t, commands, "")
+	if cfg.GOVERSION != runtime.Version() {
+		t.Fatalf("selected SDK version = %q, want %q", cfg.GOVERSION, runtime.Version())
+	}
 	if !slices.Contains(cfg.toolTags, "goexperiment.jsonv2") {
 		t.Fatalf("lost selected Go 1.27 default experiment: %v", cfg.toolTags)
 	}
@@ -455,5 +536,51 @@ func TestSourceGoToolTagsUseResolvedCompiler(t *testing.T) {
 	output, err := commands.configure(exec.Command(filepath.Join(cfg.GOROOT, "bin", goExe), "list", "encoding/json/v2", "encoding/json/jsontext")).CombinedOutput()
 	if err != nil {
 		t.Fatalf("selected JSON packages unavailable: %v\n%s", err, output)
+	}
+}
+
+func TestDevelopmentSDKReleaseSelection(t *testing.T) {
+	for _, tc := range []struct {
+		raw, want     string
+		wantToolchain string
+	}{
+		{"devel go1.27-abcd Mon Nov 28", "go1.27", ""},
+		{"go1.24.0 X:boringcrypto", "go1.24.0", ""},
+		{"go1.27rc1", "go1.27rc1", "go1.27rc1"},
+	} {
+		cfg := sourceGoConfig{GOVERSION: tc.raw}
+		if got := cfg.releaseVersion(); got != tc.want {
+			t.Fatalf("%q => %q, want %q", tc.raw, got, tc.want)
+		}
+		for _, v := range []string{tc.raw, cfg.releaseVersion()} {
+			tags, err := releaseTagsForGoVersion(v)
+			if err != nil || len(tags) < 24 {
+				t.Fatalf("release tags for %q: %v, %v", v, tags, err)
+			}
+		}
+		env := withResolvedGoToolchain(nil, cfg.GOVERSION)
+		gotToolchain := (commandEnv{environ: env}).lookup("GOTOOLCHAIN")
+		if gotToolchain != tc.wantToolchain {
+			t.Fatalf("GOTOOLCHAIN for %q = %q, want %q", tc.raw, gotToolchain, tc.wantToolchain)
+		}
+	}
+}
+
+func TestDistroExperimentLauncherDoesNotForceGOTOOLCHAIN(t *testing.T) {
+	bin := t.TempDir()
+	writeBuildTestTool(t, bin, "go")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	commands := experimentCommands(t, "")
+	commands.environ = withEnv(commands.environ, "LLGO_TEST_GO_CONFIG_HELPER=distro-experiment")
+	cfg := mustResolveSourceGo(t, commands, "")
+	if cfg.GOVERSION != runtime.Version() {
+		t.Fatalf("selected SDK version = %q, want %q", cfg.GOVERSION, runtime.Version())
+	}
+	if got := cfg.resolvedToolchainVersion(); got != "" {
+		t.Fatalf("resolvedToolchainVersion() = %q, want empty for non-standard distro launcher", got)
+	}
+	applied := cfg.apply([]string{"PATH=/usr/bin"})
+	if got := (commandEnv{environ: applied}).lookup("GOTOOLCHAIN"); got != "" {
+		t.Fatalf("apply() set GOTOOLCHAIN=%q for non-standard distro launcher, want unset", got)
 	}
 }
