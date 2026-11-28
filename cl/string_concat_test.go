@@ -77,33 +77,23 @@ func TestStringConcatLoweringWithRoots(t *testing.T) {
 func fused(a, b, c string) string { return a + b + c }
 `, ssa.InstantiateGenerics, &llssa.Target{GOOS: "wasip1", GOARCH: "wasm", WasmProfile: "w32"}, true)
 	// W32 has four-byte pointers but 16-byte strings. Bind all three data
-	// addresses to distinct typed roots and track each padding-normalized header
+	// addresses to the indirect tail of the compact root map (high bit plus 3)
+	// and track each padding-normalized header
 	// from its argument through the ordered table stores to the call and release.
 	checks := `CHECK: [[STR:%".*String"]] = type { { ptr, i32 }, i64 }
-CHECK: @__llgo_gcroot_stack_pointer_4 = {{.*}}constant i8 4
-CHECK: @"concatroots.fused$gcmap" = {{.*}}i32 6, i32 6,
-CHECK-SAME: zeroinitializer, {{.*}}zeroinitializer, {{.*}}zeroinitializer,
-CHECK-SAME: ptr @__llgo_gcroot_stack_pointer_4
-CHECK-SAME: ptr @__llgo_gcroot_stack_pointer_4
-CHECK-SAME: ptr @__llgo_gcroot_stack_pointer_4
+CHECK: @"concatroots.fused$gcmap" = {{.*}}constant { i32, i32 } { i32 6, i32 -2147483645 }
 CHECK-LABEL: @concatroots.fused(
 CHECK-SAME: [[STR]] [[A:%[0-9]+]], [[STR]] [[B:%[0-9]+]], [[STR]] [[C:%[0-9]+]])
 CHECK: [[TABLE:%.*]] = alloca [3 x [[STR]]]
-CHECK: [[ROOT0:%.*]] = getelementptr inbounds [6 x { ptr, i32 }], ptr [[ROOTS:%.*]], i32 0, i32 3
-CHECK: [[ROOT1:%.*]] = getelementptr inbounds [6 x { ptr, i32 }], ptr [[ROOTS]], i32 0, i32 4
-CHECK: [[ROOT2:%.*]] = getelementptr inbounds [6 x { ptr, i32 }], ptr [[ROOTS]], i32 0, i32 5
+CHECK: [[ROOT0:%.*]] = getelementptr inbounds [6 x ptr], ptr [[ROOTS:%.*]], i32 0, i32 3
+CHECK: [[ROOT1:%.*]] = getelementptr inbounds [6 x ptr], ptr [[ROOTS]], i32 0, i32 4
+CHECK: [[ROOT2:%.*]] = getelementptr inbounds [6 x ptr], ptr [[ROOTS]], i32 0, i32 5
 CHECK: call void @llvm.memset.p0.i64(ptr [[TABLE]], i8 0, i64 48, i1 false)
-CHECK: [[PTR0:%.*]] = ptrtoint ptr [[TABLE]] to i32
-CHECK-NEXT: [[WORD0:%.*]] = zext i32 [[PTR0]] to i64
-CHECK-NEXT: store i64 [[WORD0]], ptr [[ROOT0]]
+CHECK: store ptr [[TABLE]], ptr [[ROOT0]], align 4
 CHECK: [[DATA1:%.*]] = getelementptr inbounds i8, ptr [[TABLE]], i64 16
-CHECK-NEXT: [[PTR1:%.*]] = ptrtoint ptr [[DATA1]] to i32
-CHECK-NEXT: [[WORD1:%.*]] = zext i32 [[PTR1]] to i64
-CHECK-NEXT: store i64 [[WORD1]], ptr [[ROOT1]]
+CHECK-NEXT: store ptr [[DATA1]], ptr [[ROOT1]], align 4
 CHECK: [[DATA2:%.*]] = getelementptr inbounds i8, ptr [[TABLE]], i64 32
-CHECK-NEXT: [[PTR2:%.*]] = ptrtoint ptr [[DATA2]] to i32
-CHECK-NEXT: [[WORD2:%.*]] = zext i32 [[PTR2]] to i64
-CHECK-NEXT: store i64 [[WORD2]], ptr [[ROOT2]]
+CHECK-NEXT: store ptr [[DATA2]], ptr [[ROOT2]], align 4
 CHECK-DAG: [[APTR:%[0-9]+]] = extractvalue [[STR]] [[A]], 0
 CHECK-DAG: [[APAD:%[0-9]+]] = insertvalue { ptr, i32 } [[APTR]], i32 0, 1
 CHECK-DAG: [[ANORM:%[0-9]+]] = insertvalue [[STR]] [[A]], { ptr, i32 } [[APAD]], 0
