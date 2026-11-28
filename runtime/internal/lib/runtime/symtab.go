@@ -2071,49 +2071,31 @@ func prebuiltTextContains(pc uintptr) bool {
 	return false
 }
 
-// frameSymbolResultCache memoizes full symbolization results per PC.
-// Multiple entries per set keep return addresses in the same stack walk
-// from repeatedly evicting each other when their cache indices collide.
+// frameSymbolResultCache memoizes full symbolization results per pc. Deep
+// CallersFrames walks re-symbolize the same return addresses on every walk,
+// and a miss below costs a dladdr; entries are immutable heap nodes so the
+// benign-racy word-sized store never tears.
 type frameSymbolResult struct {
 	pc  uintptr
 	sym pcSymbol
 }
 
-const frameSymbolCacheSets = 1024
-const frameSymbolCacheWays = 4
+const frameSymbolResultCacheSize = 4096
 
-var frameSymbolResultCache [frameSymbolCacheSets][frameSymbolCacheWays]latomic.Pointer[frameSymbolResult]
-var frameSymbolCacheNext [frameSymbolCacheSets]uint32
+var frameSymbolResultCache [frameSymbolResultCacheSize]*frameSymbolResult
 
 // minLegalPC: nothing below the zero page can be code. Values under it are
 // null-ish slots or shadow-stack synthetic markers, never return addresses.
 const minLegalPC = 4096
 
-func frameSymbolCacheIndex(pc uintptr) uintptr {
-	// Fold in the higher address bits to spread widely separated PCs
-	// across sets even if their low bits match.
-	return (pc>>2 ^ pc>>12 ^ pc>>22) & (frameSymbolCacheSets - 1)
-}
-
-func loadFrameSymbolResult(pc uintptr) *frameSymbolResult {
-	set := &frameSymbolResultCache[frameSymbolCacheIndex(pc)]
-	for i := range set {
-		if e := set[i].Load(); e != nil && e.pc == pc {
-			return e
-		}
-	}
-	return nil
-}
-
 func frameSymbol(pc uintptr) pcSymbol {
 	if pc > minLegalPC {
-		if e := loadFrameSymbolResult(pc); e != nil {
+		i := (pc >> 2) & uintptr(len(frameSymbolResultCache)-1)
+		if e := frameSymbolResultCache[i]; e != nil && e.pc == pc {
 			return e.sym
 		}
 		sym := frameSymbolUncached(pc)
-		index := frameSymbolCacheIndex(pc)
-		way := (latomic.AddUint32(&frameSymbolCacheNext[index], 1) - 1) & (frameSymbolCacheWays - 1)
-		frameSymbolResultCache[index][way].Store(&frameSymbolResult{pc: pc, sym: sym})
+		frameSymbolResultCache[i] = &frameSymbolResult{pc: pc, sym: sym}
 		return sym
 	}
 	return frameSymbolUncached(pc)
