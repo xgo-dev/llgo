@@ -625,6 +625,68 @@ func TestDefaultGODEBUGGOENVFileInvalidation(t *testing.T) {
 	}
 }
 
+func TestDefaultGODEBUGGOENVSymlinkDotDot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks require admin on Windows")
+	}
+	root := t.TempDir()
+	buildDir := filepath.Join(root, "build")
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(buildDir, "go.mod"), "module example.com/symlinkenv\ngo 1.27.0\n")
+	writeFile(t, filepath.Join(buildDir, "main.go"), "package main\nfunc main() {}\n")
+
+	// Target directory outside buildDir: root/target/sub
+	targetDir := filepath.Join(root, "target", "sub")
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Target env file is root/target/go.env
+	realEnvFile := filepath.Join(root, "target", "go.env")
+	writeFile(t, realEnvFile, "GOFIPS140=off\n")
+
+	// In buildDir, symlink alias -> root/target/sub
+	if err := os.Symlink(targetDir, filepath.Join(buildDir, "alias")); err != nil {
+		t.Fatal(err)
+	}
+
+	// GOENV=alias/../go.env resolves to root/target/go.env in OS, but lexical clean of
+	// buildDir/alias/../go.env would resolve to buildDir/go.env!
+	cfg := &packages.Config{Dir: buildDir, Env: withEnv(os.Environ(), "GOENV=alias/../go.env")}
+	pkgMain := []*packages.Package{{ID: "example.com/symlinkenv", Name: "main"}}
+
+	key1 := defaultGODEBUGCachePath(cfg, runtime.GOROOT(), pkgMain, nil)
+	if key1 == "" {
+		t.Fatal("expected non-empty cache key")
+	}
+	defaults1, err := resolveDefaultGODEBUG(cfg, runtime.GOROOT(), pkgMain, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(defaults1["example.com/symlinkenv"], "fips140=on") {
+		t.Fatalf("expected off, got %q", defaults1["example.com/symlinkenv"])
+	}
+
+	// Modify target go.env to GOFIPS140=latest
+	writeFile(t, realEnvFile, "GOFIPS140=latest\n")
+	key2 := defaultGODEBUGCachePath(cfg, runtime.GOROOT(), pkgMain, nil)
+	if key2 == "" {
+		t.Fatal("expected non-empty cache key")
+	}
+	if key1 == key2 {
+		t.Fatalf("modifying target GOENV through symlink/.. must invalidate cache key: key1=%q, key2=%q", key1, key2)
+	}
+
+	defaults2, err := resolveDefaultGODEBUG(cfg, runtime.GOROOT(), pkgMain, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(defaults2["example.com/symlinkenv"], "fips140=on") {
+		t.Fatalf("expected fips140=on, got %q", defaults2["example.com/symlinkenv"])
+	}
+}
+
 func TestDefaultGODEBUGTestDirectivesWarmBuild(t *testing.T) {
 	root := godebugFixture(t)
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/testwarm\ngo 1.27.0\n")

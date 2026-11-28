@@ -178,14 +178,26 @@ func recordEffectiveGoEnv(h io.Writer, cmdEnv commandEnv, overlay map[string][]b
 			base, _ = os.Getwd()
 		}
 		if base != "" {
-			goenv = filepath.Join(base, goenv)
+			sep := string(filepath.Separator)
+			goenv = strings.TrimRight(base, sep) + sep + goenv
 		}
 	}
-	goenv = filepath.Clean(goenv)
 	if overlay != nil {
 		if data, ok := overlay[goenv]; ok {
 			fmt.Fprintf(h, "goenvcontent=%s:%s\x00", goenv, digestBytes(data))
 			return
+		}
+		if cleaned := filepath.Clean(goenv); cleaned != goenv {
+			if data, ok := overlay[cleaned]; ok {
+				fmt.Fprintf(h, "goenvcontent=%s:%s\x00", goenv, digestBytes(data))
+				return
+			}
+		}
+		if resolved, err := filepath.EvalSymlinks(goenv); err == nil && resolved != goenv {
+			if data, ok := overlay[resolved]; ok {
+				fmt.Fprintf(h, "goenvcontent=%s:%s\x00", goenv, digestBytes(data))
+				return
+			}
 		}
 	}
 	if data, err := os.ReadFile(goenv); err == nil {
