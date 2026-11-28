@@ -27,7 +27,6 @@ type initialBuildGroup struct {
 // Trace ownership moves to Build so its parent span still encloses the children.
 type initialBuildPlan struct {
 	invocations       []Invocation
-	finishTrace       func()
 	sourceOverlayFile string
 }
 

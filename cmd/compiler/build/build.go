@@ -562,26 +562,69 @@ func Do(args []string, conf *Config) ([]Package, error) {
 
 // Build executes one build invocation.
 func Build(inv Invocation) ([]Package, error) {
+	if inv.Config == nil {
+		inv.Config = NewDefaultConf(ModeBuild)
+	}
+	dir := inv.Dir
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+	}
+	conf, err := resolveBuildConfig(inv.Config)
+	if err != nil {
+		return nil, err
+	}
+
+	buildTrace := inv.parentBuildTrace
+	isRootTrace := false
+	if buildTrace == nil {
+		buildTrace, err = startBuildTrace(conf.BuildTrace, dir, conf.parallelism())
+		if err != nil {
+			return nil, fmt.Errorf("start build trace: %w", err)
+		}
+		isRootTrace = true
+	}
+	inv.parentBuildTrace = buildTrace
+
+	buildSpan := buildTrace.startCoordinator("build", map[string]any{
+		"packages":    slices.Clone(inv.Args),
+		"parallelism": conf.parallelism(),
+	})
+	var traceOnce sync.Once
+	finishTrace := func() {
+		traceOnce.Do(func() {
+			buildSpan.done()
+			if isRootTrace {
+				if closeErr := buildTrace.close(); closeErr != nil {
+					fmt.Fprintf(os.Stderr, "warning: write build trace: %v\n", closeErr)
+				}
+			}
+		})
+	}
+	defer finishTrace()
+
 	var plan initialBuildPlan
 	defer func() {
 		if plan.sourceOverlayFile != "" {
 			os.Remove(plan.sourceOverlayFile)
 		}
 	}()
+
 	result, err := buildInvocation(inv, &plan)
-	if errors.Is(err, errFrontendSourceRequired) && (inv.Config == nil || !inv.Config.frontendSourceOnly) {
+	if errors.Is(err, errFrontendSourceRequired) && !inv.Config.frontendSourceOnly {
 		for attempt := 0; attempt < 5 && errors.Is(err, errFrontendSourceRequired); attempt++ {
 			if plan.sourceOverlayFile != "" {
 				os.Remove(plan.sourceOverlayFile)
 				plan.sourceOverlayFile = ""
 			}
-			if inv.Config == nil {
-				inv.Config = NewDefaultConf(ModeBuild)
-			} else {
-				inv.Config = inv.Config.clone()
-			}
+			inv.Config = inv.Config.clone()
 			var reqErr *frontendSourceRequiredError
+			var reqPkgIDs []string
 			if attempt < 4 && errors.As(err, &reqErr) && len(reqErr.pkgIDs) > 0 {
+				reqPkgIDs = reqErr.pkgIDs
 				if inv.Config.frontendSourcePkgs == nil {
 					inv.Config.frontendSourcePkgs = make(map[string]bool, len(reqErr.pkgIDs))
 				}
@@ -598,30 +641,24 @@ func Build(inv Invocation) ([]Package, error) {
 			} else {
 				inv.Config.frontendSourceOnly = true
 			}
-			if filename := inv.Config.BuildTrace; filename != "" && inv.parentBuildTrace == nil {
-				if !filepath.IsAbs(filename) {
-					base := inv.Dir
-					if base == "" {
-						base, _ = os.Getwd()
-					}
-					filename = filepath.Join(base, filename)
-				}
-				_ = os.Remove(filename) // this invocation exclusively created the first-attempt trace
+			args := map[string]any{
+				"attempt": attempt + 1,
 			}
+			if len(reqPkgIDs) > 0 {
+				args["packages"] = slices.Clone(reqPkgIDs)
+			}
+			retrySpan := buildTrace.startCoordinator("retry", args)
 			result, err = buildInvocation(inv, &plan)
+			retrySpan.done()
 			if inv.Config.frontendSourceOnly {
 				break
 			}
 		}
 	}
-	if len(plan.invocations) == 0 {
-		return result, err
+	if len(plan.invocations) > 0 {
+		return buildInitialGroups(plan.invocations)
 	}
-	// End the analysis frame (including its deferred LLVM cleanup) before
-	// loading a child graph. The plan contains names/configuration, not the
-	// parent's packages, syntax or SSA.
-	defer plan.finishTrace()
-	return buildInitialGroups(plan.invocations)
+	return result, err
 }
 
 func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, resultErr error) {
@@ -659,32 +696,9 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		defer conf.coverage.close()
 	}
 	buildTrace := inv.parentBuildTrace
-	if buildTrace == nil {
-		buildTrace, err = startBuildTrace(conf.BuildTrace, dir, conf.parallelism())
-		if err != nil {
-			return nil, fmt.Errorf("start build trace: %w", err)
-		}
-	}
 	if conf.coverage != nil {
 		conf.coverage.trace = buildTrace
 	}
-	buildSpan := buildTrace.startCoordinator("build", map[string]any{
-		"packages":    slices.Clone(inv.Args),
-		"parallelism": conf.parallelism(),
-	})
-	finishTrace := func() {
-		buildSpan.done()
-		if inv.parentBuildTrace == nil {
-			if closeErr := buildTrace.close(); closeErr != nil {
-				fmt.Fprintf(os.Stderr, "warning: write build trace: %v\n", closeErr)
-			}
-		}
-	}
-	defer func() {
-		if len(plan.invocations) == 0 {
-			finishTrace()
-		}
-	}()
 	// Handle crosscompile configuration first to set correct GOOS/GOARCH
 	forceEspClang := conf.ForceEspClang || conf.Target != ""
 	nativeInput := crosscompile.NativeToolchainInput{}
@@ -1138,7 +1152,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		groups = groupInitialBuilds(ctx, altPkgs)
 		if len(groups) > 1 {
 			plan.invocations = initialGroupInvocations(inv, ctx, groups)
-			plan.finishTrace = finishTrace
 			fallback = nil
 			return nil, nil
 		}
@@ -1185,7 +1198,6 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 			// Compatible groups still reuse their package-archive cache entries.
 			fallback = nil // Each group retains its own normal error recovery.
 			plan.invocations = initialGroupInvocations(inv, ctx, groups)
-			plan.finishTrace = finishTrace
 			return nil, nil
 		}
 		if len(groups) == 1 {

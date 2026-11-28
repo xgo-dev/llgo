@@ -3,6 +3,7 @@ package build
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/xgo-dev/llgo/types"
 	"os"
 	"path/filepath"
@@ -341,4 +342,82 @@ func TestInitialGroupInvocationsDoNotRetainParentPackages(t *testing.T) {
 		t.Fatal("prepared child still retains the parent package graph")
 	}
 	runtime.KeepAlive(children)
+}
+
+func TestInitialGroupRetryPreservesSingleBuildSpanAndTracesRetry(t *testing.T) {
+	t.Setenv(llgoBuildCache, "1")
+	cacheDir := t.TempDir()
+	oldCacheRoot := cacheRootFunc
+	cacheRootFunc = func() string { return cacheDir }
+	defer func() { cacheRootFunc = oldCacheRoot }()
+
+	plainFile := "cmd/plain/main.go"
+	depFile := "dep/dep.go"
+	localFile := "cmd/local/main.go"
+
+	root := writeMultiBuildModule(t, map[string]string{
+		depFile:   "package dep\nvar X = 1\nfunc F() int { return 42 }\n",
+		plainFile: "package main\nimport \"example.com/multibuild/dep\"\nfunc main() { println(dep.X) }\n",
+		localFile: "package main\nimport \"fmt\"\nfunc main() { fmt.Println(\"local\") }\n",
+	})
+
+	conf := multiBuildConfig()
+	if runtime.GOOS == "windows" {
+		conf.AppExt = ".exe"
+	}
+	tracePath := filepath.Join(t.TempDir(), "groups.json")
+	conf.BuildTrace = tracePath
+
+	// Cold build: plain only reads dep.X, so dep's inline body is not requested.
+	if _, err := Build(Invocation{Args: []string{"./cmd/plain", "./cmd/local"}, Config: conf, Dir: root}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Warm build: modify cmd/plain to call dep.F(), requiring dep's inline body.
+	plainPath := filepath.Join(root, filepath.FromSlash(plainFile))
+	if err := os.WriteFile(plainPath, []byte("package main\nimport \"example.com/multibuild/dep\"\nfunc main() { println(dep.F()) }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tracePath = filepath.Join(t.TempDir(), "groups.json")
+	conf.BuildTrace = tracePath
+	if _, err := Build(Invocation{Args: []string{"./cmd/plain", "./cmd/local"}, Config: conf, Dir: root}); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(tracePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []buildTraceEvent
+	if err := json.Unmarshal(raw, &events); err != nil {
+		t.Fatal(err)
+	}
+
+	builds := 0
+	retries := 0
+	var retryPackages []any
+	for _, event := range events {
+		if event.Phase != "X" {
+			continue
+		}
+		switch event.Name {
+		case "build":
+			builds++
+		case "retry":
+			retries++
+			if pkgs, ok := event.Args["packages"].([]any); ok {
+				retryPackages = pkgs
+			}
+		}
+	}
+	if builds != 3 {
+		t.Fatalf("expected parent and two group builds in shared trace, got %d", builds)
+	}
+	if retries != 1 {
+		t.Fatalf("expected exactly 1 retry span in shared trace, got %d", retries)
+	}
+	if len(retryPackages) == 0 || !strings.Contains(fmt.Sprint(retryPackages[0]), "example.com/multibuild/dep") {
+		t.Fatalf("expected retry args to record dep package, got %+v", retryPackages)
+	}
 }
