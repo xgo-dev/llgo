@@ -92,7 +92,16 @@ var (
 
 	gcMutex  mutex // gcMutex protects GC related variables
 	isGCInit bool  // isGCInit indicates GC initialization state
+
+	// Set by the first successful registration under gcMutex. With no
+	// registrar reachable, LTO can discard the finalizer worker and its hooks.
+	finalizerHooks *gcFinalizerHooks
 )
+
+type gcFinalizerHooks struct {
+	preserve func()
+	schedule func()
+}
 
 // Some globals + constants for the entire GC.
 
@@ -453,8 +462,11 @@ func Alloc(size uintptr) unsafe.Pointer {
 				gcSetStateIn(segment, i, blockStateTail)
 			}
 			ret := c.Memset(unsafe.Pointer(gcAddressOfIn(segment, thisAlloc)), 0, size)
+			hooks := finalizerHooks
 			unlock(&gcMutex)
-			scheduleFinalizers()
+			if hooks != nil {
+				hooks.schedule()
+			}
 			// Return a pointer to this allocation.
 			return ret
 		}
@@ -528,8 +540,11 @@ func freeObject(ptr unsafe.Pointer) {
 func GC() uintptr {
 	lock(&gcMutex)
 	freeBytes := gc()
+	hooks := finalizerHooks
 	unlockForGC(&gcMutex)
-	scheduleFinalizers()
+	if hooks != nil {
+		hooks.schedule()
+	}
 	return freeBytes
 }
 
@@ -554,7 +569,9 @@ func gc() (freeBytes uintptr) {
 	gcMarkReachable()
 
 	finishMark()
-	preserveFinalizableObjects()
+	if hooks := finalizerHooks; hooks != nil {
+		hooks.preserve()
+	}
 	markHeads.reset()
 
 	// Sweep phase: free all non-marked objects and unmark marked objects for
@@ -579,7 +596,7 @@ func markRoots(start, end uintptr) {
 	}
 	for addr := start; addr <= end-gcScanWordSize; addr += gcScanWordSize {
 		root := loadGCScanWord(addr)
-		markRoot(addr, root)
+		markRoot(root)
 	}
 }
 
@@ -693,8 +710,8 @@ func finishMark() {
 	}
 }
 
-// mark a GC root at the address addr.
-func markRoot(addr, root uintptr) {
+// markRoot traces a pointer from a GC root.
+func markRoot(root uintptr) {
 	if isOnHeap(root) {
 		block := blockFromAddr(root)
 		if gcStateOf(block) == blockStateFree {

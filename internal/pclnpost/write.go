@@ -229,7 +229,11 @@ func metaGlobalAddrs(info *binaryInfo) (idxPtr, cntPtr uint64, ok bool) {
 	return 0, 0, false
 }
 
-// loadSymbolIndex reads the {u64 symbolID, u32 funcIndex} table, locating it
+// ShortSymbolIndexFlag marks two adjacent arrays of u64 symbol IDs and u16
+// record indexes. Keep in sync with runtime's compact funcinfo reader.
+const ShortSymbolIndexFlag = 1 << 31
+
+// loadSymbolIndex reads the symbol-ID table, locating it
 // through the entry-section meta record (LTO-safe) with the symbol table as
 // fallback for older binaries.
 func loadSymbolIndex(path string, info *binaryInfo) ([]symIndexEntry, error) {
@@ -247,11 +251,24 @@ func loadSymbolIndex(path string, info *binaryInfo) ([]symIndexEntry, error) {
 	}
 	dataAddr := decodePtr(info, readVM(info, ptrAddr, 8))
 	count := binary.LittleEndian.Uint64(readVM(info, cntAddr, 8))
-	if count == 0 || count > 1<<20 {
+	compact := count&ShortSymbolIndexFlag != 0
+	count &^= ShortSymbolIndexFlag
+	if count == 0 || count > 1<<20 || compact && count > 0xffff {
 		return nil, fmt.Errorf("bad symbol index count %d", count)
 	}
-	raw := readVM(info, dataAddr, int(count)*16)
 	out := make([]symIndexEntry, count)
+	if compact {
+		raw := readVM(info, dataAddr, int(count)*10)
+		indexes := raw[int(count)*8:]
+		for i := range out {
+			out[i] = symIndexEntry{
+				id:  binary.LittleEndian.Uint64(raw[i*8:]),
+				idx: uint32(binary.LittleEndian.Uint16(indexes[i*2:])),
+			}
+		}
+		return out, nil
+	}
+	raw := readVM(info, dataAddr, int(count)*16)
 	for i := range out {
 		out[i] = symIndexEntry{
 			id:  binary.LittleEndian.Uint64(raw[i*16:]),

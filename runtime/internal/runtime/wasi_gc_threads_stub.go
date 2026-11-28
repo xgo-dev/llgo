@@ -4,3 +4,7 @@ package runtime
 
 func registerWasiGCThread()   {}
 func unregisterWasiGCThread() {}
+
+const wasiSelectMainContext = false
+
+func wasiMainG() *g { return nil }

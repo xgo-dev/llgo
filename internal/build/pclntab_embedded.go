@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 
 	"github.com/xgo-dev/llgo/internal/pclnmap"
 	"github.com/xgo-dev/llgo/internal/pclnpost"
@@ -99,6 +100,7 @@ func pruneEmbeddedPCLN(ctx *context, plan *mainLinkPlan, output string, verbose 
 		analyze = func(path string) (pclnpost.ExternalAnalysis, error) { return analyzeWasmPCLN(path, *plan.embeddedPCLN) }
 	}
 	var relinkObjects string
+	published := false
 	previousObjects := ctx.darwinLTOObjectDirectory
 	err := pruneEmbeddedPCLNWith(plan, output, verbose, embeddedPCLNLinker{
 		analyze: analyze,
@@ -116,9 +118,13 @@ func pruneEmbeddedPCLN(ctx *context, plan *mainLinkPlan, output string, verbose 
 			}
 			return linkObjFiles(ctx, candidate, inputs, plan.linkArgs, verbose)
 		},
-		publish: replaceFile,
+		publish: func(candidate, dest string) error {
+			err := replaceFile(candidate, dest)
+			published = err == nil
+			return err
+		},
 	})
-	if err != nil && relinkObjects != "" {
+	if !published && relinkObjects != "" {
 		_ = os.RemoveAll(relinkObjects)
 	} else if relinkObjects != "" {
 		if previousObjects != "" && previousObjects != relinkObjects {
@@ -151,12 +157,12 @@ func pruneEmbeddedPCLNWith(plan *mainLinkPlan, output string, verbose bool, link
 	if err != nil {
 		return fmt.Errorf("prune embedded pclntab: %w", err)
 	}
-	entryIR, grown, err := growSymbolEntryReserve(plan.entryIR, analysis)
+	entryIR, resized, err := sizeSymbolEntryReserve(plan.entryIR, analysis, true)
 	if err != nil {
 		return err
 	}
 	if len(pruned.Table.Records) == len(plan.embeddedPCLN.Table.Records) &&
-		len(pruned.Table.PCLines) == len(plan.embeddedPCLN.Table.PCLines) && !grown {
+		len(pruned.Table.PCLines) == len(plan.embeddedPCLN.Table.PCLines) && !resized {
 		return nil
 	}
 	dir, err := os.MkdirTemp(filepath.Dir(output), ".llgo-pcln-link-*")
@@ -185,9 +191,22 @@ func pruneEmbeddedPCLNWith(plan *mainLinkPlan, output string, verbose bool, link
 	if err != nil {
 		return fmt.Errorf("verify compact embedded pclntab: %w", err)
 	}
-	if _, growAgain, err := growSymbolEntryReserve(entryIR, final); err != nil {
+	// A shared Mach-O reservation is packed for size. If relinking moves
+	// code across a bucket or changes liveness, the first image still has
+	// its complete catalog. Keep it only when its reservation fits.
+	keepFirst := func() bool {
+		if !strings.Contains(plan.entryIR, `section "__DATA,__llgo_fie,`) {
+			return false
+		}
+		_, tooSmall, err := sizeSymbolEntryReserve(plan.entryIR, analysis, false)
+		return err == nil && !tooSmall
+	}
+	if _, growAgain, err := sizeSymbolEntryReserve(entryIR, final, false); err != nil {
 		return err
 	} else if growAgain {
+		if keepFirst() {
+			return nil
+		}
 		return fmt.Errorf("linked text outgrew the symbol entry reservation")
 	}
 	// Recompute from the original catalog: using only the pruned catalog here
@@ -197,6 +216,9 @@ func pruneEmbeddedPCLNWith(plan *mainLinkPlan, output string, verbose bool, link
 		return err
 	}
 	if !reflect.DeepEqual(pruned.Table, verified.Table) || !reflect.DeepEqual(pruned.SymbolIndex, verified.SymbolIndex) {
+		if keepFirst() {
+			return nil
+		}
 		return fmt.Errorf("embedded pclntab liveness changed during metadata relink")
 	}
 	if err := linker.publish(candidate, output); err != nil {
@@ -249,16 +271,20 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 		return err
 	}
 	defer mod.Dispose()
-	setArray := func(name string, values func(llvm.Type) []llvm.Value) error {
+	layout := mod.NamedGlobal(funcInfoLayoutSymbol)
+	recordData, offsetType, layoutFlags := encodeEmbeddedFuncInfo(lc, data.Table, !layout.IsNil())
+	if !layout.IsNil() {
+		layout.SetInitializer(llvm.ConstInt(layout.GlobalValueType(), uint64(layoutFlags), false))
+	}
+	setData := func(name string, initializer func(llvm.Type) llvm.Value) error {
 		old := mod.NamedGlobal(name)
 		if old.IsNil() {
 			return fmt.Errorf("embedded pclntab array %s is missing", name)
 		}
-		elem := old.GlobalValueType().ElementType()
-		items := values(elem)
+		value := initializer(old.GlobalValueType())
 		old.SetName(name + ".unpruned")
-		array := llvm.AddGlobal(mod, llvm.ArrayType(elem, len(items)), name)
-		array.SetInitializer(llvm.ConstArray(elem, items))
+		array := llvm.AddGlobal(mod, value.Type(), name)
+		array.SetInitializer(value)
 		array.SetLinkage(llvm.PrivateLinkage)
 		array.SetGlobalConstant(true)
 		array.SetUnnamedAddr(true)
@@ -279,63 +305,65 @@ func rewriteEmbeddedPCLNIR(path string, data pclnmap.Data) error {
 	}
 	arrays := []struct {
 		name   string
+		elem   llvm.Type
 		values func(llvm.Type) []llvm.Value
 	}{
-		{funcInfoDataSymbol, func(t llvm.Type) (v []llvm.Value) {
-			for _, r := range data.Table.Records {
-				v = append(v, ints(t, uint64(r.SymbolPkg), uint64(r.SymbolName), uint64(r.NamePkg), uint64(r.NameName), uint64(r.FileRoot), uint64(r.FileName), uint64(r.Line)))
-			}
-			return
-		}},
-		{pcLineDataSymbol, func(t llvm.Type) (v []llvm.Value) {
+		{pcLineDataSymbol, llvm.Type{}, func(t llvm.Type) (v []llvm.Value) {
 			for _, r := range data.Table.PCLines {
 				v = append(v, ints(t, r.ID, uint64(r.Func), uint64(r.FileRoot), uint64(r.FileName), uint64(r.Line)))
 			}
 			return
 		}},
-		{funcInfoStringsDataSymbol, func(t llvm.Type) (v []llvm.Value) {
+		{funcInfoStringsDataSymbol, llvm.Type{}, func(t llvm.Type) (v []llvm.Value) {
 			for _, b := range data.Table.Strings {
 				v = append(v, llvm.ConstInt(t, uint64(b), false))
 			}
 			return
 		}},
-		{funcInfoStringOffsetsDataSymbol, func(t llvm.Type) (v []llvm.Value) {
+		{funcInfoStringOffsetsDataSymbol, offsetType, func(t llvm.Type) (v []llvm.Value) {
 			for _, b := range data.Table.StringOffsets {
 				v = append(v, llvm.ConstInt(t, uint64(b), false))
 			}
 			return
 		}},
-		{funcInfoHashDataSymbol, func(t llvm.Type) (v []llvm.Value) {
+		{funcInfoHashDataSymbol, llvm.Type{}, func(t llvm.Type) (v []llvm.Value) {
 			for _, b := range data.Table.Hash {
 				v = append(v, llvm.ConstInt(t, uint64(b), false))
 			}
 			return
 		}},
-		{funcInfoSymbolIndexDataSymbol, func(t llvm.Type) (v []llvm.Value) {
-			for _, r := range data.SymbolIndex {
-				v = append(v, ints(t, r.SymbolID, uint64(r.FuncIndex)))
-			}
-			return
-		}},
+	}
+	if err := setData(funcInfoDataSymbol, func(llvm.Type) llvm.Value { return recordData }); err != nil {
+		return err
 	}
 	for _, array := range arrays {
 		if array.name == pcLineDataSymbol && len(data.Table.PCLines) == 0 && mod.NamedGlobal(array.name).IsNil() {
 			continue
 		}
-		if err := setArray(array.name, array.values); err != nil {
+		if err := setData(array.name, func(old llvm.Type) llvm.Value {
+			elem := array.elem
+			if elem.IsNil() {
+				elem = old.ElementType()
+			}
+			return llvm.ConstArray(elem, array.values(elem))
+		}); err != nil {
 			return err
 		}
 	}
-	for name, count := range map[string]int{
-		funcInfoCountSymbol: len(data.Table.Records), pcLineCountSymbol: len(data.Table.PCLines),
-		funcInfoStringCountSymbol: len(data.Table.StringOffsets), funcInfoSymbolIndexCountSymbol: len(data.SymbolIndex),
-		funcInfoHashMaskSymbol: max(0, len(data.Table.Hash)-1),
+	index, indexCount := encodeFuncInfoSymbolIndex(lc, data.SymbolIndex, len(data.Table.Records), !layout.IsNil())
+	if err := setData(funcInfoSymbolIndexDataSymbol, func(llvm.Type) llvm.Value { return index }); err != nil {
+		return err
+	}
+	for name, count := range map[string]uint64{
+		funcInfoCountSymbol: uint64(len(data.Table.Records)), pcLineCountSymbol: uint64(len(data.Table.PCLines)),
+		funcInfoStringCountSymbol: uint64(len(data.Table.StringOffsets)), funcInfoSymbolIndexCountSymbol: indexCount,
+		funcInfoHashMaskSymbol: uint64(max(0, len(data.Table.Hash)-1)),
 	} {
 		global := mod.NamedGlobal(name)
 		if global.IsNil() {
 			return fmt.Errorf("embedded pclntab count %s is missing", name)
 		}
-		global.SetInitializer(llvm.ConstInt(global.GlobalValueType(), uint64(count), false))
+		global.SetInitializer(llvm.ConstInt(global.GlobalValueType(), count, false))
 	}
 	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 		return err

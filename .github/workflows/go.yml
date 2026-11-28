@@ -297,7 +297,7 @@ jobs:
       - name: Test runtime ABI and helpers with coverage
         shell: bash
         working-directory: runtime
-        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings runtime-helpers go test -json -coverprofile=../coverage-runtime-helpers.txt -covermode=set ./abi ./internal/traceback ./internal/wordmap
+        run: python ../.github/scripts/run_go_tests.py --output-dir ../go-test-timings runtime-helpers go test -json -coverprofile=../coverage-runtime-helpers.txt -covermode=set ./abi ./internal/gcroot ./internal/traceback ./internal/wordmap
 
       - name: Test with embedded emulator env
         env:
@@ -448,15 +448,72 @@ jobs:
 
           echo "LLGO_LTO_PLUGIN=$GITHUB_WORKSPACE/ltoplugin/build/LLGOLTOPlugin.so" >> "$GITHUB_ENV"
 
+      - name: Verify closed-link pruning and executable output
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -tags=dev -covermode=atomic -coverpkg=./cl,./internal/build \
+            -coverprofile=coverage-dev-pruning-unit.txt \
+            -run 'ClosedLink|NativeFormatImports|HostedValueFormatSupport|OptionalInitializers|DeferredErrorType|UnusedGlobalInit|ConfigureDarwinExecutableCwd|WasiSizePruning|EmbeddedSizePruning|WasmMetadataEligibility|OptionalMap|OptionalSlice' \
+            ./internal/build ./cl
+          cover_dir="$(mktemp -d)"
+          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build \
+            -o "$cover_dir/llgo" ./cmd/llgo
+          for fixture in native-map-init native-link-parity wasm-once-panic; do
+            package="./internal/build/testdata/$fixture"
+            go run "$package" > "$cover_dir/want.out" 2> "$cover_dir/want.err"
+            GOCOVERDIR="$cover_dir" "$cover_dir/llgo" build -Oz -deadcodedrop -globaldce=false \
+              -lto=full -debug-artifact=none -o "$cover_dir/probe" "$package"
+            "$cover_dir/probe" > "$cover_dir/got.out" 2> "$cover_dir/got.err"
+            diff -u "$cover_dir/want.out" "$cover_dir/got.out"
+            diff -u "$cover_dir/want.err" "$cover_dir/got.err"
+          done
+          go tool covdata textfmt -i="$cover_dir" -o=coverage-dev-pruning-link.txt
+
+      - name: Verify compact metadata in optimized executables
+        shell: bash
+        run: |
+          set -euo pipefail
+          cover_dir="$(mktemp -d)"
+          go build -tags=dev -cover -covermode=atomic \
+            -coverpkg=./cmd/llgo,./cl,./ssa,./internal/abi,./internal/build,./internal/pclnpost \
+            -o "$cover_dir/llgo" ./cmd/llgo
+          for fixture in wasm-reflect-type-queries wasm-type-fields-reflect; do
+            package="./internal/build/testdata/$fixture"
+            GOCOVERDIR="$cover_dir" "$cover_dir/llgo" build -Oz -deadcodedrop -globaldce=false \
+              -lto=full -debug-artifact=none -o "$cover_dir/probe" "$package"
+            go run "$package" > "$cover_dir/ref" 2>&1
+            "$cover_dir/probe" > "$cover_dir/out" 2>&1
+            diff -u "$cover_dir/ref" "$cover_dir/out"
+          done
+          go tool covdata textfmt -i="$cover_dir" -o=coverage-dev-metadata-link.txt
+          go test -tags=dev -timeout 20m -covermode=atomic \
+            -coverpkg=./cl,./ssa,./internal/abi,./internal/build,./internal/pclnpost \
+            -coverprofile=coverage-dev-metadata-unit.txt \
+            -run 'EmbeddedPCLN|FuncInfoTable|SymbolEntr|LargeAggregateTemporaryRoots|DiscardedWasmBoundaryResult|StringConcatLoweringWithRoots|GCRoot' \
+            ./cl ./ssa ./internal/abi ./internal/build ./internal/pclnpost
+
       - name: Run dev LTO GlobalDCE tests and demos with coverage
         run: |
           set -euo pipefail
 
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverprofile=coverage-dev-globaldce-unit.txt \
-            -run '^TestDevLTOGlobalDCE' \
-            ./ssa ./internal/build ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
+            -coverpkg=./ssa,./internal/build/...,./internal/crosscompile,./cmd/internal/flags,./internal/cabi \
+            -run '^Test(DevLTOGlobalDCE|HostedValueFormatSupport|SpecializeValueFormats|BinaryCodecSupport|WasiSizePruning|UnusedGlobalInit|WasmMetadataEligibilityWithoutInitializerPlan|RegisterFormatSupportErrors|NativeFormatImports|BuiltinFormatSource|DiscardableJSONInit|JSONV2Initializers|RewriteBinaryCodecs|RewriteJSONMarshal|RewriteJSONDecode|ConfigureCodecInits|DeferredErrorType|EntryJSONUses|StatelessTokenizerHandle|TypedJSONSupport|SpecializeScalarFormats|ScalarFormatsRequireKnownArgumentStorage|OptionalInitializers|ConfigureDarwinExecutableCwd|DarwinSymbol|SymbolEntryReservation|SharedSymbolEntryReservation)' \
+            ./ssa ./internal/build/... ./internal/crosscompile ./cmd/internal/flags ./internal/cabi
           go tool cover -func=coverage-dev-globaldce-unit.txt
+
+          go test -tags=dev -timeout 5m -covermode=atomic \
+            -coverprofile=coverage-dev-size-codecs.txt \
+            ./internal/build/binaryspecialize ./internal/build/fmtspecialize ./internal/build/jsonspecialize
+
+          native_cover="$(mktemp -d)"
+          go build -tags=dev -cover -covermode=atomic -coverpkg=./cmd/llgo,./cl,./internal/build/... \
+            -o "$native_cover/llgo" ./cmd/llgo
+          GOCOVERDIR="$native_cover" python3 test/sizebuild/runtest.py --target=native --llgo "$native_cover/llgo"
+          go tool covdata textfmt -i="$native_cover" -o=coverage-dev-native-size.txt \
+            -pkg=github.com/xgo-dev/llgo/cl,github.com/xgo-dev/llgo/internal/build/...
 
           go test -tags=dev -timeout 30m -covermode=atomic \
             -coverpkg=github.com/xgo-dev/llgo/ssa,github.com/xgo-dev/llgo/internal/build,github.com/xgo-dev/llgo/internal/crosscompile \
@@ -490,7 +547,7 @@ jobs:
           version: "11.3.1"
           token: ${{secrets.CODECOV_TOKEN}}
           use_oidc: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          files: coverage-dev-globaldce-unit.txt,coverage-dev-lto-globaldce-cl.txt,coverage-dev-lto-globaldce-symbols.txt,coverage-dev-lto-plugin-cl.txt
+          files: coverage-dev-metadata-link.txt,coverage-dev-metadata-unit.txt,coverage-dev-globaldce-unit.txt,coverage-dev-size-codecs.txt,coverage-dev-native-size.txt,coverage-dev-lto-globaldce-cl.txt,coverage-dev-lto-globaldce-symbols.txt,coverage-dev-lto-plugin-cl.txt,coverage-dev-pruning-unit.txt,coverage-dev-pruning-link.txt
           flags: dev-lto-globaldce
           disable_search: true
 

@@ -10,5 +10,7 @@ func gcMarkStackRoots() {
 	if sp < top {
 		markRoots(sp, top)
 	}
-	gcroot.VisitThreadStacks(markRoots)
+	if !gcroot.WASISelectableMutators || gcroot.WASIConcurrentMutators() {
+		gcroot.VisitThreadStacks(markRoots)
+	}
 }

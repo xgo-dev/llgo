@@ -32,7 +32,8 @@ func elideWrapperPC(pc, callee uintptr) bool {
 	} else {
 		index = runtimeFuncPCFrames[i].funcIndex
 	}
-	if index == 0 || uintptr(index) > runtimeFuncInfoCount || funcInfoAt(uintptr(index)-1).line&runtimeFuncInfoLineWrapper == 0 {
+	var scratch runtimeFuncInfoRecord
+	if index == 0 || uintptr(index) > runtimeFuncInfoCount || funcInfoAt(uintptr(index)-1, &scratch).line&runtimeFuncInfoLineWrapper == 0 {
 		return false
 	}
 	return elideWrapperCalling(frameSymbol(callee).function)

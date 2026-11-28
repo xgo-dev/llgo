@@ -644,6 +644,10 @@ func TestReflectNativeCallbackRoundTrip(t *testing.T) {
 
 func TestReflectCanConvertNativeCallback(t *testing.T) {
 	dst := reflect.TypeFor[reflectBulkCallback]()
+	src := reflect.TypeFor[func(int32) int32]()
+	if src.AssignableTo(dst) || dst.AssignableTo(src) {
+		t.Fatal("Go closures and native callback pointers are not directly assignable")
+	}
 	n := int32(42)
 	if reflect.ValueOf(func(x int32) int32 { return x + n }).CanConvert(dst) {
 		t.Fatal("CanConvert accepted a captured closure as a native callback")

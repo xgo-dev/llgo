@@ -40,6 +40,10 @@ var (
 	readyFinalizers         *finalizerRecord
 	finalizerWorkerRunning  bool
 	finalizerDependencyScan bool
+	activeFinalizerHooks    = gcFinalizerHooks{
+		preserve: preserveFinalizableObjects,
+		schedule: scheduleFinalizers,
+	}
 )
 
 // AddFinalizer registers callback for ptr without retaining the object. The
@@ -81,6 +85,9 @@ func addFinalizer(ptr unsafe.Pointer, callback func(unsafe.Pointer), kind finali
 	record.object = encodeFinalizerAddress(address)
 	record.next = finalizers
 	finalizers = record
+	if finalizerHooks == nil {
+		finalizerHooks = &activeFinalizerHooks
+	}
 	unlock(&gcMutex)
 
 	return func() {

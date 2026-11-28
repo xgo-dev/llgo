@@ -485,5 +485,20 @@ func poll_runtime_pollUnblock(ctx uintptr) {
 	pollWake(pd, 0)
 }
 
+//go:linkname os_llgoStdoutPollableAtStartup os.llgoStdoutPollableAtStartup
+func os_llgoStdoutPollableAtStartup() bool {
+	flags := cliteos.Fcntl(1, c.Int(csyscall.F_GETFL))
+	return flags >= 0 && flags&c.Int(csyscall.O_NONBLOCK) != 0 && !pollDescriptorUnsupported(1)
+}
+
+// The closed stdout writer has no File to cancel or set a deadline on.
+//
+//go:linkname os_llgoStdoutPoll os.llgoStdoutPoll
+func os_llgoStdoutPoll() {
+	fd := pollfd{fd: 1, events: pollOut}
+	for c_poll(&fd, 1, -1) < 0 && cliteos.Errno() == c.Int(csyscall.EINTR) {
+	}
+}
+
 //go:linkname poll_runtime_isPollServerDescriptor internal/poll.runtime_isPollServerDescriptor
 func poll_runtime_isPollServerDescriptor(fd uintptr) bool { return false }

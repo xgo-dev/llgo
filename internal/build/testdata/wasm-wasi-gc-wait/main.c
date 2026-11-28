@@ -1,18 +1,53 @@
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <time.h>
 
-void llgo_wasi_gc_enter_begin(void);
-void llgo_wasi_gc_enter_end(void);
-void llgo_wasi_gc_leave_end(void);
-int llgo_wasi_gc_stop(void);
-void llgo_wasi_gc_resume(void);
-void llgo_wasi_gc_mutex_lock(pthread_mutex_t *, uintptr_t, uintptr_t, uintptr_t);
-void llgo_wasi_gc_cond_timedwait(pthread_cond_t *, pthread_mutex_t *, int64_t,
-                                int, uintptr_t, uintptr_t, uintptr_t);
+// The native fixture models the Wasm wait queue for the world-change word.
+// Comparing the word and joining the queue must be atomic with respect to a
+// notification, including when the word changes before the wait begins.
+static pthread_mutex_t wait_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t wait_condition = PTHREAD_COND_INITIALIZER;
+
+static int wait64(_Atomic uint64_t *address, uint64_t expected,
+                  int64_t timeout) {
+  assert(pthread_mutex_lock(&wait_mutex) == 0);
+  int result = 1;
+  if (atomic_load(address) == expected) {
+    int status;
+    if (timeout < 0) {
+      status = pthread_cond_wait(&wait_condition, &wait_mutex);
+    } else {
+      struct timespec deadline;
+      assert(clock_gettime(CLOCK_REALTIME, &deadline) == 0);
+      deadline.tv_sec += timeout / 1000000000;
+      deadline.tv_nsec += timeout % 1000000000;
+      if (deadline.tv_nsec >= 1000000000) {
+        deadline.tv_sec++;
+        deadline.tv_nsec -= 1000000000;
+      }
+      status = pthread_cond_timedwait(&wait_condition, &wait_mutex, &deadline);
+    }
+    assert(status == 0 || status == ETIMEDOUT);
+    result = status == ETIMEDOUT ? 2 : 0;
+  }
+  assert(pthread_mutex_unlock(&wait_mutex) == 0);
+  return result;
+}
+
+static void notify_waiters(void) {
+  assert(pthread_mutex_lock(&wait_mutex) == 0);
+  assert(pthread_cond_broadcast(&wait_condition) == 0);
+  assert(pthread_mutex_unlock(&wait_mutex) == 0);
+}
+
+#define __builtin_wasm_memory_atomic_wait64(address, value, timeout) \
+  wait64((_Atomic uint64_t *)(address), (value), (timeout))
+#define __builtin_wasm_memory_atomic_notify(address, count) notify_waiters()
+#include "../../../../runtime/internal/runtime/_wrap/wasi_gc_world.c"
 
 static pthread_mutex_t application = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t condition = PTHREAD_COND_INITIALIZER;

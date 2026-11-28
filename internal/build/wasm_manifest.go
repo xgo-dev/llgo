@@ -72,6 +72,7 @@ type wasmManifest struct {
 	Tool            wasmManifestTool       `json:"wasm_opt"`
 	Args            []string               `json:"wasm_opt_args"`
 	LinkFlags       []string               `json:"link_flags"`
+	JSMinifier      string                 `json:"js_minifier,omitempty"`
 	InputBytes      int64                  `json:"post_link_bytes"`
 	Payload         wasmManifestSize       `json:"payload"`
 	Debug           wasmManifestSize       `json:"debug"`
@@ -151,6 +152,7 @@ func writeWasmManifest(ctx *context, dir, module string, moduleData []byte, name
 		Target: conf.Target, Profile: string(ctx.crossCompile.WasmProfile), Provider: string(ctx.crossCompile.WasmProvider),
 		PointerBits: int(conf.debugPointerSize) * 8, PCLN: conf.PCLNMode.String(), Optimization: conf.WasmOpt,
 		Strip: conf.WasmStrip, Tool: tool, Args: args, LinkFlags: linkFlags, InputBytes: before,
+		JSMinifier:      ctx.wasmJSMinifier,
 		AllowedFeatures: wasmFinalFeatures(&ctx.crossCompile)}
 	if m.LinkDriver != "" {
 		m.LinkDriver = filepath.Base(m.LinkDriver)

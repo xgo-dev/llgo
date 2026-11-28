@@ -67,6 +67,14 @@ entry:
 			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 				t.Fatalf("invalid rooted lowering: %v\n%s", err, mod.String())
 			}
+			// Frontend and lowering-created frames are traversed by the same
+			// runtime scanner, even when the Go word is larger than an address.
+			for n := mod.FirstFunction(); !n.IsNil(); n = llvm.NextFunction(n) {
+				ir := n.String()
+				if strings.Contains(ir, "alloca { { ptr, i32 },") {
+					t.Fatalf("Go-width storage in a compiler root frame:\n%s", ir)
+				}
+			}
 			for _, name := range []string{"make", "snapshot", "caller"} {
 				fn := mod.NamedFunction(name)
 				ir := fn.String()

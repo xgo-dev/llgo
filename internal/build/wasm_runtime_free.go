@@ -8,10 +8,14 @@ import (
 	"go/types"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/env"
 	"github.com/xgo-dev/llgo/internal/optlevel"
+	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
 	"golang.org/x/tools/go/ssa"
 )
@@ -19,7 +23,9 @@ import (
 // A closed program with no Go allocation, panic, callbacks or scheduler use
 // needs neither logical frames nor runtime initialization. Prove this before
 // lowering: frame bookkeeping itself would otherwise introduce allocations.
-func configureWasmRuntimeFree(ctx *context) {
+// Emscripten uses the same proof to omit runtime startup and the scheduler at
+// final link. The instrumentation in cached archives keeps its usual ABI.
+func configureRuntimeFree(ctx *context) {
 	if ctx.frontend != nil && ctx.frontend.program != nil {
 		if ctx.frontend.program.RuntimeFree {
 			enableWasmRuntimeFree(ctx)
@@ -27,12 +33,16 @@ func configureWasmRuntimeFree(ctx *context) {
 		return
 	}
 	conf := ctx.buildConf
+	directMain := canUseEmscriptenDirectMain(ctx)
 	if len(ctx.initial) != 1 || ctx.initial[0].Types == nil || ctx.initial[0].Types.Name() != "main" ||
-		conf.Goarch != "wasm" || conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
-		conf.OptLevel == optlevel.O0 || ctx.prog.Target().WasmProvider != "wasi" || conf.PCLNLoad.startsAtEntry() ||
-		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0 ||
-		ctx.frontendOptions.DebuggerFrames || needsWasmRuntimeScheduler(ctx) ||
+		conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
+		conf.OptLevel == optlevel.O0 || conf.PCLNLoad.startsAtEntry() ||
+		ctx.frontendOptions.DebuggerFrames || (!directMain && needsWasmRuntimeScheduler(ctx)) ||
 		os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" || conf.LinkOptions.ExternalLinkerFlags != "" {
+		return
+	}
+	if !directMain && (conf.Goarch != "wasm" || ctx.prog.Target().WasmProvider != "wasi" ||
+		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0) {
 		return
 	}
 	linkname := func(fn *ssa.Function) string {
@@ -52,7 +62,8 @@ func configureWasmRuntimeFree(ctx *context) {
 	}
 	// Check reachable globals even inside the trusted runtime tree. Most
 	// programs also fail this proof without needing any filesystem checks.
-	if !wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe) {
+	runtimeFree, _ := wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe)
+	if !runtimeFree {
 		return
 	}
 	// Foreign objects and exported entries can hide calls back into Go.
@@ -121,7 +132,57 @@ func configureWasmRuntimeFree(ctx *context) {
 			return
 		}
 	}
-	enableWasmRuntimeFree(ctx)
+	if directMain {
+		ctx.emscriptenDirectMain = true
+		if conf.Verbose || conf.PrintCommands {
+			fmt.Fprintln(os.Stderr, "llgo: omit Emscripten scheduler for a synchronous executable")
+		}
+	} else {
+		enableWasmRuntimeFree(ctx)
+	}
+}
+
+// Native inputs and externally selected flags can introduce suspending calls
+// that have no Go SSA body. Use the fixed Emscripten executable profiles.
+func canUseEmscriptenDirectMain(ctx *context) bool {
+	conf, target := ctx.buildConf, ctx.crossCompile
+	tags := splitSourcePatchBuildTags(conf.Tags)
+	return !conf.disableSizeSpecialization && sizeCodecBuild(conf, ctx.frontendOptions) &&
+		conf.DebugArtifactMode == DebugArtifactNone && conf.Goos == "js" && conf.Goarch == "wasm" &&
+		(conf.Target == "emscripten" || conf.Target == "emscripten-memory64") &&
+		target.WasmProvider == crosscompile.WasmProviderEmscripten && slices.Contains(target.LDFLAGS, "-sASYNCIFY=1") &&
+		len(target.ExtraFiles) == 0 && conf.LinkOptions.ExternalLinker == "" &&
+		!slices.Contains(target.BuildTags, "llgo.wasm.workers") && !slices.Contains(tags, "llgo.wasm.workers") &&
+		!slices.Contains(tags, wasmReflectLibffiTag) &&
+		os.Getenv("EMCC_CFLAGS") == "" && ctx.commands.lookup("EMCC_CFLAGS") == ""
+}
+
+// Apply the startup proof to the final link only. Package manifests use the
+// original profile, so synchronous and suspending programs can share archives.
+func configureEmscriptenDirectLink(target *crosscompile.Export) {
+	flags := slices.Clone(target.LDFLAGS)
+	for i := 0; i+1 < len(flags); i++ {
+		if flags[i] == "--pre-js" && filepath.Base(flags[i+1]) == emscriptenAsyncifyExportsJS {
+			flags = slices.Delete(flags, i, i+2)
+			break
+		}
+	}
+	target.LDFLAGS = slices.DeleteFunc(flags, func(flag string) bool {
+		return strings.HasPrefix(flag, "-sASYNCIFY")
+	})
+	target.WasmPostLink.Asyncify = false
+}
+
+// Only the executable's own package can omit its polls and caller frames.
+// Dependencies still compile with the fixed runtime profile.
+func isEmscriptenRuntimeFreeEntry(ctx *context, pkg *packages.Package) bool {
+	return ctx.emscriptenDirectMain && pkgExists(ctx.initial, pkg)
+}
+
+func useMinimalWASIStartup(ctx *context) bool {
+	// An external symbol map may derive its path from argv[0].
+	return ctx.wasmRuntimeFree && ctx.buildConf.PCLNMode != PCLNExternal &&
+		wasiGuardedStaticData(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions)
 }
 
 func enableWasmRuntimeFree(ctx *context) {
@@ -135,9 +196,14 @@ func enableWasmRuntimeFree(ctx *context) {
 	}
 }
 
-func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool) bool {
+func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool) (runtimeFree, usesCPrintf bool) {
+	return runtimeFreeFunctions(roots, linkname, globalSafe, nil, true)
+}
+
+func runtimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function) string, globalSafe func(*ssa.Global) bool,
+	acceptCall func(*ssa.Call) bool, allowPrint bool) (runtimeFree, usesCPrintf bool) {
 	if len(roots) == 0 {
-		return false
+		return false, false
 	}
 	state := make(map[*ssa.Function]uint8)
 	var visit func(*ssa.Function) bool
@@ -155,17 +221,25 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 		for _, block := range fn.Blocks {
 			for _, instruction := range block.Instrs {
 				switch instr := instruction.(type) {
-				case *ssa.DebugRef, *ssa.Return, *ssa.Jump, *ssa.If, *ssa.Phi:
+				case *ssa.DebugRef, *ssa.Return, *ssa.Jump, *ssa.If, *ssa.Phi, *ssa.Field:
+				case *ssa.Index:
+					if !runtimeFreeArrayIndex(instr.X.Type(), instr.Index) {
+						return false
+					}
+				case *ssa.Alloc, *ssa.FieldAddr, *ssa.IndexAddr:
+					if !runtimeFreeLocalAddress(instr.(ssa.Value)) {
+						return false
+					}
 				case *ssa.UnOp:
 					if instr.Op == token.MUL {
-						if global, ok := instr.X.(*ssa.Global); !ok || !globalSafe(global) || !runtimeFreeScalar(instr.Type()) {
+						if !runtimeFreeAddress(instr.X, instr.Type(), globalSafe) {
 							return false
 						}
 					} else if instr.Op != token.NOT && instr.Op != token.SUB && instr.Op != token.XOR {
 						return false
 					}
 				case *ssa.Store:
-					if global, ok := instr.Addr.(*ssa.Global); !ok || !globalSafe(global) || !runtimeFreeScalar(instr.Val.Type()) {
+					if !runtimeFreeAddress(instr.Addr, instr.Val.Type(), globalSafe) {
 						return false
 					}
 				case *ssa.BinOp:
@@ -182,9 +256,12 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 						return false
 					}
 				case *ssa.Call:
+					if acceptCall != nil && acceptCall(instr) {
+						continue
+					}
 					call := instr.Common()
 					if builtin, ok := call.Value.(*ssa.Builtin); ok {
-						if builtin.Name() != "print" && builtin.Name() != "println" {
+						if !allowPrint || builtin.Name() != "print" && builtin.Name() != "println" {
 							return false
 						}
 						for _, arg := range call.Args {
@@ -219,6 +296,7 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 							if !ok || !args.IsNil() {
 								return false
 							}
+							usesCPrintf = true
 						default:
 							return false
 						}
@@ -235,13 +313,71 @@ func wasmRuntimeFreeFunctions(roots []*ssa.Function, linkname func(*ssa.Function
 	}
 	for _, root := range roots {
 		if !visit(root) {
-			return false
+			return false, false
 		}
 	}
-	return true
+	return true, usesCPrintf
 }
 
 func runtimeFreeScalar(typ types.Type) bool {
 	basic, ok := typ.Underlying().(*types.Basic)
 	return ok && basic.Info()&(types.IsInteger|types.IsBoolean|types.IsString) != 0
+}
+
+func runtimeFreeArrayIndex(t types.Type, index ssa.Value) bool {
+	array, ok := t.Underlying().(*types.Array)
+	n, known := index.(*ssa.Const)
+	if !ok || !known || n.Value == nil {
+		return false
+	}
+	i, exact := constant.Int64Val(n.Value)
+	return exact && i >= 0 && i < array.Len()
+}
+
+func runtimeFreeAddress(addr ssa.Value, elem types.Type, globalSafe func(*ssa.Global) bool) bool {
+	if global, ok := addr.(*ssa.Global); ok {
+		return globalSafe(global) && runtimeFreeScalar(elem)
+	}
+	return runtimeFreeLocalAddress(addr)
+}
+
+// Only direct projections of a small stack object are provably non-nil.
+// Variable indexes and addresses originating in parameters stay unproven.
+func runtimeFreeLocalAddress(addr ssa.Value) bool {
+	switch v := addr.(type) {
+	case *ssa.Alloc:
+		if v.Heap {
+			return false
+		}
+		elem := v.Type().(*types.Pointer).Elem()
+		if !runtimeFreeAggregate(elem) {
+			return false
+		}
+		// Bound the size with the widest supported pointer and alignment.
+		size := types.SizesFor("gc", "amd64").Sizeof(elem)
+		return size >= 0 && uint64(size) <= llabi.MaxStackVarSize
+	case *ssa.FieldAddr:
+		return runtimeFreeLocalAddress(v.X)
+	case *ssa.IndexAddr:
+		ptr, ok := v.X.Type().Underlying().(*types.Pointer)
+		return ok && runtimeFreeArrayIndex(ptr.Elem(), v.Index) && runtimeFreeLocalAddress(v.X)
+	default:
+		return false
+	}
+}
+
+func runtimeFreeAggregate(t types.Type) bool {
+	switch value := t.Underlying().(type) {
+	case *types.Array:
+		return runtimeFreeAggregate(value.Elem())
+	case *types.Struct:
+		for i := 0; i < value.NumFields(); i++ {
+			if !runtimeFreeAggregate(value.Field(i).Type()) {
+				return false
+			}
+		}
+		return true
+	default:
+		return runtimeFreeScalar(t)
+	}
 }

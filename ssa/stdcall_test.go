@@ -156,12 +156,16 @@ func TestWasm32NativeAliasDescriptors(t *testing.T) {
 	if common.Operand(6).ZExtValue()&uint64(abi.KindFuncPublic) == 0 || common.Operand(3).ZExtValue()&uint64(abi.TFlagNative) != 0 {
 		t.Fatalf("wrong native/public flags on the higher-order Go function: %s", frame)
 	}
-	for _, suffix := range []string{"$in", "$out"} {
+	for i, slot := range []string{"input", "result"} {
 		member := func(desc llvm.Value) llvm.Value {
-			return pkg.Module().NamedGlobal(desc.Name() + suffix).Initializer().Operand(0).Operand(0)
+			table := pkg.Module().NamedGlobal(desc.Name() + "$params")
+			if table.IsNil() {
+				t.Fatalf("missing parameter table for %q", desc.Name())
+			}
+			return table.Initializer().Operand(i).Operand(0)
 		}
 		if member(frame) != scalar || member(public) != plain {
-			t.Fatalf("%s of %q and %q lost the native/public distinction", suffix, frame.Name(), public.Name())
+			t.Fatalf("%s of %q and %q lost the native/public distinction", slot, frame.Name(), public.Name())
 		}
 	}
 }

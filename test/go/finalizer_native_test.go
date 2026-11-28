@@ -32,7 +32,7 @@ type nativeAggregateFinalizer func(*nativeFinalizerObject) [64]int
 func registerBoxedFinalizer(obj, fn any) { runtime.SetFinalizer(obj, fn) }
 
 func TestRuntimeSetFinalizerNative(t *testing.T) {
-	for _, tc := range []struct {
+	for i, tc := range []struct {
 		name string
 		fn   any
 	}{
@@ -42,12 +42,19 @@ func TestRuntimeSetFinalizerNative(t *testing.T) {
 		{"aggregate result", nativeAggregateFinalizer(func(p *nativeFinalizerObject) (r [64]int) { p.finalize(); r[63] = 123; return })},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			finalized := make(chan int, 1)
+			// Conservative stack roots may keep an individual allocation alive.
+			// Exercise each native signature with independently collectible objects,
+			// as in TestRuntimeSetFinalizerAssignableArgumentTypes.
+			const registrations = 8
+			want := 42 + i
+			finalized := make(chan int, registrations)
 			registerFinalizerForTest(func() {
-				p := &nativeFinalizerObject{value: 42, finalized: finalized}
-				registerBoxedFinalizer(p, tc.fn)
+				for range registrations {
+					p := &nativeFinalizerObject{value: want, finalized: finalized}
+					registerBoxedFinalizer(p, tc.fn)
+				}
 			})
-			waitForFinalizerValue(t, finalized, 42)
+			waitForFinalizerValue(t, finalized, want)
 		})
 	}
 }
@@ -68,4 +75,18 @@ func TestRuntimeSetFinalizerNativeCancel(t *testing.T) {
 		t.Fatal("canceled native finalizer ran")
 	default:
 	}
+}
+
+func TestRuntimeSetFinalizerDirectErrorResult(t *testing.T) {
+	finalized := make(chan int, 1)
+	registerFinalizerForTest(func() {
+		p := &nativeFinalizerObject{value: 40, finalized: finalized}
+		registerBoxedFinalizer(p, nativePointerFinalizer(func(p *nativeFinalizerObject) { p.finalize() }))
+		runtime.SetFinalizer(p, func(p *nativeFinalizerObject) error {
+			finalized <- p.value + 2
+			return nil
+		})
+		runtime.KeepAlive(p)
+	})
+	waitForFinalizerValue(t, finalized, 42)
 }

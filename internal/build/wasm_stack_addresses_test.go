@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	llabi "github.com/xgo-dev/llgo/internal/abi"
+	"github.com/xgo-dev/llgo/internal/crosscompile"
+	"github.com/xgo-dev/llgo/internal/lto"
+	"github.com/xgo-dev/llgo/internal/optlevel"
 	"github.com/xgo-dev/llvm"
 )
 
@@ -194,5 +197,80 @@ define void @ordinary(ptr %data) {
 		if moved := localizeWasmStackAddresses("wasm", mod); moved != 0 || mod.String() != before {
 			t.Fatal("changed a module without setjmp calls")
 		}
+	}
+}
+
+func TestEmscriptenSetjmpInlining(t *testing.T) {
+	t.Setenv("CCFLAGS", "")
+	t.Setenv("CFLAGS", "")
+	t.Setenv("LDFLAGS", "")
+	const ir = `
+declare i32 @setjmp(ptr) returns_twice
+declare void @ordinary()
+declare void @required() alwaysinline
+declare void @llvm.sideeffect()
+define void @protected(ptr %state, ptr %f) {
+	call i32 @setjmp(ptr %state)
+	call void @ordinary()
+	call void %f()
+	call void @required()
+	call void @llvm.sideeffect()
+	ret void
+}
+define void @unprotected() {
+	call void @ordinary()
+	ret void
+}
+`
+	for _, tt := range []struct {
+		name     string
+		provider crosscompile.WasmProvider
+		level    optlevel.Level
+		linkTime lto.Mode
+		debug    DebugArtifactMode
+		emcc     string
+		want     bool
+	}{
+		{"full size build", crosscompile.WasmProviderEmscripten, optlevel.Oz, lto.Full, DebugArtifactNone, "", true},
+		{"non-size build", crosscompile.WasmProviderEmscripten, optlevel.O2, lto.Full, DebugArtifactNone, "", false},
+		{"thin LTO", crosscompile.WasmProviderEmscripten, optlevel.Oz, lto.Thin, DebugArtifactNone, "", false},
+		{"debug artifact", crosscompile.WasmProviderEmscripten, optlevel.Oz, lto.Full, DebugArtifactExternal, "", false},
+		{"native SjLj", crosscompile.WasmProviderEmscripten, optlevel.Oz, lto.Full, DebugArtifactNone, "-fwasm-exceptions -sSUPPORT_LONGJMP=wasm", false},
+		{"WASI", crosscompile.WasmProviderWASI, optlevel.Oz, lto.Full, DebugArtifactNone, "", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := &context{
+				buildConf:    &Config{OptLevel: tt.level, LTO: tt.linkTime, DebugArtifactMode: tt.debug},
+				crossCompile: crosscompile.Export{WasmProvider: tt.provider},
+				commands:     commandEnv{environ: []string{"EMCC_CFLAGS=" + tt.emcc}},
+			}
+			mod := parseWasmAggregateIR(t, ir)
+			before := mod.String()
+			limitEmscriptenSetjmpInlining(ctx, mod)
+			if !tt.want {
+				if mod.String() != before {
+					t.Fatal("changed the LLVM module outside the supported profile")
+				}
+				return
+			}
+			for _, name := range []string{"protected", "unprotected"} {
+				for _, block := range mod.NamedFunction(name).BasicBlocks() {
+					for inst := block.FirstInstruction(); !inst.IsNil(); inst = llvm.NextInstruction(inst) {
+						if inst.IsACallInst().IsNil() {
+							continue
+						}
+						callee := inst.CalledValue().Name()
+						want := name == "protected" && (callee == "ordinary" || callee == "f")
+						got := !inst.GetCallSiteEnumAttribute(-1, llvm.AttributeKindID("noinline")).IsNil()
+						if got != want {
+							t.Fatalf("%s calls %s: noinline = %v, want %v", name, callee, got, want)
+						}
+					}
+				}
+			}
+			if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

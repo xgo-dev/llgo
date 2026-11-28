@@ -541,6 +541,12 @@ func (b Builder) WrapNilCheck(ptr, recvType, methodName Expr) Expr {
 	return ptr
 }
 
+func (b Builder) WrapNilCheckText(ptr, text Expr) Expr {
+	isNil := b.BinOp(token.EQL, ptr, b.Prog.Nil(ptr.Type))
+	b.Call(b.Pkg.rtFunc("PanicWrapNilPointerText"), isNil, text)
+	return ptr
+}
+
 // Load returns the value at the pointer ptr.
 func (b Builder) Load(ptr Expr) Expr {
 	dbgInstrf("Load %v\n", ptr.impl)

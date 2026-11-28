@@ -192,6 +192,16 @@ func (b Builder) fitLLVMValue(value llvm.Value, source Type, target llvm.Type) l
 	}
 	if value.Type().TypeKind() == llvm.IntegerTypeKind && target.TypeKind() == llvm.IntegerTypeKind {
 		if value.Type().IntTypeWidth() > target.IntTypeWidth() {
+			// A matching extension into the Go word already proves that the
+			// integer fits in the original native word. Avoid keeping an
+			// assertion call that LTO can only simplify to an assertion of false.
+			extension := value.IsASExtInst()
+			if source.kind == vkUnsigned {
+				extension = value.IsAZExtInst()
+			}
+			if !extension.IsNil() && extension.Operand(0).Type().IntTypeWidth() == target.IntTypeWidth() {
+				return extension.Operand(0)
+			}
 			truncated := llvm.CreateTrunc(b.impl, value, target)
 			var restored llvm.Value
 			if source.kind == vkUnsigned {
