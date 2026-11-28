@@ -160,9 +160,10 @@ func (p *Pool) getSlow(pid int) any {
 }
 
 // The standard cleanup operates on a per-P array stored in Pool.local. LLGo
-// stores an opaque pool identity there and retains pools and their locals in
-// per-thread maps until thread exit. The runtime GC hook must not reinterpret
-// that identity as an array. Periodic GC cleanup is currently unsupported.
+// stores an opaque *poolSlotMeta handle there and retains per-thread locals in
+// a hybrid fast-slot slice (first 1024 pools) plus an overflow wordmap until
+// thread exit. The runtime GC hook must not reinterpret that handle as an
+// array. Periodic GC cleanup is currently unsupported.
 func poolCleanup() {}
 
 // Implemented in runtime. Keeping the dynamic TLS implementation behind these

@@ -56,11 +56,17 @@ func HasWaitUint32() bool { return darwinHasWaitUint32() != 0 }
 func HasWaitUint32Timeout() bool { return darwinHasWaitUint32Timeout() != 0 }
 
 // WaitUint32 atomically checks addr and sleeps while it contains value.
+// Returns an errno value (0 on success, ENOPROTOOPT if unavailable).
+// Callers must always re-read *addr after WaitUint32 returns (spurious wakes
+// and EINTR are possible).
 func WaitUint32(addr *uint32, value uint32) c.Int {
 	return darwinWaitUint32(addr, value)
 }
 
 // WaitUint32Timeout sleeps while *addr == value for up to timeoutNs nanoseconds.
+// Returns an errno value (0 on success, ETIMEDOUT on timeout or timeoutNs == 0
+// without inspecting *addr, ENOPROTOOPT if unavailable). Callers must always
+// re-read *addr after WaitUint32Timeout returns.
 func WaitUint32Timeout(addr *uint32, value uint32, timeoutNs uint64) c.Int {
 	return darwinWaitUint32Timeout(addr, value, timeoutNs)
 }

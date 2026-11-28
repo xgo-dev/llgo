@@ -47,6 +47,8 @@ int llgo_darwin_has_wait_uint32_timeout(void)
 
 int llgo_darwin_wait_uint32(uint32_t *addr, uint32_t value)
 {
+    if (llgo_wait_addr_fn == NULL)
+        return ENOPROTOOPT;
     int saved_errno = errno;
     int ret = llgo_wait_addr_fn(addr, (uint64_t)value, sizeof(*addr), 0);
     int err = ret < 0 ? errno : 0;
@@ -56,6 +58,8 @@ int llgo_darwin_wait_uint32(uint32_t *addr, uint32_t value)
 
 int llgo_darwin_wait_uint32_timeout(uint32_t *addr, uint32_t value, uint64_t timeout_ns)
 {
+    if (llgo_wait_addr_timeout_fn == NULL)
+        return ENOPROTOOPT;
     if (timeout_ns == 0)
         return ETIMEDOUT;
     int saved_errno = errno;
@@ -68,6 +72,8 @@ int llgo_darwin_wait_uint32_timeout(uint32_t *addr, uint32_t value, uint64_t tim
 
 void llgo_darwin_wake_uint32(uint32_t *addr)
 {
+    if (llgo_wake_addr_any_fn == NULL)
+        return;
     int saved_errno = errno;
     llgo_wake_addr_any_fn(addr, sizeof(*addr), 0);
     errno = saved_errno;
@@ -75,6 +81,8 @@ void llgo_darwin_wake_uint32(uint32_t *addr)
 
 void llgo_darwin_wake_uint32_all(uint32_t *addr)
 {
+    if (llgo_wake_addr_all_fn == NULL)
+        return;
     int saved_errno = errno;
     llgo_wake_addr_all_fn(addr, sizeof(*addr), 0);
     errno = saved_errno;

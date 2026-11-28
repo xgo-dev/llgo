@@ -11,9 +11,11 @@ import (
 
 // Share one TLS key to avoid exhausting the process-wide pthread key limit.
 // The first poolFastSlotLimit sync.Pools receive sequential slot IDs so
-// per-thread Get/Put lookups index a flat slice in O(1) without hashing; any
-// pools beyond that cap fall back to a sparse per-thread wordmap so programs
-// creating many ephemeral sync.Pool instances stay bounded in memory.
+// per-thread Get/Put lookups index a flat slice in O(1) without hashing (each
+// fast slice grows lazily up to poolFastSlotLimit entries per thread). Pools
+// allocated past that one-way cap fall back to the sparse per-thread overflow
+// wordmap (retaining entries until thread exit, matching the pre-existing map
+// lifecycle).
 const poolFastSlotLimit = 1024
 
 type poolLocalEntry struct {
@@ -53,8 +55,8 @@ func syncRuntimePoolLocalAlloc(victim *unsafe.Pointer) unsafe.Pointer {
 		})
 	})
 	id := uintptr(poolFastSlotLimit)
-	if poolNextID.Load() < poolFastSlotLimit {
-		id = poolNextID.Add(1) - 1
+	if n := poolNextID.Add(1); n <= poolFastSlotLimit {
+		id = n - 1
 	}
 	// Retain the victim pointer inside the handle so the pool's victim field
 	// stays reachable until thread TLS destructors publish cached locals.

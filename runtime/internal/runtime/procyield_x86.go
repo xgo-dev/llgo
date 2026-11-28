@@ -8,8 +8,9 @@ import _ "unsafe"
 func procyieldAsm(instruction string)
 
 // Procyield executes architecture pause instructions during short lock spins.
-func Procyield(cycles uint32) {
-	for i := uint32(0); i < cycles; i++ {
+// The count parameter specifies the number of pause instructions to issue.
+func Procyield(count uint32) {
+	for i := uint32(0); i < count; i++ {
 		procyieldAsm("pause")
 	}
 }
