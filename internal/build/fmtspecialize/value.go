@@ -9,13 +9,14 @@ import (
 )
 
 type ValuePlan struct {
-	callee      *ssa.Function
-	builtin     *ssa.Function
-	printf      *ssa.Function
-	plainPrintf *ssa.Function
-	pending     []formatRewrite
-	names       map[*types.Package]*ValueFunctions
-	calls       []formatRewrite
+	callee         *ssa.Function
+	builtin        *ssa.Function
+	printf         *ssa.Function
+	plainPrintf    *ssa.Function
+	pending        []formatRewrite
+	entryFunctions []*ssa.Function
+	names          map[*types.Package]*ValueFunctions
+	calls          []formatRewrite
 }
 
 type formatRewrite struct {
@@ -56,6 +57,20 @@ func (plan *ValuePlan) apply(accept func() bool) map[*types.Package]bool {
 		return nil
 	}
 	return plan.commit(removed)
+}
+
+// RecordFunction reuses the compiler's enumeration of functions, including
+// methods, generic instances and anonymous functions of the entry package.
+func (plan *ValuePlan) RecordFunction(fn *ssa.Function) {
+	owner := fn.Pkg
+	if owner == nil {
+		if origin := fn.Origin(); origin != nil {
+			owner = origin.Pkg
+		}
+	}
+	if owner != nil && owner.Pkg.Name() == "main" {
+		plan.entryFunctions = append(plan.entryFunctions, fn)
+	}
 }
 
 // Record adds a call to the plan when its packed operands are used only here.

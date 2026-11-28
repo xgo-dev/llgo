@@ -9,6 +9,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	"github.com/xgo-dev/llgo/internal/optlevel"
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 func TestSpecializeScalarFormats(t *testing.T) {
@@ -206,6 +207,7 @@ func TestSpecializeScalarFormatsPrintfWithFiniteTypes(t *testing.T) {
 		{"private parameter", `if cond { render("value") } else { render(1.25) }`, false,
 			1<<(types.String-types.Bool) | 1<<(types.Float64-types.Bool)},
 		{"address taken", `f := []func(any){render}; f[0]("value")`, false, 0},
+		{"closure caller", `render("v"); (func() { render(1.5) })()`, false, 1<<(types.String-types.Bool) | 1<<(types.Float64-types.Bool)},
 		{"entry parameter", `render("value")`, true, 0},
 		{"unknown incoming branch", `var v any = "value"; if cond { v = input }; render(v)`, false, 0},
 		{"named scalar method", `render(label(1))`, false, 0},
@@ -232,7 +234,11 @@ func main() { `+tc.body+` }
 `, fmtPkg.Pkg)
 			prog.Build()
 			plan := fmtspecialize.NewValuePlan(prog, nil)
-			for _, fn := range []*ssa.Function{main.Func("main"), main.Func("render")} {
+			for fn := range ssautil.AllFunctions(prog) {
+				plan.RecordFunction(fn)
+				if fn.Pkg != main {
+					continue
+				}
 				for _, block := range fn.Blocks {
 					for _, inst := range block.Instrs {
 						plan.Record(inst, main)

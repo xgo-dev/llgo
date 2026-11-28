@@ -4762,6 +4762,9 @@ func recordPackageSSAInstructions(ctx *context) error {
 		if fn == nil {
 			continue
 		}
+		if valueFormats != nil {
+			valueFormats.RecordFunction(fn)
+		}
 		if validateMaps != nil {
 			if err := validateSSAVectorMaps(fn, validateMaps); err != nil {
 				return err
