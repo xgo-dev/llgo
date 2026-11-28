@@ -3,6 +3,7 @@
 package simd_test
 
 import (
+	"os"
 	"simd/archsimd"
 	"testing"
 )
@@ -22,8 +23,15 @@ func TestSIMD512RoundScale(t *testing.T) {
 		}
 	}
 }
+
 func TestSIMD512AESRound(t *testing.T) {
-	if !archsimd.X86.AVXAES() {
+	available := archsimd.X86.AVXAES()
+	if os.Getenv("LLGO_TEST_MASKED_AES") == "1" {
+		// The runner has already executed this instruction on the same CPU.
+		if available {
+			t.Fatal("expected the Go AVXAES query to be disabled")
+		}
+	} else if !available {
 		t.Skip("requires AVX and AES")
 	}
 	var x archsimd.Uint8x16

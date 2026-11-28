@@ -9,14 +9,11 @@ var CPUFeatures uint64
 // SIMDHasAVX reports the OS-enabled AVX flag after CPU overrides.
 func SIMDHasAVX() bool { return CPUFeatures&4 != 0 }
 
-// PanicSIMDX86Feature is called only on the missing-feature path.
+// Previously generated code marks the edge after this call unreachable.
 func PanicSIMDX86Feature() {
 	panic(errorString("SIMD instruction requires an unavailable x86 CPU feature"))
 }
 
-// SIMDRequireX86Features remains available to previously generated packages.
-func SIMDRequireX86Features(required uint64) {
-	if CPUFeatures&required != required {
-		PanicSIMDX86Feature()
-	}
-}
+// Previous compilers called SIMDRequireX86Features before every x86 instruction
+// leaf. Those call sites can return normally and execute the instruction.
+func SIMDRequireX86Features(uint64) {}

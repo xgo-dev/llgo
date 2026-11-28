@@ -159,7 +159,7 @@ func (a *wideABI) localVectorWork(inst llvm.Value) bool {
 
 // Generic LLVM intrinsics that can use an optional instruction even when the
 // vector fits the baseline. Instruction-specific x86 leaves already carry their
-// own target features. Their caller checks the effective CPU mask at the call site.
+// own target features.
 func (a *wideABI) intrinsicGuards(inst, fn llvm.Value) uint64 {
 	if hint := inst.Metadata(a.mod.Context().MDKindID(PreferFeatureMD)); !hint.IsNil() {
 		if operands := hint.MDNodeOperands(); len(operands) == 1 && operands[0].IsAMDString() {

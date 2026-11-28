@@ -16,9 +16,9 @@ for compiler in go "$LLGO"; do
     GODEBUG="${GODEBUG:+$GODEBUG,}simd=512" "$SDE" -spr -- "$output/test" -test.count=1 -test.timeout="${SDE_TIMEOUT:-60m}" -test.v -test.run="$filter" >"$output/result" || { cat "$output/result"; exit 1; }
     cat "$output/result"
     if [[ "$package" == ./test/simd ]]; then
-      # Sapphire Rapids supplies YMM and ZMM state even with effective Go queries off.
-      GODEBUG=cpu.all=off LLGO_TEST_MASKED_YMM=1 LLGO_TEST_MASKED_ZMM=1 "$SDE" -spr -- "$output/test" -test.count=1 \
-        -test.run='^TestSIMD(FMVOutlineCallers|512FixedRegisterCall)$' -test.v
+      # Sapphire Rapids supports the register transfers and AES with Go queries off.
+      GODEBUG=cpu.all=off LLGO_TEST_MASKED_YMM=1 LLGO_TEST_MASKED_ZMM=1 LLGO_TEST_MASKED_AES=1 "$SDE" -spr -- "$output/test" -test.count=1 \
+        -test.run='^TestSIMD(FMVOutlineCallers|512FixedRegisterCall|512AESRound)$' -test.v
       GODEBUG="${GODEBUG:+$GODEBUG,}cpu.avx512f=off,cpu.sha=off" "$SDE" -spr -- "$output/test" -test.count=1 -test.run='^TestSIMD512(VBMI2|EitherGuard|IndependentGuards)WideCall$' -test.v | tee "$output/result"
       grep -q 'AVX2=true AVX512=false VBMI2=true' "$output/result"
       grep -q 'FMA=true SHA=false AVXVNNI=true VBMI2=true' "$output/result"

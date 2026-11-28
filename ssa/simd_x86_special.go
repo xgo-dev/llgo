@@ -43,18 +43,17 @@ var x86SIMDInstructions = map[SIMDOp]x86SIMDInstruction{
 
 func SIMDX86Special(op SIMDOp) bool { _, ok := x86SIMDInstructions[op]; return ok }
 
-// Keep the required predicate bits in sync with internal/cpu's publication.
-func (ins x86SIMDInstruction) encoding(width int, single bool) (name, features string, required uint64) {
+func (ins x86SIMDInstruction) encoding(width int, single bool) (name, features string) {
 	suffix := "." + strconv.Itoa(width)
 	switch ins.family {
 	case x86AES:
 		if width == 128 {
-			return "aesni." + ins.name, "+aes,+avx", 8
+			return "aesni." + ins.name, "+aes,+avx"
 		}
 		if width == 256 {
-			return "aesni." + ins.name + suffix, "+avx,+vaes", 16
+			return "aesni." + ins.name + suffix, "+avx,+vaes"
 		}
-		return "aesni." + ins.name + suffix, "+avx512f,+vaes", 32
+		return "aesni." + ins.name + suffix, "+avx512f,+vaes"
 	case x86GF:
 		features = "+gfni,+avx"
 		if width == 256 {
@@ -63,9 +62,9 @@ func (ins x86SIMDInstruction) encoding(width int, single bool) (name, features s
 		if width == 512 {
 			features += ",+avx512f,+avx512bw"
 		}
-		return ins.name + suffix, features, 64
+		return ins.name + suffix, features
 	case x86SHA:
-		return ins.name, "+sha,+sse2", 128
+		return ins.name, "+sha,+sse2"
 	}
 	precision := ".pd"
 	if single {
@@ -77,17 +76,17 @@ func (ins x86SIMDInstruction) encoding(width int, single bool) (name, features s
 	}
 	if ins.family == x86Reciprocal {
 		if single && width == 128 {
-			return "sse." + ins.name + ".ps", "+sse", 4
+			return "sse." + ins.name + ".ps", "+sse"
 		}
 		if single && width == 256 {
-			return "avx." + ins.name + ".ps.256", "+avx", 4
+			return "avx." + ins.name + ".ps.256", "+avx"
 		}
-		return "avx512." + ins.name + "14" + precision + suffix, features, 256
+		return "avx512." + ins.name + "14" + precision + suffix, features
 	}
 	if ins.family == x86Residue {
 		features += ",+avx512dq"
 	}
-	return "avx512.mask." + ins.name + precision + suffix, features, 256
+	return "avx512.mask." + ins.name + precision + suffix, features
 }
 
 // SHA1 rounds and scaled rounding encode their selectors as two or four
@@ -108,8 +107,7 @@ func (ins x86SIMDInstruction) selectorCases() int {
 func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 	ins := x86SIMDInstructions[op]
 	width := int(b.Prog.td.TypeSizeInBits(result.ll))
-	name, features, required := ins.encoding(width, result.ll.ElementType().TypeKind() == llvm.FloatTypeKind)
-	b.requireX86SIMD(required)
+	name, features := ins.encoding(width, result.ll.ElementType().TypeKind() == llvm.FloatTypeKind)
 	ctx := b.Prog.ctx
 	mod := b.Pkg.Module()
 	intrinsic := mod.IntrinsicDeclaration(llvm.LookupIntrinsicID("llvm.x86."+name), nil)
@@ -207,27 +205,4 @@ func (b Builder) simdX86Special(op SIMDOp, result Type, args []Expr) Expr {
 	call := b.impl.CreateCall(ft, leaf, operands, "")
 	call.SetInstructionCallConv(leaf.FunctionCallConv())
 	return Expr{b.impl.CreateBitCast(call, result.ll, ""), result}
-}
-
-// Keep a missing feature recoverable, but avoid a runtime call on every
-// successful round of a SHA/AES kernel. CPUFeatures is initialized once by
-// internal/cpu after applying GODEBUG; it must not be a compile-time constant.
-func (b Builder) requireX86SIMD(bits uint64) {
-	t := b.Prog.Uint64()
-	g := b.Pkg.NewVarEx(PkgRuntime+".CPUFeatures", b.Prog.Pointer(t))
-	published := b.impl.CreateLoad(t.ll, g.impl, "")
-	required := llvm.ConstInt(t.ll, bits, false)
-	masked := b.impl.CreateAnd(published, required, "")
-	missing := llvm.CreateICmp(b.impl, llvm.IntNE, masked, required)
-	logical, entry := b.blk, b.impl.GetInsertBlock()
-	blocks := b.Func.MakeBlocks(2)
-	b.If(Expr{missing, b.Prog.Bool()}, blocks[0], blocks[1])
-	b.SetBlock(blocks[0])
-	b.Call(b.Pkg.rtFunc("PanicSIMDX86Feature"))
-	b.Unreachable()
-	b.SetBlockEx(blocks[1], AtEnd, false)
-	b.blk = logical
-	if logical.last == entry {
-		logical.last = blocks[1].last
-	}
 }

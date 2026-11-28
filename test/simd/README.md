@@ -132,9 +132,11 @@ call, its caller must have hardware and OS support for the register width.
 The runtime records the OS-enabled YMM and ZMM widths before applying Go's
 feature overrides. For example, with `GOAMD64=v1` and `GODEBUG=cpu.all=off`,
 a caller can still use the fixed ZMM ABI on an AVX-512F machine with ZMM
-state enabled. On a narrower machine the caller can take its scalar paths.
-Reaching a call that requires an unavailable register width faults at that site. Each explicit SIMD
-operation in the callee retains its own feature requirements.
+state enabled. The baseline body retains the original call and its control
+flow. If an unguarded call executes in a body compiled below the required
+register width, its result is unspecified. LLVM can split an argument across
+narrower registers while the callee expects one wide register. Execution may
+return incorrect lanes or encounter an illegal instruction.
 `TestSIMD512FixedRegisterCall` exercises both branches. The Sapphire Rapids
 SDE run also checks all 16 transferred lanes with Go's optional CPU features
 disabled.
@@ -177,17 +179,16 @@ the 256-bit family. Grouped permutations and saturating packing operate within
 
 The AMD64 implementation includes compression and expansion, vector and scalar
 funnel shifts, truth tables, widening products, cryptographic rounds and scaled
-floating-point operations. Before calling a private x86 instruction leaf, the
-caller checks the effective CPU features published by the runtime. A missing
-feature takes the recoverable panic path. The instruction function takes and returns vectors
+floating-point operations. An explicit x86 instruction executes when control
+reaches it. A source guard such as `archsimd.X86.SHA()` can skip it on a CPU
+that lacks the instruction. The instruction function takes and returns vectors
 by value using XMM, YMM or ZMM registers, including on Win64. LLVM can inline
 it into a caller with compatible target features. Go functions use the
 platform ABI for their declared signatures.
 
 For SHA-1 rounds and scaled rounding, a constant selector produces a leaf
 with the immediate encoded in its instruction. A runtime selector uses a
-shared leaf that switches on the selector bits. Both paths use the same CPU
-feature check.
+shared leaf that switches on the selector bits.
 `GODEBUG=simd=512` selects the 512-bit portable representation when eligible.
 
 On Linux/amd64, run the Sapphire Rapids instruction tests with Intel SDE:
@@ -527,8 +528,7 @@ Independent extensions keep their effective Go branches. Where a selected
 body needs an instruction beyond its target features, the guarded operation
 can execute in a private outlined leaf. For example, `SHA256TwoRounds`
 already runs in a private function compiled with SHA support. Its caller
-keeps the Go guard and runtime safety check. These checks alone create no
-SHA version of the caller. A guarded FMA lowered to an instruction in the
+keeps the Go guard. A guarded FMA lowered to an instruction in the
 caller can still specialize that function.
 
 A function with a scalar signature can select a body with enough register

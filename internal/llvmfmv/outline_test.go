@@ -31,14 +31,15 @@ unwind:
 	if err := llvm.VerifyModule(m, llvm.ReturnStatusAction); err != nil {
 		t.Fatal(err, m.String())
 	}
-	narrow := m.NamedFunction("caller" + symbolPrefix + "guard_base").String()
-	if !strings.Contains(narrow, "@llvm.trap()") || strings.Contains(narrow, "invoke ") || strings.Contains(narrow, "alloca ") {
-		t.Fatal(narrow)
-	}
-	wide := m.NamedFunction("caller" + symbolPrefix + "guard_zmm").String()
-	for _, s := range []string{"invoke x86_vectorcallcc <16 x i32> %", "ptr byval(i32) align 4", "i16 signext", "unwind label %unwind"} {
-		if !strings.Contains(wide, s) {
-			t.Fatalf("lost %q:\n%s", s, wide)
+	for _, suffix := range []string{"guard_base", "guard_zmm"} {
+		body := m.NamedFunction("caller" + symbolPrefix + suffix).String()
+		for _, want := range []string{"invoke x86_vectorcallcc <16 x i32> %", "ptr byval(i32) align 4", "i16 signext", "unwind label %unwind"} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s lost %q:\n%s", suffix, want, body)
+			}
+		}
+		if strings.Contains(body, "@llvm.trap(") || strings.Contains(body, "alloca ") {
+			t.Fatal(body)
 		}
 	}
 }

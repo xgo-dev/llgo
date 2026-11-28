@@ -58,8 +58,8 @@ scalar:
 		checkCachedGuard(t, mod, tc.mask, body)
 		code := body.String()
 		if !strings.Contains(code, "ret i32 3") ||
-			strings.Contains(code, "call <8 x float> @ymm") != (tc.suffix != "guard_base") ||
-			strings.Contains(code, "call <16 x float> %indirect") != (tc.suffix == "guard_zmm") {
+			!strings.Contains(code, "call <8 x float> @ymm") ||
+			!strings.Contains(code, "call <16 x float> %indirect") {
 			t.Fatal(code)
 		}
 	}
@@ -110,15 +110,8 @@ exit:
 		if !strings.Contains(body.String(), "call i1 @"+tc.query+"()") || !strings.Contains(body.String(), "br i1") {
 			t.Fatal("width changed the Go control flow", body.String())
 		}
-		switch tc.suffix {
-		case "guard_base":
-			if !strings.Contains(body.String(), "@llvm.trap(") || strings.Contains(body.String(), "alloca ") {
-				t.Fatal(body.String())
-			}
-		case "guard_zmm":
-			if !strings.Contains(body.String(), "call void @wide(") || strings.Contains(body.String(), "alloca ") {
-				t.Fatal(body.String())
-			}
+		if !strings.Contains(body.String(), "call void @wide(") || strings.Contains(body.String(), "alloca ") {
+			t.Fatal(body.String())
 		}
 	}
 }
@@ -197,8 +190,8 @@ define void @helper(ptr %p) {
 		t.Fatal("missing native wide call from helper")
 	}
 	narrow := m.NamedFunction("helper" + symbolPrefix + "guard_base")
-	if narrow.IsNil() || !strings.Contains(narrow.String(), "@llvm.trap") || strings.Contains(narrow.String(), "call void @consume(") {
-		t.Fatal("a machine without the register width must fault at the wide call")
+	if narrow.IsNil() || targetWidth(narrow, "v1") != baselineWidth("v1") || !strings.Contains(narrow.String(), "call void @consume(") {
+		t.Fatal("baseline body lost the wide call or acquired ZMM features")
 	}
 	checkEntryCachedGuard(t, m, "helper", 0, narrow)
 }

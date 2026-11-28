@@ -39,23 +39,21 @@ func main(){}
 			}
 			for _, tc := range []struct {
 				fn, sym, immediate string
-				mask               uint64
-				cases              int
-				lanes              int
+				cases, lanes       int
 			}{
-				{"fixed", "avx512.mask.rndscale.ps.128_0_imm2", "i32 32,", 256, 1, 4},
-				{"dynamic", "avx512.mask.rndscale.ps.128_0", "", 256, 16, 4},
-				{"sha", "sha1rnds4_0_imm3", "i8 3)", 128, 1, 4},
-				{"shaDynamic", "sha1rnds4_0", "", 128, 4, 4},
-				{"wide256", "avx512.mask.rndscale.ps.256_0_imm2", "i32 32,", 256, 1, 8},
-				{"wide512", "avx512.mask.rndscale.ps.512_0_imm2", "i32 32,", 256, 1, 16},
+				{"fixed", "avx512.mask.rndscale.ps.128_0_imm2", "i32 32,", 1, 4},
+				{"dynamic", "avx512.mask.rndscale.ps.128_0", "", 16, 4},
+				{"sha", "sha1rnds4_0_imm3", "i8 3)", 1, 4},
+				{"shaDynamic", "sha1rnds4_0", "", 4, 4},
+				{"wide256", "avx512.mask.rndscale.ps.256_0_imm2", "i32 32,", 1, 8},
+				{"wide512", "avx512.mask.rndscale.ps.512_0_imm2", "i32 32,", 1, 16},
 			} {
 				name := "__llgo_simd_" + tc.sym
 				leaf := m.NamedFunction(name)
 				if leaf.IsNil() {
 					t.Fatal("missing " + name)
 				}
-				assertX86LeafGuard(t, m.NamedFunction("main."+tc.fn), name, tc.mask)
+				assertDirectX86Leaf(t, m.NamedFunction("main."+tc.fn), name)
 				ir := leaf.String()
 				if count := strings.Count(ir, "@llvm.x86."); count != tc.cases {
 					t.Fatalf("%s contains %d instruction calls, want %d", name, count, tc.cases)
@@ -93,32 +91,18 @@ func main(){}
 	}
 }
 
-func assertX86LeafGuard(t *testing.T, fn llvm.Value, leafName string, mask uint64) {
+func assertDirectX86Leaf(t *testing.T, fn llvm.Value, leaf string) {
 	t.Helper()
 	if fn.IsNil() {
-		t.Fatal("missing x86 leaf caller")
+		t.Fatal("missing caller of " + leaf)
 	}
-	for bb := fn.FirstBasicBlock(); !bb.IsNil(); bb = llvm.NextBasicBlock(bb) {
-		br := bb.LastInstruction()
-		if br.InstructionOpcode() != llvm.Br || br.SuccessorsCount() != 2 {
-			continue
-		}
-		cmp := br.Operand(0).IsAICmpInst()
-		if cmp.IsNil() || cmp.IntPredicate() != llvm.IntNE {
-			continue
-		}
-		and := cmp.Operand(0).IsABinaryOperator()
-		if and.IsNil() || and.InstructionOpcode() != llvm.And {
-			continue
-		}
-		bit := llvm.ConstInt(and.Type(), mask, false)
-		load := and.Operand(0).IsALoadInst()
-		if load.IsNil() || load.Operand(0).Name() != "github.com/xgo-dev/llgo/runtime/internal/runtime.CPUFeatures" || and.Operand(1) != bit || cmp.Operand(1) != bit {
-			continue
-		}
-		if strings.Contains(br.Successor(0).AsValue().String(), "PanicSIMDX86Feature") && strings.Contains(br.Successor(1).AsValue().String(), "@"+leafName+"(") {
-			return
+	body := fn.String()
+	if !strings.Contains(body, "@"+leaf+"(") {
+		t.Fatalf("%s has no call to %s:\n%s", fn.Name(), leaf, body)
+	}
+	for _, guard := range []string{"runtime.CPUFeatures", "SIMDRequireX86Features", "PanicSIMDX86Feature"} {
+		if strings.Contains(body, guard) {
+			t.Fatalf("%s has an implicit CPU check before %s:\n%s", fn.Name(), leaf, body)
 		}
 	}
-	t.Fatalf("%s has no checked call to %s for mask %#x:\n%s", fn.Name(), leafName, mask, fn.String())
 }

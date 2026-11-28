@@ -37,24 +37,12 @@ func (a *wideABI) validateOutlines(fn llvm.Value, queries map[llvm.Value]uint64,
 
 func (a *wideABI) outlineBody(fn llvm.Value, baseline string, queries map[llvm.Value]uint64, enabled uint64) {
 	floor := a.registerFloor(fn, baseline)
-	traps := false
-	a.calls(fn, func(call llvm.Value, width int) {
-		if width > floor {
-			a.trapBeforeCall(call)
-			traps = true
-		}
-	})
 	for _, s := range a.guardedIntrinsics(fn, queries, enabled) {
 		// Leave the generic intrinsic in place if the private call would
 		// need wider registers for its arguments or result.
 		if a.signature(s.call.CalledFunctionType()) <= floor {
 			a.outlineIntrinsic(s.call, s.required)
 		}
-	}
-	if traps {
-		// LLVM truncates after each noreturn trap and removes dead call or
-		// invoke edges, including their incoming values in successor PHIs.
-		fn.RemoveUnreachableBlocks()
 	}
 }
 
@@ -82,19 +70,6 @@ func (a *wideABI) guardedIntrinsics(fn llvm.Value, queries map[llvm.Value]uint64
 		}
 	}
 	return sites
-}
-
-// This implementation is selected only on machines without the fixed width
-// required by the call. Fault at the call itself; scalar exits and earlier
-// Go effects retain their source order. The capable version keeps the exact
-// original call, including indirect targets, EH edges and ABI attributes.
-func (a *wideABI) trapBeforeCall(inst llvm.Value) {
-	b := a.mod.Context().NewBuilder()
-	defer b.Dispose()
-	b.SetInsertPointBefore(inst)
-	trap := a.mod.IntrinsicDeclaration(llvm.LookupIntrinsicID("llvm.trap"), nil)
-	fault := b.CreateCall(trap.GlobalValueType(), trap, nil, "")
-	fault.InstructionSetDebugLoc(inst.InstructionDebugLoc())
 }
 
 // A vector mask crosses an ISA boundary as its scalar bits: the two targets

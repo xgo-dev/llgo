@@ -274,7 +274,7 @@ func TestSIMDLeafOwnsInstructionFeature(t *testing.T) {
 			if !strings.Contains(caller, "X86Features.SHA") {
 				t.Fatalf("SHA caller lost the source feature query:\n%s", caller)
 			}
-			assertX86LeafGuard(t, mod.NamedFunction("main.shaKernel"), "__llgo_simd_sha256rnds2_0", 128)
+			assertDirectX86Leaf(t, mod.NamedFunction("main.shaKernel"), "__llgo_simd_sha256rnds2_0")
 			if goos == "linux" {
 				// On SysV, MulAdd lowers to an FMA intrinsic in the caller.
 				fast := mod.NamedFunction("main.fmaKernel.__llgo_fmv_guard_fma")
