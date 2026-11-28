@@ -135,23 +135,15 @@ func (p *context) escapeStackLayout(site ssa.Instruction, typ types.Type) (size,
 		header, bucket := p.prog.MapStackStorage(p.type_(v.Type(), llssa.GoDecl))
 		size, alignment = p.prog.SizeOf(header), p.prog.AlignOf(header)
 		if bucket != nil {
-			a := p.prog.AlignOf(bucket)
-			size += -size & (a - 1)
-			size += p.prog.SizeOf(bucket)
-			if a > alignment {
-				alignment = a
-			}
+			bucketAlign := p.prog.AlignOf(bucket)
+			size += -size & (bucketAlign - 1)
+			size += p.prog.SizeOf(bucket) + p.prog.StackRootBytes(bucket)
+			alignment = max(alignment, bucketAlign)
 		}
-		if p.prog.GCRootsEnabled() {
-			size += p.prog.StackRootBytes(header)
-			if bucket != nil {
-				size += p.prog.StackRootBytes(bucket)
-			}
-		}
-		return size, alignment
+		return size + p.prog.StackRootBytes(header), alignment
 	}
 	lowered := p.type_(typ, llssa.GoDecl)
-	return p.escapeRootedStackSize(lowered), p.prog.AlignOf(lowered)
+	return p.prog.SizeOf(lowered) + p.prog.StackRootBytes(lowered), p.prog.AlignOf(lowered)
 }
 
 func (p *context) escapeCallContract(fn *ssa.Function) (goescape.Summary, bool) {
@@ -262,13 +254,4 @@ func (p *context) stackStorage(site ssa.Instruction) bool {
 	// facts never justify promoting an object that SSA placed on the heap.
 	alloc, ok := site.(*ssa.Alloc)
 	return ok && !alloc.Heap
-}
-
-// Promoted storage and its field-address root slots share one stack budget.
-func (p *context) escapeRootedStackSize(typ llssa.Type) uint64 {
-	size := p.prog.SizeOf(typ)
-	if p.prog.GCRootsEnabled() {
-		size += p.prog.StackRootBytes(typ)
-	}
-	return size
 }

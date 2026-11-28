@@ -612,10 +612,7 @@ func (b Builder) BinOpEx(op token.Token, x, y Expr, heap bool) Expr {
 		switch kind {
 		case vkString:
 			if op == token.ADD {
-				if !heap {
-					return Expr{b.InlineCall(b.Pkg.rtFunc("StringCatBuffer"), x, y, b.stringStackBuffer()).impl, x.Type}
-				}
-				return Expr{b.InlineCall(b.Pkg.rtFunc("StringCat"), x, y).impl, x.Type}
+				return b.stringCat(x, y, x.Type, !heap)
 			}
 		case vkComplex:
 			xr, xi := b.impl.CreateExtractValue(x.impl, 0, ""), b.impl.CreateExtractValue(x.impl, 1, "")
