@@ -37,6 +37,17 @@ var poolLocalOnce psync.Once
 var poolLocals tls.Handle[*poolLocalTable]
 var poolNextID atomic.Uintptr
 
+func allocatePoolSlot(next *atomic.Uintptr) uintptr {
+	for id := next.Load(); id < poolFastSlotLimit; id = next.Load() {
+		if next.CompareAndSwap(id, id+1) {
+			return id
+		}
+	}
+	// Fast-slot owners may outlive the counter hitting its limit. Keep the
+	// counter saturated so that no later pool can receive one of their IDs.
+	return poolFastSlotLimit
+}
+
 //go:linkname syncRuntimePoolLocalAlloc sync.runtime_poolLocalAlloc
 func syncRuntimePoolLocalAlloc(victim *unsafe.Pointer) unsafe.Pointer {
 	poolLocalOnce.Do(func() {
@@ -54,10 +65,7 @@ func syncRuntimePoolLocalAlloc(victim *unsafe.Pointer) unsafe.Pointer {
 			}
 		})
 	})
-	id := uintptr(poolFastSlotLimit)
-	if n := poolNextID.Add(1); n <= poolFastSlotLimit {
-		id = n - 1
-	}
+	id := allocatePoolSlot(&poolNextID)
 	// Retain the victim pointer inside the handle so the pool's victim field
 	// stays reachable until thread TLS destructors publish cached locals.
 	return unsafe.Pointer(&poolSlotMeta{id: id, victim: unsafe.Pointer(victim)})
