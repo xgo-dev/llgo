@@ -117,37 +117,28 @@ func GrowSlice(src Slice, num, etSize int, hasPointers bool) Slice {
 	return GrowSliceAligned(src, num, etSize, 1, hasPointers)
 }
 
-// roundupSliceAllocSize rounds a slice backing-array allocation up to match
-// BDWGC's underlying size classes (16B granules <=384B, cached medium classes
-// up to 2048B, and 4096B heap blocks above 2048B), mirroring Go's runtime
-// roundupsize so append/io.ReadAll expose the full allocated block capacity
-// instead of discarding trailing allocator slop.
-func roundupSliceAllocSize(mem uintptr) uintptr {
-	if mem == 0 || mem > maxAlloc {
-		return mem
+// expandSliceCap derives any extra usable capacity from the already-allocated
+// block at p (which must be an exact block base, not an interior Memalign
+// pointer). When zeroTail is true, newly exposed bytes beyond mem are zeroed.
+func expandSliceCap(p unsafe.Pointer, curCap int, mem, etSize uintptr, zeroTail bool) int {
+	if etSize == 0 || mem == 0 || p == nil {
+		return curCap
 	}
-	switch {
-	case mem <= 384:
-		return (mem + 15) &^ 15
-	case mem <= 512:
-		return 512
-	case mem <= 640:
-		return 640
-	case mem <= 768:
-		return 768
-	case mem <= 1024:
-		return 1024
-	case mem <= 1536:
-		return 1536
-	case mem <= 2048:
-		return 2048
-	default:
-		const hblk = 4096
-		if mem > maxAlloc-(hblk-1) {
-			return mem
+	usable := sliceAllocUsableSize(p, mem)
+	if usable <= mem {
+		return curCap
+	}
+	roundedCap := int(usable / etSize)
+	if roundedCap <= curCap {
+		return curCap
+	}
+	if zeroTail {
+		newMem := uintptr(roundedCap) * etSize
+		if newMem > mem {
+			c.Memset(unsafe.Add(p, mem), 0, newMem-mem)
 		}
-		return (mem + hblk - 1) &^ (hblk - 1)
 	}
+	return roundedCap
 }
 
 func GrowSliceAligned(src Slice, num, etSize, etAlign int, hasPointers bool) Slice {
@@ -162,21 +153,18 @@ func GrowSliceAligned(src Slice, num, etSize, etAlign int, hasPointers bool) Sli
 		if overflow || mem > maxAlloc {
 			panicgrowslicelen()
 		}
-		if etSize > 0 && mem > 0 && uintptr(etAlign) <= 16 {
-			rounded := roundupSliceAllocSize(mem)
-			if rounded > mem && rounded <= maxAlloc {
-				roundedCap := int(rounded / uintptr(etSize))
-				if roundedCap > newCap {
-					newCap = roundedCap
-					mem = uintptr(newCap) * uintptr(etSize)
-				}
-			}
-		}
 		var p unsafe.Pointer
 		if hasPointers {
 			p = AllocZAligned(mem, uintptr(etAlign))
+			if etSize > 0 && mem > 0 && uintptr(etAlign) <= 16 {
+				newCap = expandSliceCap(p, newCap, mem, uintptr(etSize), true)
+			}
 		} else {
 			p = AllocAtomicUAligned(mem, uintptr(etAlign))
+			if etSize > 0 && mem > 0 && uintptr(etAlign) <= 16 {
+				newCap = expandSliceCap(p, newCap, mem, uintptr(etSize), false)
+				mem = uintptr(newCap) * uintptr(etSize)
+			}
 			// The old prefix is overwritten by the copy below. Clear the
 			// remaining capacity, including newly exposed elements: reflect.Grow
 			// uses this helper without subsequently writing append arguments.
@@ -268,24 +256,14 @@ func MakeSlice(len, cap int, etSize int, hasPointers bool) Slice {
 	return Slice{data, len, cap}
 }
 
-// MakeSliceRounded allocates backing storage for append([]T(nil), make([]T, n)...),
-// rounding capacity up to the allocator's size class (matching Go's growslice
-// roundupsize behavior, relied upon by stdlib io.ReadAll).
+// MakeSliceRounded allocates backing storage for dynamic-length
+// append([]T(nil), make([]T, n)...), exposing any usable trailing capacity
+// from the allocated GC block (matching Go's growslice roundupsize behavior,
+// relied upon by stdlib io.ReadAll).
 func MakeSliceRounded(length, etSize int, hasPointers bool) Slice {
 	mem := makeSliceMemory(length, length, etSize)
 	if length == 0 {
 		return Slice{nil, 0, 0}
-	}
-	cap := length
-	if etSize > 0 && mem > 0 {
-		rounded := roundupSliceAllocSize(mem)
-		if rounded > mem && rounded <= maxAlloc {
-			roundedCap := int(rounded / uintptr(etSize))
-			if roundedCap > cap {
-				cap = roundedCap
-				mem = uintptr(cap) * uintptr(etSize)
-			}
-		}
 	}
 	var data unsafe.Pointer
 	if hasPointers {
@@ -293,6 +271,7 @@ func MakeSliceRounded(length, etSize int, hasPointers bool) Slice {
 	} else {
 		data = AllocAtomicZ(mem)
 	}
+	cap := expandSliceCap(data, length, mem, uintptr(etSize), true)
 	return Slice{data, length, cap}
 }
 

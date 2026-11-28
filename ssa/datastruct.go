@@ -1350,8 +1350,9 @@ func (b Builder) chanOp(s *SelectState) Expr {
 
 // -----------------------------------------------------------------------------
 
-// AppendFreshSliceToNil forwards a fresh, exclusively used slice whose length
-// equals its capacity. The caller must give its backing array result lifetime.
+// AppendFreshSliceToNil forwards a fresh, exclusively used slice (preserving
+// its capacity, which may exceed length when allocated via MakeSliceRounded).
+// The caller must give its backing array result lifetime.
 // An empty append preserves nil, unlike make of a zero-length slice.
 func (b Builder) AppendFreshSliceToNil(t Type, fresh Expr) Expr {
 	length := b.SliceLen(fresh)

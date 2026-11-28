@@ -2166,6 +2166,8 @@ func (p *context) compileInstrOrValue(b llssa.Builder, iv instrOrValue, asValue 
 	case *ssa.MakeSlice:
 		t := p.type_(v.Type(), llssa.GoDecl)
 		nLen := p.compileValue(b, v.Len)
+		// Only dynamic-length *ssa.MakeSlice uses MakeSliceRounded; constant-length
+		// make([]T, k) lowers to an array Alloc whose capacity equals k.
 		if freshNilAppendAllocation(v) {
 			ret = b.MakeSliceRounded(t, nLen)
 			break

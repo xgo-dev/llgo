@@ -124,6 +124,9 @@ func StringIterNext(it *StringIter) (ok bool, k int, v rune) {
 }
 
 func StringToBytes(s String) []byte {
+	if s.len < 0 || uintptr(s.len) > maxAlloc {
+		panicmakeslicelen()
+	}
 	if s.len == 0 {
 		return []byte{}
 	}
