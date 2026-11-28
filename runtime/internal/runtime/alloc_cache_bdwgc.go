@@ -36,6 +36,8 @@ import (
 // objects linked through their first word, holding the list heads inside m (an
 // uncollectable GC root) keeps queued objects reachable across concurrent
 // collections without disabling GC.
+// The medium freelists follow the M: they survive pooled reuse but are
+// dropped on thread teardown. They are never shared between threads.
 //
 // Also cache small (<= 64 B) uncollectable root blocks per M and in a bounded
 // cross-thread pool so frequent goroutine startup records avoid
@@ -77,18 +79,17 @@ var root64Pool struct {
 	ptrs   [32]unsafe.Pointer
 }
 
-func ensureRoot64Pool() {
+func tryInitRoot64Pool() bool {
 	if atomic.Load(&root64Pool.inited) == 2 {
-		return
+		return true
 	}
 	if _, won := atomic.CompareAndExchange(&root64Pool.inited, uint32(0), uint32(1)); won {
 		root64Pool.mu.init()
 		atomic.Store(&root64Pool.inited, uint32(2))
-		return
+		return true
 	}
-	for atomic.Load(&root64Pool.inited) != 2 {
-		c.Usleep(1)
-	}
+	// Use the collector while another M initializes the shared pool.
+	return atomic.Load(&root64Pool.inited) == 2
 }
 
 func currentAllocCache() *mediumAllocCache {
@@ -102,14 +103,13 @@ func currentAllocCache() *mediumAllocCache {
 // clearMediumAllocCache releases per-M caches on thread teardown. Remaining
 // root64 blocks are flushed into root64Pool up to its capacity so exiting
 // child goroutines recycle their startup argument blocks back to future callers,
-// and only overflow entries are returned to BDWGC via Free.
+// and return the rest to BDWGC when the shared pool is full or initializing.
 func clearMediumAllocCache(mp *m) {
 	if mp == nil {
 		return
 	}
 	n := mp.allocCache.nRoot64
-	if n > 0 {
-		ensureRoot64Pool()
+	if n > 0 && tryInitRoot64Pool() {
 		root64Pool.mu.Lock()
 		for n > 0 && root64Pool.n < len(root64Pool.ptrs) {
 			n--
@@ -121,10 +121,10 @@ func clearMediumAllocCache(mp *m) {
 			}
 		}
 		root64Pool.mu.Unlock()
-		for i := uint8(0); i < n; i++ {
-			if p := mp.allocCache.root64[i]; p != nil {
-				bdwgc.Free(p)
-			}
+	}
+	for i := uint8(0); i < n; i++ {
+		if p := mp.allocCache.root64[i]; p != nil {
+			bdwgc.Free(p)
 		}
 	}
 	mp.allocCache = mediumAllocCache{}
@@ -142,8 +142,7 @@ func allocRootCached(size uintptr) unsafe.Pointer {
 		cache.root64[n] = nil
 		return p
 	}
-	if atomic.Load(&rootCacheBlockSize) != 0 {
-		ensureRoot64Pool()
+	if atomic.Load(&rootCacheBlockSize) != 0 && tryInitRoot64Pool() {
 		root64Pool.mu.Lock()
 		if root64Pool.n > 0 {
 			root64Pool.n--
@@ -199,7 +198,9 @@ func freeRootCached(ptr unsafe.Pointer) bool {
 			return true
 		}
 	}
-	ensureRoot64Pool()
+	if !tryInitRoot64Pool() {
+		return false
+	}
 	c.Memset(ptr, 0, slotSize)
 	root64Pool.mu.Lock()
 	for i := 0; i < root64Pool.n; i++ {
@@ -224,6 +225,23 @@ func freeRootCached(ptr unsafe.Pointer) bool {
 	}
 	root64Pool.mu.Unlock()
 	return false
+}
+
+var retiredRootCaches, undrainedRootCaches uint32
+
+func rootCacheCount(mp *m) uint8 { return mp.allocCache.nRoot64 }
+
+func recordRetiredRootCache(mp *m, before uint8) {
+	if before != 0 {
+		if rootCacheCount(mp) != 0 {
+			atomic.Add(&undrainedRootCaches, uint32(1))
+		}
+		atomic.Add(&retiredRootCaches, uint32(1))
+	}
+}
+
+func retiredRootCacheCountsForTesting() (retired, undrained uint32) {
+	return atomic.Load(&retiredRootCaches), atomic.Load(&undrainedRootCaches)
 }
 
 func allocNormalMedium(size uintptr) unsafe.Pointer {

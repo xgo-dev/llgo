@@ -26,3 +26,5 @@ func clearMediumAllocCache(mp *m)              {}
 func allocNormalMedium(uintptr) unsafe.Pointer { return nil }
 func allocRootCached(uintptr) unsafe.Pointer   { return nil }
 func freeRootCached(unsafe.Pointer) bool       { return false }
+func rootCacheCount(*m) uint8                  { return 0 }
+func recordRetiredRootCache(*m, uint8)         {}

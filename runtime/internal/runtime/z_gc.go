@@ -39,6 +39,8 @@ func AllocU(size uintptr) unsafe.Pointer {
 			panic("out of memory")
 		}
 	}
+	// Profiles count requested bytes. The medium cache rounds requests up to
+	// its size classes, so collector usage can be higher.
 	recordMemProfileAlloc(size)
 	return ret
 }
