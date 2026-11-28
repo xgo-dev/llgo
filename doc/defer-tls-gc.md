@@ -57,14 +57,14 @@ Prior experiments (`test-defer-dont-free` branch) confirmed the crash disappeare
 
 4. **Dynamic `sync.Pool` state**
    - `sync.Pool` shares a single GC-aware `clite/tls` handle storing a per-thread
-     `*poolLocalTable` (`fast []poolLocalEntry` for the first 1024 pools, plus a
+     `*poolLocalTable` (lazily allocated fast-slot pages for the first 1024 pools, plus a
      sparse `overflow` `wordmap` for pools created past that cap). Each `Pool`
      holds an opaque `*poolSlotMeta` handle recording its slot ID and victim
      pointer.
-   - Keeping the fast slice indexed by slot ID avoids per-`Get`/`Put` map
+   - Indexing the fast pages by slot ID avoids per-`Get`/`Put` map
      lookups for hot pools while preserving thread-exit victim handoff across
      both fast-slot and overflow pools.
-   - Both the per-thread fast slice (up to 1024 `(victim, local)` entries per
+   - Both the per-thread fast pages (up to 1024 `(victim, local)` entries per
      thread) and the overflow map retain entries until thread exit; matching
      upstream's GC-cycle pool cleanup would require a separate runtime
      integration. This migration deliberately preserves that thread-lifetime
