@@ -58,6 +58,10 @@ import (
 //   - Lazily promote to standard readLoop+writeLoop on demand for Expect: 100-
 //     continue or large/streaming request bodies.
 
+// errSyncClosedEarly is local to the patch so it compiles across all Go 1.27.x
+// point releases (upstream net/http added errClosedEarly in a 1.27 point release).
+var errSyncClosedEarly = errors.New("net/http: response body closed early")
+
 const (
 	clientIdleShardCount  = 16
 	clientIdleTickNs      = 1_000_000 // 1ms promotion tick while entries are pending
@@ -608,7 +612,7 @@ func (pc *persistConn) roundTripSync(req *transportRequest) (*Response, error) {
 			if alive && resp.ContentLength <= maxPostCloseReadBytes && maybeDrainBody(origBody) {
 				pc.syncPutIdleConn(req)
 			} else {
-				pc.close(errClosedEarly)
+				pc.close(errSyncClosedEarly)
 			}
 			return nil
 		},
