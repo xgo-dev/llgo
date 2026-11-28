@@ -21,6 +21,7 @@ package http
 import (
 	"crypto/tls"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -500,6 +501,21 @@ func (cr *connReader) startBackgroundRead() {
 	if !httpBgWatchArm(cr) {
 		cr.rwc.SetReadDeadline(time.Time{})
 		go cr.backgroundRead()
+	}
+}
+
+func (cr *connReader) handleReadErrorLocked(err error) {
+	if cr.conn == nil {
+		return
+	}
+	// Hot-grace keep-alive Peek uses cr.aborted to suppress connection cancellation
+	// when the short grace deadline expires before offloading to the idle watcher.
+	if cr.aborted && os.IsTimeout(err) {
+		return
+	}
+	cr.conn.cancelCtx()
+	if res := cr.conn.curReq.Load(); res != nil {
+		res.closeNotify()
 	}
 }
 

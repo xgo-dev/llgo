@@ -36,9 +36,14 @@ import (
 // OS thread (and BDWGC STW stack scan) per idle socket.
 //
 // Offload idle HTTP/1.1 Keep-Alive sockets to a single shared kqueue/epoll
-// watcher after a brief hot-grace window (5ms, up to httpIdleMaxHot concurrent
-// hot waiters so active keep-alive bursts incur zero handoff overhead while
+// watcher after a bounded hot-grace window (up to httpIdleMaxHot concurrent
+// hot waiters so active keep-alive bursts incur minimal handoff overhead while
 // connection storms offload immediately):
+//   - When no explicit IdleTimeout/ReadTimeout is configured, hot waiters block
+//     in bufio.Reader.Peek(4) with no per-request deadline timer and are evicted
+//     lazily by the watcher after ~100..150ms idle (httpIdleHotGrace).
+//   - When an explicit IdleTimeout or ReadTimeout is configured, hot waiters
+//     use a short bounded deadline (httpIdleDeadlineGrace, 5ms) before parking.
 //   - When a parked socket becomes readable or receives EOF/RST, the watcher
 //     dispatches the connection to an elastic worker pool (which always spawns
 //     a new goroutine if all cached workers are busy, so slow handlers or
@@ -55,14 +60,28 @@ import (
 // Never call rawConn.Control, c.rwc.Close, or user hooks under httpIdleMgr.mu.
 
 const (
-	httpIdleHotGrace    = 5 * time.Millisecond
-	httpIdleMaxHot      = 64
-	httpIdleProbeNs     = 250_000_000 // 250ms liveness check for external rwc.Close
-	httpIdleWorkerTTL   = 500 * time.Millisecond
-	httpIdleStateParkng = 1
-	httpIdleStateParked = 2
-	httpIdleStateTaken  = 3
+	httpIdleHotGrace      = 150 * time.Millisecond
+	httpIdleDeadlineGrace = 5 * time.Millisecond
+	httpIdleMaxHot        = 128
+	httpIdleMinWorkers    = 16
+	httpIdleProbeNs       = 500_000_000 // 500ms liveness check for external rwc.Close
+	httpIdleWorkerTTL     = 500 * time.Millisecond
+	httpIdleWarmWorkerTTL = 10 * time.Second
+	httpHotSweepTickNs    = int64(httpIdleHotGrace / httpHotIdleTicks)
+	httpHotIdleTicks      = 3 // evict hot conn after ~100..150ms idle
+	httpHotEvictBit       = uint64(1) << 63
+	httpHotClosedVal      = uint64(0)
+	httpIdleStateParkng   = 1
+	httpIdleStateParked   = 2
+	httpIdleStateTaken    = 3
 )
+
+type httpHotEntry struct {
+	c         *conn
+	idleGen   atomic.Uint64 // odd: blocked in Peek(4); even: active/closed; bit63: sweeper evicted
+	lastGen   uint64        // watcher-private
+	idleTicks uint8         // watcher-private
+}
 
 type httpIdleEntry struct {
 	c         *conn
@@ -76,17 +95,19 @@ type httpIdleEntry struct {
 }
 
 var httpIdleMgr struct {
-	once        sync.Once
-	ready       atomic.Bool
-	poller      *httpBgPoller
-	mu          sync.Mutex
-	byConn      map[*conn]*httpIdleEntry
-	byFD        map[int]*httpIdleEntry
-	nextWakeNs  int64 // UnixNano of watcher's next wake deadline; 0 means sleeping indefinitely
-	hotCount    atomic.Int64
-	work        chan func()
-	idleWorkers atomic.Int32
-	maxWorkers  int32
+	once          sync.Once
+	ready         atomic.Bool
+	poller        *httpBgPoller
+	mu            sync.Mutex
+	byConn        map[*conn]*httpIdleEntry
+	byFD          map[int]*httpIdleEntry
+	hotEntries    map[*httpHotEntry]struct{}
+	deadlineCount int
+	nextWakeNs    int64 // UnixNano of watcher's next wake deadline; 0 means sleeping indefinitely
+	hotCount      atomic.Int64
+	work          chan func()
+	idleWorkers   atomic.Int32
+	maxWorkers    int32
 }
 
 func ensureHTTPIdleWatcher() bool {
@@ -97,13 +118,14 @@ func ensureHTTPIdleWatcher() bool {
 		}
 		httpIdleMgr.byConn = make(map[*conn]*httpIdleEntry, 64)
 		httpIdleMgr.byFD = make(map[int]*httpIdleEntry, 64)
+		httpIdleMgr.hotEntries = make(map[*httpHotEntry]struct{}, 32)
 		httpIdleMgr.work = make(chan func())
 		maxW := int32(runtime.GOMAXPROCS(0) * 2)
 		if maxW < 4 {
 			maxW = 4
 		}
-		if maxW > 16 {
-			maxW = 16
+		if maxW > 32 {
+			maxW = 32
 		}
 		httpIdleMgr.maxWorkers = maxW
 		httpIdleMgr.poller = p
@@ -111,6 +133,35 @@ func ensureHTTPIdleWatcher() bool {
 		go runHTTPIdleWatcher(p)
 	})
 	return httpIdleMgr.ready.Load()
+}
+
+func httpHotRegister(c *conn) *httpHotEntry {
+	if !ensureHTTPIdleWatcher() {
+		return nil
+	}
+	he := &httpHotEntry{c: c}
+	var wake bool
+	wantWakeBy := time.Now().UnixNano() + httpHotSweepTickNs
+	httpIdleMgr.mu.Lock()
+	httpIdleMgr.hotEntries[he] = struct{}{}
+	if httpIdleMgr.nextWakeNs == 0 || httpIdleMgr.nextWakeNs > wantWakeBy {
+		wake = true
+	}
+	httpIdleMgr.mu.Unlock()
+	if wake {
+		httpIdleMgr.poller.wake()
+	}
+	return he
+}
+
+func httpHotUnregister(he *httpHotEntry) {
+	if he == nil {
+		return
+	}
+	he.idleGen.Store(httpHotClosedVal)
+	httpIdleMgr.mu.Lock()
+	delete(httpIdleMgr.hotEntries, he)
+	httpIdleMgr.mu.Unlock()
 }
 
 // httpIdleDispatch runs fn on an already-idle pooled worker if one is waiting,
@@ -126,13 +177,35 @@ func httpIdleDispatch(fn func()) {
 }
 
 func httpIdleWorkerRun(fn func()) {
+	var timer *time.Timer
 	for {
 		fn()
-		if httpIdleMgr.idleWorkers.Add(1) > httpIdleMgr.maxWorkers {
+		select {
+		case next := <-httpIdleMgr.work:
+			fn = next
+			continue
+		default:
+		}
+		idle := httpIdleMgr.idleWorkers.Add(1)
+		if idle > httpIdleMgr.maxWorkers {
 			httpIdleMgr.idleWorkers.Add(-1)
+			if timer != nil {
+				timer.Stop()
+			}
 			return
 		}
-		timer := time.NewTimer(httpIdleWorkerTTL)
+		// Keep a small warm core of idle workers longer than burst workers so
+		// active dispatch bursts avoid frequent thread churn, while still
+		// expiring cleanly when the server becomes idle.
+		ttl := httpIdleWorkerTTL
+		if idle <= httpIdleMinWorkers {
+			ttl = httpIdleWarmWorkerTTL
+		}
+		if timer == nil {
+			timer = time.NewTimer(ttl)
+		} else {
+			timer.Reset(ttl)
+		}
 		select {
 		case next := <-httpIdleMgr.work:
 			httpIdleMgr.idleWorkers.Add(-1)
@@ -156,6 +229,20 @@ func (e *httpIdleEntry) closeConnection() {
 		e.c.close()
 		e.c.setState(e.c.rwc, StateClosed, runHooks)
 	}
+}
+
+// detachLocked removes a parked entry from both indexes under httpIdleMgr.mu.
+func (e *httpIdleEntry) detachLocked() {
+	if httpIdleMgr.byConn[e.c] == e {
+		delete(httpIdleMgr.byConn, e.c)
+	}
+	if httpIdleMgr.byFD[e.fd] == e {
+		delete(httpIdleMgr.byFD, e.fd)
+	}
+	if !e.deadline.IsZero() {
+		httpIdleMgr.deadlineCount--
+	}
+	e.state = httpIdleStateTaken
 }
 
 // httpIdlePark attempts to transfer ownership of an idle HTTP/1.1 connection to
@@ -188,6 +275,7 @@ func httpIdlePark(c *conn, ctx context.Context, cancelCtx context.CancelFunc, ra
 
 	var buf [1]byte
 	var wakeWatcher bool
+	var displaced *httpIdleEntry
 	ctrlErr := rawConn.Control(func(u uintptr) {
 		fd := int(u)
 		for {
@@ -205,17 +293,24 @@ func httpIdlePark(c *conn, ctx context.Context, cancelCtx context.CancelFunc, ra
 					closed = true
 					return
 				}
-				entry.fd = fd
-				entry.state = httpIdleStateParked
-				httpIdleMgr.byFD[fd] = entry
+				// A locally closed socket can lose its poll registration before
+				// the watcher has removed its entry. This fd now belongs to c.
+				if displaced = httpIdleMgr.byFD[fd]; displaced != nil {
+					displaced.detachLocked()
+				}
 				if err := httpIdleMgr.poller.add(fd); err != nil {
-					delete(httpIdleMgr.byFD, fd)
 					if httpIdleMgr.byConn[c] == entry {
 						delete(httpIdleMgr.byConn, c)
 					}
 					entry.state = httpIdleStateTaken
 					httpIdleMgr.mu.Unlock()
 					return
+				}
+				entry.fd = fd
+				entry.state = httpIdleStateParked
+				httpIdleMgr.byFD[fd] = entry
+				if !deadline.IsZero() {
+					httpIdleMgr.deadlineCount++
 				}
 				// Wake watcher if it was sleeping indefinitely or its next wake is
 				// later than this entry's idle deadline.
@@ -243,6 +338,9 @@ func httpIdlePark(c *conn, ctx context.Context, cancelCtx context.CancelFunc, ra
 			return
 		}
 	})
+	if displaced != nil {
+		httpIdleDispatch(displaced.closeConnection)
+	}
 
 	if parked {
 		if wakeWatcher {
@@ -285,11 +383,7 @@ func httpIdleNotifyClosed(c *conn) {
 		httpIdleMgr.mu.Unlock()
 		return
 	}
-	delete(httpIdleMgr.byConn, c)
-	if httpIdleMgr.byFD[entry.fd] == entry {
-		delete(httpIdleMgr.byFD, entry.fd)
-	}
-	entry.state = httpIdleStateTaken
+	entry.detachLocked()
 	httpIdleMgr.mu.Unlock()
 
 	httpIdleDispatch(entry.closeConnection)
@@ -299,7 +393,9 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 	readyFDs := make([]int, 0, 64)
 	expired := make([]*httpIdleEntry, 0, 32)
 	probeList := make([]*httpIdleEntry, 0, 64)
+	hotList := make([]*httpHotEntry, 0, 64)
 	lastProbe := time.Now()
+	nextHotSweep := time.Now().Add(time.Duration(httpHotSweepTickNs))
 
 	for {
 		now := time.Now()
@@ -307,31 +403,39 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 		var timeoutNs int64 = -1
 
 		httpIdleMgr.mu.Lock()
+		hasHot := len(httpIdleMgr.hotEntries) > 0
 		if len(httpIdleMgr.byFD) > 0 {
 			timeoutNs = httpIdleProbeNs
-			for fd, entry := range httpIdleMgr.byFD {
-				if entry.state != httpIdleStateParked {
-					delete(httpIdleMgr.byFD, fd)
-					continue
-				}
-				if !entry.deadline.IsZero() {
-					rem := entry.deadline.Sub(now)
-					if rem <= 0 {
+			if httpIdleMgr.deadlineCount > 0 {
+				for fd, entry := range httpIdleMgr.byFD {
+					if entry.state != httpIdleStateParked {
 						delete(httpIdleMgr.byFD, fd)
-						if httpIdleMgr.byConn[entry.c] == entry {
-							delete(httpIdleMgr.byConn, entry.c)
-						}
-						entry.state = httpIdleStateTaken
-						expired = append(expired, entry)
 						continue
 					}
-					if int64(rem) < timeoutNs {
-						timeoutNs = int64(rem)
+					if !entry.deadline.IsZero() {
+						rem := entry.deadline.Sub(now)
+						if rem <= 0 {
+							entry.detachLocked()
+							expired = append(expired, entry)
+							continue
+						}
+						if int64(rem) < timeoutNs {
+							timeoutNs = int64(rem)
+						}
 					}
 				}
+				if len(httpIdleMgr.byFD) == 0 {
+					timeoutNs = -1
+				}
 			}
-			if len(httpIdleMgr.byFD) == 0 {
-				timeoutNs = -1
+		}
+		if hasHot {
+			hotRem := int64(nextHotSweep.Sub(now))
+			if hotRem < 1_000_000 {
+				hotRem = 1_000_000
+			}
+			if timeoutNs < 0 || hotRem < timeoutNs {
+				timeoutNs = hotRem
 			}
 		}
 		if timeoutNs < 0 {
@@ -358,17 +462,51 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 				httpIdleMgr.mu.Unlock()
 				continue
 			}
-			delete(httpIdleMgr.byFD, fd)
-			if httpIdleMgr.byConn[entry.c] == entry {
-				delete(httpIdleMgr.byConn, entry.c)
-			}
-			entry.state = httpIdleStateTaken
+			entry.detachLocked()
 			httpIdleMgr.mu.Unlock()
 
 			e := entry
 			httpIdleDispatch(func() {
 				e.c.serveHTTP1(e.ctx, e.cancelCtx, true, e.deadline)
 			})
+		}
+
+		// Lazily evict hot-grace keep-alive connections that have been idle in
+		// Peek(4) across httpHotIdleTicks consecutive sweeps (~100..150ms) so
+		// active keep-alive loops avoid per-request deadline timers.
+		if nowSweep := time.Now(); !nowSweep.Before(nextHotSweep) {
+			nextHotSweep = nowSweep.Add(time.Duration(httpHotSweepTickNs))
+			hotList = hotList[:0]
+			httpIdleMgr.mu.Lock()
+			for he := range httpIdleMgr.hotEntries {
+				hotList = append(hotList, he)
+			}
+			httpIdleMgr.mu.Unlock()
+
+			for _, he := range hotList {
+				g := he.idleGen.Load()
+				if g&1 == 1 && g&httpHotEvictBit == 0 {
+					if g == he.lastGen {
+						he.idleTicks++
+					} else {
+						he.lastGen = g
+						he.idleTicks = 1
+					}
+					if he.idleTicks >= httpHotIdleTicks {
+						he.c.r.lock()
+						if he.idleGen.CompareAndSwap(g, g|httpHotEvictBit) {
+							he.c.r.aborted = true
+							he.c.rwc.SetReadDeadline(aLongTimeAgo)
+						}
+						he.c.r.unlock()
+						he.lastGen = 0
+						he.idleTicks = 0
+					}
+				} else {
+					he.lastGen = 0
+					he.idleTicks = 0
+				}
+			}
 		}
 
 		// Periodically probe parked rawConns outside httpIdleMgr.mu so even an
@@ -388,13 +526,7 @@ func runHTTPIdleWatcher(p *httpBgPoller) {
 				if err := entry.rawConn.Control(func(uintptr) {}); err != nil {
 					httpIdleMgr.mu.Lock()
 					if entry.state == httpIdleStateParked {
-						if httpIdleMgr.byFD[entry.fd] == entry {
-							delete(httpIdleMgr.byFD, entry.fd)
-						}
-						if httpIdleMgr.byConn[entry.c] == entry {
-							delete(httpIdleMgr.byConn, entry.c)
-						}
-						entry.state = httpIdleStateTaken
+						entry.detachLocked()
 						httpIdleMgr.mu.Unlock()
 						e := entry
 						httpIdleDispatch(e.closeConnection)
@@ -517,54 +649,12 @@ func (c *conn) serve(ctx context.Context) {
 	c.serveHTTP1(ctx, cancelCtx, false, time.Time{})
 }
 
-const (
-	idleWaitReady    = 0
-	idleWaitTimeout  = 1
-	idleWaitClosed   = 2
-	idleWaitFallback = 3
-)
-
-// httpIdleWaitReadable waits until rawConn has at least one byte readable or
-// graceDeadline expires, using MSG_PEEK via rawConn.Read so no read error ever
-// passes through connReader.Read (which would cancel the connection-level
-// c.cancelCtx on a hot-grace timeout).
-func httpIdleWaitReadable(c *conn, rawConn syscall.RawConn, graceDeadline time.Time) int {
-	c.rwc.SetReadDeadline(graceDeadline)
-	var buf [1]byte
-	status := idleWaitTimeout
-	readErr := rawConn.Read(func(u uintptr) bool {
-		fd := int(u)
-		for {
-			n, _, rerr := syscall.Recvfrom(fd, buf[:], syscall.MSG_PEEK|syscall.MSG_DONTWAIT)
-			if rerr == syscall.EINTR {
-				continue
-			}
-			if rerr == syscall.EAGAIN || rerr == syscall.EWOULDBLOCK {
-				return false
-			}
-			if rerr != nil {
-				if isNonPeekableErrno(rerr) {
-					status = idleWaitFallback
-					return true
-				}
-				status = idleWaitClosed
-				return true
-			}
-			if n == 0 {
-				status = idleWaitClosed
-				return true
-			}
-			status = idleWaitReady
-			return true
-		}
-	})
-	if readErr != nil {
-		if os.IsTimeout(readErr) {
-			return idleWaitTimeout
-		}
-		return idleWaitClosed
+func requestBodyLimitReached(w *response) bool {
+	// Go 1.27.4 changed requestBodyLimitHit from bool to atomic.Bool.
+	if flag, ok := any(&w.requestBodyLimitHit).(*bool); ok {
+		return *flag
 	}
-	return status
+	return any(&w.requestBodyLimitHit).(*atomic.Bool).Load()
 }
 
 func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, resumed bool, resumedIdleDeadline time.Time) {
@@ -587,7 +677,15 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 			}
 		}
 	}
+	var hotEntry *httpHotEntry
+	if hotSlot && cachedRawConn != nil {
+		hotEntry = httpHotRegister(c)
+	}
+	var hotWaitSeq uint64 = 1
 	defer func() {
+		if hotEntry != nil {
+			httpHotUnregister(hotEntry)
+		}
 		if hotSlot {
 			httpIdleMgr.hotCount.Add(-1)
 		}
@@ -705,7 +803,7 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 		w.finishRequest()
 		c.rwc.SetWriteDeadline(time.Time{})
 		if !w.shouldReuseConnection() {
-			if w.requestBodyLimitHit || w.closedRequestBodyEarly() {
+			if requestBodyLimitReached(w) || w.closedRequestBodyEarly() {
 				c.closeWriteAndWait()
 			}
 			return
@@ -725,44 +823,78 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 
 		if cachedRawConn != nil && c.bufr.Buffered() == 0 && !c.r.hasByte {
 			needPark := false
-			fallback := false
 			if hotSlot {
-				graceDeadline := time.Now().Add(httpIdleHotGrace)
-				if !idleDeadline.IsZero() && idleDeadline.Before(graceDeadline) {
-					graceDeadline = idleDeadline
-				}
-				switch httpIdleWaitReadable(c, cachedRawConn, graceDeadline) {
-				case idleWaitReady:
-					// Next request arrived during hot-grace window.
-					if !idleDeadline.IsZero() {
-						c.rwc.SetReadDeadline(idleDeadline)
+				if hotEntry != nil && idleDeadline.IsZero() {
+					// Lazy watcher-driven hot-grace wait when no IdleTimeout/ReadTimeout
+					// is set: clear any read deadline a handler may have installed via
+					// ResponseController.SetReadDeadline, then block in Peek(4) with no
+					// grace timer. The idle watcher evicts only if hotEntry.idleGen
+					// remains unchanged across httpHotIdleTicks (~100..150ms).
+					c.rwc.SetReadDeadline(time.Time{})
+					seq := hotWaitSeq
+					hotWaitSeq += 2
+					if hotWaitSeq&httpHotEvictBit != 0 {
+						hotWaitSeq = 1
+					}
+					hotEntry.idleGen.Store(seq)
+					_, peekErr := c.bufr.Peek(4)
+					prev := hotEntry.idleGen.Swap(seq + 1)
+					if prev&httpHotEvictBit != 0 {
+						c.r.lock()
+						c.r.aborted = false
+						c.rwc.SetReadDeadline(time.Time{})
+						c.r.unlock()
+					}
+					if peekErr == nil {
+						if readHeaderTO > 0 {
+							c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
+						}
+						continue
+					}
+					if prev&httpHotEvictBit == 0 || !os.IsTimeout(peekErr) {
+						return
+					}
+					// Finish buffered prefixes below without a header deadline.
+					needPark = c.bufr.Buffered() == 0
+				} else {
+					graceDeadline := time.Now().Add(httpIdleDeadlineGrace)
+					if !idleDeadline.IsZero() && idleDeadline.Before(graceDeadline) {
+						graceDeadline = idleDeadline
+					}
+					// Explicit IdleTimeout/ReadTimeout (or watcher init fallback): use
+					// a short bounded grace deadline on c.bufr.Peek(4).
+					c.rwc.SetReadDeadline(graceDeadline)
+					c.r.lock()
+					c.r.aborted = true
+					c.r.unlock()
+					_, peekErr := c.bufr.Peek(4)
+					c.r.lock()
+					c.r.aborted = false
+					c.r.unlock()
+					if peekErr == nil {
+						if readHeaderTO > 0 {
+							c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
+						} else {
+							c.rwc.SetReadDeadline(time.Time{})
+						}
+						continue
+					}
+					if os.IsTimeout(peekErr) {
+						if !idleDeadline.IsZero() && !time.Now().Before(idleDeadline) {
+							return
+						}
+						// An incomplete prefix in bufr must finish under the original
+						// idle deadline. The poller only sees bytes in the socket.
+						needPark = c.bufr.Buffered() == 0
 					} else {
-						c.rwc.SetReadDeadline(time.Time{})
-					}
-					if _, err := c.bufr.Peek(4); err != nil {
 						return
 					}
-					if readHeaderTO > 0 {
-						c.rwc.SetReadDeadline(time.Now().Add(readHeaderTO))
-					} else if !idleDeadline.IsZero() {
-						c.rwc.SetReadDeadline(time.Time{})
-					}
-					continue
-				case idleWaitClosed:
-					return
-				case idleWaitFallback:
-					fallback = true
-				case idleWaitTimeout:
-					if !idleDeadline.IsZero() && !time.Now().Before(idleDeadline) {
-						return
-					}
-					needPark = true
 				}
 			} else {
 				needPark = true
 			}
 
-			if !fallback && needPark {
+			if needPark {
 				c.rwc.SetReadDeadline(time.Time{})
 				parked, hasData, closed := httpIdlePark(c, ctx, cancelCtx, cachedRawConn, idleDeadline)
 				if parked {
@@ -789,7 +921,7 @@ func (c *conn) serveHTTP1(ctx context.Context, cancelCtx context.CancelFunc, res
 			}
 		}
 
-		// Standard fallback for TLS, custom net.Conn, buffered pipelined reads, or poller init failure.
+		// Wait for a complete prefix before starting the next request's timeouts.
 		if !idleDeadline.IsZero() {
 			c.rwc.SetReadDeadline(idleDeadline)
 		} else {
@@ -818,6 +950,11 @@ func (s *Server) Close() error {
 
 	for c := range s.activeConn {
 		c.rwc.Close()
+		// A local close can remove the background poll registration without
+		// delivering a read error to the handler waiting on its context.
+		if w := c.curReq.Load(); w != nil {
+			w.cancelCtx()
+		}
 		httpIdleNotifyClosed(c)
 		delete(s.activeConn, c)
 	}

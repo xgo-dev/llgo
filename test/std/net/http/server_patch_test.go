@@ -5,10 +5,13 @@ package http_test
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"net/textproto"
 	"os"
 	"runtime"
 	"strings"
@@ -262,8 +265,8 @@ func TestServerIdleKeepAliveOffloadAndShutdown(t *testing.T) {
 	}
 
 	// On LLGo, idle keep-alive connections offload to the shared kqueue/epoll
-	// watcher after the 5ms hot-grace window instead of pinning one OS thread
-	// per idle socket.
+	// watcher after the hot-grace window (~150ms) instead of pinning one OS
+	// thread per idle socket.
 	if runtime.Compiler == "llgo" {
 		deadline := time.Now().Add(1500 * time.Millisecond)
 		var afterG int
@@ -441,8 +444,9 @@ func TestServerElasticWorkerPoolNoSelfCallDeadlock(t *testing.T) {
 		readers[i] = br
 	}
 
-	// Let all 40 idle connections park into the shared idle watcher.
-	time.Sleep(25 * time.Millisecond)
+	// Allow the 150ms hot grace and an extra sweep interval before resuming
+	// the connections through the shared idle watcher.
+	time.Sleep(300 * time.Millisecond)
 
 	var wg sync.WaitGroup
 	errs := make(chan error, concurrency)
@@ -504,9 +508,9 @@ func TestServerIdleKeepAlivePreservesRequestContext(t *testing.T) {
 		if resp.StatusCode != http.StatusOK || string(body) != "ok:"+path {
 			t.Fatalf("%s: got status=%d body=%q, want 200 ok:%s", path, resp.StatusCode, string(body), path)
 		}
-		// Pause past the 5ms hot-grace window so the connection parks on the
-		// shared idle watcher and resumes for the next request with live ctx.
-		time.Sleep(20 * time.Millisecond)
+		// Pause past the 150ms lazy hot-grace window so the connection parks on
+		// the shared idle watcher and resumes for the next request with live ctx.
+		time.Sleep(220 * time.Millisecond)
 	}
 }
 
@@ -599,5 +603,819 @@ func TestServerBackgroundReadNonSocketSyscallConnFallback(t *testing.T) {
 	case <-cancelled:
 	case <-time.After(1 * time.Second):
 		t.Fatal("non-socket syscall.Conn fallback did not observe client close promptly")
+	}
+}
+
+func TestClientTransportKeepAliveRetryTimeoutAndLargePost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/slow-header":
+			time.Sleep(120 * time.Millisecond)
+			io.WriteString(w, "slow")
+		case "/echo":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Write(body)
+		default:
+			io.WriteString(w, "ok")
+		}
+	}))
+	defer srv.Close()
+
+	tr := &http.Transport{
+		MaxIdleConns:          32,
+		MaxIdleConnsPerHost:   32,
+		ResponseHeaderTimeout: 50 * time.Millisecond,
+	}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr}
+
+	// 1. Exercise keep-alive GETs across concurrent connections.
+	const conns = 16
+	var wg sync.WaitGroup
+	errs := make(chan error, conns)
+	for i := 0; i < conns; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				resp, err := client.Get(srv.URL + "/ok")
+				if err != nil {
+					errs <- err
+					return
+				}
+				data, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil || string(data) != "ok" {
+					errs <- io.ErrUnexpectedEOF
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("keep-alive GET failed: %v", err)
+	}
+
+	// 2. ResponseHeaderTimeout fires while waiting for the response.
+	if resp, err := client.Get(srv.URL + "/slow-header"); err == nil {
+		resp.Body.Close()
+		t.Fatal("expected ResponseHeaderTimeout error, got nil")
+	}
+
+	// 3. A large POST echoes the full body.
+	payload := strings.Repeat("0123456789abcdef", 8192) // 128 KiB
+	trLarge := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer trLarge.CloseIdleConnections()
+	resp, err := (&http.Client{Transport: trLarge}).Post(srv.URL+"/echo", "text/plain", strings.NewReader(payload))
+	if err != nil {
+		t.Fatalf("large POST failed: %v", err)
+	}
+	got, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil || string(got) != payload {
+		t.Fatalf("large POST echo mismatch: len=%d want=%d err=%v", len(got), len(payload), err)
+	}
+
+	// 4. Server closing an idle keep-alive conn is retried transparently on GET.
+	trRetry := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer trRetry.CloseIdleConnections()
+	cRetry := &http.Client{Transport: trRetry}
+	r1, err := cRetry.Get(srv.URL + "/ok")
+	if err != nil {
+		t.Fatalf("first GET: %v", err)
+	}
+	io.Copy(io.Discard, r1.Body)
+	r1.Body.Close()
+	srv.CloseClientConnections()
+	time.Sleep(15 * time.Millisecond)
+	r2, err := cRetry.Get(srv.URL + "/ok")
+	if err != nil {
+		t.Fatalf("GET after server closed idle conn failed: %v", err)
+	}
+	io.Copy(io.Discard, r2.Body)
+	r2.Body.Close()
+
+	// 5. An unknown-length POST uses chunked encoding and echoes cleanly.
+	chunkedReq, err := http.NewRequest("POST", srv.URL+"/echo", io.NopCloser(strings.NewReader("chunked-body")))
+	if err != nil {
+		t.Fatalf("new chunked req: %v", err)
+	}
+	chunkedReq.ContentLength = 0
+	rChunk, err := cRetry.Do(chunkedReq)
+	if err != nil {
+		t.Fatalf("chunked POST failed: %v", err)
+	}
+	gotChunk, err := io.ReadAll(rChunk.Body)
+	rChunk.Body.Close()
+	if err != nil || string(gotChunk) != "chunked-body" {
+		t.Fatalf("chunked POST mismatch: got=%q err=%v", string(gotChunk), err)
+	}
+}
+
+func TestServerIdleClearsHandlerReadDeadlineAndHandlesPartialPrefix(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/set-deadline" {
+			rc := http.NewResponseController(w)
+			if err := rc.SetReadDeadline(time.Now().Add(40 * time.Millisecond)); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		io.WriteString(w, "ok:"+r.URL.Path)
+	}))
+	defer srv.Close()
+
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	br := bufio.NewReader(conn)
+
+	// 1. Handler sets a 40ms read deadline via ResponseController; keeping the
+	// connection idle for 80ms must not kill it (deadline must be cleared).
+	if _, err := io.WriteString(conn, "GET /set-deadline HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatalf("write 1: %v", err)
+	}
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("read 1: %v", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	time.Sleep(80 * time.Millisecond)
+
+	// 2. Send a 2-byte prefix before grace expiry, pause past the 150ms grace
+	// window, then send the rest of the request; server must not stall in park.
+	if _, err := io.WriteString(conn, "GE"); err != nil {
+		t.Fatalf("write partial prefix: %v", err)
+	}
+	time.Sleep(220 * time.Millisecond)
+	if _, err := io.WriteString(conn, "T /after HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatalf("write remainder: %v", err)
+	}
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	resp2, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("read 2 after handler deadline + partial prefix: %v", err)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK || string(body2) != "ok:/after" {
+		t.Fatalf("resp2: status=%d body=%q", resp2.StatusCode, string(body2))
+	}
+}
+
+func TestClientTransportRejectsUnsolicitedBufferedBytes(t *testing.T) {
+	if runtime.Compiler != "llgo" {
+		t.Skip("requires the LLGo HTTP/1.1 connection reuse guard")
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	var accepted atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			n := accepted.Add(1)
+			go func(conn net.Conn, id int32) {
+				defer conn.Close()
+				br := bufio.NewReader(conn)
+				req, err := http.ReadRequest(br)
+				if err != nil {
+					return
+				}
+				io.Copy(io.Discard, req.Body)
+				req.Body.Close()
+				if id == 1 {
+					// Append a fabricated unsolicited second response in the same
+					// write so pc.br buffers it alongside the first response.
+					_, _ = io.WriteString(conn,
+						"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nfirst"+
+							"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\npoison")
+				} else {
+					_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecond")
+				}
+			}(c, n)
+		}
+	}()
+
+	tr := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr}
+	url := "http://" + ln.Addr().String() + "/"
+
+	r1, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("first GET: %v", err)
+	}
+	b1, err := io.ReadAll(r1.Body)
+	r1.Body.Close()
+	if err != nil || string(b1) != "first" {
+		t.Fatalf("first body=%q err=%v", string(b1), err)
+	}
+
+	r2, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("second GET: %v", err)
+	}
+	b2, err := io.ReadAll(r2.Body)
+	r2.Body.Close()
+	if err != nil || string(b2) != "second" {
+		t.Fatalf("second body=%q (want \"second\", not poisoned) err=%v", string(b2), err)
+	}
+	if got := accepted.Load(); got < 2 {
+		t.Fatalf("expected second request to open a new connection, accepted=%d", got)
+	}
+}
+
+type blockingBodyReader struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *blockingBodyReader) Read(p []byte) (int, error) {
+	<-b.closed
+	return 0, errors.New("body closed")
+}
+
+func (b *blockingBodyReader) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
+
+func TestClientTransportEarlyRejectSmallStreamingPost(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		br := bufio.NewReader(conn)
+		// Read request headers only, then immediately reject with 413 + Connection: close.
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil || line == "\r\n" {
+				break
+			}
+		}
+		_, _ = io.WriteString(conn, "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+	}()
+
+	tr := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr, Timeout: 2 * time.Second}
+
+	body := &blockingBodyReader{closed: make(chan struct{})}
+	defer body.Close()
+	req, err := http.NewRequest("POST", "http://"+ln.Addr().String()+"/upload", body)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.ContentLength = 8
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("streaming POST early 413 failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+}
+
+func TestClientTransportGot1xxErrorTerminalOnReusedConn(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	var requests atomic.Int32
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				br := bufio.NewReader(c)
+				for {
+					req, err := http.ReadRequest(br)
+					if err != nil {
+						return
+					}
+					io.Copy(io.Discard, req.Body)
+					req.Body.Close()
+					n := requests.Add(1)
+					switch n {
+					case 1:
+						// Warm the keep-alive connection.
+						_, _ = io.WriteString(c, "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nwarm")
+					case 2:
+						// Send 103 Early Hints followed by 200 on the reused conn.
+						_, _ = io.WriteString(c, "HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+						return
+					default:
+						// If the client erroneously retried on a new connection, return 200.
+						_, _ = io.WriteString(c, "HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\nretried")
+						return
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	tr := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr}
+	url := "http://" + ln.Addr().String() + "/"
+
+	r1, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("warm GET: %v", err)
+	}
+	io.Copy(io.Discard, r1.Body)
+	r1.Body.Close()
+
+	sentinel := errors.New("stop on 103")
+	ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
+		Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+			if code == 103 {
+				return sentinel
+			}
+			return nil
+		},
+	})
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext: %v", err)
+	}
+	r2, err := client.Do(req)
+	if err == nil {
+		r2.Body.Close()
+		t.Fatalf("expected sentinel error from Got1xxResponse, got status %d (requests=%d)", r2.StatusCode, requests.Load())
+	}
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want errors.Is(_, sentinel)", err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatalf("requests = %d, want 2 (no retry after Got1xxResponse error)", got)
+	}
+}
+
+func TestClientTransportEarlyBodyCloseReturnsPromptly(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	releaseBody := make(chan struct{})
+	defer close(releaseBody)
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		br := bufio.NewReader(conn)
+		if _, err := http.ReadRequest(br); err != nil {
+			return
+		}
+		// Flush response headers with Content-Length: 8 but withhold body bytes
+		// until after the client closes Response.Body.
+		_, _ = io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\n")
+		<-releaseBody
+	}()
+
+	tr := &http.Transport{MaxIdleConnsPerHost: 4}
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr}
+
+	resp, err := client.Get("http://" + ln.Addr().String() + "/delayed-body")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	start := time.Now()
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("Body.Close: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 20*time.Millisecond {
+		t.Fatalf("early Response.Body.Close blocked for %v (want < 20ms)", elapsed)
+	}
+}
+
+func TestServerIdleTimeoutExpiresPartialPrefix(t *testing.T) {
+	idle := make(chan struct{})
+	prefixSent := make(chan struct{})
+	defer close(prefixSent)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{
+		IdleTimeout: 100 * time.Millisecond,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			if state == http.StateIdle {
+				close(idle)
+				<-prefixSent
+			}
+		},
+	}
+	go srv.Serve(ln)
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	select {
+	case <-idle:
+	case <-time.After(3 * time.Second):
+		t.Fatal("server never entered the idle state")
+	}
+	if _, err := io.WriteString(conn, "GE"); err != nil {
+		t.Fatal(err)
+	}
+	// Send the partial prefix before the server begins its keep-alive wait.
+	prefixSent <- struct{}{}
+	if _, err := br.ReadByte(); !errors.Is(err, io.EOF) {
+		t.Fatalf("connection with a partial request prefix should close at IdleTimeout, got %v", err)
+	}
+}
+
+func TestClientTransportEarlyRejectWhileWritingHeaders(t *testing.T) {
+	ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	release := make(chan struct{})
+	defer close(release)
+	serverErr := make(chan error, 1)
+	go func() {
+		conn, err := ln.AcceptTCP()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		defer conn.Close()
+		if err := conn.SetReadBuffer(1024); err != nil {
+			serverErr <- err
+			return
+		}
+		var firstByte [1]byte
+		if _, err := io.ReadFull(conn, firstByte[:]); err != nil {
+			serverErr <- err
+			return
+		}
+		// Leave the connection open while rejecting the request, without
+		// draining the remaining headers from the receive buffer.
+		_, err = io.WriteString(conn, "HTTP/1.1 413 Content Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+		serverErr <- err
+		<-release
+	}()
+
+	tr := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			if err := conn.(*net.TCPConn).SetWriteBuffer(1024); err != nil {
+				conn.Close()
+				return nil, err
+			}
+			return conn, nil
+		},
+	}
+	defer tr.CloseIdleConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", "http://"+ln.Addr().String()+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("X-Large", strings.Repeat("a", 1<<20))
+	resp, err := tr.RoundTrip(req)
+	if err != nil {
+		t.Fatalf("early response while writing request headers: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server: %v", err)
+	}
+}
+
+func TestClientTransportCancelCompletedRequestAndReuseConn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/no-body" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		io.WriteString(w, "ok")
+	}))
+	defer srv.Close()
+
+	for _, path := range []string{"/body", "/no-body"} {
+		t.Run(path[1:], func(t *testing.T) {
+			tr := &http.Transport{MaxConnsPerHost: 1}
+			defer tr.CloseIdleConnections()
+			client := &http.Client{Transport: tr, Timeout: 3 * time.Second}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			first, err := http.NewRequestWithContext(ctx, "GET", srv.URL+path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := client.Do(first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var reused bool
+			trace := &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) { reused = info.Reused }}
+			next, err := http.NewRequestWithContext(httptrace.WithClientTrace(context.Background(), trace), "GET", srv.URL+"/body", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cancel()
+			resp, err = client.Do(next)
+			if err != nil {
+				t.Fatalf("request after canceling the completed request: %v", err)
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil || string(body) != "ok" || !reused {
+				t.Fatalf("next request: body=%q err=%v reused=%t", body, err, reused)
+			}
+		})
+	}
+}
+
+func TestServerIdlePartialPrefixDefersHeaderTimeout(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	srv.Config.ReadHeaderTimeout = 90 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(3 * time.Second))
+	br := bufio.NewReader(conn)
+	if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if _, err := io.WriteString(conn, "G"); err != nil {
+		t.Fatal(err)
+	}
+	// Allow the waiter to leave hot grace, then exceed ReadHeaderTimeout
+	// before completing the four-byte prefix.
+	time.Sleep(400 * time.Millisecond)
+	if _, err := io.WriteString(conn, "ET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err = http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("second status = %d, want 204", resp.StatusCode)
+	}
+}
+
+type observedTCPConn struct {
+	*net.TCPConn
+	idle      atomic.Bool
+	polls     chan int
+	idlePolls chan int
+}
+
+type observedRawConn struct {
+	syscall.RawConn
+	observe func(int)
+}
+
+func (c observedRawConn) Control(f func(uintptr)) error {
+	fd := -1
+	err := c.RawConn.Control(func(u uintptr) {
+		fd = int(u)
+		f(u)
+	})
+	if err == nil {
+		c.observe(fd)
+	}
+	return err
+}
+
+func (c *observedTCPConn) SyscallConn() (syscall.RawConn, error) {
+	rc, err := c.TCPConn.SyscallConn()
+	if err != nil {
+		return nil, err
+	}
+	return observedRawConn{rc, func(fd int) {
+		ch := c.polls
+		if c.idle.Load() {
+			ch = c.idlePolls
+		}
+		select {
+		case ch <- fd:
+		default:
+		}
+	}}, nil
+}
+
+type observedTCPListener struct {
+	*net.TCPListener
+	accepted         chan *observedTCPConn
+	acceptAfterFirst <-chan struct{}
+	sawFirst         bool
+}
+
+func (ln *observedTCPListener) Accept() (net.Conn, error) {
+	if ln.sawFirst && ln.acceptAfterFirst != nil {
+		<-ln.acceptAfterFirst
+	}
+	conn, err := ln.AcceptTCP()
+	if err != nil {
+		return nil, err
+	}
+	ln.sawFirst = true
+	observed := &observedTCPConn{TCPConn: conn, polls: make(chan int, 1), idlePolls: make(chan int, 1)}
+	ln.accepted <- observed
+	return observed, nil
+}
+
+func observeTCP(t *testing.T) *observedTCPListener {
+	t.Helper()
+	if runtime.Compiler != "llgo" {
+		t.Skip("requires the LLGo HTTP pollers")
+	}
+	ln, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &observedTCPListener{TCPListener: ln, accepted: make(chan *observedTCPConn, 2)}
+}
+
+func awaitHTTPEvent[T any](t *testing.T, ch <-chan T, desc string) T {
+	t.Helper()
+	select {
+	case result := <-ch:
+		return result
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", desc)
+		var zero T
+		return zero
+	}
+}
+
+func TestServerCloseCancelsPolledRequest(t *testing.T) {
+	ln := observeTCP(t)
+	done := make(chan struct{})
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		close(done)
+	})}
+	go srv.Serve(ln)
+	defer srv.Close()
+	client, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := io.WriteString(client, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	conn := awaitHTTPEvent(t, ln.accepted, "accepted connection")
+	awaitHTTPEvent(t, conn.polls, "background poll registration")
+	if err := srv.Close(); err != nil {
+		t.Fatal(err)
+	}
+	awaitHTTPEvent(t, done, "request cancellation after Server.Close")
+}
+
+func TestServerIdleRetiresReusedFD(t *testing.T) {
+	ln := observeTCP(t)
+	allowAccept := make(chan struct{})
+	ln.acceptAfterFirst = allowAccept
+	openAcceptGate := sync.OnceFunc(func() { close(allowAccept) })
+	closed := make(chan net.Conn, 2)
+	srv := &http.Server{
+		IdleTimeout: 450 * time.Millisecond,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}),
+		ConnState: func(c net.Conn, state http.ConnState) {
+			switch state {
+			case http.StateIdle:
+				c.(*observedTCPConn).idle.Store(true)
+			case http.StateClosed:
+				closed <- c
+			}
+		},
+	}
+	go srv.Serve(ln)
+	defer func() {
+		openAcceptGate()
+		srv.Close()
+	}()
+	dial := func() net.Conn {
+		c, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		c.SetDeadline(time.Now().Add(2 * time.Second))
+		return c
+	}
+	warm := func(c net.Conn) (*observedTCPConn, int) {
+		if _, err := io.WriteString(c, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		conn := awaitHTTPEvent(t, ln.accepted, "accepted connection")
+		return conn, awaitHTTPEvent(t, conn.idlePolls, "idle poll registration")
+	}
+	first, fd1 := warm(dial())
+	// Allocate the second client fd before closing the first server fd, so
+	// Accept can reuse the server fd when the gate opens.
+	secondClient := dial()
+	first.Close()
+	openAcceptGate()
+	second, fd2 := warm(secondClient)
+	if fd1 != fd2 {
+		t.Skipf("kernel assigned different server fds (%d and %d)", fd1, fd2)
+	}
+	seen := make(map[net.Conn]bool, 2)
+	for range 2 {
+		seen[awaitHTTPEvent(t, closed, "StateClosed for a parked connection")] = true
+	}
+	if !seen[first] || !seen[second] {
+		t.Fatalf("StateClosed callbacks: first=%t second=%t", seen[first], seen[second])
 	}
 }
