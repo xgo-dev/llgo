@@ -135,7 +135,7 @@ func funcForPCSlow(pc uintptr) *Func {
 	// considering entry-anchor slack, which can reach across the preceding
 	// function's epilogue in a shared library.
 	if pc > minLegalPC {
-		if entry := frameSymbolResultCache[(pc>>2)&(frameSymbolResultCacheSize-1)]; entry != nil && entry.pc == pc && entry.sym.ok {
+		if entry := loadFrameSymbolResult(pc); entry != nil && entry.sym.ok {
 			fn := newFuncForPC(pc, entry.sym)
 			cacheFuncForPC(pc, fn)
 			return fn
