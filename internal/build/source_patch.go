@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/xgo-dev/llgo/internal/build/fmtspecialize"
 	llruntime "github.com/xgo-dev/llgo/runtime"
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -38,6 +39,7 @@ type sourcePatchBuildContext struct {
 	toolTags       []string
 	buildFlags     []string
 	targetTags     []string
+	builtinFormats bool
 	deferErrorType bool
 	cgoEnabled     *bool
 }
@@ -299,6 +301,18 @@ func applySourcePatchForPkg(base, current map[string][]byte, runtimeDir, goroot,
 		out[target] = src.data
 		files = append(files, src.filename)
 		changed = true
+	}
+	if pkgPath == "fmt" && ctx.builtinFormats {
+		printFile := filepath.Join(srcDir, "print.go")
+		if source, err := os.ReadFile(printFile); err == nil && base[printFile] == nil {
+			baremetal := slices.Contains(sourcePatchBuildTags(ctx.buildFlags, ctx.targetTags), "baremetal")
+			if generated := fmtspecialize.BuiltinFormatSource(source, baremetal); len(generated) != 0 {
+				ensureOverlay()
+				target := filepath.Join(srcDir, "z_llgo_patch_builtin_format.go")
+				out[target] = generated
+				files = append(files, target)
+			}
+		}
 	}
 	return changed, out, files, nil
 }

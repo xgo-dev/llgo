@@ -180,23 +180,31 @@ func (s *commonSection) empty() bool {
 }
 
 type packageSection struct {
-	GoVersion        string            `yaml:"go_language_version,omitempty"`
-	FrontendInputs   string            `yaml:"frontend_inputs,omitempty"`
-	DeadInits        []string          `yaml:"unused_global_inits,omitempty"`
-	PthreadStackSize int64             `yaml:"pthread_stack_size,omitempty"`
-	PkgPath          string            `yaml:"pkg_path,omitempty"`
-	PkgID            string            `yaml:"pkg_id,omitempty"`
-	GoFiles          []fileDigest      `yaml:"go_files,omitempty"`
-	AltGoFiles       []fileDigest      `yaml:"alt_go_files,omitempty"`
-	EmbedFiles       []embedFileDigest `yaml:"embed_files,omitempty"`
-	AltEmbedFiles    []embedFileDigest `yaml:"alt_embed_files,omitempty"`
-	OtherFiles       []fileDigest      `yaml:"other_files,omitempty"`
-	LLGoFiles        []llgoFileDigest  `yaml:"llgo_files,omitempty"`
-	RewriteVars      orderedStringMap  `yaml:"rewrite_vars,omitempty"`
+	GoVersion             string            `yaml:"go_language_version,omitempty"`
+	FrontendInputs        string            `yaml:"frontend_inputs,omitempty"`
+	DeadInits             []string          `yaml:"unused_global_inits,omitempty"`
+	InitializerGuards     []string          `yaml:"initializer_guards,omitempty"`
+	GeneratedValueFormat  bool              `yaml:"generated_value_format,omitempty"`
+	BinaryCodecAccessor   bool              `yaml:"binary_codec_accessor,omitempty"`
+	SpecializeBinary      bool              `yaml:"specialize_binary,omitempty"`
+	CodecInitDrops        []string          `yaml:"omit_codec_init,omitempty"`
+	SpecializeJSON        bool              `yaml:"specialize_json,omitempty"`
+	StdoutWriter          string            `yaml:"stdout_writer,omitempty"`
+	SpecializeValueFormat bool              `yaml:"specialize_value_format,omitempty"`
+	PthreadStackSize      int64             `yaml:"pthread_stack_size,omitempty"`
+	PkgPath               string            `yaml:"pkg_path,omitempty"`
+	PkgID                 string            `yaml:"pkg_id,omitempty"`
+	GoFiles               []fileDigest      `yaml:"go_files,omitempty"`
+	AltGoFiles            []fileDigest      `yaml:"alt_go_files,omitempty"`
+	EmbedFiles            []embedFileDigest `yaml:"embed_files,omitempty"`
+	AltEmbedFiles         []embedFileDigest `yaml:"alt_embed_files,omitempty"`
+	OtherFiles            []fileDigest      `yaml:"other_files,omitempty"`
+	LLGoFiles             []llgoFileDigest  `yaml:"llgo_files,omitempty"`
+	RewriteVars           orderedStringMap  `yaml:"rewrite_vars,omitempty"`
 }
 
 func (s *packageSection) empty() bool {
-	return s.GoVersion == "" && s.FrontendInputs == "" && len(s.DeadInits) == 0 && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
+	return s.GoVersion == "" && s.FrontendInputs == "" && len(s.DeadInits) == 0 && len(s.InitializerGuards) == 0 && !s.GeneratedValueFormat && !s.SpecializeValueFormat && s.StdoutWriter == "" && !s.BinaryCodecAccessor && !s.SpecializeBinary && len(s.CodecInitDrops) == 0 && !s.SpecializeJSON && s.PkgPath == "" && s.PkgID == "" && len(s.GoFiles) == 0 && len(s.AltGoFiles) == 0 &&
 		len(s.EmbedFiles) == 0 && len(s.AltEmbedFiles) == 0 &&
 		len(s.OtherFiles) == 0 && len(s.LLGoFiles) == 0 && len(s.RewriteVars) == 0 && s.PthreadStackSize == 0
 }

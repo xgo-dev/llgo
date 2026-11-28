@@ -14,6 +14,7 @@ import (
 	"github.com/xgo-dev/llgo/internal/crosscompile"
 	"github.com/xgo-dev/llgo/internal/packages"
 	llssa "github.com/xgo-dev/llgo/ssa"
+	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
 )
@@ -152,7 +153,32 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 	if len(roots) == 0 {
 		return
 	}
-	unused, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil)
+	unused, reachable := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, false)
+
+	if plan := ctx.stdout; plan != nil && (len(plan.calls) != 0 || len(plan.builtinCalls) != 0) &&
+		slices.ContainsFunc(standardFiles, func(file cl.OptionalInitializer) bool {
+			return file.Global.Name() == "Stdout" && fixedStdoutDescriptor(file, reachable, isSymbolRoot)
+		}) {
+		analyze := func(wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph) {
+			initializers, result := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, wantGraph)
+			return initializers, result.CallGraph
+		}
+		// Reflection may keep file methods without an edge in the call graph.
+		keepFileWriter := ctx.prog.Target().WasmReflectBridges || isSymbolRoot(pollWriteSymbol)
+		unused = plan.specialize(unused, candidates, standardFiles, roots, keepFileWriter, analyze)
+		if plan.selected != nil {
+			usesDescriptor := plan.selected == plan.descriptor
+			if native && usesDescriptor {
+				ctx.initializerGuardsOff = append(ctx.initializerGuardsOff, stdoutPollInitGuard)
+			}
+			if conf.Verbose || conf.PrintCommands {
+				fmt.Fprintln(os.Stderr, "llgo: specialize closed literal stdout")
+				if usesDescriptor {
+					fmt.Fprintln(os.Stderr, "llgo: use the stdout descriptor writer")
+				}
+			}
+		}
+	}
 
 	var callbackInitializers []cl.OptionalInitializer
 	for _, group := range unused {
@@ -166,7 +192,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		init := darwinOS.Func(darwinExecutableCwdInitializer)
 		blocks := init.Blocks
 		init.Blocks = nil
-		withoutStartup, reachable := unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers)
+		withoutStartup, reachable := unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers, false)
 		init.Blocks = blocks
 		// The additional drops are sound only when the omitted cwd edge
 		// really disappears in the linked executable.
@@ -174,7 +200,7 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			maps.Copy(unused, withoutStartup)
 		}
 	} else if len(callbackInitializers) != 0 {
-		withoutCallbacks, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers)
+		withoutCallbacks, _ := unobservedInitializers(roots, candidates, sliceOwners, observedData, callbackInitializers, false)
 		maps.Copy(unused, withoutCallbacks)
 	}
 	// Drop the standard file startup group together. Keeping a single standard file
@@ -246,14 +272,14 @@ func initializerStoresCallback(value ssa.Value) bool {
 }
 
 func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl.OptionalInitializer,
-	sliceOwners, knownData map[*ssa.Package]bool, omitted []cl.OptionalInitializer) (map[*ssa.Global]cl.OptionalInitializer, *rta.Result) {
+	sliceOwners, knownData map[*ssa.Package]bool, omitted []cl.OptionalInitializer, wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *rta.Result) {
 	if len(omitted) != 0 {
 		restore := omitInitializerEdges(omitted)
 		defer restore()
 	}
 	unused := maps.Clone(candidates)
 	observedData := maps.Clone(knownData)
-	reachable := rta.Analyze(roots, false)
+	reachable := rta.Analyze(roots, wantGraph)
 	var operands [8]*ssa.Value
 	for fn := range reachable.Reachable {
 		for _, block := range fn.Blocks {
