@@ -599,9 +599,9 @@ runs:
         llvm_major="${{ inputs.llvm-version }}"
         case "$llvm_major" in
           23)
-            llvm_version=23.1.5
-            package_version=23.1.5-1
-            runtime_package_version=23.1.5-1
+            llvm_version=23.1.6
+            package_version=23.1.6-1
+            runtime_package_version=23.1.6-1
             ;;
           *)
             echo "unsupported Windows LLVM version: $llvm_major" >&2
