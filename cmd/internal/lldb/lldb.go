@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -106,7 +107,7 @@ func run(configuredPath string, args []string, stdin io.Reader, stdout, stderr i
 	lldbArgs = append(lldbArgs, args...)
 
 	command := exec.Command(path, lldbArgs...)
-	command.Env = lldbEnvironment(os.Environ(), runtime.GOOS)
+	command.Env = lldbEnvironment(os.Environ(), runtime.GOOS, runtime.GOARCH)
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr
@@ -158,7 +159,7 @@ func validateLLDB(name string) (string, error) {
 		return "", fmt.Errorf("llgo lldb: find %q: %w", name, err)
 	}
 	command := exec.Command(path, "--version")
-	command.Env = lldbEnvironment(os.Environ(), runtime.GOOS)
+	command.Env = lldbEnvironment(os.Environ(), runtime.GOOS, runtime.GOARCH)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("llgo lldb: query %q version: %w", path, err)
@@ -201,7 +202,7 @@ func lldbImportCommand(path string) string {
 // lldbEnvironment configures only the debugger process. LLGo may also start a
 // host Python (for example, a remote-debug transport), whose interpreter ABI
 // must not inherit the different Python home required by native Windows LLDB.
-func lldbEnvironment(environ []string, goos string) []string {
+func lldbEnvironment(environ []string, goos, goarch string) []string {
 	if goos != "windows" {
 		return environ
 	}
@@ -213,6 +214,14 @@ func lldbEnvironment(environ []string, goos string) []string {
 			}
 		}
 		return ""
+	}
+	if goarch == "arm64" && value("LLDB_USE_LLDB_SERVER") == "" {
+		// LLVM 23 defaults to lldb-server on Windows. That transport does
+		// not supply ARM64 PAC masks, and the adapter deliberately does not
+		// infer a remote process's address width from the local host. Keep
+		// the native Windows process plugin, where the existing stop hook
+		// can configure the code mask before unwinding authenticated LRs.
+		environ = append(slices.Clone(environ), "LLDB_USE_LLDB_SERVER=0")
 	}
 	home := value("LLGO_WINDOWS_LLDB_PYTHON_HOME")
 	if home == "" {

@@ -16,17 +16,15 @@ func sampleSignature(t *testing.T, ctx llvm.Context, id, variant int) llvm.Type 
 	lanes, size := 4, 0
 	for _, d := range entries {
 		switch d.Kind {
-		case "OneNthEltsVecArgument":
-			divisor := int(d.Value) * 4
+		case "OneNthEltsVec":
+			divisor := int(d.Value)
 			a, b := lanes, divisor
 			for b != 0 {
 				a, b = b, a%b
 			}
 			lanes = lanes / a * divisor
-		case "Argument":
-			if d.ArgumentKind != 7 {
-				size = max(size, int(d.Argument)+1)
-			}
+		case "Overloaded":
+			size = max(size, int(d.Argument)+1)
 		case "VecOfAnyPtrsToElt":
 			size = max(size, int(d.Argument)+1, int(d.Reference)+1)
 		}
@@ -40,31 +38,30 @@ func sampleSignature(t *testing.T, ctx llvm.Context, id, variant int) llvm.Type 
 		return llvm.VectorType(element, lanes)
 	}
 	for _, d := range entries {
-		if d.Kind != "Argument" || d.ArgumentKind == 7 {
+		if d.Kind != "Overloaded" {
 			continue
 		}
 		var typ llvm.Type
-		switch d.ArgumentKind {
+		switch d.ElementConstraint {
 		case 0:
 			typ = []llvm.Type{i32, llvm.ArrayType(ctx.Int8Type(), 3), ctx.StructType([]llvm.Type{i32, ctx.DoubleType()}, false), llvm.ArrayType(ctx.Int8Type(), 0)}[variant]
-		case 1, 2:
+			if d.VectorConstraint == 1 {
+				typ = i32
+				if variant%2 != 0 {
+					typ = f32
+				}
+			}
+		case 1:
 			typ = i32
-			if d.ArgumentKind == 2 {
-				typ = f32
-			}
-			if variant != 0 {
-				typ = vector(typ)
-			}
+		case 2:
+			typ = f32
 		case 3:
-			typ = i32
-			if variant%2 != 0 {
-				typ = f32
-			}
-			typ = vector(typ)
-		case 4:
 			typ = llvm.PointerType(ctx.Int8Type(), variant%2)
 		default:
-			t.Fatalf("unknown overload domain %d", d.ArgumentKind)
+			t.Fatalf("unknown element constraint %d", d.ElementConstraint)
+		}
+		if d.VectorConstraint == 1 || (d.VectorConstraint == 0 && d.ElementConstraint != 0 && variant != 0) {
+			typ = vector(typ)
 		}
 		overloads[d.Argument] = typ
 	}
@@ -121,20 +118,40 @@ func metadataPattern(t *testing.T, entries []llvm.IITDescriptor) Type {
 				fields[i] = read()
 			}
 			return Struct(fields...)
-		case "Argument":
-			if d.ArgumentKind == 7 {
-				return ref(int(d.Argument))
-			}
-			domains := []Type{Any, Integers, Floats, AnyVector, AnyPointer}
-			if int(d.ArgumentKind) >= len(domains) {
-				t.Fatalf("unknown LLVM overload domain %d", d.ArgumentKind)
-			}
-			return Bind(fmt.Sprintf("T%d", int(d.Argument)), domains[int(d.ArgumentKind)])
-		case "VecElementArgument":
+		case "Match":
+			return ref(int(d.Argument))
+		case "Overloaded":
+			return Bind(fmt.Sprintf("T%d", int(d.Argument)), Where(Any, "LLVM overload constraints", func(_ Context, typ llvm.Type) error {
+				_, _, vector := vectorShape(typ)
+				if (d.VectorConstraint == 1 && !vector) || (d.VectorConstraint == 2 && vector) {
+					return fmt.Errorf("vector constraint %d", d.VectorConstraint)
+				}
+				if vector {
+					typ = typ.ElementType()
+				}
+				switch d.ElementConstraint {
+				case 0:
+					return nil
+				case 1:
+					if typ.TypeKind() == llvm.IntegerTypeKind {
+						return nil
+					}
+				case 2:
+					if isFloat(typ) {
+						return nil
+					}
+				case 3:
+					if typ.TypeKind() == llvm.PointerTypeKind {
+						return nil
+					}
+				}
+				return fmt.Errorf("element constraint %d", d.ElementConstraint)
+			}))
+		case "VecElement":
 			return Elem(ref(int(d.Argument)))
-		case "SameVecWidthArgument":
+		case "SameVecWidth":
 			return Shape(ref(int(d.Argument)), read())
-		case "OneNthEltsVecArgument":
+		case "OneNthEltsVec":
 			return Vector(Divide(Lanes(ref(int(d.Reference))), uint64(d.Value)), Elem(ref(int(d.Reference))))
 		case "VecOfAnyPtrsToElt":
 			return Bind(fmt.Sprintf("T%d", int(d.Argument)), Vector(Lanes(ref(int(d.Reference))), AnyPointer))

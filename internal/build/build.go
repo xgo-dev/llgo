@@ -3960,7 +3960,7 @@ func printCompletedPackage(conf *Config, pkg *aPackage) {
 func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, error) {
 	prepareWasmGCGlobals(pkg.Module(), pkg.Prog.GCRootsEnabled(), pkgPath+"/"+filepath.Base(exportFile), ctx.buildConf.goGlobalDCEEnabled())
 	applySizeOptimizationAttributes(pkg.Module(), ctx.buildConf.OptLevel)
-	applyWASILTOFeatures(ctx, pkg.Module())
+	applyWASIFeatures(ctx, pkg.Module())
 	applyEmscriptenEHFeature(ctx, pkg.Module())
 	if useInMemoryNativeCodegen(ctx) {
 		return exportObjectInMemory(ctx, pkgPath, exportFile, pkg)
@@ -3970,7 +3970,7 @@ func exportObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Pac
 
 func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg llssa.Package) (string, packageArchiveBuffer, error) {
 	prepareWasmGCGlobals(pkg.Module(), pkg.Prog.GCRootsEnabled(), pkgPath+"/"+filepath.Base(exportFile), ctx.buildConf.goGlobalDCEEnabled())
-	applyWASILTOFeatures(ctx, pkg.Module())
+	applyWASIFeatures(ctx, pkg.Module())
 	applyEmscriptenEHFeature(ctx, pkg.Module())
 	if !useInMemoryNativeCodegen(ctx) {
 		path, err := exportObjectWithClang(ctx, pkgPath, exportFile, []byte(pkg.String()))
@@ -3993,10 +3993,12 @@ func exportPackageObject(ctx *context, pkgPath string, exportFile string, pkg ll
 	return "", packageArchiveBuffer{name: name, buffer: buf}, nil
 }
 
-// LTO backend defaults do not merge into existing target-features attributes.
-// Fill the WASI profile requirements without replacing features such as SIMD.
-func applyWASILTOFeatures(ctx *context, mod gllvm.Module) {
-	if !ctx.buildConf.ltoEnabled() || ctx.crossCompile.WasmProfile != crosscompile.WasmProfileW32 {
+// LLVM 23 requires the native SjLj feature on every calling function, including
+// definitions without existing target-features. Backend defaults also do not
+// merge into existing attributes. Carry the WASI profile in every codegen mode
+// without replacing unrelated capabilities such as SIMD.
+func applyWASIFeatures(ctx *context, mod gllvm.Module) {
+	if ctx.crossCompile.WasmProfile != crosscompile.WasmProfileW32 {
 		return
 	}
 	// Match the WASI compiler/backend flags in internal/crosscompile/crosscompile.go.
@@ -4006,9 +4008,9 @@ func applyWASILTOFeatures(ctx *context, mod gllvm.Module) {
 		if fn.IsDeclaration() {
 			continue
 		}
+		merged := slices.Clone(requiredFeatures)
 		for _, existing := range fn.GetFunctionAttributes() {
 			if existing.IsString() && existing.GetStringKind() == "target-features" {
-				merged := slices.Clone(requiredFeatures)
 				for _, feature := range strings.Split(existing.GetStringValue(), ",") {
 					// The mandatory profile features supersede both positive
 					// and negative copies; retain unrelated per-function ones.
@@ -4016,12 +4018,12 @@ func applyWASILTOFeatures(ctx *context, mod gllvm.Module) {
 						merged = append(merged, feature)
 					}
 				}
-				slices.Sort(merged)
-				features := strings.Join(slices.Compact(merged), ",")
-				fn.AddFunctionAttr(mod.Context().CreateStringAttribute("target-features", features))
 				break
 			}
 		}
+		slices.Sort(merged)
+		features := strings.Join(slices.Compact(merged), ",")
+		fn.AddFunctionAttr(mod.Context().CreateStringAttribute("target-features", features))
 	}
 }
 
@@ -4819,9 +4821,8 @@ func effectiveOptLevel(conf *Config) optlevel.Level {
 
 // applySizeOptimizationAttributes records the per-function size policy that
 // LLVM preserves in bitcode and consumes during both ordinary and LTO
-// optimization/code generation. The PassBuilder's Os/Oz pipeline selection is
-// not sufficient by itself: unlike Clang's frontend, it does not add these
-// attributes to existing IR.
+// optimization/code generation. LLVM 23 uses the O2 pipeline for both Os and
+// Oz, with these attributes carrying the size policy.
 func applySizeOptimizationAttributes(mod gllvm.Module, level optlevel.Level) {
 	if level != optlevel.Os && level != optlevel.Oz {
 		return
@@ -4846,11 +4847,11 @@ func applySizeOptimizationAttributes(mod gllvm.Module, level optlevel.Level) {
 func llvmPassPipeline(level optlevel.Level, ltoMode lto.Mode) string {
 	switch ltoMode {
 	case lto.Full:
-		return "lto-pre-link<" + level.Name() + ">"
+		return "lto-pre-link<" + level.PipelineName() + ">"
 	case lto.Thin:
-		return "thinlto-pre-link<" + level.Name() + ">"
+		return "thinlto-pre-link<" + level.PipelineName() + ">"
 	default:
-		return "default<" + level.Name() + ">"
+		return "default<" + level.PipelineName() + ">"
 	}
 }
 

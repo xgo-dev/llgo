@@ -10,7 +10,7 @@ test -x "$clang/bin/clang++"
 test -x "$clang/bin/ld.lld"
 test -x "$clang/bin/llvm-config"
 test -f "$clang/LICENSE-LLVM.txt"
-test -d "$clang/lib/clang/22/include"
+test -d "$clang/lib/clang/23/include"
 for directory in llvm llvm-c clang clang-c; do
     test ! -e "$clang/include/$directory"
 done

@@ -35,7 +35,7 @@ func (t *Tracker) Repeated(block llvm.BasicBlock, last llvm.Value, location Loca
 			return false
 		}
 		switch inst.InstructionOpcode() {
-		case llvm.Call, llvm.Invoke, llvm.Ret, llvm.Br, llvm.Switch, llvm.IndirectBr,
+		case llvm.Call, llvm.Invoke, llvm.Ret, llvm.CondBr, llvm.UncondBr, llvm.Switch, llvm.IndirectBr,
 			llvm.Unreachable, llvm.Resume, llvm.CleanupRet, llvm.CatchRet, llvm.CatchSwitch:
 			return false
 		}

@@ -1,6 +1,6 @@
 $script:LLGoRepository = 'xgo-dev/llgo'
 $script:LLGoGoVersion = '1.27.0'
-$script:LLGoLLVMVersion = '22.1.8'
+$script:LLGoLLVMVersion = '23.1.4'
 
 function ConvertTo-LLGoArchitecture {
   param([Parameter(Mandatory = $true)][string]$Architecture)
@@ -436,9 +436,9 @@ case "$LLGO_INSTALL_MINGW_ARCH" in
     ;;
 esac
 
-llvm_version=22.1.8
-package_version=22.1.8-2
-runtime_package_version=22.1.8-1
+llvm_version=23.1.3
+package_version=23.1.3-1
+runtime_package_version=23.1.3-1
 packages=(
   "clang-$package_version"
   "clang-libs-$package_version"
@@ -470,12 +470,12 @@ ldflags="$(llvm-config --ldflags --libs all --system-libs)"
 pc_dir="$MINGW_PREFIX/lib/pkgconfig"
 mkdir -p "$pc_dir"
 printf '%s\n' \
-  'Name: LLVM 22' \
-  'Description: LLVM 22 host compiler and linker flags' \
+  'Name: LLVM 23' \
+  'Description: LLVM 23 host compiler and linker flags' \
   "Version: $llvm_version" \
   "Cflags: ${cflags//$'\n'/ }" \
   "Libs: ${ldflags//$'\n'/ }" \
-  > "$pc_dir/llvm-22.pc"
+  > "$pc_dir/llvm-23.pc"
 '@
   & $bash -lc $setup | Out-Host
   if ($LASTEXITCODE -ne 0) { throw 'Installing MSYS2 MinGW dependencies failed' }

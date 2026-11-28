@@ -88,7 +88,17 @@ func Address(b *dep.Box) *uint64 { return b.Address() }
 				if level == optlevel.O0 {
 					return
 				}
-				runModulePasses(t, prog, mod, "default<"+level.String()+">")
+				if level == optlevel.Os || level == optlevel.Oz {
+					for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+						if !fn.IsDeclaration() {
+							fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(llvm.AttributeKindID("optsize"), 0))
+							if level == optlevel.Oz {
+								fn.AddFunctionAttr(mod.Context().CreateEnumAttribute(llvm.AttributeKindID("minsize"), 0))
+							}
+						}
+					}
+				}
+				runModulePasses(t, prog, mod, "default<"+level.PipelineName()+">")
 				for _, name := range []string{"Add", "Value", "Read"} {
 					if ir := mustNamedFunction(t, mod, "example.com/root."+name).String(); strings.Contains(ir, "call ") {
 						t.Fatalf("method call survived optimization:\n%s", ir)

@@ -17,7 +17,7 @@ stage=$(mktemp -d "$destination/.staging.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 for arch in amd64 arm64; do
     sdk="$source_root/linux/$arch/crosscompile/clang"
-    # Fedora's LLVM 22 omits Xtensa. Package compilers use the common targets;
+    # Fedora's LLVM 23 omits Xtensa. Package compilers use the common targets;
     # the separately staged ESP runtimes retain their full target set.
     config="$stage/system-linux/$arch/include/llvm/Config"
     mkdir -p "$config"

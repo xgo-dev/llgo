@@ -34,7 +34,7 @@ class ESPStagingTests(unittest.TestCase):
         archive = self.sources / pin['asset']
         files = {
             'bin/clang': b'compiler', 'bin/ld.lld': b'linker', 'lib/libLLVM.dylib': b'library',
-            'lib/clang/22/include/stddef.h': b'resource header',
+            f"lib/clang/{self.pins['llvm_version'].split('.')[0]}/include/stddef.h": b'resource header',
             'LLGO-LLVM-MANIFEST.txt': (f"payload_version={self.pins['release']}\n"
                 f"host_target={manifest_target or target}\nllvm_expected_version={self.pins['llvm_version']}\n"
                 'payload_profile=runtime\n').encode(),
