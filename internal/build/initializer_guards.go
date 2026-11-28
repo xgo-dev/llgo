@@ -159,8 +159,8 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 		slices.ContainsFunc(standardFiles, func(file cl.OptionalInitializer) bool {
 			return file.Global.Name() == "Stdout" && fixedStdoutDescriptor(file, reachable, isSymbolRoot)
 		}) {
-		analyze := func(wantGraph bool) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph) {
-			initializers, result := unobservedInitializers(roots, candidates, sliceOwners, observedData, nil, wantGraph)
+		analyze := func(wantGraph bool, alternate ...*ssa.Function) (map[*ssa.Global]cl.OptionalInitializer, *callgraph.Graph) {
+			initializers, result := unobservedInitializers(append(roots, alternate...), candidates, sliceOwners, observedData, nil, wantGraph)
 			return initializers, result.CallGraph
 		}
 		// Reflection may keep file methods without an edge in the call graph.
@@ -186,9 +186,13 @@ func configureOptionalInitializers(ctx *context, goroot string, inputs *linkPrun
 			callbackInitializers = append(callbackInitializers, group)
 		}
 	}
+	cwdExecutableObserved := false
+	if darwinOS != nil && (ctx.stdout == nil || ctx.stdout.selected == nil) {
+		_, cwdExecutableObserved = reachable.Reachable[darwinOS.Func("executable")]
+	}
 	// Address-taken callbacks can keep unrelated package data reachable through
 	// indirect calls. Recheck after removing the already proven-unused edges.
-	if darwinOS != nil && !blankImports["os"] {
+	if darwinOS != nil && !blankImports["os"] && (len(callbackInitializers) > 0 || !cwdExecutableObserved) {
 		init := darwinOS.Func(darwinExecutableCwdInitializer)
 		blocks := init.Blocks
 		init.Blocks = nil
@@ -282,6 +286,10 @@ func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl
 	reachable := rta.Analyze(roots, wantGraph)
 	var operands [8]*ssa.Value
 	for fn := range reachable.Reachable {
+		var initOwner *ssa.Package
+		if fn.Pkg != nil && sliceOwners[fn.Pkg] && fn == fn.Pkg.Func("init") {
+			initOwner = fn.Pkg
+		}
 		for _, block := range fn.Blocks {
 			for _, inst := range block.Instrs {
 				if _, debug := inst.(*ssa.DebugRef); debug {
@@ -289,7 +297,7 @@ func unobservedInitializers(roots []*ssa.Function, candidates map[*ssa.Global]cl
 				}
 				for _, operand := range inst.Operands(operands[:0]) {
 					if global, ok := (*operand).(*ssa.Global); ok {
-						if sliceOwners[global.Pkg] && fn != global.Pkg.Func("init") {
+						if sliceOwners[global.Pkg] && global.Pkg != initOwner {
 							observedData[global.Pkg] = true
 						}
 						if init, candidate := unused[global]; candidate && init.Store != inst {

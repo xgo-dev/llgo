@@ -5,6 +5,7 @@ import argparse
 import os
 import pathlib
 import re
+import signal
 import shutil
 import subprocess
 import tempfile
@@ -61,6 +62,57 @@ def controlled_environment(source):
     return env
 
 
+def native_stdout_pipe_probe(artifact, env):
+    rfd, wfd = os.pipe()
+    with os.fdopen(rfd, "rb") as reader, os.fdopen(wfd, "wb") as writer:
+        os.set_blocking(wfd, False)
+        filled = 0
+        for block in (b"x" * 4096, b"x"):
+            try:
+                while True:
+                    filled += os.write(wfd, block)
+            except BlockingIOError:
+                pass
+        with subprocess.Popen([str(artifact)], env=env, stdout=writer, stderr=subprocess.PIPE) as process:
+            writer.close()
+            try:
+                process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+            else:
+                raise RuntimeError("literal stdout returned while a nonblocking pipe was full")
+            reader.read(filled)
+            try:
+                _, stderr = process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                raise
+        if process.returncode or reader.read() != b"literal %\n" or stderr != b"stdout count and path error ok\n":
+            raise RuntimeError("literal stdout did not resume after draining the pipe")
+    rfd, wfd = os.pipe()
+    os.close(rfd)
+    with os.fdopen(wfd, "wb") as writer:
+        result = subprocess.run([str(artifact)], env=env, stdout=writer, stderr=subprocess.PIPE, timeout=10)
+    if result.returncode != -signal.SIGPIPE:
+        raise RuntimeError(f"literal stdout did not preserve SIGPIPE: {result}")
+
+
+def native_size_probe(llgo, directory, env):
+    for name in ("binary-fixed", "binary-mixed", "json-static", "json-mixed", "typed-stdout", "wasm-literal-stdout"):
+        fixture = f"./internal/build/testdata/{name}"
+        artifact = directory / name
+        log = command([str(llgo), "build", "-Oz", "-lto=full", "-deadcodedrop", "-globaldce=false",
+                       "-compiler-verbose", "-debug-artifact=none", "-o", str(artifact), fixture], env)
+        expected = command(["go", "run", fixture], env)
+        actual = command([str(artifact)], env)
+        if expected != actual:
+            raise RuntimeError(f"{fixture}: expected {expected!r}, got {actual!r}")
+        if name == "wasm-literal-stdout":
+            if "llgo: use the stdout descriptor writer" not in log:
+                raise RuntimeError(f"{fixture}: descriptor writer was not selected")
+            native_stdout_pipe_probe(artifact, env)
+
+
 def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT):
     output = command([str(llgo), "run", "-target=esp32c3-basic", "-emulator",
                       *flags, package], env, stdout_only=True, cwd=cwd)
@@ -73,7 +125,8 @@ def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=("wasi", "esp32c3"), required=True)
+    parser.add_argument("--target", choices=("wasi", "esp32c3", "native"), required=True)
+    parser.add_argument("--llgo", type=pathlib.Path, help="use an existing development LLGo executable")
     parser.add_argument("--esp32c3-go-root", type=pathlib.Path, action="append", default=[],
                         help="also run fmt with this Go standard library")
     args = parser.parse_args()
@@ -81,8 +134,15 @@ def main():
     with tempfile.TemporaryDirectory(prefix="llgo-size-build-") as directory:
         directory = pathlib.Path(directory)
         suffix = ".exe" if os.name == "nt" else ""
-        llgo = directory / f"llgo{suffix}"
-        command(["go", "build", "-tags=dev", "-o", str(llgo), "./cmd/llgo"], env)
+        llgo = args.llgo
+        if llgo is None:
+            llgo = directory / f"llgo{suffix}"
+            command(["go", "build", "-tags=dev", "-o", str(llgo), "./cmd/llgo"], env)
+        else:
+            llgo = llgo.resolve(strict=True)
+        if args.target == "native":
+            native_size_probe(llgo, directory, env)
+            return
         if args.target == "esp32c3":
             # This entry never builds the Go runtime. Its preloaded runtime
             # packages must not become DCE inputs with missing metadata.

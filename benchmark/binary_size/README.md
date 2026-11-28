@@ -101,15 +101,6 @@ passed as individual arguments. It accepts `%s`, `%t`, `%b`, `%d`, `%o`,
 `%x`, `%X` and `%v`, with optional zero padding and widths through 99.
 `Println` and `Sprintln` specialize the same scalar argument types.
 
-The `fmtprintf-scalars`, `fmtprintf-struct` and `fmtprintln-struct` cases
-exercise typed default formatting, including floating-point and complex
-values, arrays and structs. The `println-scalars` and `println-fields` cases
-exercise builtin output with scalar operands and fields of a concrete struct.
-Compare the same source and output with Go and TinyGo for each target.
-The `fmtprintf-dynamic-format` case takes a float format such as `%.2f`
-from argv. The `fmtprintf-dynamic-type` case takes either a float or a string
-through a private function's `any` parameter.
-
 Eligible closed size builds also use the concrete default-value renderer for
 constant `Printf` formats containing `%v`, `%%` and equivalent unmodified
 scalar verbs (`%d`, `%s`, `%t`, `%g`), and typed `Println` calls.

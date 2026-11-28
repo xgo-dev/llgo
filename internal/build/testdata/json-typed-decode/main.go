@@ -6,6 +6,7 @@ type count int8
 type flags []bool
 
 type record struct {
+	Tagged count `json:"a/b~c"`
 	Tick   count
 	Mask   uint16
 	Name   string
@@ -20,6 +21,7 @@ func main() {
 		`{"TICK":5,"Name":"x\ud83d\ude03","Seen":[false],"Array":[8,9,10],"Values":{"a":7},"ignore":{"key":[]}}`,
 		"{\"Name\":\"\x80\",\"Mask\":123}",
 		`{"Tick":null,"Ptr":null,"Array":[3],"Values":{"a":null},"Seen":[]}`,
+		`{"a/b~c":true}`,
 		`{"Tick":999,"Array":[true],"Name":"updated","Seen":[null,false]}`,
 		`{"Tick":7,"Tick":8,"Seen":[null,false],"Ptr":25}`,
 		`{"Mask":-1,"Values":[3],"Ptr":{},"Name":{}}`,
