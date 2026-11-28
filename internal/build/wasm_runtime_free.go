@@ -33,6 +33,7 @@ func configureRuntimeFree(ctx *context) {
 		return
 	}
 	conf := ctx.buildConf
+	embedded := embeddedSizePruningConfig(conf, ctx.crossCompile, ctx.frontendOptions)
 	directMain := canUseEmscriptenDirectMain(ctx)
 	if len(ctx.initial) != 1 || ctx.initial[0].Types == nil || ctx.initial[0].Types.Name() != "main" ||
 		conf.BuildMode != BuildModeExe || ctx.mode == ModeGen || conf.Coverage != nil ||
@@ -41,7 +42,7 @@ func configureRuntimeFree(ctx *context) {
 		os.Getenv("LDFLAGS") != "" || ctx.commands.lookup("LDFLAGS") != "" || conf.LinkOptions.ExternalLinkerFlags != "" {
 		return
 	}
-	if !directMain && (conf.Goarch != "wasm" || ctx.prog.Target().WasmProvider != "wasi" ||
+	if !embedded && !directMain && (conf.Goarch != "wasm" || ctx.prog.Target().WasmProvider != "wasi" ||
 		conf.Target != "" && conf.Target != "wasi" || len(ctx.crossCompile.ExtraFiles) != 0) {
 		return
 	}
@@ -62,7 +63,7 @@ func configureRuntimeFree(ctx *context) {
 	}
 	// Check reachable globals even inside the trusted runtime tree. Most
 	// programs also fail this proof without needing any filesystem checks.
-	runtimeFree, _ := wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe)
+	runtimeFree, usesCPrintf := wasmRuntimeFreeFunctions(wasmReflectRoots(ctx), linkname, globalSafe)
 	if !runtimeFree {
 		return
 	}
@@ -136,6 +137,18 @@ func configureRuntimeFree(ctx *context) {
 		ctx.emscriptenDirectMain = true
 		if conf.Verbose || conf.PrintCommands {
 			fmt.Fprintln(os.Stderr, "llgo: omit Emscripten scheduler for a synchronous executable")
+		}
+	} else if embedded {
+		ctx.embeddedRuntimeFree = true
+		// The ordinary stdio path shares buffering with C callers. Switch
+		// only when every reachable write is a Go builtin print.
+		ctx.embeddedDirectConsole = !usesCPrintf &&
+			slices.Contains(ctx.crossCompile.BuildTags, embeddedConsoleTag)
+		if conf.Verbose || conf.PrintCommands {
+			fmt.Fprintln(os.Stderr, "llgo: runtime startup omitted: proven allocation-free bare-metal program")
+			if ctx.embeddedDirectConsole {
+				fmt.Fprintln(os.Stderr, "llgo: write bare-metal builtin output directly to the console")
+			}
 		}
 	} else {
 		enableWasmRuntimeFree(ctx)

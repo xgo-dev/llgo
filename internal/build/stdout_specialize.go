@@ -20,6 +20,7 @@ type stdoutPlan struct {
 	entry                                     *ssa.Package
 	regular, typed, file, descriptor          *ssa.Function
 	pollWrite, selected                       *ssa.Function
+	discard                                   *ssa.Function
 	calls                                     []stdoutCall
 	builtinClosed, fileBytes, descriptorBytes *ssa.Function
 	builtinCalls                              []builtinStdoutCall
@@ -54,7 +55,7 @@ func newStdoutPlan(ctx *context) *stdoutPlan {
 	if regular == nil || file == nil && descriptor == nil {
 		return nil
 	}
-	plan := &stdoutPlan{entry: entry, regular: regular, typed: fmtPkg.Func("LlgoPrintfValue"), file: file, descriptor: descriptor}
+	plan := &stdoutPlan{entry: entry, regular: regular, typed: fmtPkg.Func("LlgoPrintfValue"), file: file, descriptor: descriptor, discard: osPkg.Func("llgoWriteStdoutDiscard")}
 	plan.builtinClosed = fmtPkg.Func(fmtspecialize.BuiltinPrintfClosed)
 	plan.fileBytes = osPkg.Func("llgoWriteClosedStdoutBytes")
 	plan.descriptorBytes = osPkg.Func("llgoWriteStdoutDescriptorBytes")

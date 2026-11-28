@@ -415,19 +415,98 @@ def wasi_specialization_probe(llgo, directory, env, runner):
 
 
 
-def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT):
-    output = command([str(llgo), "run", "-target=esp32c3-basic", "-emulator",
+def embedded_output_probe(llgo, directory, env, target, flags, package, expected):
+    if target == "esp32c3-flash":
+        result = subprocess.run([str(llgo), "run", f"-target={target}", "-emulator",
+                                 *flags, "-compiler-verbose", package], cwd=ROOT, env=env,
+                                capture_output=True, text=True, timeout=120)
+        boot = re.search(r"^entry 0x[0-9a-fA-F]+\n", result.stdout, re.MULTILINE)
+        if result.returncode or boot is None or result.stdout[boot.end():] != expected:
+            raise RuntimeError(f"{target} {package}: output mismatch\n{result.stdout}{result.stderr}")
+        return result.stderr
+    output = directory / "embedded-probe.elf"
+    log = command([str(llgo), "build", f"-target={target}", *flags, "-compiler-verbose",
+                   "-o", str(output), package], env)
+    actual = command(["qemu-system-arm", "-machine", "mps2-an385", "-semihosting",
+                      "-nographic", "-kernel", str(output)], env, timeout=120)
+    if actual != expected:
+        raise RuntimeError(f"{target} {package}: output mismatch\n{actual}")
+    return log
+
+
+def embedded_size_probes(llgo, directory, env, target, flags):
+    package = "./internal/build/testdata/json-typed-decode"
+    expected = command(["go", "run", package], env)
+    log = embedded_output_probe(llgo, directory, env, target, flags, package, expected)
+    marker = "llgo: omit unused JSON package initialization"
+    if legacy_json_uses_v2(env) and marker not in log:
+        raise RuntimeError(f"{target}: typed decoder kept the generic JSON initialization\n{log}")
+    print(f"{target} typed JSON output and error parity passed", flush=True)
+
+    log = embedded_output_probe(llgo, directory, env, target, flags,
+                                "./benchmark/binary_size/println", "Hello, world\n")
+    if "llgo: runtime startup omitted: proven allocation-free bare-metal program" not in log:
+        raise RuntimeError(f"{target}: allocation-free println kept runtime startup\n{log}")
+    log = embedded_output_probe(llgo, directory, env, target, flags,
+                                "./benchmark/binary_size/println-fields", "17 true false lab\n")
+    if "llgo: runtime startup omitted: proven allocation-free bare-metal program" not in log:
+        raise RuntimeError(f"{target}: println of struct fields kept runtime startup\n{log}")
+    embedded_output_probe(llgo, directory, env, target, flags,
+                          "./benchmark/binary_size/fmtprintf-struct", "{17 [true false] lab}\n")
+    direct_console = "llgo: write bare-metal builtin output directly to the console"
+    if target == "esp32c3-flash":
+        if direct_console not in log:
+            raise RuntimeError(f"{target}: allocation-free println kept the stdio writer\n{log}")
+        log = embedded_output_probe(llgo, directory, env, target, flags,
+                                    "./benchmark/binary_size/cprintf", "Hello, world\n")
+        if direct_console in log:
+            raise RuntimeError(f"{target}: C printf selected the direct console writer\n{log}")
+    stdout_marker = "llgo: specialize closed literal stdout"
+    log = embedded_output_probe(llgo, directory, env, target, flags,
+                                "./benchmark/binary_size/fmtprintf", "Hello, world\n")
+    if stdout_marker not in log:
+        raise RuntimeError(f"{target}: closed literal stdout kept the standard file writer\n{log}")
+    if "llgo: select firmware console and passive startup" not in log:
+        raise RuntimeError(f"{target}: closed literal stdout retained full startup\n{log}")
+    if target == "esp32c3-flash":
+        omit_float = "llgo: omit unused ESP32-C3 floating-point printf"
+        if omit_float not in log:
+            raise RuntimeError(f"{target}: literal stdout retained the newlib float formatter\n{log}")
+        package = "./internal/build/testdata/embedded-printf-go-float"
+        expected = command(["go", "run", package], env)
+        output = embedded_output_probe(llgo, directory, env, target, flags, package, expected)
+        if "llgo: retain ESP32-C3 floating-point printf for Go builtin printing" not in output:
+            raise RuntimeError(f"{target}: builtin float printing did not require the full link\n{output}")
+        output = embedded_output_probe(llgo, directory, env, target, flags,
+                                       "./internal/build/testdata/embedded-printf-c-float", "C float 1.25\n")
+        if omit_float in output:
+            raise RuntimeError(f"{target}: dynamic C format dropped float support\n{output}")
+    log = embedded_output_probe(llgo, directory, env, target, flags,
+                                "./internal/build/testdata/embedded-link-parity",
+                                "redirected\nembedded output and reflection ok\n")
+    if stdout_marker in log:
+        raise RuntimeError(f"{target}: redirected stdout selected the descriptor writer\n{log}")
+    log = embedded_output_probe(llgo, directory, env, target, flags,
+                                "./internal/build/testdata/embedded-printf-result",
+                                "first\nchecked\n")
+    if "llgo: select firmware console and passive startup" in log:
+        raise RuntimeError(f"{target}: discarded an observed fmt.Printf result\n{log}")
+    print(f"{target} startup, console and reflective metadata passed", flush=True)
+
+
+def run_esp32c3_case(llgo, env, package, flags, *, cwd=ROOT, target="esp32c3-basic"):
+    output = command([str(llgo), "run", f"-target={target}", "-emulator",
                       *flags, package], env, stdout_only=True, cwd=cwd)
     # The ROM writes its boot banner before handing control to the program.
     boot = re.search(r"^entry 0x[0-9a-fA-F]+\n", output, re.MULTILINE)
     if boot is None or output[boot.end():] != "Hello, world\n":
-        raise RuntimeError(f"ESP32-C3 {package} emulator output mismatch\n{output}")
-    print(f"ESP32-C3 {package} emulator output passed", flush=True)
+        raise RuntimeError(f"{target} {package} emulator output mismatch\n{output}")
+    print(f"{target} {package} emulator output passed", flush=True)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=("wasi", "emscripten", "native", "esp32c3"), required=True)
+    parser.add_argument("--target", choices=("wasi", "emscripten", "native", "esp32c3", "cortex-m-mps2"), required=True)
     parser.add_argument("--llgo", type=pathlib.Path, help="use an existing development LLGo executable")
     parser.add_argument("--browser", action="store_true", help="also run Emscripten products in Chrome")
     parser.add_argument("--esp32c3-go-root", type=pathlib.Path, action="append", default=[],
@@ -454,6 +533,10 @@ def main():
         if args.target == "native":
             full_lto_codec_probe(llgo, directory, env, "native", [], "")
             return
+        if args.target == "cortex-m-mps2":
+            embedded_size_probes(llgo, directory, env, "cortex-m-mps2",
+                                      ["-Oz", "-deadcodedrop", "-globaldce=false", "-lto=full"])
+            return
         if args.target == "esp32c3":
             # This entry never builds the Go runtime. Its preloaded runtime
             # packages must not become DCE inputs with missing metadata.
@@ -474,6 +557,9 @@ def main():
             if output.read_bytes()[:4] != b"\x7fELF":
                 raise RuntimeError("ESP32-C3 fmt did not produce an ELF image")
             run_esp32c3_case(llgo, env, "./benchmark/binary_size/fmtprintf", flags)
+            run_esp32c3_case(llgo, env, "./benchmark/binary_size/fmtprintf", ["-Oz"],
+                             target="esp32c3-flash")
+            embedded_size_probes(llgo, directory, env, "esp32c3-flash", flags)
             if args.esp32c3_go_root:
                 sample = directory / "fmtprintf"
                 sample.mkdir()

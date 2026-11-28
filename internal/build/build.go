@@ -733,6 +733,15 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 	if hostedCompactPCLNProfile(conf) {
 		export.BuildTags = append(slices.Clone(export.BuildTags), hostedCompactPCLNTag)
 	}
+	if embeddedPrintfFloatProfile(conf, export) {
+		export.BuildTags = append(slices.Clone(export.BuildTags), espPrintfFloatTag)
+	}
+	if embeddedConsoleProfile(conf, export) {
+		export.BuildTags = append(slices.Clone(export.BuildTags), embeddedConsoleTag)
+	}
+	if embeddedSizePruningConfig(conf, export, cl.Options{Debug: shouldEmitDebugInfo(conf, &export)}) {
+		export.BuildTags = append(slices.Clone(export.BuildTags), embeddedStartupTag)
+	}
 	if emscriptenSchedulerProofProfile(conf, &export) {
 		export.BuildTags = append(slices.Clone(export.BuildTags), emscriptenSchedulerProofTag)
 	}
@@ -1254,6 +1263,7 @@ func buildInvocation(inv Invocation, plan *initialBuildPlan) (result []Package, 
 		formatInputs = configureFormattingAndInits(ctx, sourcePatchGOROOT, asmRoots)
 	}
 	configureOptionalInitializers(ctx, sourcePatchGOROOT, formatInputs)
+	configureEmbeddedStartup(ctx, sourcePatchGOROOT, formatInputs)
 	ctx.probeEmscriptenScheduler = canProbeEmscriptenScheduler(ctx, formatInputs)
 	ctx.probeWASIMutator = canProbeWASIMutator(ctx, formatInputs)
 	configureWasiReleaseDCE(ctx, asmRoots)
@@ -2085,6 +2095,9 @@ type context struct {
 
 	embeddedClosedProgram bool
 	nativeClosedProgram   bool
+	probeEmbeddedStartup  bool
+	embeddedRuntimeFree   bool
+	embeddedDirectConsole bool
 
 	cTransformer *cabi.Transformer
 
@@ -2779,6 +2792,8 @@ type mainLinkPlan struct {
 
 	emscriptenUseLibcAllocator bool
 	directWasmAllocator        bool
+	embeddedStartupEntry       string
+	embeddedPrintfFloatMarker  string
 	wasiMutatorSelection       string
 }
 
@@ -2800,6 +2815,7 @@ type mainLinkPreparation struct {
 
 	emscriptenUseLibcAllocator bool
 	emscriptenCollectorArchive string
+	probeEmbeddedPrintfFloat   bool
 }
 
 func linkMainPkg(ctx *context, pkg *packages.Package, pkgs []*aPackage, outputPath string, verbose bool) error {
@@ -2886,6 +2902,8 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	}
 	// Even a leaf export needs the runtime for foreign-thread registration.
 	needRuntime = needRuntime || len(cExports) != 0
+	probeEmbeddedPrintfFloat := len(cExports) == 0 && !needPyInit && len(linkArgs) == 0 &&
+		configureEmbeddedPrintf(ctx, linkedOrder, needRuntime, rtLinkArgs)
 
 	// Only link runtime objects when needed (or for host builds where runtime is always required).
 	linkRuntime := needRuntime || needPyInit || ctx.buildConf.Target == ""
@@ -2921,9 +2939,13 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 	packageInits = slices.DeleteFunc(packageInits, func(name string) bool {
 		return ctx.codecInitDrops[name]
 	})
+	if ctx.embeddedRuntimeFree && !ctx.embeddedDirectConsole && needRuntime && !slices.Contains(ctx.crossCompile.BuildTags, "llgo.baremetal.cstdio") {
+		// The builtin printer uses the console streams opened by clite.
+		packageInits = append([]string{env.LLGoRuntimePkg + "/internal/clite.init"}, packageInits...)
+	}
 	gen := genConfig{
 		defaultGODEBUG: ctx.defaultGODEBUG[pkg.ID],
-		rtInit:         needRuntime && !ctx.wasmRuntimeFree && !ctx.emscriptenDirectMain,
+		rtInit:         needRuntime && !ctx.wasmRuntimeFree && !ctx.embeddedRuntimeFree && !ctx.emscriptenDirectMain,
 		pyInit:         needPyInit,
 		abiInit:        needAbiInit,
 		packageInits:   packageInits,
@@ -2955,6 +2977,7 @@ func planMainLink(ctx *context, pkg *packages.Package, pkgs []*aPackage) (*mainL
 
 		emscriptenUseLibcAllocator: ctx.emscriptenDirectMain && !linkRuntime,
 		emscriptenCollectorArchive: collectorArchive,
+		probeEmbeddedPrintfFloat:   probeEmbeddedPrintfFloat,
 	}, nil
 }
 
@@ -2969,6 +2992,21 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	ctx.stripDarwinLTOLocals = false
 	ctx.darwinHiddenGlobals = nil
 	entryPkg := genMainModule(ctx, llssa.PkgRuntime, pkg, &preparation.gen)
+	if slices.Contains(ctx.crossCompile.BuildTags, embeddedStartupTag) {
+		defineEmbeddedStartupMarker(entryPkg.LPkg)
+	}
+	var embeddedPrintfFloatMarker string
+	if slices.Contains(ctx.crossCompile.BuildTags, espPrintfFloatTag) {
+		if preparation.probeEmbeddedPrintfFloat {
+			var err error
+			embeddedPrintfFloatMarker, err = buildEmbeddedPrintfFloatMarker(ctx, entryPkg.ExportFile)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			defineEmbeddedPrintfFloatMarker(entryPkg.LPkg)
+		}
+	}
 	cExports := preparation.gen.cExports
 	if _, err := lowerMainCExportModule(ctx, entryPkg.LPkg, cExports); err != nil {
 		return nil, err
@@ -3002,6 +3040,14 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 	entryObjFile, err := exportObject(ctx, "entry_main", entryPkg.ExportFile, entryPkg.LPkg)
 	if err != nil {
 		return nil, err
+	}
+	var embeddedStartupEntry string
+	if ctx.probeEmbeddedStartup && ctx.pclnExternal == nil && ctx.pclnEmbedded == nil &&
+		!preparation.gen.pyInit && len(preparation.gen.cExports) == 0 {
+		embeddedStartupEntry, err = buildCompactEmbeddedEntry(ctx, pkg, preparation, verbose)
+		if err != nil {
+			return nil, err
+		}
 	}
 	linkInputs := []string{entryObjFile}
 
@@ -3052,6 +3098,8 @@ func buildMainLink(ctx *context, pkg *packages.Package, preparation *mainLinkPre
 
 		emscriptenUseLibcAllocator: preparation.emscriptenUseLibcAllocator,
 		directWasmAllocator:        directWasmAllocator,
+		embeddedStartupEntry:       embeddedStartupEntry,
+		embeddedPrintfFloatMarker:  embeddedPrintfFloatMarker,
 		wasiMutatorSelection:       wasiMutatorSelection,
 	}, nil
 }
@@ -3070,8 +3118,21 @@ func executeMainLink(ctx *context, plan *mainLinkPlan, verbose bool) error {
 	}
 	defer cleanupWasmLinkOutput(linkOutput, driverOut)
 	configureEmscriptenESMHost(ctx, driverOut)
-	if err := linkObjFiles(ctx, linkOutput, plan.linkInputs, plan.linkArgs, verbose); err != nil {
-		return err
+	linked := false
+	if plan.embeddedStartupEntry != "" {
+		linked, err = linkCompactEmbeddedEntry(ctx, plan, linkOutput, verbose)
+		if err != nil {
+			return err
+		}
+	}
+	if !linked {
+		if plan.embeddedPrintfFloatMarker != "" {
+			if err := linkEmbeddedPrintfFloat(ctx, plan, linkOutput, verbose); err != nil {
+				return err
+			}
+		} else if err := linkObjFiles(ctx, linkOutput, plan.linkInputs, plan.linkArgs, verbose); err != nil {
+			return err
+		}
 	}
 	if err := pruneEmbeddedPCLN(ctx, plan, linkOutput, verbose); err != nil {
 		return err
@@ -3868,6 +3929,9 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	options.CExportWrappers = needsCExportWrappers(ctx, aPkg)
 	options.StaticByteArrays = aPkg.staticByteArrays
 	options.GuardedInitializers = aPkg.guardedInitializers
+	if embeddedSizePruningConfig(ctx.buildConf, ctx.crossCompile, ctx.frontendOptions) {
+		options.GuardPackageInitCalls = embeddedStartupPackages
+	}
 	ret, externs, err := cl.NewPackageExWithEmbedMetaOptions(
 		ctx.prog, ctx.callerTracking, ctx.patches, aPkg.rewriteVars,
 		aPkg.SSA, syntax, embedMap, needMeta, options)
@@ -3881,7 +3945,7 @@ func preparePackageModule(ctx *context, aPkg *aPackage, verbose bool) ([]string,
 	}
 
 	if pkgPath == "os" {
-		for _, guard := range []string{darwinExecutableCwdGuard, stdoutPollInitGuard} {
+		for _, guard := range []string{darwinExecutableCwdGuard, stdoutPollInitGuard, embeddedFullStdout} {
 			if !ret.Module().NamedGlobal(guard).IsNil() {
 				cl.DefineInitializerGuard(ret, guard, true)
 			}

@@ -99,6 +99,13 @@ func genMainModule(ctx *context, rtPkgPath string, pkg *packages.Package, cfg *g
 	isarchive.Init(prog.BoolVal(ctx.buildConf.BuildMode == BuildModeCArchive))
 	mainPkg.Module().NamedGlobal("runtime.islibrary").SetVisibility(llvm.HiddenVisibility)
 	mainPkg.Module().NamedGlobal("runtime.isarchive").SetVisibility(llvm.HiddenVisibility)
+	if slices.Contains(ctx.crossCompile.BuildTags, embeddedConsoleTag) {
+		flag := mainPkg.NewVarEx(embeddedConsoleFlag, prog.Pointer(prog.Bool()))
+		flag.Init(prog.BoolVal(ctx.embeddedDirectConsole))
+		value := mainPkg.Module().NamedGlobal(embeddedConsoleFlag)
+		value.SetGlobalConstant(true)
+		value.SetVisibility(llvm.HiddenVisibility)
+	}
 	funcInfo := cfg.funcInfo
 	if needsRuntimeMainFrame(ctx) {
 		// The native process entry is the physical frame below runtime.main,

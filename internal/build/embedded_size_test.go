@@ -22,3 +22,20 @@ func TestEmbeddedSizePruningConfig(t *testing.T) {
 		t.Fatal("foreign boot file did not disable pruning")
 	}
 }
+
+func TestEmbeddedConsoleProfile(t *testing.T) {
+	conf := Config{Target: "esp32c3-flash", OptLevel: optlevel.Oz, LTO: lto.Full}
+	target := crosscompile.Export{Libc: "newlib-esp32"}
+	if !embeddedConsoleProfile(&conf, target) {
+		t.Fatal("ESP32-C3 size profile did not enable the console writer")
+	}
+	conf.Tags = "llgo.baremetal.cstdio"
+	if embeddedConsoleProfile(&conf, target) {
+		t.Fatal("C stdio profile enabled the direct console writer")
+	}
+	conf.Tags = ""
+	conf.LTO = lto.Thin
+	if embeddedConsoleProfile(&conf, target) {
+		t.Fatal("Thin LTO enabled the direct console writer")
+	}
+}
