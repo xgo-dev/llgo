@@ -131,6 +131,7 @@ type Cmd_work struct {
 	xcmd.Command
 	*App
 }
+
 //line cmd/llgo/main_app.gox:1
 func (this *App) MainEntry() {
 //line cmd/llgo/main_app.gox:1:1
@@ -164,6 +165,7 @@ func (this *App) Main() {
 	_xgo_obj24 := &Cmd_work{App: this}
 	xcmd.Gopt_App_Main(this, _xgo_obj0, _xgo_obj1, _xgo_obj2, _xgo_obj3, _xgo_obj4, _xgo_obj5, _xgo_obj6, _xgo_obj7, _xgo_obj8, _xgo_obj9, _xgo_obj10, _xgo_obj11, _xgo_obj12, _xgo_obj13, _xgo_obj14, _xgo_obj15, _xgo_obj16, _xgo_obj17, _xgo_obj18, _xgo_obj19, _xgo_obj20, _xgo_obj21, _xgo_obj22, _xgo_obj23, _xgo_obj24)
 }
+
 //line cmd/llgo/bug_cmd.gox:16
 func (this *Cmd_bug) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -182,6 +184,7 @@ func (this *Cmd_bug) Main(_xgo_arg0 string) {
 func (this *Cmd_bug) Classfname() string {
 	return "bug"
 }
+
 //line cmd/llgo/build_cmd.gox:20
 func (this *Cmd_build) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -200,6 +203,7 @@ func (this *Cmd_build) Main(_xgo_arg0 string) {
 func (this *Cmd_build) Classfname() string {
 	return "build"
 }
+
 //line cmd/llgo/clean_cmd.gox:20
 func (this *Cmd_clean) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -218,6 +222,7 @@ func (this *Cmd_clean) Main(_xgo_arg0 string) {
 func (this *Cmd_clean) Classfname() string {
 	return "clean"
 }
+
 //line cmd/llgo/cmptest_cmd.gox:20
 func (this *Cmd_cmptest) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -236,6 +241,7 @@ func (this *Cmd_cmptest) Main(_xgo_arg0 string) {
 func (this *Cmd_cmptest) Classfname() string {
 	return "cmptest"
 }
+
 //line cmd/llgo/debug_cmd.gox:20
 func (this *Cmd_debug) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -254,6 +260,7 @@ func (this *Cmd_debug) Main(_xgo_arg0 string) {
 func (this *Cmd_debug) Classfname() string {
 	return "debug"
 }
+
 //line cmd/llgo/doc_cmd.gox:16
 func (this *Cmd_doc) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -272,6 +279,7 @@ func (this *Cmd_doc) Main(_xgo_arg0 string) {
 func (this *Cmd_doc) Classfname() string {
 	return "doc"
 }
+
 //line cmd/llgo/env_cmd.gox:16
 func (this *Cmd_env) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -290,6 +298,7 @@ func (this *Cmd_env) Main(_xgo_arg0 string) {
 func (this *Cmd_env) Classfname() string {
 	return "env"
 }
+
 //line cmd/llgo/fix_cmd.gox:16
 func (this *Cmd_fix) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -308,6 +317,7 @@ func (this *Cmd_fix) Main(_xgo_arg0 string) {
 func (this *Cmd_fix) Classfname() string {
 	return "fix"
 }
+
 //line cmd/llgo/fmt_cmd.gox:16
 func (this *Cmd_fmt) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -326,6 +336,7 @@ func (this *Cmd_fmt) Main(_xgo_arg0 string) {
 func (this *Cmd_fmt) Classfname() string {
 	return "fmt"
 }
+
 //line cmd/llgo/gdb_cmd.gox:20
 func (this *Cmd_gdb) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -344,6 +355,7 @@ func (this *Cmd_gdb) Main(_xgo_arg0 string) {
 func (this *Cmd_gdb) Classfname() string {
 	return "gdb"
 }
+
 //line cmd/llgo/generate_cmd.gox:16
 func (this *Cmd_generate) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -362,6 +374,7 @@ func (this *Cmd_generate) Main(_xgo_arg0 string) {
 func (this *Cmd_generate) Classfname() string {
 	return "generate"
 }
+
 //line cmd/llgo/get_cmd.gox:18
 func (this *Cmd_get) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -380,6 +393,7 @@ func (this *Cmd_get) Main(_xgo_arg0 string) {
 func (this *Cmd_get) Classfname() string {
 	return "get"
 }
+
 //line cmd/llgo/install_cmd.gox:20
 func (this *Cmd_install) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -398,6 +412,7 @@ func (this *Cmd_install) Main(_xgo_arg0 string) {
 func (this *Cmd_install) Classfname() string {
 	return "install"
 }
+
 //line cmd/llgo/list_cmd.gox:16
 func (this *Cmd_list) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -416,6 +431,7 @@ func (this *Cmd_list) Main(_xgo_arg0 string) {
 func (this *Cmd_list) Classfname() string {
 	return "list"
 }
+
 //line cmd/llgo/lldb_cmd.gox:20
 func (this *Cmd_lldb) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -434,6 +450,7 @@ func (this *Cmd_lldb) Main(_xgo_arg0 string) {
 func (this *Cmd_lldb) Classfname() string {
 	return "lldb"
 }
+
 //line cmd/llgo/mod_cmd.gox:16
 func (this *Cmd_mod) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -452,6 +469,7 @@ func (this *Cmd_mod) Main(_xgo_arg0 string) {
 func (this *Cmd_mod) Classfname() string {
 	return "mod"
 }
+
 //line cmd/llgo/monitor_cmd.gox:21
 func (this *Cmd_monitor) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -470,6 +488,7 @@ func (this *Cmd_monitor) Main(_xgo_arg0 string) {
 func (this *Cmd_monitor) Classfname() string {
 	return "monitor"
 }
+
 //line cmd/llgo/run_cmd.gox:20
 func (this *Cmd_run) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -488,6 +507,7 @@ func (this *Cmd_run) Main(_xgo_arg0 string) {
 func (this *Cmd_run) Classfname() string {
 	return "run"
 }
+
 //line cmd/llgo/test_cmd.gox:20
 func (this *Cmd_test) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -506,6 +526,7 @@ func (this *Cmd_test) Main(_xgo_arg0 string) {
 func (this *Cmd_test) Classfname() string {
 	return "test"
 }
+
 //line cmd/llgo/tool_cmd.gox:21
 func (this *Cmd_tool) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -529,6 +550,7 @@ func (this *Cmd_tool) Main(_xgo_arg0 string) {
 func (this *Cmd_tool) Classfname() string {
 	return "tool"
 }
+
 //line cmd/llgo/tool_compile_cmd.gox:20
 func (this *Cmd_tool_compile) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -547,6 +569,7 @@ func (this *Cmd_tool_compile) Main(_xgo_arg0 string) {
 func (this *Cmd_tool_compile) Classfname() string {
 	return "tool_compile"
 }
+
 //line cmd/llgo/tool_symbolize_cmd.gox:9
 func (this *Cmd_tool_symbolize) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -570,6 +593,7 @@ func (this *Cmd_tool_symbolize) Main(_xgo_arg0 string) {
 func (this *Cmd_tool_symbolize) Classfname() string {
 	return "tool_symbolize"
 }
+
 //line cmd/llgo/version_cmd.gox:18
 func (this *Cmd_version) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -588,6 +612,7 @@ func (this *Cmd_version) Main(_xgo_arg0 string) {
 func (this *Cmd_version) Classfname() string {
 	return "version"
 }
+
 //line cmd/llgo/vet_cmd.gox:16
 func (this *Cmd_vet) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)
@@ -606,6 +631,7 @@ func (this *Cmd_vet) Main(_xgo_arg0 string) {
 func (this *Cmd_vet) Classfname() string {
 	return "vet"
 }
+
 //line cmd/llgo/work_cmd.gox:16
 func (this *Cmd_work) Main(_xgo_arg0 string) {
 	this.Command.Main(_xgo_arg0)

@@ -4464,10 +4464,10 @@ type aPackage struct {
 	pcln *packagePCLN // source mappings read from ArchiveFile before linking
 
 	// Cache related fields
-	Fingerprint    string               // fingerprint digest
-	Manifest       string               // manifest text content
-	CacheHit       bool                 // whether cache was hit
-	frontendOpaque *frontendExport      // validated body-independent archive contract
+	Fingerprint    string          // fingerprint digest
+	Manifest       string          // manifest text content
+	CacheHit       bool            // whether cache was hit
+	frontendOpaque *frontendExport // validated body-independent archive contract
 	exportMetaMu   sync.RWMutex
 	exportMeta     *pkgmeta.PackageMeta // binary compiler summary sidecar
 }

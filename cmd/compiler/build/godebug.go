@@ -37,7 +37,7 @@ func defaultGODEBUGCachePath(cfg *packages.Config, goroot string, roots []*packa
 		fmt.Fprintf(h, "pat=%s\x00", pat)
 	}
 	cmdEnv := commandEnv{dir: cfg.Dir, environ: cfg.Env}
-	for _, name := range []string{"GOOS", "GOARCH", "GOEXPERIMENT", "GOFLAGS", "GOWORK", "GOENV", "GO111MODULE", "GOTOOLCHAIN", "LLGO_TEST_GODEBUG_METADATA"} {
+	for _, name := range []string{"GOOS", "GOARCH", "GOEXPERIMENT", "GOFLAGS", "GOWORK", "GOENV", "GO111MODULE", "GOTOOLCHAIN", "GOFIPS140", "LLGO_TEST_GODEBUG_METADATA"} {
 		fmt.Fprintf(h, "%s=%s\x00", name, commandEnvLookup(cmdEnv, name))
 	}
 	recordEffectiveGoMod(h, cfg.Dir, "", cfg.Overlay)
@@ -61,19 +61,14 @@ func defaultGODEBUGCachePath(cfg *packages.Config, goroot string, roots []*packa
 			recordEffectiveGoMod(h, pkg.Dir, pkg.Module.GoMod, cfg.Overlay)
 		}
 		recordEffectiveGoWork(h, pkg.Dir, cmdEnv, cfg.BuildFlags, cfg.Overlay)
-		var debugDirectives []string
 		for _, file := range pkg.Syntax {
 			for _, cg := range file.Comments {
 				for _, c := range cg.List {
 					if strings.HasPrefix(c.Text, "//go:debug") {
-						debugDirectives = append(debugDirectives, c.Text)
+						fmt.Fprintf(h, "godebug=%s\x00", c.Text)
 					}
 				}
 			}
-		}
-		slices.Sort(debugDirectives)
-		for _, d := range debugDirectives {
-			fmt.Fprintf(h, "godebug=%s\x00", d)
 		}
 	}
 	return filepath.Join(newCacheManager().root, "meta", "godebug-"+hex.EncodeToString(h.Sum(nil))+".json")

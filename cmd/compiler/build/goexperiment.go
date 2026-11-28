@@ -116,7 +116,7 @@ func sourceGoConfigCachePath(commands commandEnv, experiment string, buildFlags 
 	for _, name := range []string{
 		"GOROOT", "GOEXPERIMENT", "GOFLAGS", "CGO_ENABLED", "GOOS", "GOARCH",
 		"GOTOOLCHAIN", "GOWORK", "GOENV", "GOMODCACHE", "GOPATH", "GO111MODULE",
-		"GO386", "GOAMD64", "GOARM", "GOARM64", "GOMIPS", "GOMIPS64", "GOPPC64", "GORISCV64", "GOWASM",
+		"GO386", "GOAMD64", "GOARM", "GOARM64", "GOMIPS", "GOMIPS64", "GOPPC64", "GORISCV64", "GOWASM", "GOFIPS140",
 	} {
 		fmt.Fprintf(h, "%s=%s\x00", name, commandEnvLookup(commands, name))
 	}

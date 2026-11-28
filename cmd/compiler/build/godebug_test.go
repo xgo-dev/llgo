@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/xgo-dev/llgo/types"
+	"go/ast"
+	"go/parser"
 	"go/token"
 	"os"
 	"os/exec"
@@ -486,4 +488,68 @@ func TestDefaultGODEBUGAutoGOWORKAndGoModContentInvalidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	godebugAssertProgram(t, conf4.OutFile, "false false")
+}
+
+func TestDefaultGODEBUGDirectiveOrderAndFIPS140(t *testing.T) {
+	root := godebugFixture(t)
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/debugorder\ngo 1.27.0\n")
+
+	// 1. Directive order: latter directive takes precedence in resolveDefaultGODEBUG
+	mainPath := filepath.Join(root, "main.go")
+	writeFile(t, mainPath, "//go:debug panicnil=0\n//go:debug panicnil=1\npackage main\nfunc main() {}\n")
+
+	cfg := &packages.Config{Dir: root, Env: os.Environ()}
+	roots, err := packages.LoadMetadata(cfg, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults1, err := resolveDefaultGODEBUG(cfg, runtime.GOROOT(), roots, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(defaults1["example.com/debugorder"], "panicnil=1") {
+		t.Fatalf("want panicnil=1, got %q", defaults1["example.com/debugorder"])
+	}
+
+	// Swap directive order: panicnil=0 is now second, so it wins
+	writeFile(t, mainPath, "//go:debug panicnil=1\n//go:debug panicnil=0\npackage main\nfunc main() {}\n")
+	roots2, err := packages.LoadMetadata(cfg, ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults2, err := resolveDefaultGODEBUG(cfg, runtime.GOROOT(), roots2, []string{"."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(defaults2["example.com/debugorder"], "panicnil=0") {
+		t.Fatalf("want panicnil=0, got %q", defaults2["example.com/debugorder"])
+	}
+
+	// 2. GOFIPS140 invalidates DefaultGODEBUG cache key
+	cfg1 := &packages.Config{Dir: root, Env: withEnv(os.Environ(), "GOFIPS140=off")}
+	cfg2 := &packages.Config{Dir: root, Env: withEnv(os.Environ(), "GOFIPS140=latest")}
+	pkgMain := []*packages.Package{{ID: "example.com/debugorder", Name: "main"}}
+	key1 := defaultGODEBUGCachePath(cfg1, runtime.GOROOT(), pkgMain, nil)
+	key2 := defaultGODEBUGCachePath(cfg2, runtime.GOROOT(), pkgMain, nil)
+	if key1 == "" || key2 == "" || key1 == key2 {
+		t.Fatalf("GOFIPS140 change must invalidate cache key: key1=%q, key2=%q", key1, key2)
+	}
+
+	// 3. Directive order invalidates DefaultGODEBUG cache key
+	fset := token.NewFileSet()
+	f1, err := parser.ParseFile(fset, "main.go", "//go:debug panicnil=0\n//go:debug panicnil=1\npackage main\n", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f2, err := parser.ParseFile(fset, "main.go", "//go:debug panicnil=1\n//go:debug panicnil=0\npackage main\n", parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg1 := []*packages.Package{{ID: "example.com/debugorder", Name: "main", Syntax: []*ast.File{f1}}}
+	pkg2 := []*packages.Package{{ID: "example.com/debugorder", Name: "main", Syntax: []*ast.File{f2}}}
+	cacheKey1 := defaultGODEBUGCachePath(cfg1, runtime.GOROOT(), pkg1, nil)
+	cacheKey2 := defaultGODEBUGCachePath(cfg1, runtime.GOROOT(), pkg2, nil)
+	if cacheKey1 == "" || cacheKey2 == "" || cacheKey1 == cacheKey2 {
+		t.Fatalf("Directive order change must invalidate cache key: key1=%q, key2=%q", cacheKey1, cacheKey2)
+	}
 }
