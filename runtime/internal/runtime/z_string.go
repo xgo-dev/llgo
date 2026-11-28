@@ -205,12 +205,15 @@ func StringIterNext(it *StringIter) (ok bool, k int, v rune) {
 }
 
 func StringToBytes(s String) []byte {
+	if s.len < 0 || uintptr(s.len) > maxAlloc {
+		panicmakeslicelen()
+	}
 	if s.len == 0 {
 		return []byte{}
 	}
-	data := make([]byte, s.len)
-	c.Memcpy(unsafe.Pointer(&data[0]), s.data, uintptr(s.len))
-	return data
+	p := AllocAtomicU(uintptr(s.len))
+	c.Memcpy(p, s.data, uintptr(s.len))
+	return unsafe.Slice((*byte)(p), s.len)
 }
 
 func StringToRunes(s string) []rune {
