@@ -4,7 +4,6 @@ package runtime
 
 import (
 	latomic "sync/atomic"
-	"syscall"
 
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	psync "github.com/xgo-dev/llgo/runtime/internal/sync"
@@ -91,14 +90,10 @@ func semaAcquire(addr *uint32) {
 			if value != 0 && latomic.CompareAndSwapUint32(addr, value, value-1) {
 				return
 			}
-			if err := psync.WaitUint32(addr, 0); err != 0 {
-				switch syscall.Errno(err) {
-				case syscall.EINTR, syscall.EAGAIN:
-				default:
-					// Avoid pinning a core in a tight spin if the kernel wait
-					// fails persistently (e.g. ENOMEM/EFAULT).
-					c.Usleep(100)
-				}
+			if err := psync.WaitUint32(addr, 0); err != 0 && !psync.WaitErrnoRetryable(err) {
+				// Avoid pinning a core in a tight spin if the kernel wait
+				// fails persistently (e.g. ENOMEM/EFAULT).
+				c.Usleep(100)
 			}
 		}
 	}

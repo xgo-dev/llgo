@@ -3,8 +3,6 @@
 package runtime
 
 import (
-	"syscall"
-
 	c "github.com/xgo-dev/llgo/runtime/internal/clite"
 	psync "github.com/xgo-dev/llgo/runtime/internal/sync"
 	"github.com/xgo-dev/llgo/runtime/internal/sync/atomic"
@@ -59,16 +57,12 @@ func timerSchedulerSignalLocked() {
 }
 
 func timerSchedWaitBackoff(err c.Int) {
-	if err == 0 {
+	if psync.WaitErrnoRetryable(err) {
 		return
 	}
-	switch syscall.Errno(err) {
-	case syscall.EINTR, syscall.EAGAIN, syscall.ETIMEDOUT:
-	default:
-		// Prevent a tight 100%-CPU spin if the kernel address wait fails
-		// persistently (e.g. ENOMEM/EFAULT).
-		c.Usleep(100)
-	}
+	// Prevent a tight 100%-CPU spin if the kernel address wait fails
+	// persistently (e.g. ENOMEM/EFAULT).
+	c.Usleep(100)
 }
 
 func timerSchedulerWaitIndefinitely() {

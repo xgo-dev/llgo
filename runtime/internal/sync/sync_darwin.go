@@ -49,6 +49,9 @@ func darwinWakeUint32(addr *uint32)
 //go:linkname darwinWakeUint32All C.llgo_darwin_wake_uint32_all
 func darwinWakeUint32All(addr *uint32)
 
+//go:linkname darwinWaitErrnoRetryable C.llgo_darwin_wait_errno_retryable
+func darwinWaitErrnoRetryable(err c.Int) c.Int
+
 // HasWaitUint32 reports whether Darwin's os_sync_wait_on_address API (macOS 14.4+) is available.
 func HasWaitUint32() bool { return darwinHasWaitUint32() != 0 }
 
@@ -79,4 +82,11 @@ func WakeUint32(addr *uint32) {
 // WakeUint32All wakes all threads waiting for addr.
 func WakeUint32All(addr *uint32) {
 	darwinWakeUint32All(addr)
+}
+
+// WaitErrnoRetryable reports whether err is a benign WaitUint32 /
+// WaitUint32Timeout return (0, EINTR, EAGAIN, or ETIMEDOUT) that callers may
+// retry immediately without backoff.
+func WaitErrnoRetryable(err c.Int) bool {
+	return darwinWaitErrnoRetryable(err) != 0
 }

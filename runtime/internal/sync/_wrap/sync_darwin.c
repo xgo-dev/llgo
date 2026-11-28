@@ -87,3 +87,8 @@ void llgo_darwin_wake_uint32_all(uint32_t *addr)
     llgo_wake_addr_all_fn(addr, sizeof(*addr), 0);
     errno = saved_errno;
 }
+
+int llgo_darwin_wait_errno_retryable(int err)
+{
+    return err == 0 || err == EINTR || err == EAGAIN || err == ETIMEDOUT;
+}
