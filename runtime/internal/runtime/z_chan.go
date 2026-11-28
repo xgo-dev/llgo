@@ -78,8 +78,9 @@ type chanWaiter struct {
 }
 
 type singleChanWaiter struct {
-	waiter chanWaiter
-	signal chanSignal
+	waiter      chanWaiter
+	signal      chanSignal
+	signalReady bool
 }
 
 type selectState struct {
@@ -144,7 +145,9 @@ func freeSelectCache(gp *g) {
 
 func freeChanWaiter(gp *g) {
 	if gp != nil && gp.chanWaiter != nil {
-		gp.chanWaiter.signal.destroy()
+		if gp.chanWaiter.signalReady {
+			gp.chanWaiter.signal.destroy()
+		}
 		gp.chanWaiter = nil
 	}
 }
@@ -293,7 +296,10 @@ func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanW
 	}
 	if sw == nil {
 		sw = new(singleChanWaiter)
+	}
+	if !sw.signalReady {
 		sw.signal.initFast()
+		sw.signalReady = true
 	}
 	w := &sw.waiter
 	w.synctest = nil
@@ -301,6 +307,7 @@ func newChanWaiter(ch *Chan, elem unsafe.Pointer, eltSize int, send bool) *chanW
 	w.next = nil
 	w.all = nil
 	w.queued = false
+	w.isHead = false
 	w.status = waitPending
 	w.sel = nil
 	w.caseIndex = 0
